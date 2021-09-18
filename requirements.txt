@@ -1,5 +1,6 @@
 adafruit-circuitpython-lsm303dlh_mag==1.1.8
-adafruit-circuitpython-lsm303-accel==1.1.7 
+adafruit-circuitpython-lsm303_accel==1.1.7 
 pymitter==0.3.1
 flask==2.0.1
-simple-pid==1.0.1 
+simple-pid==1.0.1
+numpy
