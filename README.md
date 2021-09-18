@@ -27,10 +27,14 @@ Also, I learned the hard way that it is a good idea to get a wrist-strap or some
 
 ## Planned
 
+- Extensive testing before it get's to cold outside.
+- Adding support for GPS module instead of getting position from plotter.
+
 ## Wishlist
 
 - Some kind of simulation software
 - PID profiles for boats of different sizes
+- Relying on a regular DC motor instead of a stepper for steering. And using a potentiometer for position-feedback.
 
 ## Details
 
@@ -70,19 +74,52 @@ APB from NMEA takes the coordinates of a GPX-file (with \<WP\> tags) and generat
 
 XTE magnitude is added to the feedback of the PID-controller.
 
+## Configuring the raspberry (Without existing wifi/network on the boat)
+
+1. Clone vanchor to /opt/vanchor
+2. Run `/opt/vanchor/scripts/install.sh` to install packages and set it up as a systemctl service.
+3. Run `sudo raspi-config` and enable I2C.
+4. Connect the GY-511 to the raspberry GPIO-pins
+5. Connect your RS232 adapter and Arduino and configure them to use a fixed name in /dev: https://www.freva.com/assign-fixed-usb-port-names-to-your-raspberry-pi/
+6. Edit the device paths of Serial/Controller/Device and Serial/NmeaInput/Device to correspond to the fixed names of the arduino and RS232 adapter in the config.yml file.
+7. Edit the var `APPASS="<PASSWORD>"` in `/opt/vanchor/scripts/wifi.sh` to a WIFI-password of your choice.
+8. Run `/opt/vanchor/scripts/wifi.sh` to setup your raspberry as an access point. The raspberry will now reboot.
+9. Run `journalctl -xef`
+10. Connect the ssid named `Vanchor` with the password that you choose in step 6
+11. Browse to http://10.0.0.1 and try it out while checking the logs from `journalctl -xef`
+
+## Configuring the raspberry (with existing network + SignalK/Similar)
+
+1. Clone vanchor to /opt/vanchor
+2. Run `sudo raspi-config` and enable I2C.
+3. Run `/opt/vanchor/scripts/install.sh` to install packages and set it up as a systemctl service.
+4. Connect the GY-511 to the raspberry GPIO-pins assign-fixed-usb-port-names-to-your-raspberry-pi/
+5. Connect your Arduino and configure them to use a fixed name in /dev: https://www.freva.com/assign-fixed-usb-port-names-to-your-raspberry-pi/
+6. Edit the device path of Serial/Controller/Device to correspond to the fixed names of the arduino and RS232 adapter in the config.yml file.
+7. Connect the raspberry to your boats network. A static IP or resolvable hostname is recommended.
+8. Configure SignalK to forward NMEA data to port 10000 of the raspberry
+9. Run `journalctl -xef`
+10. Browse to http://\<ip\> and try it out while checking the logs from `journalctl -xef`
+
 ## Hardware
 
 While it's easily modifiable I used the following when it comes to hardware (NOT affiliate links):
 
 - Raspberry Pi 4
+- RS232 -> USB adapter
 - 6-24V step-down module /w USB (https://www.amazon.se/dp/B09DPJXNTP)
 - Arduino Nano (https://www.amazon.se/dp/B01MS7DUEM)
-  - GY-511 e-compass (https://www.amazon.se/dp/B07XXG8HNJ)
-  - 60A DC Motor Controller (https://www.amazon.se/gp/product/B075FTL53W/)
-  - L298N (for stepper) (https://www.amazon.se/gp/product/B077NY9RY6)
-  - Stepper Motor (https://www.amazon.se/gp/product/B072LVXVKW)
-  - A3144E Hall sensor (https://www.amazon.se/gp/product/B01M2WASFL)
-  - 5mm neodynium magnet (for hall sensor)
+- GY-511 e-compass (https://www.amazon.se/dp/B07XXG8HNJ)
+- 60A DC Motor Controller (https://www.amazon.se/gp/product/B075FTL53W/)
+  - Note: I use a 60Amp controller on my 40Amp engine as a safety margin.
+- L298N (for stepper) (https://www.amazon.se/gp/product/B077NY9RY6)
+- Stepper Motor (https://www.amazon.se/gp/product/B072LVXVKW)
+- A3144E Hall sensor (https://www.amazon.se/gp/product/B01M2WASFL)
+- 5mm neodynium magnet (for hall sensor)
+- Anti-corrosion spray for electronics (for protecting the electronics)
+- Flex-PVC pipe for the power cables to the trolling motor.
+- Silicon for waterproofing
+- Various screws/bolts. See parts list [here.](./docs/drawing.pdf).
 
 ### Gearbox
 
