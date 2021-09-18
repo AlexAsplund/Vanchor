@@ -1,0 +1,71 @@
+AutoPilot:
+  PidKd: 0.1
+  PidKi: 0.4
+  PidKp: 0.1
+  PidOffsetLimitMax: 90
+  PidOffsetLimitMin: -90
+Compass:
+  HeadingHistoryLength: 5 # Amount of datapoints to average heading to. Removes jitter
+  UpdateInterval: 20 # Time between polls
+  SendInterval: 5 # Every # cycles
+Flask:
+  Debug: true
+  Port: 80
+Functions:
+  Enabled:
+    - AutoPilot
+    - Vanchor
+    - HoldHeading
+History:
+  MaxItems: 100
+Logging:
+  Format: "%(asctime)s - %(levelname)s - %(lineno)s - %(threadName)s - %(module)s - %(name)s:%(funcName)s - %(threadName)s - %(message)s"
+  Level: INFO
+  StdOutLevel: DEBUG
+  FileLogLevel: WARNING
+  LogToFile: False # Excessive writing to SD-cards may break them
+  LogFile: vanchor.log
+Motor:
+  Offset: 10
+  RampDelay: 20
+  RampTime: 800
+NmeaNet:
+  Port: 10000
+Serial:
+  Controller:
+    Baudrate: 19200
+    Device: /dev/arduinoNano
+    InputInterval: 50
+    OutputInterval: 50
+    Timeout: 1
+    SimulateNMEA: True
+    NmeaTestFile: test/nmea_data.txt
+  NmeaInput:
+    Baudrate: 4800
+    Device: /dev/nmeaSerial
+    Timeout: 50
+HoldHeading:
+  GPSMode: False
+Steering:
+  ChokeMotor: false
+  CorrectionInterval: 0.5
+  PidKp: 0.015
+  PidKi: 0.05
+  PidKd: 4
+  PidOffsetLimitMax: 90
+  PidOffsetLimitMin: -90
+  Slack: 2
+Stepper:
+  CalibrationOffset: 0
+  Acceleration: 480
+  Ratio: 36 # 36 stepper revs = 1 revolution of the motor
+  Reversed: false
+  Speed: 800
+  StepsPerRevolution: 200
+Vanchor:
+  PidKd: 0.1
+  PidKi: 0.4
+  PidKp: 0.1
+  PidOffsetLimitMax: 50
+  PidOffsetLimitMin: 0
+  Radius: 1

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Runkeeper - http://www.runkeeper.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.topografix.com/GPX/1/1" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+  <wpt lat="59.6410833333333" lon="13.3765333333333" xmlns="">wp1</wpt>
+  <wpt lat="59.6412666666667" lon="13.3765333333333" xmlns="">wp2</wpt>
+
+  <wpt lat="59.6434166666667" lon="13.3765166666667" xmlns="">wp14</wpt>
+  <wpt lat="59.6436" lon="13.3765166666667" xmlns="">wp15</wpt>
+  <wpt lat="59.6437833333333" lon="13.3765166666667" xmlns="">wp16</wpt>
+
+  <wpt lat="59.6470166666667" lon="13.3764833333333" xmlns="">wp34</wpt>
+  <wpt lat="59.6472" lon="13.3764833333333" xmlns="">wp35</wpt>
+
+  <wpt lat="59.6479166666667" lon="13.3764666666667" xmlns="">wp39</wpt>
+  <wpt lat="59.6481" lon="13.3764666666667" xmlns="">wp40</wpt>
+
+  <wpt lat="59.6506166666667" lon="13.37645" xmlns="">wp54</wpt>
+  <wpt lat="59.6508" lon="13.37645" xmlns="">wp55</wpt>
+ 
+  <wpt lat="59.65205" lon="13.3764333333333" xmlns="">wp62</wpt>
+</gpx>

@@ -1,0 +1,8 @@
+pymitter*
+*.log
+.vscode
+test
+config copy*.yml
+config-*
+log.txt
+pilot.pymitter

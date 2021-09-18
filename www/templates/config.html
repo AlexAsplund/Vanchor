@@ -1,0 +1,41 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="">
+<meta name="author" content="Alex Asplund">
+<title> Boat control</title>
+
+
+
+
+<!-- Bootstrap core CSS -->
+<link href="{{ url_for('static', filename= 'css/bootstrap.css') }}" rel="stylesheet">
+
+<script src="{{ url_for('static', filename= 'js/jquery.js') }}"></script>
+
+</head>
+
+<body class="bg-dark text-white px-1">
+    <main>
+        <div id="messages">
+        </div>
+        <div class="container">
+
+            <div class="form-group" id="config">
+
+
+            </div>
+
+
+
+        </div>
+        <a id="reloadBtn" class="btn btn-info w-100 btn-block pt-4 pb-4 mt-3">Reload</a>
+        <a id="saveBtn" class="btn btn-success w-100 btn-block pt-4 pb-4 mt-3">Save</a>
+    </main>
+
+
+    <script src="{{ url_for('static', filename= 'js/bootstrap.bundle.js') }}"></script>
+    <script src="{{ url_for('static', filename= 'common.js') }}"></script>
+    <script src="{{ url_for('static', filename= 'config.js') }}"></script>
+</body>
+
+</html>

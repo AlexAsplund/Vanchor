@@ -1,0 +1,12 @@
+[Unit]
+Description=Vanchor
+After=multi-user.target
+
+[Service]
+Type=simple
+Restart=always
+WorkingDirectory=/opt/vanchor/
+ExecStart=/usr/bin/python3 /opt/vanchor/vanchor.py -debug
+
+[Install]
+WantedBy=multi-user.target

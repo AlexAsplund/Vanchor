@@ -1,0 +1,142 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="">
+<meta name="author" content="Alex Asplund">
+<title>Boat control</title>
+
+
+
+
+<!-- Bootstrap core CSS -->
+<link href="{{ url_for('static', filename= 'css/bootstrap.min.css') }}" rel="stylesheet">
+
+<!-- Custom CSS -->
+<link href="{{ url_for('static', filename= 'css/custom.css') }}" rel="stylesheet">
+
+<script src="{{ url_for('static', filename= 'js/jquery.js') }}"></script>
+
+<!-- Custom styles for this template -->
+<link href="form-validation.css" rel="stylesheet">
+</head>
+
+<body class="bg-dark text-white">
+    <div id="messages">
+    </div>
+    <div class="container">
+        <main>
+            <div class="d-grip gap-1 d-md-flex">
+                <label for="steering" class="form-label">Steering (<i id="currentSteering">0</i>)</label>
+                <input type="range" class="slider" style="height: 1rem;" min="0" max="360" value="180" id="steering">
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-3">
+                <div class="btn-toolbar" role="toolbar">
+                    <div class="btn-group mr-2 mt-2" role="group" aria-label="AutoPilotGroup" style="width:100%">
+                        <button type="button" id="relativeSteeringToggle" class="btn btn-success" data-state="true">
+                            Relative Steering
+                        </button>
+
+                        <button type="button" id="maxSteeringToggle" class="btn btn-danger" data-state="true">
+                            Max steering 90°
+                        </button>
+                    </div>
+                    <div class="btn-group mr-2 mt-2" role="group" aria-label="AutoPilotGroup" style="width:100%">
+                        <a class="btn btn-info w-100" id="zeroSteering">Move to 0</a>
+                    </div>
+                </div>
+
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-2">
+                <label for="speed" class="form-label">Speed</label>
+                <input type="range" class="slider" min="0" max="100" value="0" id="speed">
+                <a class="btn btn-lg btn-danger w-100 mt-2" id="motorOff">Motor off</a>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-2">
+                <table id="statusInfo">
+                </table>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-2 align-center" , style="text-align: center">
+                <svg id="compass" width="300" height="300" xmlns="http://www.w3.org/2000/svg">
+                </svg>
+            </div>
+
+
+
+            <div class="d-grip gap-2 d-md-flex align-self-stretch mt-1">
+
+                <div class="btn-toolbar" role="toolbar">
+                    <div class="btn-group mr-2" role="group" aria-label="VanchorGroup" style="width:100%">
+                        <a class="btn btn-success w-50" data-on="false" data-type="toggleFunction" data-func="Vanchor">Enable Vanchor</a>
+                        <!--<a class="btn btn-success w-50" id="vanchorOn">Vanchor ON</a>
+                        <a class="btn btn-danger w-50" id="vanchorOff">Vanchor OFF</a>-->
+                    </div>
+                </div>
+
+
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-1">
+                <div class="btn-toolbar" role="toolbar">
+                    <div class="btn-group mr-2" role="group" aria-label="LockHeadingGroup" style="width:100%">
+                        <a class="btn btn-success w-50" data-on="false" data-type="toggleFunction" data-func="LockHeading">Enable Lock Heading</a>
+                        <!--<a class="btn btn-success w-50" id="lockHeadingOn">Lock heading ON</a>
+                        <a class="btn btn-danger w-50" id="lockHeadingOff">Lock heading OFF</a>-->
+                    </div>
+                </div>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-3">
+                <hr/>
+                <button class="btn btn-secondary w-100 mt-1" id="showAutopilot" data-type="showSubButton" data-target="#autopilotmenu" data-expanded="false">AutoPilot</button>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-3 collapse" id="autopilotmenu">
+
+                <div class="btn-toolbar" role="toolbar">
+                    <div class="btn-group mr-2 mt-2" role="group" aria-label="AutoPilotGroup" style="width:100%">
+                        <a class="btn btn-success w-50" data-on="false" data-type="toggleFunction" data-func="AutoPilot">Enable AutoPilot</a>
+                        <!-- <a class="btn btn-danger w-50" data-event="function.autopilot.disable" data-text="[]" data-type="sendEvent">AutoPilot Off</a> -->
+                    </div>
+                    <div class="w-100 mt-1" id="gpxRoutes">
+                        No routes loaded...
+                    </div>
+                </div>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-1">
+                <div class="btn-toolbar" role="toolbar">
+                    <div class="btn-group mr-2" role="group" aria-label="ToolsGroup" style="width:100%">
+
+                        <a class="btn btn-secondary w-50" id="calibrateSteering">Calibrate</a>
+                    </div>
+                </div>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-1">
+                <div class="btn-toolbar" role="toolbar">
+                    <div class="btn-group mr-2" role="group" aria-label="ToolsGroup" style="width:100%">
+
+                        <a href="./menu" class="btn btn-secondary w-50" id="goMenu">Menu</a>
+                    </div>
+                </div>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-1">
+                <div class="btn-toolbar" role="toolbar">
+                    <div class="btn-group mr-2" role="group" aria-label="InfoGroup" style="width:100%">
+                        <a class="btn btn-info w-100 px-4 mt-4" id="showDataInfo" type="button" data-target="#dataInfo" data-expanded="false" aria-controls="dataInfo">Show info</a>
+                        <a class="btn btn-secondary w-100 px-4 mt-4" id="configBtn" href="./config">Configure</a>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-2 collapse mb-5" id="dataInfo">
+                <pre id="jsonInfo">
+
+                </pre>
+            </div>
+            </br>
+
+        </main>
+    </div>
+
+
+    <script src="{{ url_for('static', filename= 'js/bootstrap.bundle.min.js') }}"></script>
+
+    <script src="{{ url_for('static', filename= 'common.js') }}"></script>
+    <script src="{{ url_for('static', filename= 'main.js') }}"></script>
+</body>
+
+</html>

@@ -1,0 +1,63 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="">
+<meta name="author" content="Alex Asplund">
+<title>Boat control</title>
+
+
+
+
+<!-- Bootstrap core CSS -->
+<link href="{{ url_for('static', filename= 'css/bootstrap.min.css') }}" rel="stylesheet">
+
+<!-- Custom CSS -->
+<link href="{{ url_for('static', filename= 'css/custom.css') }}" rel="stylesheet">
+
+<script src="{{ url_for('static', filename= 'js/jquery.js') }}"></script>
+
+</head>
+
+<body class="bg-dark text-white">
+    <div id="messages">
+    </div>
+    <div class="container">
+        <main>
+            <div class="d-grip gap-1 d-md-flex mt-3">
+                <button class="btn btn-primary w-100" data-type="showSubButton" data-target="#manageGpx" role="button" data-expanded="false" aria-controls="manageGpx">
+                    Manage routes
+                </button>
+            </div>
+            <div class="collapse mt-1" id="manageGpx">
+                <button class="btn btn-secondary w-100 mt-1" data-type="showSubButton" data-target="#gpxRoutes" data-expanded="false">Show routes</button>
+                <div class="collapse w-100" id="gpxRoutes">
+                </div>
+                <button class="btn btn-secondary w-100 mt-1" data-type="showSubButton" data-target="#uploadRoute" data-expanded="false">Upload route</button>
+                <div class="collapse w-100 mt-2" id="uploadRoute">
+                    <input type="file" name="file" id="routeFile">
+                    <button id="uploadRouteButton" class="btn btn-secondary">Upload route</button>
+                </div>
+            </div>
+            <div class="d-grip gap-1 d-md-flex mt-3">
+                <button class="btn btn-primary w-100" data-type="showSubButton" data-target="#manageUpdate" role="button" data-expanded="false" aria-controls="manageUpdate">
+                    Update Vanchor
+                </button>
+            </div>
+            <div class="collapse mt-1" id="manageUpdate">
+                <label for="uploadUpdate">Update ZIP-file</label>
+                <input type="file" name="uploadUpdate" id="updateFile">
+                <button class="btn btn-warning w-100" id="updateButton">
+                    Update
+                </button>
+            </div>
+            </br>
+        </main>
+    </div>
+
+
+    <script src="{{ url_for('static', filename= 'js/bootstrap.bundle.min.js') }}"></script>
+
+    <script src="{{ url_for('static', filename= 'common.js') }}"></script>
+    <script src="{{ url_for('static', filename= 'menu.js') }}"></script>
+</body>
+
+</html>
