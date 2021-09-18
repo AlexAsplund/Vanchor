@@ -1,17 +1,29 @@
 # Vanchor
 
+Work in progress!
+
 For controlling speed and direction of an electrical trolling motor.
 The goal here is to be able to use (almost) any cheap trolling motor while still having autopilot/follow route features.
 
-The current version gets it's coordinates from my Humminbird plotter. But it's easy to add support for cheap GPS modules that you hook up to the Raspberry.
+The current version gets it's coordinates from my Humminbird plotter. But it's easy to add support for cheap GPS modules if you want to. Just don't go too cheap.
+
+Made a total makeover of the softwre to make it more event based, adding PID and so on. So there's probably a lot of bugs currently.
+
+More pictures comming soon...
+
+<img src="docs/diagram.png" >
+
+---
 
 **Keep in mind that many aspects of this build can cause fires, chopped of fingers and/or other dangers.**
 
-Also, I learned the hard way that it is a good idea to get a wrist-strap or something similar for your phone :)
+And I learned the hard way that it is a good idea to get a wrist-strap or something similar for your phone :)
+
+---
 
 <img src="./3d/gearbox/Render_2.png" width="50%" />
 
-## Current features (Everything is not tested yet):
+## Current features:
 
 - Web interface
   - Control of trolling motor
@@ -27,13 +39,11 @@ Also, I learned the hard way that it is a good idea to get a wrist-strap or some
 
 ## Planned
 
-- Extensive testing before it get's to cold outside.
 - Adding support for GPS module instead of getting position from plotter.
 
 ## Wishlist
 
 - Some kind of simulation software
-- Rough PID settings for boats/motors of different sizes
 - Relying on a regular DC motor instead of a stepper for steering. And using a potentiometer for position-feedback.
 
 ## Details
@@ -67,10 +77,10 @@ If GPS is not available it will just take your current heading and try to keep t
 
 Autopilot has 2 modes:
 
-1. APB from NMEA (ie. plotter)
-2. APB from GPX files
+1. Receive APB sentence from NMEA.
+2. Use APB sentence generated from GPX files
 
-APB from GPX takes the coordinates of a GPX-file (with \<WP\> tags) and generates an NMEA APB-sentence with cross-track-error(XTE) / direction that it follows.
+APB from GPX takes the coordinates of a GPX-file (with \<wp\> tags) and generates an NMEA APB-sentence with cross-track-error(XTE) / direction that it follows.
 
 XTE magnitude is added to the feedback of the PID-controller.
 
@@ -166,9 +176,19 @@ You mount an "hang-in"-style mount on the trolling motor that locks into place i
 | 1   | [StepperCover.stl](./3d/gearbox/StepperCover.stl)                        |                                                                                                                                                                               |
 | 1   | [StepperGear.stl](./3d/gearbox/StepperGear.stl)                          |                                                                                                                                                                               |
 
-#### Assembly:
+## Assembly of the gearbox:
 
 - Assemble the parts according to the drawing and save the trolling motor holder for last.
 - Disassemble the trolling motor and flip the transom mount so that the box holder can lock the gearbox into place (if possible)
 - Take the gearbox and slide it over the trolling motor shaft
 - Mount the trolling motor holder in the existing screw hole to mount it into place (or clean it off with IPA and use CA glue).
+
+## Connecting the electronics
+
+- Connect the motor controller to PIN3 of the arduino
+- Connect signal from the hall sensor to PIN5
+- Connect PIN8,9,10,11 to the L298N
+- Connect the stepper motor to the output of L298N
+- Connect the arduino to the raspberry with USB
+- Connect the RS232 adapter to the raspberry
+- Connect the GY-511 5v, GND, SCL, SCA to the corresponding GPIO-pins on the raspberry
