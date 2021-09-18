@@ -6,7 +6,7 @@ After=multi-user.target
 Type=simple
 Restart=always
 WorkingDirectory=/opt/vanchor/
-ExecStart=/usr/bin/python3 /opt/vanchor/vanchor.py -debug
+ExecStart=/usr/bin/python3 /opt/vanchor/vanchor.py
 
 [Install]
 WantedBy=multi-user.target

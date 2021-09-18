@@ -38,8 +38,6 @@ class Main:
             handlers=self.get_logging_handlers(),
         )
 
-        self.logger.warning("TEST")
-
         self.work_manager = WorkerManager(self)
 
         self.data = DataNode(self)
@@ -81,6 +79,10 @@ class Main:
         os.system("mkdir /tmp/vanchor_update")
         os.system("unzip uploads/{} -d /tmp/vanchor_update".format(arg))
         os.system("cp -f config.yml /tmp/vanchor_update/config.yml")
+        try:
+            os.system("cp -f routes/* /tmp/vanchor_update/routes/")
+        except:
+            self.logger.warning("Error copying routes")
 
         try:
             os.system("mv ./* backup/{}".format(date))
@@ -89,4 +91,14 @@ class Main:
         os.system("cp -rf /tmp/vanchor_update/* .")
         os.system("rm -rf /tmp/vanchor_update")
 
+        self.logger.info("Copying vanchor.service")
+        os.system("cp scripts/vanchor.service /etc/systemd/system/vanchor.service")
+
+        self.logger.info("Reloading systemctl daemon")
+        os.system("sudo systemctl daemon-reload")
+
+        self.logger.info("Enabling vanchor.service")
+        os.system("sudo systemctl enable vanchor.service")
+
+        self.logger.info("Restarting Vanchor")
         os.system("systemctl restart vanchor")
