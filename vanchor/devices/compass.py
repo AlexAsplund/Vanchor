@@ -13,6 +13,8 @@ except:
 class Compass:
     def __init__(self, main):
         self.logger = main.logging.getLogger(self.__class__.__name__)
+
+        self.logger.info("Loading mock compass")
         self.i2c = board.I2C()  # uses board.SCL and board.SDA
         self.accel = adafruit_lsm303_accel.LSM303_Accel(self.i2c)
         self.mag = adafruit_lsm303dlh_mag.LSM303DLH_Mag(self.i2c)
@@ -37,10 +39,11 @@ class Compass:
         n = 0
         temp = []
         last = self.ls[0]
+
         for i in self.ls:
             angle = self.main.tools.get_angle(last, i)
-            diff = angle[-1]
-            if diff < self.max_diff:
+
+            if angle[-1] < self.max_diff:
                 if angle[0] > angle[1]:
                     v = angle[-1] * -1
                 else:
@@ -49,7 +52,7 @@ class Compass:
                 n += i
                 last = i
             else:
-                self.logger.debug("Diff was {} - skipping".format(diff))
+                self.logger.debug("Diff was {} - skipping".format(angle[-1]))
         try:
             average_angle = (n / len(temp) % 360) + (sum(temp) / len(temp))
             return average_angle
@@ -60,6 +63,7 @@ class Compass:
                 ),
                 e,
             )
+
             return round(sum(self.ls) / len(self.ls), 2)
 
     def get(self):
@@ -101,6 +105,7 @@ class Compass:
 
     def heading_update_worker(self, main):
         self.interval += 1
+
         if self.interval == self.main.config.get("Compass/SendInterval"):
             self.interval = 0
             self.logger.debug("Sending compass heading event")
