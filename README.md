@@ -33,14 +33,14 @@ Also, I learned the hard way that it is a good idea to get a wrist-strap or some
 ## Wishlist
 
 - Some kind of simulation software
-- PID profiles for boats of different sizes
+- Rough PID settings for boats/motors of different sizes
 - Relying on a regular DC motor instead of a stepper for steering. And using a potentiometer for position-feedback.
 
 ## Details
 
 ### Web interface
 
-Flask handles the web application.
+Served from a flask server.
 It's based on bootstrap4 and js (+jquery) and has a compass that visually shows the direction that you are heading, depth and so on.
 
 The webinterface allows you to edit the config file and to update vanchor by uploading a ZIP so that you don't have to take your laptop with you to do changes.
@@ -70,7 +70,7 @@ Autopilot has 2 modes:
 1. APB from NMEA (ie. plotter)
 2. APB from GPX files
 
-APB from NMEA takes the coordinates of a GPX-file (with \<WP\> tags) and generates an NMEA APB-sentence with cross-track-error(XTE) / direction that it follows.
+APB from GPX takes the coordinates of a GPX-file (with \<WP\> tags) and generates an NMEA APB-sentence with cross-track-error(XTE) / direction that it follows.
 
 XTE magnitude is added to the feedback of the PID-controller.
 
@@ -165,3 +165,10 @@ You mount an "hang-in"-style mount on the trolling motor that locks into place i
 | 1   | [JunctionBoxLid.stl](./3d/gearbox/JunctionBoxLid.stl)                    |                                                                                                                                                                               |
 | 1   | [StepperCover.stl](./3d/gearbox/StepperCover.stl)                        |                                                                                                                                                                               |
 | 1   | [StepperGear.stl](./3d/gearbox/StepperGear.stl)                          |                                                                                                                                                                               |
+
+#### Assembly:
+
+- Assemble the parts according to the drawing and save the trolling motor holder for last.
+- Disassemble the trolling motor and flip the transom mount so that the box holder can lock the gearbox into place (if possible)
+- Take the gearbox and slide it over the trolling motor shaft
+- Mount the trolling motor holder in the existing screw hole to mount it into place (or clean it off with IPA and use CA glue).
