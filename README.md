@@ -5,7 +5,13 @@ The goal here is to be able to use (almost) any cheap trolling motor while still
 
 The current version gets it's coordinates from my Humminbird plotter. But it's easy to add support for cheap GPS modules that you hook up to the Raspberry.
 
-## Current features:
+**Keep in mind that many aspects of this build can cause fires, chopped of fingers and/or other dangers.**
+
+Also, I learned the hard way that it is a good idea to get a wrist-strap or something similar for your phone :)
+
+<img src="./3d/gearbox/Render_2.png" width="50%" />
+
+## Current features (Everything is not tested yet):
 
 - Web interface
   - Control of trolling motor
@@ -17,10 +23,56 @@ The current version gets it's coordinates from my Humminbird plotter. But it's e
 - Autopilot (NMEA APB sentence)
 - Autopilot (GPX files)
 - Lock heading (NMEA RMC sentence and/or e-compass)
+- PID steering
+
+## Planned
+
+## Wishlist
+
+- Some kind of simulation software
+- PID profiles for boats of different sizes
+
+## Details
+
+### Web interface
+
+Flask handles the web application.
+It's based on bootstrap4 and js (+jquery) and has a compass that visually shows the direction that you are heading, depth and so on.
+
+The webinterface allows you to edit the config file and to update vanchor by uploading a ZIP so that you don't have to take your laptop with you to do changes.
+
+<img src="./docs/webinterface.png" width="30%">
+
+### [Function] Vanchor
+
+**V**irtual **Anchor** holds the boat in the current coordinates.
+It uses a PID regulator to controll trolling motor speed in case of current or wind.
+
+### [Function] Lock Heading
+
+Lock heading can lock heading with and without GPS.
+
+If GPS is available it will take current heading and set a destination point 1000km further away.
+After that it starts to generate NMEA APB sentences with Cross-Track-Error that it follows.
+
+This will counteract drifting to the sides due to wind or current.
+
+If GPS is not available it will just take your current heading and try to keep that.
+
+### [Function] Autopilot
+
+Autopilot has 2 modes:
+
+1. APB from NMEA (ie. plotter)
+2. APB from GPX files
+
+APB from NMEA takes the coordinates of a GPX-file (with \<WP\> tags) and generates an NMEA APB-sentence with cross-track-error(XTE) / direction that it follows.
+
+XTE magnitude is added to the feedback of the PID-controller.
 
 ## Hardware
 
-While it's easily modifiable i used the following when it comes to hardware (NOT affiliate links):
+While it's easily modifiable I used the following when it comes to hardware (NOT affiliate links):
 
 - Raspberry Pi 4
 - 6-24V step-down module /w USB (https://www.amazon.se/dp/B09DPJXNTP)
@@ -34,25 +86,31 @@ While it's easily modifiable i used the following when it comes to hardware (NOT
 
 ### Gearbox
 
-The gearbox is 3D-printed in PLA and seems to hold up. [You can find the STL's in ./3d/gearbox ](./3d/gearbox).
+The gearbox is 3D-printed in PLA and seems to hold up. [You can find the STL's in 3d/gearbox ](./3d/gearbox).
+
+<img src="./3d/Exploded.png" width="70%">
+
+An exploded drawing is available [here.](./docs/drawing.pdf).
+
 You mount an "hang-in"-style mount on the trolling motor that locks into place in the gearbox when the trolling motor is lowered.
 
-What hardware you need:
+#### What hardware you need:
 
 | Pcs | Part                                                                     |
 | --- | ------------------------------------------------------------------------ |
 | 4   | 608ZZ bearing (Or similar bearing)                                       |
 | 4   | 30mm M5 screws/bolts with a low profile head                             |
 | 1   | 20mm bolt                                                                |
-| 1   | A3144E sensor for calibration                                            |
+| 1   | A3144E sensor for calibrating                                            |
 | 1   | ~5mm neodynium magnet </br>A3144E only reacts to 1 of the magnets poles. |
 | 3   | ~10-20mm M3 screws                                                       |
 | 4   | ~4-5mm self drilling screws                                              |
 | -   | TP-cable for connecting the stepper and hall sensor                      |
 | -   | CA-glue                                                                  |
 | -   | Grease suitable for PLA                                                  |
+| 1   | trolling motor with a 1" shaft                                           |
 
-The parts you need to print
+#### The parts you need to print
 
 | Pcs | Part                                                                     | Comment                                                                                                                                                                       |
 | --- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
