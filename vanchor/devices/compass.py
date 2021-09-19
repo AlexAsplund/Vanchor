@@ -1,6 +1,7 @@
 from time import sleep
 from time import time
 from math import radians, cos, sin, asin, sqrt, pi, atan2, degrees
+from pynmea2 import HDM
 
 try:
     import board
@@ -108,11 +109,12 @@ class Compass:
 
         if self.interval == self.main.config.get("Compass/SendInterval"):
             self.interval = 0
-            self.logger.debug("Sending compass heading event")
-            self.emitter.emit(
-                "status.set",
-                ["Navigation/Compass/Heading", round(self.heading(), 3)],
+            self.logger.debug("Sending compass heading nmea sentence as event")
+            heading = round(self.heading(), 3)
+            nmea_sentence = pynmea2.HDM(
+                talker="VA", sentence_type="HDM", data=[str(heading), "M"]
             )
+            self.emitter.emit("nmea.reading", str(nmea_sentence))
 
 
 class MockCompass:
@@ -209,8 +211,9 @@ class MockCompass:
 
         if self.interval == self.main.config.get("Compass/SendInterval"):
             self.interval = 0
-            self.logger.debug("Sending compass heading event")
-            self.emitter.emit(
-                "status.set",
-                ["Navigation/Compass/Heading", round(self.heading(), 3)],
+            self.logger.debug("Sending compass heading nmea sentence as event")
+            heading = round(self.heading(), 3)
+            nmea_sentence = pynmea2.HDM(
+                talker="VA", sentence_type="HDM", data=[str(heading), "M"]
             )
+            self.emitter.emit("nmea.reading", str(nmea_sentence))

@@ -5,7 +5,7 @@ class DeviceManager:
     def __init__(self, main):
         self.logger = main.logging.getLogger(self.__class__.__name__)
         self.main = main
-        self.nmea_reader = NmeaReader(self.main)
+        self.nmea_reader = Nmea(self.main)
         try:
             self.compass = Compass(self.main)
         except Exception as e:

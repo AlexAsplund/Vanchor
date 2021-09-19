@@ -3,14 +3,15 @@ import serial
 from time import sleep
 
 
-class NmeaReader:
+class Nmea:
     def __init__(self, main):
         self.logger = main.logging.getLogger(self.__class__.__name__)
         self.main = main
 
         self.main.event.emitter.on("nmea.parse", self.parse_nmea)
 
-        self.main.event.emitter.on("nmea.reading.rmc", self.add_coordinates)
+        self.main.event.emitter.on("nmea.reading.rmc", self.nmea_rmc_handler)
+        self.main.event.emitter.on("nmea.reading.hdm", self.nmea_hdm_handler)
 
         main.work_manager.start_worker(self.input_listener, **{"timer": 10})
 
@@ -50,7 +51,7 @@ class NmeaReader:
         except Exception as e:
             self.logger.error("Error reading controller serial input", e)
 
-    def add_coordinates(self, arg):
+    def nmea_rmc_handler(self, arg):
         nmea_packet = arg[0]
         self.main.emitter.emit(
             "status.set.navigation.coordinates",
@@ -60,4 +61,13 @@ class NmeaReader:
             "Adding Coordinates from NMEA {}, {}".format(
                 nmea_packet.latitude, nmea_packet.longitude
             )
+        )
+
+    def nmea_hdm_handler(self, arg):
+        self.logger.debug("Recevied HDM sentence")
+        heading = float(arg[0].heading)
+
+        self.emitter.emit(
+            "status.set",
+            ["Navigation/Compass/Heading", heading],
         )
