@@ -13,6 +13,12 @@ class Nmea:
         self.main.event.emitter.on("nmea.reading.rmc", self.nmea_rmc_handler)
         self.main.event.emitter.on("nmea.reading.hdm", self.nmea_hdm_handler)
 
+        if self.main.debug != True:
+            self.serial = serial.Serial(
+                main.config.get("Serial/Nmea/Device"),
+                main.config.get("Serial/Nmea/Baudrate"),
+            )
+
         main.work_manager.start_worker(self.input_listener, **{"timer": 10})
 
     def parse_nmea(self, message):
@@ -38,10 +44,11 @@ class Nmea:
                 if self.serial.in_waiting > 0:
                     reading = self.serial.readline().decode()
                     self.main.event.emitter.emit("nmea.parse", reading)
-            elif self.main.config.get("Serial/Controller/SimulateNMEA"):
+
+            elif self.main.config.get("Serial/Nmea/SimulateNMEA", False):
                 self.logger.info("DEBUG activated - NMEA test mode")
                 for l in open(
-                    self.main.config.get("Serial/Controller/NmeaTestFile"), "r"
+                    self.main.config.get("Serial/Nmea/NmeaTestFile"), "r"
                 ).readlines():
                     l = l.replace("\n", "")
                     self.logger.debug("Emitting {}".format(l))
@@ -49,7 +56,7 @@ class Nmea:
                     sleep(1)
 
         except Exception as e:
-            self.logger.error("Error reading controller serial input", e)
+            self.logger.error("Error reading NMEA serial", e)
 
     def nmea_rmc_handler(self, arg):
         nmea_packet = arg[0]
@@ -67,7 +74,7 @@ class Nmea:
         self.logger.debug("Recevied HDM sentence")
         heading = float(arg[0].heading)
 
-        self.emitter.emit(
+        self.main.event.emit(
             "status.set",
             ["Navigation/Compass/Heading", heading],
         )

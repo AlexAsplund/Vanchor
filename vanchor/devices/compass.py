@@ -213,7 +213,7 @@ class MockCompass:
             self.interval = 0
             self.logger.debug("Sending compass heading nmea sentence as event")
             heading = round(self.heading(), 3)
-            nmea_sentence = pynmea2.HDM(
+            nmea_sentence = HDM(
                 talker="VA", sentence_type="HDM", data=[str(heading), "M"]
             )
-            self.emitter.emit("nmea.reading", str(nmea_sentence))
+            self.emitter.emit("nmea.parse", str(nmea_sentence))

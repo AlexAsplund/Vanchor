@@ -32,15 +32,22 @@ class Config:
 
         self.emitter.on("config.reload", self.reload())
 
-    def get(self, path=None):
-
+    def get(self, path=None, default=None):
+        self.logger.debug("Fetching config value of: {}".format(path))
         if path == None:
             return self.data
         else:
             dict_path = path.split("/")[0:-1]
             value_name = path.split("/")[-1]
-
-            return reduce(dict.get, dict_path, self.data)[value_name]
+            try:
+                return reduce(dict.get, dict_path, self.data)[value_name]
+            except KeyError:
+                if default != None:
+                    return None
+                else:
+                    self.logger.error(
+                        "{} does not exist in config and default was not set"
+                    )
 
     def set(self, path, value):
         dict_path = path.split("/")[0:-1]

@@ -23,6 +23,7 @@ Logging:
   Level: INFO
   StdOutLevel: DEBUG
   FileLogLevel: WARNING
+  Level: DEBUG
   LogToFile: False # Excessive writing to SD-cards may break them
   LogFile: vanchor.log
 Motor:
@@ -38,12 +39,12 @@ Serial:
     InputInterval: 50
     OutputInterval: 50
     Timeout: 1
-    SimulateNMEA: True
-    NmeaTestFile: test/nmea_data.txt
-  NmeaInput:
+  Nmea:
     Baudrate: 4800
     Device: /dev/nmeaSerial
     Timeout: 50
+    SimulateNMEA: True
+    NmeaTestFile: test/nmea_data.txt
 HoldHeading:
   GPSMode: False
 Steering:
