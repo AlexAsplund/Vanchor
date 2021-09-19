@@ -9,7 +9,7 @@ on:
     # Inputs the workflow accepts.
     inputs:
       note:
-        description: 'Short release note'
+        description: "Short release note"
         required: true
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
@@ -21,11 +21,11 @@ jobs:
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-    - uses: actions/checkout@v1
-    - name: Get version
-      run: $VERSION=$(cat version.txt)
-    - name: Create ZIP
-      run: zip "vanchor-$VERSION" ./src/*
-    - uses: actions/upload-artifact@v2
-      with:
-        name: vanchor-$VERSION.zip
+      - uses: actions/checkout@v1
+      - name: Get version
+        run: VERSION=$(cat version.txt)
+      - name: Create ZIP
+        run: zip "vanchor-$VERSION" ./src/*
+      - uses: actions/upload-artifact@v2
+        with:
+          name: vanchor-$VERSION.zip
