@@ -6,3 +6,4 @@ config copy*.yml
 config-*
 log.txt
 pilot.pymitter
+__pycache__
