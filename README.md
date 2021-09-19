@@ -174,7 +174,7 @@ You mount an "hang-in"-style mount on the trolling motor that locks into place i
 | 1   | [JunctionBox.stl](./3d/gearbox/JunctionBox.stl)                          |                                                                                                                                                                               |
 | 1   | [JunctionBoxLid.stl](./3d/gearbox/JunctionBoxLid.stl)                    |                                                                                                                                                                               |
 | 1   | [StepperCover.stl](./3d/gearbox/StepperCover.stl)                        |                                                                                                                                                                               |
-| 1   | [StepperGear.stl](./3d/gearbox/StepperGear.stl)                          |                                                                                                                                                                               |
+| 1   | [StepperGear_6T.stl](./3d/gearbox/StepperGear.stl)                       |                                                                                                                                                                               |
 
 ## Assembly of the gearbox:
 
