@@ -43,7 +43,7 @@ class Nmea:
             if self.main.debug != True:
                 if self.serial.in_waiting > 0:
                     try:
-                        reading = self.serial.readline().decode()
+                        reading = str(self.serial.readline())
                     except Exception as e:
                         self.logger.warning("Failed to read NMEA serial", e)
                     if reading[0] == "$":
