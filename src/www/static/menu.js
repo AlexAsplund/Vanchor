@@ -66,6 +66,7 @@ $('#uploadRouteButton').on('click', function(event) {
             Route: contents
         }
         sendEvent('routes.new', data)
+        notify("Route uploaded to Vanchor", "It should now be visible under AutoPilot Routes")
 
     })
 
@@ -81,6 +82,8 @@ $('#updateButton').on('click', function(event) {
     fetch('/upload/update', { method: "POST", body: form });
 
     $(event.target).text = "Update submitted!"
+    $(event.target).disable()
+    notify("Update submitted", "Update has been submitted to Vanchor")
 
 })
 

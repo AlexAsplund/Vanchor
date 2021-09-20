@@ -8,21 +8,11 @@
 
 
 
-function create_notification(title, message, sev = "success") {
-    div = document.createElement('div')
+function notify(title, message, severity = "success") {
+    template = `<div class="alert alert-${severity} alert-dismissible fade show w-100" role="alert">
+                    <strong class="mr-2">${title}</strong> ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>`
 
-    div.setAttribute('class', `alert alert-${sev} alert-dismissible fade show`)
-    div.setAttribute('role', 'alert')
-
-    div.innerHTML = `<strong>${title}</strong> ${message}`
-
-    button = document.createElement('button')
-    button.setAttribute('type', 'button')
-    button.setAttribute('class', 'btn-close')
-    button.setAttribute('data-bs-dismiss', 'alert')
-    button.setAttribute('aria-label', 'close')
-
-    div.append(button)
-
-    document.getElementById('messages').append(div)
+    $('#notifications').append($(template))
 }
