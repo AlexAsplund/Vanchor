@@ -14,6 +14,7 @@ class DataNode:
         self.emitter.on("status.set", self.status_set)
 
         self.data = {
+            "Version": self.main.version,
             "Navigation": {
                 "Compass": {"Heading": 0},
                 "Coordinates": [0, 0],
