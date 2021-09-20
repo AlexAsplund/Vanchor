@@ -3,7 +3,8 @@ $Version[-1] = [int]$Version[-1] + 1
 $Version = $Version -join "."
 
 
-$ZipFile
+$ZipFile = "$env:temp\vanchor-$version.zip"
+rm $ZipFile -Force 
 Compress-Archive -Path src\* -DestinationPath $ZipFile
 
-"$env:temp\vanchor-$version.zip"
+mv $ZipFile C:\temp
