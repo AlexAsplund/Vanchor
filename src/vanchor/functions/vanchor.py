@@ -6,20 +6,16 @@ class Vanchor:
 
     def __init__(self, main, emitter):
         self.main = main
-        self.main.event.emitter = emitter
+        self.emitter = emitter
         self.logger = main.logging.getLogger("Function:" + self.__class__.__name__)
         self.logger.info("Initializing function {}".format(self.name))
 
-        self.main.event.emitter.on(
-            "function.{}.enable".format(self.name.lower()), self.enable
-        )
-        self.main.event.emitter.on(
-            "function.{}.disable".format(self.name.lower()), self.disable
-        )
-        self.main.event.emitter.on(
-            "status.set.navigation.coordinates", self.vanchor_handler
-        )
-        self.main.event.emitter.on("function.status", self.auto_off)
+        self.emitter.on("function.{}.enable".format(self.name.lower()), self.enable)
+        self.emitter.on("function.{}.disable".format(self.name.lower()), self.disable)
+        self.emitter.on("status.set.navigation.coordinates", self.vanchor_handler)
+        self.emitter.on("function.status", self.auto_off)
+
+        self.emitter.emit("steering.autosteer.register", "Functions/Vanchor/Enabled")
 
         self.create_pid()
 

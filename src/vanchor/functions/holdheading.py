@@ -25,6 +25,10 @@ class HoldHeading:
         self.emitter.on("status.set.navigation.coordinates", self.set_xte)
         self.emitter.on("function.status", self.auto_off)
 
+        self.emitter.emit(
+            "steering.autosteer.register", "Functions/HoldHeading/Enabled"
+        )
+
     def send_status(self, status):
         self.emitter.emit(
             "status.set", ["Functions/{}/Enabled".format(self.name), status]

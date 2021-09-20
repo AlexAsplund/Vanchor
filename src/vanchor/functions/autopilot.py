@@ -28,6 +28,8 @@ class AutoPilot:
         self.emitter.on("autopilot.waypoint.arrived", self.next_waypoint)
         self.emitter.emit("status.set", ["Functions/AutoPilot/LoadedRoute", {}])
 
+        self.emitter.emit("steering.autosteer.register", "Functions/AutoPilot/Enabled")
+
         self.update_routes(None)
 
     def load_route(self, route: str, start: bool = False):
@@ -180,7 +182,12 @@ class AutoPilot:
 
         apb = APB("VA", "APB", apb_data).render()
         self.logger.debug("Sending APB: {}".format(apb))
-        self.emitter.emit("nmea.reading", apb)
+        self.emitter.emit("nmea.reading.apb", apb)
+
+        if curr_to_dest["Distance"] < self.main.config.get(
+            "AutoPilot/ArrivalCircleRadius", 5
+        ):
+            self.emitter.emit("autopilot.waypoint.arrived", None)
 
     def parse_gpx(self, route):
         gpx_string = open("routes/{}".format(route)).read()
