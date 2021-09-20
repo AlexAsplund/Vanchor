@@ -48,7 +48,6 @@ Serial:
 HoldHeading:
   GPSMode: False
 Steering:
-  ChokeMotor: false
   CorrectionInterval: 0.5
   PidKp: 0.015
   PidKi: 0.05
@@ -58,10 +57,10 @@ Steering:
   Slack: 2
 Stepper:
   CalibrationOffset: 0
-  Acceleration: 480
+  Acceleration: 380
   Ratio: 36 # 36 stepper revs = 1 revolution of the motor
   Reversed: false
-  Speed: 800
+  Speed: 700
   StepsPerRevolution: 200
 Vanchor:
   PidKd: 0.1
