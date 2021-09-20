@@ -6,13 +6,9 @@ class DeviceManager:
         self.logger = main.logging.getLogger(self.__class__.__name__)
         self.main = main
         self.nmea_reader = Nmea(self.main)
-        try:
+        if main.debug == False:
             self.compass = Compass(self.main)
-        except Exception as e:
-            self.logger.warning(
-                "Failed to load regular compass due to an import error. Loading MockCompass instead.",
-                e,
-            )
+        else:
             self.compass = MockCompass(self.main)
         self.steering = Steering(self.main)
         self.controller = Controller(self.main)
