@@ -14,7 +14,7 @@ class Controller:
         if self.main.debug != True:
             self.serial = serial.Serial(
                 main.config.get("Serial/Controller/Device"),
-                main.config.get("Serial.Controller/Baudrate"),
+                main.config.get("Serial/Controller/Baudrate"),
             )
 
         sleep(0.25)
@@ -33,6 +33,7 @@ class Controller:
         # EventHandlers
         ###########################
         self.emitter.on("controller.send", self.send)
+        self.emitter.on("controller.reading", self.controller_status_reading)
 
     def send(self, command):
         self.logger.debug("Adding command {} to queue".format(command))
@@ -41,28 +42,28 @@ class Controller:
     def output_worker(self, main):
         try:
             msg = self.queue.get()
-            self.logger.debug("Got command: {}".format(msg))
 
             timestamp = msg[0]
             command = msg[1]
-            if self.last_command == command:
-                return
-
+            if self.last_command != command:
+                self.logger.debug("Got command: {}".format(msg))
             self.last_command = msg[1]
             sent = time()
             delay = sent - timestamp
             if self.main.debug != True:
                 if self.serial.isOpen():
                     self.serial.write(bytes((command + "\n"), "utf-8"))
-                    self.logger.debug(
-                        f"Sending command: {command} | Received:{timestamp} Sent:{sent} Delay:{delay}"
-                    )
+                    if self.last_command != command:
+                        self.logger.debug(
+                            f"Sending command: {command} | Received:{timestamp} Sent:{sent} Delay:{delay}"
+                        )
                 else:
                     self.logger.error("Controller serial was not available")
             else:
-                self.logger.debug(
-                    f"Sending command: {command} | Received:{timestamp} Sent:{sent} Delay:{delay}"
-                )
+                if self.last_command != command:
+                    self.logger.debug(
+                        f"Sending command: {command} | Received:{timestamp} Sent:{sent} Delay:{delay}"
+                    )
 
             self.queue.task_done()
 
@@ -96,7 +97,7 @@ class Controller:
 
     def input_listener(self, main):
         if self.main.debug != True:
-            if self.controller_serial.in_waiting > 0:
+            if self.serial.in_waiting > 0:
                 try:
                     reading = self.serial.readline().decode()
                     if reading.startswith("STATUS "):
