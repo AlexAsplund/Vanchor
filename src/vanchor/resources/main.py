@@ -26,9 +26,9 @@ class Main:
         self.emitter.on("main.update.uploaded", self.update)
 
         try:
-            self.main.version = open("version.txt", "r").read()
+            self.version = open("version.txt", "r").read()
         except:
-            self.main.version = "N/A"
+            self.version = "N/A"
 
     def run(self, config_file="config.yml"):
 
