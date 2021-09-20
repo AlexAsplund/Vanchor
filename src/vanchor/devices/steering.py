@@ -86,35 +86,36 @@ class Steering:
 
         self.logger.debug("PID update received with val {}".format(arg))
 
-        self.pid_value = self.pid(arg[1]) % 360
-        self.logger.debug(
-            "PID Value is:{} Setpoint:{}".format(self.pid_value, self.pid.setpoint)
+        angle = self.main.tools.get_angle(
+            arg[1], self.main.data.get("Steering/SetHeading")
         )
 
-        if self.pid_value < 0:
-            self.pid_value = (360 - self.pid_value) % 360
+        if angle[0] < angle[1]:
+            self.pid_value = self.pid(angle[0])
+        else:
+            self.pid_value = self.pid(-angle[1])
 
-        self.pid_value = self.pid_value % 360
+        heading = self.main.config.get("Navigation/Compass/Heading") + self.pid_value
 
-        for handler in self.handlers:
-            handler(self)
+        self.logger.debug(
+            "PID Value is:{} CorrectedHeading:{}".format(self.pid_value, heading)
+        )
 
         if self.autosteer_enabled() == True:
-            self.emitter.emit("steering.set.heading", self.pid_value)
+            self.emitter.emit("steering.set.heading", heading)
 
         self.logger.debug(
             "Got pid_value:{} from {} degrees pidheading:{}".format(
-                self.pid_value, arg, self.pid_value
+                self.pid_value, arg, heading
             )
         )
-        self.emitter.emit("status.set", ["Steering/PidHeading", self.pid_value])
+        self.emitter.emit("status.set", ["Steering/PidHeading", heading])
 
     def set_pid_setpoint(self, arg):
         self.logger.debug("Got arg: {}".format(arg))
-        if self.main.data.get("Steering/PidSetpoint") != arg[1]:
-            self.emitter.emit("status.set", ["Steering/PidSetpoint", arg[1]])
+        if self.main.data.get("Steering/SetHeading") != arg[1]:
+            self.emitter.emit("status.set", ["Steering/SetHeading", arg[1]])
             self.pid.reset()
-            self.pid.setpoint = arg[1]
 
     def reload(self, arg):
         self.pid.Kp = self.main.config.get("Steering/PidKp")
