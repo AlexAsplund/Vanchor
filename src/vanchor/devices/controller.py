@@ -34,7 +34,7 @@ class Controller:
         # EventHandlers
         ###########################
         self.emitter.on("controller.send", self.send)
-        self.emitter.on("controller.reading", self.controller_status_reading)
+        self.emitter.on("controller.status.reading", self.controller_status_reading)
 
     def send(self, command):
         self.logger.debug("Adding command {} to queue".format(command))
@@ -105,15 +105,21 @@ class Controller:
     def input_listener(self, main):
         if self.main.debug != True:
             if self.serial.in_waiting > 0:
+                reading = ""
                 try:
-                    reading = self.serial.readline().decode()
+                    reading = self.serial.readline()
+                    reading = str(reading).replace("\r\n", "")
                     if reading.startswith("STATUS "):
                         self.emitter.emit("controller.status.reading", reading)
                     else:
-                        self.emitter.emit("controller.reading", reading)
+                        # Ignore
+                        None
+                        # self.emitter.emit("controller.reading", reading)
 
                 except Exception as e:
-                    self.log.error("Error reading controller serial input", e)
+                    self.logger.error(
+                        "Error reading controller serial input: {}".format(reading), e
+                    )
 
     def command_stream_worker(self, main, **kwargs):
 
