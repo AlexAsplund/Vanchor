@@ -21,7 +21,7 @@ class Compass:
         self.mag = adafruit_lsm303dlh_mag.LSM303DLH_Mag(self.i2c)
         self.emitter = self.main.event.emitter
         self.max_length = self.main.config.get("Compass/HeadingHistoryLength")
-        self.max_diff = 5  # Max diff allowed from average
+        self.max_diff = 3  # Max diff allowed from average
         self.ls = []
         self.interval = 0
         self.logger.info("Starting compass worker")
@@ -108,17 +108,14 @@ class Compass:
 
         if self.interval == self.main.config.get("Compass/SendInterval"):
             self.interval = 0
-            heading = round(self.heading(), 3)
+            self.logger.debug("Sending compass heading nmea sentence as event")
+            heading = round(self.heading(), 3) + self.main.config.get("Compass/Offset")
+            if heading < 0:
+                heading = 360 + heading
             nmea_sentence = HDM(
                 talker="VA", sentence_type="HDM", data=[str(heading), "M"]
             )
-
-            self.logger.info(
-                "Sending compass heading nmea sentence as event: {}".format(
-                    str(nmea_sentence)
-                )
-            )
-            self.emitter.emit("nmea.reading.hdm", [nmea_sentence, str(nmea_sentence)])
+            self.emitter.emit("nmea.parse", str(nmea_sentence))
 
 
 class MockCompass:
