@@ -4,6 +4,7 @@ AutoPilot:
   PidKp: 0.1
   PidOffsetLimitMax: 90
   PidOffsetLimitMin: -90
+  ArrivalCircleRadius: 10
 Compass:
   HeadingHistoryLength: 5 # Amount of datapoints to average heading to. Removes jitter
   UpdateInterval: 20 # Time between polls
@@ -24,7 +25,7 @@ Logging:
   StdOutLevel: DEBUG
   FileLogLevel: WARNING
   Level: DEBUG
-  LogToFile: False # Excessive writing to SD-cards may break them
+  LogToFile: True # Excessive writing to SD-cards may break them
   LogFile: vanchor.log
 Motor:
   Offset: 10
@@ -43,7 +44,6 @@ Serial:
     Baudrate: 4800
     Device: /dev/nmeaSerial
     Timeout: 50
-    SimulateNMEA: True
     NmeaTestFile: test/nmea_data.txt
 HoldHeading:
   GPSMode: False

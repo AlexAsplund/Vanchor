@@ -85,5 +85,7 @@ $('#updateButton').on('click', function(event) {
 })
 
 $('#setStepperPosAsZero').on('click', function(event) {
-    sendEvent("controller.send", "CAL 0")
+    cal = 0
+    sendEvent("controller.send", `CAL ${cal}`)
+
 })
