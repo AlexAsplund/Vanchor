@@ -92,3 +92,8 @@ $('#setStepperPosAsZero').on('click', function(event) {
     sendEvent("controller.send", `CAL ${cal}`)
 
 })
+
+$('#calibrateCompass').on('click', function(event) {
+    sendEvent('compass.calibrate', 15)
+    notify("Calibrating compass, this takes aprox. 30 seconds")
+})
