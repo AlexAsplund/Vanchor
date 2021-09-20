@@ -14,17 +14,16 @@ except:
 class Compass:
     def __init__(self, main):
         self.logger = main.logging.getLogger(self.__class__.__name__)
-
+        self.main = main
         self.logger.info("Loading mock compass")
         self.i2c = board.I2C()  # uses board.SCL and board.SDA
         self.accel = adafruit_lsm303_accel.LSM303_Accel(self.i2c)
         self.mag = adafruit_lsm303dlh_mag.LSM303DLH_Mag(self.i2c)
-        self.emitter = main.event.emitter
+        self.emitter = self.main.event.emitter
         self.max_length = self.main.config.get("Compass/HeadingHistoryLength")
         self.max_diff = 5  # Max diff allowed from average
         self.ls = []
         self.interval = 0
-        queue = queue.Queue()
         self.logger.info("Starting compass worker")
         self.main.work_manager.start_worker(
             self.heading_update_worker,
@@ -109,12 +108,17 @@ class Compass:
 
         if self.interval == self.main.config.get("Compass/SendInterval"):
             self.interval = 0
-            self.logger.debug("Sending compass heading nmea sentence as event")
             heading = round(self.heading(), 3)
-            nmea_sentence = pynmea2.HDM(
+            nmea_sentence = HDM(
                 talker="VA", sentence_type="HDM", data=[str(heading), "M"]
             )
-            self.emitter.emit("nmea.reading", str(nmea_sentence))
+
+            self.logger.info(
+                "Sending compass heading nmea sentence as event: {}".format(
+                    str(nmea_sentence)
+                )
+            )
+            self.emitter.emit("nmea.reading.hdm", [nmea_sentence, str(nmea_sentence)])
 
 
 class MockCompass:
