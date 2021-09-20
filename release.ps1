@@ -4,7 +4,12 @@ $Version = $Version -join "."
 
 
 $ZipFile = "$env:temp\vanchor-$version.zip"
-rm $ZipFile -Force 
+
+rm $ZipFile -Force -ErrorAction SilentlyContinue
+cp -Force .\version.txt src\version.txt
+
 Compress-Archive -Path src\* -DestinationPath $ZipFile
 
-mv $ZipFile C:\temp
+rm src\version.txt -ErrorAction SilentlyContinue
+
+$Version | Out-File .\version.txt
