@@ -80,4 +80,10 @@ $('#updateButton').on('click', function(event) {
     form.append("zip", file);
     fetch('/upload/update', { method: "POST", body: form });
 
+    $(event.target).text = "Update submitted!"
+
+})
+
+$('#setStepperPosAsZero').on('click', function(event) {
+    sendEvent("controller.send", "CAL 0")
 })
