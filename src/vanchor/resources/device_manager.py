@@ -6,10 +6,11 @@ class DeviceManager:
         self.logger = main.logging.getLogger(self.__class__.__name__)
         self.main = main
         self.nmea_reader = Nmea(self.main)
-        if main.debug == False:
+        if debug == False:
             self.compass = Compass(self.main)
         else:
             self.compass = MockCompass(self.main)
+
         self.steering = Steering(self.main)
         self.controller = Controller(self.main)
 
