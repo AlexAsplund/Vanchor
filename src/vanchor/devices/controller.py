@@ -19,6 +19,7 @@ class Controller:
 
         sleep(0.25)
         self.last_command = ""
+        self.emitter.emit("status.set", ["Controller", {}])
         self.emitter.emit("controller.initialized")
 
         self.queue = queue.Queue()
@@ -37,19 +38,27 @@ class Controller:
 
     def send(self, command):
         self.logger.debug("Adding command {} to queue".format(command))
-        self.queue.put(command)
+
+        if self.last_command != command:
+            if isinstance(command, str):
+                command = [time(), command]
+            self.queue.put(command)
+            self.last_command = command
 
     def output_worker(self, main):
         try:
             msg = self.queue.get()
+            self.emitter.emit(
+                "status.set", ["Controller/QueueSize", self.queue.qsize()]
+            )
 
             timestamp = msg[0]
             command = msg[1]
-            if self.last_command != command:
-                self.logger.debug("Got command: {}".format(msg))
-            self.last_command = msg[1]
             sent = time()
             delay = sent - timestamp
+
+            self.logger.debug(f"Received command: {command}")
+
             if self.main.debug != True:
                 if self.serial.isOpen():
                     self.serial.write(bytes((command + "\n"), "utf-8"))
@@ -60,13 +69,11 @@ class Controller:
                 else:
                     self.logger.error("Controller serial was not available")
             else:
-                if self.last_command != command:
-                    self.logger.debug(
-                        f"Sending command: {command} | Received:{timestamp} Sent:{sent} Delay:{delay}"
-                    )
+                self.logger.debug(
+                    f"Sending command: {command} | Received:{timestamp} Sent:{sent} Delay:{delay}"
+                )
 
             self.queue.task_done()
-
             self.emitter.emit("status.set", ["Devices/Controller/Delay", delay])
         except Exception as e:
             self.logger.error(
