@@ -33,9 +33,10 @@ class Steering:
         self.handlers = []
 
         # Autosteer functions
-        self.autosteer_functions = []
-
+        self.emitter.emit("status.set", ["Steering/AutoSteerFunctions", []])
+        self.registered_functions = []
         self.emitter.on("steering.autosteer.register", self.register_autosteer_function)
+
         # EventHandlers
         @self.emitter.on("steering.set.position")
         def set_position(arg):
@@ -47,10 +48,11 @@ class Steering:
             self.logger.debug("Setting heading to {}".format(arg))
             self.set_heading(arg)
 
-        self.emitter.on("status.set.navigation.compass.heading", self.pid_updater)
         self.emitter.on("status.set.navigation.heading", self.set_pid_setpoint)
         self.emitter.on("config.reload.steering", self.reload)
         self.emitter.on("steering.handler.register", self.register_handler)
+
+        self.emitter.on("status.set.navigation.compass.heading", self.pid_updater)
 
     def set_position(self, arg):
         self.emitter.emit("steering.stepper.set_pos", arg)
@@ -81,6 +83,7 @@ class Steering:
 
     def pid_updater(self, arg):
         pid_enabled = self.main.data.get("Steering/PidEnabled")
+
         self.logger.debug("PID update received with val {}".format(arg))
 
         self.pid_value = self.pid(arg[1]) % 360
@@ -123,18 +126,20 @@ class Steering:
         self.handlers.append(handler)
 
     def autosteer_enabled(self):
-        if (
-            self.main.data.get("Functions/HoldHeading/Enabled")
-            or self.main.data.get("Functions/Vanchor/Enabled")
-            or self.main.data.get("Functions/AutoPilot/Enabled")
-        ):
-            return True
-        # for f in self.autosteer_functions:
-        #    if self.main.data.get(f) == True:
-        #        return True
+        status = False
+        for f in self.main.data.get("Steering/AutoSteerFunctions"):
+            if self.main.data.get(f) == True:
+                status = True
 
-        return False
+        self.emitter.emit("status.set", ["Steering/AutoSteerEnabled", status])
+
+        return status
 
     def register_autosteer_function(self, path):
         self.logger.debug("Registering autosteer lookup value: {}".format(path))
-        self.autosteer_functions.append(path)
+
+        self.registered_functions.append(path)
+
+        self.emitter.emit(
+            "status.set", ["Steering/AutoSteerFunctions", self.registered_functions]
+        )
