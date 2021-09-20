@@ -42,10 +42,14 @@ class Nmea:
         try:
             if self.main.debug != True:
                 if self.serial.in_waiting > 0:
-                    reading = self.serial.readline().decode()
-                    self.main.event.emitter.emit("nmea.parse", reading)
+                    try:
+                        reading = self.serial.readline().decode()
+                    except Exception as e:
+                        self.logger.warning("Failed to read NMEA serial", e)
+                    if reading[0] == "$":
+                        self.main.event.emitter.emit("nmea.parse", reading)
 
-            elif self.main.config.get("Serial/Nmea/SimulateNMEA", False):
+            else:
                 self.logger.info("DEBUG activated - NMEA test mode")
                 for l in open(
                     self.main.config.get("Serial/Nmea/NmeaTestFile"), "r"
