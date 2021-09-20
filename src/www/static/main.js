@@ -64,6 +64,25 @@ setInterval(function() {
                     document.getElementById('statusCircle').setAttributeNS(null, "fill", "black");
                 }
 
+                // Enable/Disable buttons
+                vanchorButton = $('a[data-func=Vanchor]')
+                if (data.Functions.Vanchor.Enabled == 1) {
+                    enableButton(vanchorButton)
+                } else {
+                    disableButton(vanchorButton)
+                }
+                autoPilotButton = $('a[data-func=AutoPilot]')
+                if (data.Functions.AutoPilot.Enabled == 1) {
+                    enableButton(autoPilotButton)
+                } else {
+                    disableButton(autoPilotButton)
+                }
+                holdHeadingButton = $('a[data-func=HoldHeading]')
+                if (data.Functions.HoldHeading.Enabled == 1) {
+                    enableButton(holdHeadingButton)
+                } else {
+                    disableButton(holdHeadingButton)
+                }
 
 
                 rotatex(g1, data.Navigation.Heading)
@@ -564,6 +583,7 @@ $('a[data-type=toggleFunction]').on('click', function(event) {
         target.removeClass('btn-danger')
         target.addClass('btn-success')
         target.text(`Enable ${funcName}`)
+        sendEvent(`function.${func}.disable`, true)
 
     } else {
         target.data('on', true)
@@ -574,5 +594,35 @@ $('a[data-type=toggleFunction]').on('click', function(event) {
         target.addClass('btn-danger')
         target.removeClass('btn-success')
         target.text(`Disable ${funcName}`)
+        sendEvent(`function.${func}.enable`, false)
     }
 })
+
+
+function enableButton(target) {
+    if (target.data('on') != true) {
+        target.data('on', true)
+
+        funcName = target.data('func')
+        func = funcName.toLowerCase()
+
+        target.addClass('btn-danger')
+        target.removeClass('btn-success')
+        target.text(`Disable ${funcName}`)
+
+    }
+}
+
+function disableButton(target) {
+    if (target.data('on') == true) {
+        target.data('on', false)
+
+        funcName = target.data('func')
+        func = funcName.toLowerCase()
+
+        target.removeClass('btn-danger')
+        target.addClass('btn-success')
+        target.text(`Enable ${funcName}`)
+
+    }
+}
