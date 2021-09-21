@@ -1,0 +1,18 @@
+# This is a basic workflow that is manually triggered
+
+name: Package
+env:
+  runNumber: ${{ github.run_number }}
+on: push
+jobs:
+  create-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Create ZIP
+        run: cd src && zip -r "../vanchor.zip" . && cd ..
+      - uses: actions/upload-artifact@v2
+        with:
+          name: vanchor
+          path: vanchor-build${{ env.runNumber }}.zip
+  
