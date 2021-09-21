@@ -2,7 +2,8 @@
 
 name: Release
 
-
+env:
+  zip: vanchor-${GITHUB_RUN_NUMBER}.zip
 on:
   workflow_dispatch:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
@@ -17,8 +18,8 @@ jobs:
       - name: Get version
         run: VERSION=$(cat version.txt)
       - name: Create ZIP
-        run: cd src && zip -r "../vanchor.zip" . && cd ..
+        run: cd src && zip -r "../${{ env.zip }}" . && cd ..
       - uses: actions/upload-artifact@v2
         with:
-          name: vanchor-$GITHUB_RUN_NUMBER.zip
-          path: vanchor.zip
+          name: ${{ env.zip }}
+          path: ${{ env.zip }}
