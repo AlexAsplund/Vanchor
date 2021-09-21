@@ -22,7 +22,7 @@ Functions:
 History:
   MaxItems: 100
 Logging:
-  Format: "%(asctime)s - %(levelname)s - %(lineno)s - %(threadName)s - %(module)s - %(name)s:%(funcName)s - %(threadName)s - %(message)s"
+  Format: "%(asctime)s - %(levelname)s - %(lineno)s - %(threadName)s - %(module)s - %(name)s:%(funcName)s - %(message)s"
   Level: INFO
   StdOutLevel: DEBUG
   FileLogLevel: WARNING
