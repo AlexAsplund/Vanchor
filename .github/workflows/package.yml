@@ -3,18 +3,14 @@
 name: Package
 env:
   runNumber: ${{ github.run_number }}
-on: push
+on:
+  push:
 jobs:
   create-artifact:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
-      - name: cd src
-        run: cd src
-      - name: Create ZIP
-        run: zip -r "../vanchor.zip" .
-      - name: cd ..
-        run: cd ..
+        run: cd src ; zip -r "../vanchor.zip" . ; cd ..
       - uses: actions/upload-artifact@v2
         with:
           name: vanchor-build-${{ env.runNumber }}
