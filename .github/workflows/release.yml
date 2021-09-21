@@ -29,3 +29,4 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: vanchor-$VERSION.zip
+          path: vanchor-$VERSION.zip
