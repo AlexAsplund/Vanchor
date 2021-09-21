@@ -25,8 +25,8 @@ jobs:
       - name: Get version
         run: VERSION=$(cat version.txt)
       - name: Create ZIP
-        run: zip "vanchor-$VERSION" ./src/*
+        run: zip "vanchor.zip" ./src/*
       - uses: actions/upload-artifact@v2
         with:
-          name: vanchor-$VERSION.zip
-          path: vanchor-$VERSION.zip
+          name: vanchor.zip
+          path: vanchor.zip
