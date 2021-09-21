@@ -6,9 +6,11 @@ AutoPilot:
   PidOffsetLimitMin: -90
   ArrivalCircleRadius: 10
 Compass:
-  HeadingHistoryLength: 5 # Amount of datapoints to average heading to. Removes jitter
-  UpdateInterval: 20 # Time between polls
-  SendInterval: 5 # Every # cycles
+  HeadingHistoryLength: 10 # Amount of datapoints to average heading to. Removes jitter
+  UpdateInterval: 10 # Time between polls
+  SendInterval: 10 # Every # cycles
+  Declination: -6.670
+  WmmFile: resources/WMM2020.COF
 Flask:
   Debug: true
   Port: 80
@@ -24,8 +26,8 @@ Logging:
   Level: INFO
   StdOutLevel: DEBUG
   FileLogLevel: WARNING
-  Level: DEBUG
-  LogToFile: True # Excessive writing to SD-cards may break them
+  Level: INFO
+  LogToFile: False # Excessive writing to SD-cards may break them
   LogFile: vanchor.log
 Motor:
   Offset: 10
@@ -49,18 +51,18 @@ HoldHeading:
   GPSMode: False
 Steering:
   CorrectionInterval: 0.5
-  PidKp: 0.015
-  PidKi: 0.05
+  PidKp: 0.0015
+  PidKi: 0.04
   PidKd: 4
   PidOffsetLimitMax: 90
   PidOffsetLimitMin: -90
   Slack: 2
 Stepper:
   CalibrationOffset: 0
-  Acceleration: 380
+  Acceleration: 330
   Ratio: 36 # 36 stepper revs = 1 revolution of the motor
   Reversed: false
-  Speed: 700
+  Speed: 600
   StepsPerRevolution: 200
 Vanchor:
   PidKd: 0.1

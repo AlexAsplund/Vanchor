@@ -12,7 +12,7 @@ from datetime import datetime
 
 class Main:
     def __init__(self, emitter=None, debug=False, config_file="config.yml"):
-        debug = False
+
         self.logging = logging
         if emitter == None:
             self.emitter = EventEmitter(wildcard=True)

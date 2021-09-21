@@ -87,7 +87,7 @@ class Steering:
         self.logger.debug("PID update received with val {}".format(arg))
 
         angle = self.main.tools.get_angle(
-            arg[1], self.main.data.get("Steering/SetHeading")
+            arg[1], self.main.data.get("Steering/SetHeading", 0)
         )
 
         if angle[0] < angle[1]:
@@ -95,7 +95,7 @@ class Steering:
         else:
             self.pid_value = self.pid(-angle[1])
 
-        heading = self.main.config.get("Navigation/Compass/Heading") + self.pid_value
+        heading = self.main.config.get("Navigation/Compass/Heading", 0) + self.pid_value
 
         self.logger.debug(
             "PID Value is:{} CorrectedHeading:{}".format(self.pid_value, heading)

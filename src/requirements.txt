@@ -4,3 +4,4 @@ pymitter==0.3.1
 flask==2.0.1
 simple-pid==1.0.1
 numpy
+geomag==0.9.2015

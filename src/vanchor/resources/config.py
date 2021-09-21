@@ -43,7 +43,14 @@ class Config:
                 return reduce(dict.get, dict_path, self.data)[value_name]
             except KeyError:
                 if default != None:
-                    return None
+                    return default
+                else:
+                    self.logger.error(
+                        "{} does not exist in config and default was not set"
+                    )
+            except TypeError:
+                if default != None:
+                    return default
                 else:
                     self.logger.error(
                         "{} does not exist in config and default was not set"

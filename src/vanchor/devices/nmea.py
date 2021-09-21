@@ -25,14 +25,13 @@ class Nmea:
         try:
             nmea_packet = pynmea2.parse(message, check=False)
             packet_type = nmea_packet.__class__.__name__.lower()
-            self.logger.debug(
+            self.logger.info(
                 "Sending nmea packet: {}, sending nmea.reading.{} event".format(
                     message, packet_type
                 )
             )
             self.main.event.emitter.emit(
-                "nmea.reading.{}".format(packet_type),
-                [nmea_packet, message],
+                "nmea.reading.{}".format(packet_type), [nmea_packet, message]
             )
 
         except pynmea2.ParseError as e:
@@ -50,22 +49,27 @@ class Nmea:
                         self.main.event.emitter.emit("nmea.parse", reading)
 
             else:
-                self.logger.info("DEBUG activated - NMEA test mode")
-                for l in open(
-                    self.main.config.get("Serial/Nmea/NmeaTestFile"), "r"
-                ).readlines():
-                    l = l.replace("\n", "")
-                    self.logger.debug("Emitting {}".format(l))
-                    self.parse_nmea(l)
-                    sleep(1)
 
+                self.logger.info("DEBUG activated - NMEA test mode")
+                try:
+                    for l in open(
+                        self.main.config.get("Serial/Nmea/NmeaTestFile"), "r"
+                    ).readlines():
+
+                        l = l.replace("\n", "").replace("\r", "")
+                        self.logger.debug("Emitting {}".format(l))
+                        self.parse_nmea(l)
+                        sleep(1)
+                except Exception as e:
+                    self.logger.error("Error reading NmeaTestFile", e)
+                sleep(1)
         except Exception as e:
             self.logger.error("Error reading NMEA serial", e)
 
     def nmea_rmc_handler(self, arg):
         nmea_packet = arg[0]
         self.main.emitter.emit(
-            "status.set.navigation.coordinates",
+            "status.set",
             ["Navigation/Coordinates", [nmea_packet.latitude, nmea_packet.longitude]],
         )
         self.logger.debug(

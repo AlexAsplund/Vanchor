@@ -6,7 +6,7 @@ class DeviceManager:
         self.logger = main.logging.getLogger(self.__class__.__name__)
         self.main = main
         self.nmea_reader = Nmea(self.main)
-        if debug == False:
+        if self.main.debug == False:
             self.compass = Compass(self.main)
         else:
             self.compass = MockCompass(self.main)
