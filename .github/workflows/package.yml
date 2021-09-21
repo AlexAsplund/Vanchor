@@ -9,9 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
+      - name: cd src
+        run: cd src
       - name: Create ZIP
-        run: cd src && zip -r "../vanchor.zip" . && cd ..
+        run: zip -r "../vanchor.zip" .
+      - name: cd ..
+        run: cd ..
       - uses: actions/upload-artifact@v2
         with:
-          name: vanchor-build${{ env.runNumber }}
+          name: vanchor-build-${{ env.runNumber }}
           path: vanchor.zip
