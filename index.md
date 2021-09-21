@@ -34,7 +34,7 @@ Can send and receive NMEA to apps like Navionics, iNavX or SignalK
 
 Vanchor is controlled through a web interface with bootstrap and JS.
 
-<img src="images/interface.png" width="25%" align="center">
+<img src="images/interface.png"  align="center">
 
 ---
 
