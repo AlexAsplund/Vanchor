@@ -18,15 +18,14 @@ jobs:
   create-artifact:
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
-
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       - uses: actions/checkout@v1
       - name: Get version
         run: VERSION=$(cat version.txt)
       - name: Create ZIP
-        run: cd src && zip -r "../vanchor.zip" . && cd ..
+        run: cd src && zip -r "../vanchor-{{ GITHUB_RUN_NUMBER }}.zip" . && cd ..
       - uses: actions/upload-artifact@v2
         with:
-          name: vanchor.zip
-          path: vanchor.zip
+          name: vanchor-{{ GITHUB_RUN_NUMBER }}.zip
+          path: vanchor-{{ GITHUB_RUN_NUMBER }}.zip
