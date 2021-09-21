@@ -34,5 +34,14 @@ Can send and receive NMEA to apps like Navionics, iNavX or SignalK
 
 ### Web interface
 
-Vanchor is controlled through a web interface with bootstrap and JS.
-<img src="images/interface.png" width="50%" align="center">
+Vanchor is controlled through a web interface with bootstrap and JS. <img src="images/interface.png" width="25%" align="center">
+
+---
+
+## Images
+
+More comming soon...
+
+<img src="images/gearbox_1.jpg">
+
+---
