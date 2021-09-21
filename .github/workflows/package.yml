@@ -13,6 +13,5 @@ jobs:
         run: cd src && zip -r "../vanchor.zip" . && cd ..
       - uses: actions/upload-artifact@v2
         with:
-          name: vanchor
-          path: vanchor-build${{ env.runNumber }}.zip
-  
+          name: vanchor-build${{ env.runNumber }}
+          path: vanchor.zip
