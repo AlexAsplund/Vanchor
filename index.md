@@ -5,6 +5,8 @@ It's created with a goal to be cheap and easily modifiable to fit your needs.
 
 The total cost of the project including a cheap trolling motor is around $300.
 
+<img src="images/rendered_motor.png" width="75%" align="center">
+
 ## Features
 
 ### Hold Position
@@ -33,3 +35,4 @@ Can send and receive NMEA to apps like Navionics, iNavX or SignalK
 ### Web interface
 
 Vanchor is controlled through a web interface with bootstrap and JS.
+<img src="images/interface.png" width="50%" align="center">
