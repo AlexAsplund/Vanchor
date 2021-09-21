@@ -5,6 +5,7 @@ env:
   runNumber: ${{ github.run_number }}
 on:
   push:
+  workflow_dispatch:
 jobs:
   create-artifact:
     runs-on: ubuntu-latest
