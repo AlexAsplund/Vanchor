@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
+      - name: zip vanchor
         run: zip -r "../vanchor.zip" .
         working-directory: ./src
       - uses: actions/upload-artifact@v2
