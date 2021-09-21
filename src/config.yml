@@ -24,9 +24,6 @@ History:
 Logging:
   Format: "%(asctime)s - %(levelname)s - %(lineno)s - %(threadName)s - %(module)s - %(name)s:%(funcName)s - %(message)s"
   Level: INFO
-  StdOutLevel: DEBUG
-  FileLogLevel: WARNING
-  Level: INFO
   LogToFile: False # Excessive writing to SD-cards may break them
   LogFile: vanchor.log
 Motor:
