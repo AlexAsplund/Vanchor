@@ -1,7 +1,7 @@
 ## An Open Source Trolling Motor packed with features
 
 Vanchor is an Open Source trolling motor for smaller boats.
-It's created with a goal to be cheap and easily modifiable to fit your needs. The total cost of the project including a cheap trolling motor is around $300. <img src="images/rendered_motor.png" width="75%" align="center">
+It's created with a goal to be cheap and easily modifiable to fit your needs. The total cost of the project including a cheap trolling motor is around $300. <img src="images/rendered_motor.png" align="center">
 
 ## Features
 
