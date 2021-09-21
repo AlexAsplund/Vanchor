@@ -24,8 +24,8 @@ jobs:
       - name: Get version
         run: VERSION=$(cat version.txt)
       - name: Create ZIP
-        run: cd src && zip -r "../vanchor-${GITHUB_RUN_NUMBER}.zip" . && cd ..
+        run: cd src && zip -r "../vanchor.zip" . && cd ..
       - uses: actions/upload-artifact@v2
         with:
           name: vanchor-${GITHUB_RUN_NUMBER}.zip
-          path: vanchor-${GITHUB_RUN_NUMBER}.zip
+          path: vanchor.zip
