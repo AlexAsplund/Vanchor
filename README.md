@@ -28,7 +28,7 @@ And I learned the hard way that it is a good idea to get a wrist-strap or someth
 - Web interface
   - Control of trolling motor
   - Configuration
-- NMEA 0184 (TX/RX)
+- NMEA 0183 (TX/RX)
 - NMEA through TCP (TX/RX)
   - Connect Navionics app, iNavX etc
 - Virtual Anchor (Vanchor) based on position (NMEA RMC)
