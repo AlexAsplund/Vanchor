@@ -19,13 +19,21 @@ Functions:
     - AutoPilot
     - Vanchor
     - HoldHeading
+Devices:
+  Enabled:
+    - Nmea
+    #- MockCompass
+    - Steering
+    - Controller
+    - NmeaNet
 History:
   MaxItems: 100
 Logging:
   Format: "%(asctime)s - %(levelname)s - %(lineno)s - %(threadName)s - %(module)s - %(name)s:%(funcName)s - %(message)s"
-  Level: INFO
+  Level: DEBUG
   LogToFile: False # Excessive writing to SD-cards may break them
   LogFile: vanchor.log
+  MetricsEnabled: true
 Motor:
   Offset: 10
   RampDelay: 20
@@ -39,6 +47,7 @@ GPS:
       - GGA
       - GSA
       - GLL
+      - GSV
     Type: ublox_neo_serial
     Port: com7
     BaudRate: 38400

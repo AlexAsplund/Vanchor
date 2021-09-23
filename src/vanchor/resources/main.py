@@ -4,6 +4,7 @@ import os
 from ..devices import *
 from ..functions import *
 from ..resources import *
+from ..resources.metrics import Metrics
 from ..web import *
 
 from pymitter import EventEmitter
@@ -43,6 +44,11 @@ class Main:
             level=self.logging.getLevelName(self.config.get("Logging/Level")),
             handlers=self.get_logging_handlers(),
         )
+
+        if self.config.get("Logging/MetricsEnabled", False) == True:
+            self.metrics = Metrics(self)
+        else:
+            self.logging.info("Metrics are disabled")
 
         self.work_manager = WorkerManager(self)
 

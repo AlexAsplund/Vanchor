@@ -12,7 +12,7 @@ class NmeaNet:
 
     def start(self, main):
         self.logger.info("Starting NmeaNet server")
-        host = "localhost"
+        host = "0.0.0.0"
         port = 10000
 
         self.server = NmeaNetServer((host, port), NmeaTCPHandler, nmea_net=self)
