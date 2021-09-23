@@ -6,6 +6,7 @@ For controlling speed and direction of an electrical trolling motor.
 The goal here is to be able to use (almost) any cheap trolling motor while still having autopilot/follow route features.
 
 The current version gets it's coordinates from my Humminbird plotter. But it's easy to add support for cheap GPS modules if you want to. Just don't go too cheap.
+You could also skip both of the GPS alternatives above as well as the compass and use an NMEA app on your phone to forward coordinates and heading to Vanchor, but I haven't tested the accuracy of that alrernative.
 
 Made a total makeover of the softwre to make it more event based, adding PID and so on. So there's probably a lot of bugs currently.
 
