@@ -119,7 +119,7 @@ class AutoPilot:
 
         arrival_radius = self.main.data.get("Functions/AutoPilot/ArrivalRadius", 5)
 
-        rmc = pynmea_parse(arg[1])
+        rmc = arg[0]
         curr = [rmc.latitude, rmc.longitude]
 
         if index == 0:
