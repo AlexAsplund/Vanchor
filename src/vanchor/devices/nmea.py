@@ -19,20 +19,28 @@ class Nmea:
                 main.config.get("Serial/Nmea/Baudrate"),
             )
 
+        self.main.data.set("NMEA", {})
+
         main.work_manager.start_worker(self.input_listener, **{"timer": 10})
 
     def parse_nmea(self, message):
+        self.logger.debug("Received: {}".format(message))
         try:
-            nmea_packet = pynmea2.parse(message, check=False)
-            packet_type = nmea_packet.__class__.__name__.lower()
-            self.logger.info(
-                "Sending nmea packet: {}, sending nmea.reading.{} event".format(
-                    message, packet_type
+            try:
+                nmea_packet = pynmea2.parse(message, check=False)
+                packet_type = nmea_packet.__class__.__name__.lower()
+                self.logger.debug(
+                    "Sending nmea packet: {}, sending nmea.reading.{} event".format(
+                        message, packet_type
+                    )
                 )
-            )
-            self.main.event.emitter.emit(
-                "nmea.reading.{}".format(packet_type), [nmea_packet, message]
-            )
+                self.main.event.emitter.emit(
+                    "nmea.reading.{}".format(packet_type), [nmea_packet, message]
+                )
+            except pynmea2.ParseError as e:
+                self.logger.debug("Failed to parse {}".format(message))
+            except:
+                self.logger.error("Failed to parse {}".format(message), e)
 
         except pynmea2.ParseError as e:
             self.logger.error("Error parsing NMEA string: {}".format(message), e)

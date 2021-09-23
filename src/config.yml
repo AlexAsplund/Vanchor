@@ -32,6 +32,16 @@ Motor:
   RampTime: 800
 NmeaNet:
   Port: 10000
+GPS:
+  Device:
+    Blacklist:
+      - VTG
+      - GGA
+      - GSA
+      - GLL
+    Type: ublox_neo_serial
+    Port: com7
+    BaudRate: 38400
 Serial:
   Controller:
     Baudrate: 19200
@@ -43,7 +53,7 @@ Serial:
     Baudrate: 4800
     Device: /dev/nmeaSerial
     Timeout: 50
-    NmeaTestFile: test/nmea_data.txt
+    NmeaTestFile: test_data/nmea_data.txt
 HoldHeading:
   GPSMode: False
 Steering:

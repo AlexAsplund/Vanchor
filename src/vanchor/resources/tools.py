@@ -1,6 +1,6 @@
 from pyproj import Geod
 import numpy as np
-from math import radians, cos, sin, asin, sqrt, pi, atan2, degrees, acos
+from math import radians, cos, sin, asin, sqrt, pi, atan2, degrees, acos, modf
 
 
 class Tools:
@@ -43,26 +43,46 @@ class Converter:
         self.main = main
 
     def from_dms_to_dd(self, lat, lat_dir, lon, lon_dir):
-
         # Calculate lat
         lat_degrees = int(lat[0:2])
         lat_minutes = float((lat[2:]))
-
         if lat_dir == "S":
             lat_dd = (lat_degrees + (lat_minutes / 60)) * -1
         else:
             lat_dd = lat_degrees + (lat_minutes / 60)
-
         # Calculate lon
         lon_degrees = int(lon[0:2])
         lon_minutes = float((lon[2:]))
-
         if lat_dir == "W":
             lon_dd = (lon_degrees + (lat_minutes / 60)) * -1
         else:
             lon_dd = lon_degrees + (lat_minutes / 60)
-
         return [lat_dd, lon_dd]
+
+    def from_dd_to_dms(self, coordinates):
+        n = 0
+        _compass = [["N", "S"], ["E", "W"]]
+        out = []
+        for deg in coordinates:
+            compass = _compass[n]
+
+            decimals, number = modf(deg)
+            d = int(number)
+            m = int(decimals * 60)
+            s = (deg - d - m / 60) * 60
+
+            ms = m + s
+
+            direction = compass[0 if d >= 0 else 1]
+
+            if m < 10:
+                m_str = "0{}".format(ms)
+            else:
+                m_str = str(ms)
+            out.append({"pos": "{}{}".format(d, m_str), "dir": direction})
+
+            n += 1
+        return out
 
     def get_bearing(self, a, b):
 
@@ -221,10 +241,8 @@ class Geo:
         lat1, long1 = start
         lat2, long2 = end
         dLon = long2 - long1
-        y = math.sin(dLon) * math.cos(lat2)
-        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(
-            lat2
-        ) * math.cos(dLon)
-        brng = math.atan2(y, x)
+        y = sin(dLon) * cos(lat2)
+        x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        brng = atan2(y, x)
         brng = np.rad2deg(brng)
         return brng
