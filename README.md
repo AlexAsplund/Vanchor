@@ -5,7 +5,7 @@ Work in progress!
 For controlling speed and direction of an electrical trolling motor.
 The goal here is to be able to use (almost) any cheap trolling motor while still having autopilot/follow route features.
 
-The current version gets it's coordinates from my Humminbird plotter. But it's easy to add support for cheap GPS modules if you want to. Just don't go too cheap.
+The current version can get it's coordinates from a plotter that sends NMEA (I have a Humminbird plotter) or a ublox NEO (tested with an M9N). But it's easy to add support for other GPS modules if you want to. Just don't go too cheap if you want it pretty accurate.
 
 Made a total makeover of the softwre to make it more event based, adding PID and so on. So there's probably a lot of bugs currently.
 
@@ -31,6 +31,7 @@ And I learned the hard way that it is a good idea to get a wrist-strap or someth
 - NMEA 0183 (TX/RX)
 - NMEA through TCP (TX/RX)
   - Connect Navionics app, iNavX etc
+- Supports ublox gps module (Tested on M9N)
 - Virtual Anchor (Vanchor) based on position (NMEA RMC)
 - Autopilot (NMEA APB sentence)
 - Autopilot (GPX files)
