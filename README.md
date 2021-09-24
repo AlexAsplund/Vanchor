@@ -6,6 +6,7 @@ For controlling speed and direction of an electrical trolling motor.
 The goal here is to be able to use (almost) any cheap trolling motor while still having autopilot/follow route features.
 
 The current version gets it's coordinates from my Humminbird plotter. But it's easy to add support for cheap GPS modules if you want to. Just don't go too cheap.
+
 You could also skip both of the GPS alternatives above as well as the compass and use an NMEA app on your phone to forward coordinates and heading to Vanchor, but I haven't tested the accuracy of that alternative.
 
 Made a total makeover of the softwre to make it more event based, adding PID and so on. So there's probably a lot of bugs currently.
@@ -39,11 +40,40 @@ And I learned the hard way that it is a good idea to get a wrist-strap or someth
 - Lock heading (NMEA RMC sentence and/or e-compass)
 - PID steering
 
+## Hardware
+
+There are a few alternatives when it comes to hardware, and since both the hardware and software used is pretty modular it's easy to modify.
+
+### If you already have a plotter:
+
+This was how i got started, I already had a Humminbird Helix SI G3 so I used the plotter as a location source (by sending NMEA to the rasperry). You may also need a propietary cable to connect to your plotters NMEA port.
+
+- Raspberry Pi 4
+- RS232 -> USB adapter
+- 6-24V step-down module /w USB (https://www.amazon.se/dp/B09DPJXNTP)
+- Arduino Nano (https://www.amazon.se/dp/B01MS7DUEM)
+- GY-511 e-compass (https://www.amazon.se/dp/B07XXG8HNJ)
+- 60A DC Motor Controller (https://www.amazon.se/gp/product/B075FTL53W/)
+  - Note: I use a 60Amp controller on my 40Amp engine as a safety margin.
+- L298N (for stepper) (https://www.amazon.se/gp/product/B077NY9RY6)
+- Stepper Motor (https://www.amazon.se/gp/product/B072LVXVKW)
+- A3144E Hall sensor (https://www.amazon.se/gp/product/B01M2WASFL)
+- 5mm neodynium magnet (for hall sensor)
+- Anti-corrosion spray for electronics (for protecting the electronics)
+- Flex-PVC pipe for the power cables to the trolling motor.
+- Silicon for waterproofing
+- Various screws/bolts. See parts list [here.](./docs/drawing.pdf).
+
+### If you want to use a GPS module:
+
+Except for the list above you will also need a GPS module.
+It's considerably cheaper ($50-$100) instead of buying a plotter.
+
+Vanchor has been tested with the ublox Neo-M9N but it should work with many other Neo chips as well.
+
+**Be aware of low accuracy GPS modules**
+
 ## Planned
-
-- Adding support for GPS module instead of getting position from plotter.
-
-## Wishlist
 
 - Some kind of simulation software
 - Relying on a regular DC motor instead of a stepper for steering. And using a potentiometer for position-feedback.
@@ -112,26 +142,6 @@ XTE magnitude is added to the feedback of the PID-controller.
 8. Configure SignalK to forward NMEA data to port 10000 of the raspberry
 9. Run `journalctl -xef`
 10. Browse to http://\<ip\> and try it out while checking the logs from `journalctl -xef`
-
-## Hardware
-
-While it's easily modifiable I used the following when it comes to hardware (NOT affiliate links):
-
-- Raspberry Pi 4
-- RS232 -> USB adapter
-- 6-24V step-down module /w USB (https://www.amazon.se/dp/B09DPJXNTP)
-- Arduino Nano (https://www.amazon.se/dp/B01MS7DUEM)
-- GY-511 e-compass (https://www.amazon.se/dp/B07XXG8HNJ)
-- 60A DC Motor Controller (https://www.amazon.se/gp/product/B075FTL53W/)
-  - Note: I use a 60Amp controller on my 40Amp engine as a safety margin.
-- L298N (for stepper) (https://www.amazon.se/gp/product/B077NY9RY6)
-- Stepper Motor (https://www.amazon.se/gp/product/B072LVXVKW)
-- A3144E Hall sensor (https://www.amazon.se/gp/product/B01M2WASFL)
-- 5mm neodynium magnet (for hall sensor)
-- Anti-corrosion spray for electronics (for protecting the electronics)
-- Flex-PVC pipe for the power cables to the trolling motor.
-- Silicon for waterproofing
-- Various screws/bolts. See parts list [here.](./docs/drawing.pdf).
 
 ### Gearbox
 
