@@ -1,0 +1,22 @@
+# Local environment config (keep .env.example tracked)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Runtime data + logs
+vanchor_data/
+analysis_output/
+*.log
+
+# OS
+.DS_Store

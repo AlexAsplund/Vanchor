@@ -1,0 +1,87 @@
+# Vanchor-NG configuration. Every key is optional; omitted keys use defaults.
+
+sim:
+  start_lat: 59.66275
+  start_lon: 13.32247
+  physics_hz: 20.0
+  model: fossen          # "fossen" (3-DOF, bow-mount aware) or "simple"
+  time_scale: 1.0
+
+boat:
+  length_m: 4.1
+  beam_m: 1.7
+  mass_kg: 300.0
+  max_speed_mps: 1.6
+  max_thrust_n: 250.0    # ~55 lbf trolling motor
+  reverse_efficiency: 0.6   # reverse prop thrust as a fraction of forward
+  thruster_mount: bow    # bow | stern | center
+  thruster_offset_m: null  # explicit CG->thruster distance (+fwd); overrides mount
+  max_steer_angle_deg: 180.0   # full mechanical swing (manual reaches this)
+  autopilot_steer_deg: 35.0    # authority the autopilot actually uses
+  max_steer_rate_dps: 50.0  # how fast the steering head can physically rotate (deg/s)
+  max_turn_rate_deg: 18.0  # used by the "simple" model only
+  shaft_dia_mm: 25.4         # trolling-motor shaft (steering gearbox)
+  steer_range_deg: 185.0     # +/- cable-wrap mechanical limit of the head
+  steer_reduction: 4.0       # pinion -> ring reduction
+  sonar_cone_deg: 20.0       # sonar transducer beam angle; sizes depth-map footprint (2*d*tan(cone/2))
+
+environment:
+  current_speed: 0.0
+  current_dir: 0.0
+  wind_speed: 0.0
+  wind_dir: 0.0
+  gust_amplitude_mps: 0.0     # gust std on top of the base wind (0 = steady)
+  gust_tau_s: 5.0             # how slowly gusts build and fade
+  wind_variability: 0.0       # slow session-scale wander of wind speed+dir, [0,1] (0 = steady)
+  current_variability: 0.0    # slow session-scale wander of current, [0,1] (0 = steady)
+
+sensors:
+  gps_hz: 1.0
+  compass_hz: 5.0
+  depth_hz: 2.0
+  gps_noise_m: 1.5
+  compass_noise_deg: 1.0
+  position_jump_max_m: 15.0    # reject GPS jumps bigger than this (unless confirmed)
+  heading_jump_max_deg: 30.0   # reject heading spikes bigger than this per sample
+
+control:
+  tick_hz: 5.0
+  heading_kp: 0.035
+  heading_ki: 0.0
+  heading_kd: 0.012
+  steer_tau: 0.6              # low-pass (s) on steering so the head isn't noise-driven
+  anchor_kp: 0.12             # thrust per metre of position error
+  anchor_kd: 0.6              # braking thrust per (m/s) closing speed (enables reverse)
+  anchor_radius_m: 5.0
+  anchor_idle_deadband_m: 0.8 # idle within this band of the mark (avoids GPS-noise hunting)
+  waypoint_throttle: 0.6
+  waypoint_arrival_m: 5.0
+  waypoint_xte_gain: 2.0
+  jog_increment_m: 1.5        # Spot-Lock Jog step (~5 ft)
+  cruise_kp: 0.64             # Cruise Control (constant speed-over-ground) PID
+  cruise_ki: 0.25
+  track_min_distance_m: 5.0   # record a breadcrumb every N metres
+  drift_kp: 0.5               # Drift mode (controlled drift speed) PID
+  drift_ki: 0.25
+  drift_default_knots: 0.5
+
+safety:
+  max_thrust_slew_per_s: 2.0
+  reverse_delay_s: 0.5
+  fix_timeout_s: 5.0
+  drag_alarm_factor: 2.0
+
+server:
+  host: 127.0.0.1
+  port: 8000
+
+hardware:
+  enabled: false
+  gps_port: /dev/ttyUSB0
+  compass_port: /dev/ttyUSB1
+  motor_port: /dev/ttyUSB2
+  baudrate: 4800
+
+nmea_tcp:
+  enabled: false
+  port: 10110

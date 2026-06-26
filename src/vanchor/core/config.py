@@ -1,0 +1,682 @@
+"""Typed, nested, file-backed application configuration.
+
+The whole controller is configured from a single :class:`AppConfig` tree of
+small dataclasses. Each sub-config maps onto the constructors of an existing
+component (the simulator, sensors, controller, control modes, helm and the
+environment) so the integrator can wire things up by reading fields straight
+off the config rather than threading loose keyword arguments around.
+
+Configs can be loaded from a YAML (``.yaml``/``.yml``) or JSON (``.json``)
+file. Unknown keys are ignored and any missing key falls back to its default,
+so partial config files are always valid. With no path (or a missing file) the
+built-in defaults are returned unchanged.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+from typing import Any, Callable
+
+log = logging.getLogger("vanchor.config")
+
+
+@dataclass
+class SimConfig:
+    """Simulator world + physics settings.
+
+    Maps onto ``Simulator(physics_hz, time_scale)`` and seeds the boat's
+    starting position.
+    """
+
+    start_lat: float = 59.66275  # 59°39'45.9"N (Lake Vänern, Karlstad)
+    start_lon: float = 13.32247  # 13°19'20.9"E
+    physics_hz: float = 20.0
+    model: str = "fossen"  # "fossen" (3-DOF, bow-mount aware) or "simple"
+    time_scale: float = 1.0
+
+
+@dataclass
+class BoatConfig:
+    """Physical boat + trolling-motor geometry.
+
+    Feeds the ``fossen`` 3-DOF physics model (which is bow-mount aware) and the
+    ``simple`` model's speed/turn limits. ``thruster_mount`` captures *where* the
+    steerable trolling motor sits: a bow mount pulls the bow around, a stern
+    mount pushes it -- the sign of the resulting yaw is opposite, which the
+    model accounts for via the longitudinal offset from the centre of gravity.
+    """
+
+    length_m: float = 4.1
+    beam_m: float = 1.7
+    mass_kg: float = 300.0
+    max_speed_mps: float = 1.6
+    max_thrust_n: float = 250.0  # ~55 lbf trolling motor
+    reverse_efficiency: float = 0.6  # reverse prop thrust as a fraction of forward
+    thruster_mount: str = "bow"  # "bow" | "stern" | "center"
+    thruster_offset_m: float | None = None  # explicit CG->thruster (+fwd); overrides mount
+    thruster_y_m: float = 0.0  # lateral CG->thruster offset (+ = starboard)
+    # Thrust-yaw feed-forward: a steering deflection that pre-cancels the yaw a
+    # laterally-offset thruster induces under straight thrust. None = derive from
+    # geometry (atan2(thruster_y_m, |thruster_x_m|)); a number overrides it. A
+    # calibration-measured TRIM (radians) is added on top of whichever is used.
+    thrust_yaw_ff: float | None = None
+    thrust_yaw_ff_trim: float = 0.0  # calibration refinement (radians) on the FF angle
+    max_steer_angle_deg: float = 180.0  # full mechanical swing (manual reaches this)
+    autopilot_steer_deg: float = 35.0  # authority the autopilot actually uses
+    max_steer_rate_dps: float = 50.0  # how fast the steering head can rotate (deg/s)
+    max_turn_rate_deg: float = 18.0  # used by the kinematic "simple" model
+    # Hull character / tracking (directional stability) for the fossen model.
+    # ~0.35 = jon boat (flat-bottom: loose, skittish, lots of leeway), 1.0 =
+    # current skiff (default), ~2.5 = deep-V / keel (tracks straight, resists
+    # turning). Clamped to ~0.25..3.0 on use. Scales the yaw + sway damping (see
+    # FossenParams.__post_init__); at 1.0 with the default L/B it is a no-op.
+    hull_tracking: float = 1.0
+    # Steering gearbox (the closed-loop azimuth unit; see cad/steering.py).
+    shaft_dia_mm: float = 25.4
+    steer_range_deg: float = 185.0  # +/- cable-wrap mechanical limit of the head
+    steer_reduction: float = 4.0  # pinion->ring reduction
+    # Sonar transducer beam (cone) angle in degrees. NMEA DPT/DBT carry only a
+    # depth, never a beam angle, so this configurable default is what sizes the
+    # depth-map footprint: footprint diameter at depth d = 2*d*tan(cone/2).
+    sonar_cone_deg: float = 20.0
+
+    def thruster_x_m(self) -> float:
+        """Signed longitudinal distance from CG to the thruster (+ = forward)."""
+        if self.thruster_offset_m is not None:
+            return self.thruster_offset_m
+        frac = {"bow": 0.42, "stern": -0.42, "center": 0.0}.get(self.thruster_mount, 0.42)
+        return frac * self.length_m
+
+    def thrust_yaw_ff_angle(self) -> float:
+        """Feed-forward steering deflection (radians) that cancels the straight-
+        thrust yaw of a laterally-offset thruster.
+
+        A thruster at ``(x, y)`` making forward thrust ``F`` and steering-induced
+        lateral force produces yaw ``N = x*F_lat - y*F_fwd``. Deflecting the motor
+        by ``delta`` gives ``F_fwd = F*cos(delta)``, ``F_lat = F*sin(delta)`` so
+        ``N = F*(x*sin(delta) - y*cos(delta))`` which is zero when
+        ``x*sin(delta) = y*cos(delta)`` => ``delta = atan2(y, |x|)`` -- independent
+        of thrust magnitude. ``thrust_yaw_ff`` overrides this geometric value; a
+        measured ``thrust_yaw_ff_trim`` is then added on top.
+
+        Note the lever arm uses ``|x|``: a stern mount (x < 0) needs the same
+        *physical* deflection sign as a bow mount to oppose the same lateral
+        offset; the bow/stern steering-authority flip is handled separately by the
+        helm's ``steer_sign``.
+        """
+        if self.thrust_yaw_ff is not None:
+            return self.thrust_yaw_ff + self.thrust_yaw_ff_trim
+        x_mag = abs(self.thruster_x_m())
+        return math.atan2(self.thruster_y_m, x_mag) + self.thrust_yaw_ff_trim
+
+
+@dataclass
+class EnvironmentConfig:
+    """Wind and current. Maps onto
+    ``Environment(current_speed, current_dir, wind_speed, wind_dir)``.
+    """
+
+    current_speed: float = 0.0
+    current_dir: float = 0.0
+    wind_speed: float = 0.0
+    wind_dir: float = 0.0
+    gust_amplitude_mps: float = 0.0  # gust std on top of the base wind (0 = steady)
+    gust_tau_s: float = 5.0
+    # Slow, session-scale weather wander amount in [0, 1] (0 = steady). Wind
+    # variability slowly shifts wind speed AND direction; current variability
+    # slowly shifts the current. Gusts ride on top.
+    wind_variability: float = 0.0
+    current_variability: float = 0.0
+
+
+@dataclass
+class SensorConfig:
+    """Simulated sensor rates and noise.
+
+    ``gps_hz`` maps onto ``SimGps(update_hz)`` and ``compass_hz`` onto
+    ``SimCompass(update_hz)``.
+    """
+
+    gps_hz: float = 1.0
+    compass_hz: float = 5.0
+    depth_hz: float = 2.0
+    # Per-fix position jitter (m, 1-sigma). Real marine GPS/chart-plotters
+    # smooth (Kalman/SBAS) the fix before emitting NMEA, so the track is steady
+    # frame-to-frame (~0.2-0.4 m), NOT the ~1.5 m raw-receiver scatter. Modelling
+    # the denoised plotter keeps the autopilot from chasing phantom cross-track
+    # error and weaving down a leg in otherwise calm water.
+    gps_noise_m: float = 0.35
+    compass_noise_deg: float = 1.0
+    # Sensor-anomaly protection (spike rejection).
+    position_jump_max_m: float = 15.0
+    heading_jump_max_deg: float = 30.0
+
+
+@dataclass
+class ControlConfig:
+    """Controller loop rate and the gains for every guided behaviour.
+
+    ``tick_hz`` maps onto ``Controller(tick_hz)``. The ``heading_*`` gains map
+    onto the helm ``PID(kp, ki, kd)``. The ``anchor_*`` gains and
+    ``anchor_radius_m`` map onto ``modes.AnchorConfig(kp, ki, kd, ...)``. The
+    ``waypoint_*`` fields map onto
+    ``modes.WaypointConfig(arrival_radius_m, throttle, xte_gain)``.
+    """
+
+    tick_hz: float = 5.0
+
+    heading_kp: float = 0.035  # auto-tuned compromise (faster settle, anchor-safe)
+    heading_ki: float = 0.0
+    heading_kd: float = 0.012
+    steer_tau: float = 0.6  # low-pass (s) on steering so the head isn't driven by noise
+
+    anchor_kp: float = 0.12  # thrust per metre of position error
+    anchor_kd: float = 0.6  # braking thrust per (m/s) of closing speed (reverse)
+    anchor_radius_m: float = 5.0
+    anchor_idle_deadband_m: float = 0.8  # idle within this band of the mark (no hunting)
+
+    waypoint_throttle: float = 0.6
+    waypoint_arrival_m: float = 5.0
+    waypoint_xte_gain: float = 2.0
+
+    # Tier-1 features.
+    jog_increment_m: float = 1.5  # Spot-Lock Jog step (~5 ft)
+    cruise_kp: float = 0.64  # Cruise Control (constant SOG) PID (auto-tuned)
+    cruise_ki: float = 0.25
+    track_min_distance_m: float = 5.0  # record a breadcrumb every N metres
+    # --- Trip log (#66): automatic per-outing recording. ----------------- #
+    auto_trip: bool = True  # auto-start a trip when the boat makes way
+    trip_min_distance_m: float = 5.0  # breadcrumb spacing for the trip track
+    trip_start_speed_kn: float = 0.5  # SOG over this auto-starts a trip
+    trip_idle_timeout_s: float = 120.0  # idle this long below the threshold -> auto-stop
+    drift_kp: float = 0.5  # Drift mode (controlled drift speed) PID
+    drift_ki: float = 0.25
+    drift_default_knots: float = 0.5
+
+
+@dataclass
+class SafetyConfig:
+    """Limits and watchdogs that protect the boat and the motor."""
+
+    max_thrust_slew_per_s: float = 2.0
+    reverse_delay_s: float = 0.5
+    fix_timeout_s: float = 5.0
+    drag_alarm_factor: float = 2.0
+    # Shallow-water / geofence auto-stop (#62).
+    min_depth_m: float = 0.0  # cut thrust below this sounded depth (0 = disabled)
+    nogo_lookahead_m: float = 5.0  # also stop within this distance of a no-go zone
+    # Return-to-Launch (#61) auto-recommend / auto-engage.
+    rtl_margin_m: float = 100.0  # warn when range-home gets within this of battery range
+    auto_rtl: bool = False  # if true, auto-engage RTL (don't just recommend)
+    # Lost-connection failsafe (#64): seconds with no UI client connected while
+    # underway before auto-engaging anchor-hold (hold position).
+    link_loss_timeout_s: float = 20.0
+
+
+@dataclass
+class BatteryConfig:
+    """Simulated/monitored battery pack (#60).
+
+    Maps onto ``sim.battery.BatteryConfig``. On real hardware the live
+    SOC/voltage/current come from a battery monitor over the HAL; these fields
+    still size the pack for the range/time-to-empty estimates.
+    """
+
+    capacity_ah: float = 100.0  # pack capacity (amp-hours)
+    nominal_v: float = 12.0  # nominal terminal voltage
+    reserve_pct: float = 15.0  # usable-charge reserve (%) kept in hand
+
+
+@dataclass
+class ServerConfig:
+    """Web UI / HTTP server bind address."""
+
+    host: str = "127.0.0.1"
+    port: int = 8000
+
+
+@dataclass
+class HardwareConfig:
+    """Real serial hardware. ``enabled`` is the master switch (False = full
+    simulation, the default; True = all real serial devices).
+
+    Per-device ``*_source`` overrides let you **mix** simulated and real devices
+    — e.g. drive a real steering servo while the boat itself is simulated, to
+    bench-test the servo against a realistic autopilot. Each is ``"sim"`` or
+    ``"serial"`` (the motor also accepts ``"both"`` = drive the sim boat AND
+    mirror commands to the real servo). ``None`` follows ``enabled``."""
+
+    enabled: bool = False
+    gps_port: str = "/dev/ttyUSB0"
+    compass_port: str = "/dev/ttyUSB1"
+    motor_port: str = "/dev/ttyUSB2"
+    baudrate: int = 4800
+    # Sensors also accept "nmea": build NO internal device and let the navigator
+    # be fed by external NMEA over the TCP bridge (--nmea-tcp) or inject_nmea —
+    # e.g. a phone or chart-plotter GPS. So "GPS from NMEA" is never blocked.
+    gps_source: str | None = None      # "sim" | "serial" | "nmea"
+    compass_source: str | None = None  # "sim" | "serial" | "nmea"
+    depth_source: str | None = None    # "sim" | "nmea" (no serial depth yet)
+    motor_source: str | None = None    # "sim" | "serial" | "both"
+
+    def source(self, device: str) -> str:
+        """Resolve the source for ``device`` ("gps"/"compass"/"depth"/"motor"),
+        honouring its override else falling back to ``enabled``."""
+        override = getattr(self, f"{device}_source", None)
+        if override:
+            return override
+        return "serial" if self.enabled else "sim"
+
+
+@dataclass
+class NmeaTcpConfig:
+    """Optional NMEA-over-TCP server (e.g. for OpenCPN)."""
+
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 10110
+
+
+@dataclass
+class AppConfig:
+    """The root configuration tree."""
+
+    data_dir: str = "vanchor_data"  # persisted depth map + debug recordings
+    sim: SimConfig = field(default_factory=SimConfig)
+    boat: BoatConfig = field(default_factory=BoatConfig)
+    environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
+    sensors: SensorConfig = field(default_factory=SensorConfig)
+    control: ControlConfig = field(default_factory=ControlConfig)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
+    battery: BatteryConfig = field(default_factory=BatteryConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
+    hardware: HardwareConfig = field(default_factory=HardwareConfig)
+    nmea_tcp: NmeaTcpConfig = field(default_factory=NmeaTcpConfig)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "AppConfig":
+        """Build an :class:`AppConfig` from a (possibly partial) mapping.
+
+        Performs a deep, defensive merge: unknown keys are ignored and any key
+        not present keeps its default. ``None`` is treated as an empty mapping.
+        """
+        data = data or {}
+        kwargs: dict[str, Any] = {}
+        for f in fields(cls):
+            if f.name not in _SUBCONFIGS:
+                # plain scalar field (e.g. data_dir): take value or keep default.
+                if f.name in data:
+                    kwargs[f.name] = data[f.name]
+                continue
+            sub_cls = f.type if isinstance(f.type, type) else _SUBCONFIGS[f.name]
+            kwargs[f.name] = _build_sub(sub_cls, data.get(f.name))
+        return cls(**kwargs)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the full tree to plain nested dicts."""
+        return asdict(self)
+
+
+# Mapping of AppConfig field name -> its sub-config dataclass. Used by
+# ``from_dict`` because ``from __future__ import annotations`` turns field
+# type annotations into strings.
+_SUBCONFIGS: dict[str, type] = {
+    "sim": SimConfig,
+    "boat": BoatConfig,
+    "environment": EnvironmentConfig,
+    "sensors": SensorConfig,
+    "control": ControlConfig,
+    "safety": SafetyConfig,
+    "battery": BatteryConfig,
+    "server": ServerConfig,
+    "hardware": HardwareConfig,
+    "nmea_tcp": NmeaTcpConfig,
+}
+
+
+def _build_sub(sub_cls: type, data: Any) -> Any:
+    """Instantiate a leaf sub-config, ignoring unknown keys and filling
+    defaults for anything absent."""
+    if not isinstance(data, dict):
+        return sub_cls()
+    known = {f.name for f in fields(sub_cls)}
+    kwargs = {k: v for k, v in data.items() if k in known}
+    return sub_cls(**kwargs)
+
+
+# --- Persisted, editable device/hardware config (devices.json) ----------- #
+# The device config is the only part of the config that the running UI can
+# edit + persist (separately from the load-only YAML/defaults). It lives in a
+# small ``<data_dir>/devices.json`` so a saved hardware setup survives restarts.
+# Shape: ``{"hardware": {...HardwareConfig fields...},
+#           "nmea_tcp": {...NmeaTcpConfig fields...}}`` -- the same defensive,
+# field-merge tolerance as the rest of the config (unknown/missing keys OK).
+DEVICES_FILE = "devices.json"
+
+
+def _merge_into(obj: Any, data: Any) -> None:
+    """Overwrite the known fields of dataclass ``obj`` from mapping ``data``,
+    coercing numeric/bool fields to the declared type. Unknown/absent keys and
+    ``None`` mean "keep what's there". Mutates ``obj`` in place."""
+    if not isinstance(data, dict):
+        return
+    for f in fields(obj):
+        if f.name not in data or data[f.name] is None:
+            continue
+        val = data[f.name]
+        cur = getattr(obj, f.name)
+        if isinstance(cur, bool):
+            val = bool(val)
+        elif isinstance(cur, int) and not isinstance(cur, bool):
+            val = int(val)
+        elif isinstance(cur, float):
+            val = float(val)
+        setattr(obj, f.name, val)
+
+
+def load_device_overrides(data_dir: str | Path) -> dict[str, Any] | None:
+    """Read ``<data_dir>/devices.json`` if present, else ``None``.
+
+    Returns the parsed ``{"hardware": {...}, "nmea_tcp": {...}}`` mapping. A
+    missing file (the common case) or a corrupt/non-mapping file returns
+    ``None`` so startup falls back to the base config untouched.
+    """
+    p = Path(data_dir) / DEVICES_FILE
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log.warning("ignoring unreadable %s: %s", p, exc)
+        return None
+    if not isinstance(data, dict):
+        log.warning("ignoring %s: not a mapping", p)
+        return None
+    return data
+
+
+def apply_device_overrides(config: AppConfig, data_dir: str | Path | None = None) -> AppConfig:
+    """Override ``config.hardware`` + ``config.nmea_tcp`` from a persisted
+    ``devices.json`` (if one exists under ``data_dir``), then return ``config``.
+
+    ``data_dir`` defaults to ``config.data_dir``. A field-level merge: any saved
+    key overrides the loaded base, missing/extra keys are tolerated. Call this
+    after :func:`load` and before building the runtime so a saved device config
+    survives restarts.
+    """
+    overrides = load_device_overrides(data_dir if data_dir is not None else config.data_dir)
+    if overrides is None:
+        return config
+    _merge_into(config.hardware, overrides.get("hardware"))
+    _merge_into(config.nmea_tcp, overrides.get("nmea_tcp"))
+    log.info("applied device overrides from %s", DEVICES_FILE)
+    return config
+
+
+def save_device_overrides(
+    data_dir: str | Path, hardware: HardwareConfig, nmea_tcp: NmeaTcpConfig
+) -> dict[str, Any]:
+    """Persist ``hardware`` + ``nmea_tcp`` to ``<data_dir>/devices.json``.
+
+    Returns the written ``{"hardware": {...}, "nmea_tcp": {...}}`` mapping. The
+    directory is created if needed.
+    """
+    payload = {"hardware": asdict(hardware), "nmea_tcp": asdict(nmea_tcp)}
+    d = Path(data_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / DEVICES_FILE).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    log.info("saved device overrides to %s", d / DEVICES_FILE)
+    return payload
+
+
+# --- Environment binding (.env + VANCHOR_* overrides) -------------------- #
+# Deployment values (bind hosts/ports, data dir, hardware ports, the NMEA
+# bridge, routing endpoints) are all *environment-bindable* so a release can be
+# configured without editing files. A tiny no-dependency .env loader populates
+# ``os.environ`` (never clobbering a real env var), then ``apply_env_overrides``
+# folds the ``VANCHOR_*`` vars onto the loaded config so env always wins.
+
+
+def _parse_bool(value: str) -> bool:
+    """Lenient truthy parser for env-var booleans ("1/true/yes/on" => True)."""
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def load_dotenv(path: str | Path | None = None) -> dict[str, str]:
+    """Read a ``.env`` file and set any of its keys not already in ``os.environ``.
+
+    No external dependency. Parses simple ``KEY=VALUE`` lines, ignoring blank
+    lines and ``#`` comments, stripping surrounding single/double quotes and a
+    leading ``export ``. A real environment variable always wins (existing keys
+    are left untouched). The path defaults to ``$VANCHOR_ENV_FILE`` else
+    ``./.env``; a missing file is a quiet no-op. Returns the parsed mapping.
+    """
+    if path is None:
+        path = os.environ.get("VANCHOR_ENV_FILE", ".env")
+    p = Path(path)
+    if not p.exists():
+        return {}
+    parsed: dict[str, str] = {}
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        parsed[key] = val
+        os.environ.setdefault(key, val)  # real env wins
+    log.info("Loaded %d var(s) from %s", len(parsed), p)
+    return parsed
+
+
+def apply_env_overrides(config: AppConfig) -> AppConfig:
+    """Override config fields from ``VANCHOR_*`` env vars (in place) and return it.
+
+    Only set variables are applied (unset ones leave the loaded/default value
+    untouched); each is coerced to the field's type. Booleans use
+    :func:`_parse_bool` ("1/true/yes/on").
+    """
+    env = os.environ
+
+    def _apply(var: str, target: Any, attr: str, coerce: Callable[[str], Any]) -> None:
+        val = env.get(var)
+        if val is None:
+            return
+        try:
+            setattr(target, attr, coerce(val))
+        except (TypeError, ValueError) as exc:
+            log.warning("ignoring %s=%r: %s", var, val, exc)
+
+    # Server.
+    _apply("VANCHOR_HOST", config.server, "host", str)
+    _apply("VANCHOR_PORT", config.server, "port", int)
+    # Data.
+    _apply("VANCHOR_DATA_DIR", config, "data_dir", str)
+    # Simulation.
+    _apply("VANCHOR_MODEL", config.sim, "model", str)
+    _apply("VANCHOR_TIME_SCALE", config.sim, "time_scale", float)
+    _apply("VANCHOR_PHYSICS_HZ", config.sim, "physics_hz", float)
+    _apply("VANCHOR_SIM_START_LAT", config.sim, "start_lat", float)
+    _apply("VANCHOR_SIM_START_LON", config.sim, "start_lon", float)
+    # Sensors & hardware.
+    _apply("VANCHOR_HARDWARE", config.hardware, "enabled", _parse_bool)
+    _apply("VANCHOR_GPS_PORT", config.hardware, "gps_port", str)
+    _apply("VANCHOR_COMPASS_PORT", config.hardware, "compass_port", str)
+    _apply("VANCHOR_MOTOR_PORT", config.hardware, "motor_port", str)
+    _apply("VANCHOR_BAUDRATE", config.hardware, "baudrate", int)
+    _apply("VANCHOR_GPS_SOURCE", config.hardware, "gps_source", str)
+    _apply("VANCHOR_COMPASS_SOURCE", config.hardware, "compass_source", str)
+    _apply("VANCHOR_DEPTH_SOURCE", config.hardware, "depth_source", str)
+    _apply("VANCHOR_MOTOR_SOURCE", config.hardware, "motor_source", str)
+    # NMEA bridge.
+    _apply("VANCHOR_NMEA_TCP", config.nmea_tcp, "enabled", _parse_bool)
+    _apply("VANCHOR_NMEA_TCP_HOST", config.nmea_tcp, "host", str)
+    _apply("VANCHOR_NMEA_TCP_PORT", config.nmea_tcp, "port", int)
+    return config
+
+
+def load(path: str | Path | None) -> AppConfig:
+    """Load an :class:`AppConfig` from a ``.yaml``/``.yml``/``.json`` file.
+
+    Returns the built-in defaults when ``path`` is None or the file does not
+    exist. Raises ``ValueError`` for an unsupported extension and propagates
+    parse errors from the underlying loader.
+
+    A ``.env`` file is read first (see :func:`load_dotenv`) and the resulting
+    ``VANCHOR_*`` environment variables are applied *after* the file/defaults so
+    the environment always wins over the YAML/JSON and the built-in defaults.
+    """
+    load_dotenv()
+
+    if path is None:
+        return apply_env_overrides(AppConfig())
+
+    p = Path(path)
+    if not p.exists():
+        log.warning("Config file %s not found; using defaults", p)
+        return apply_env_overrides(AppConfig())
+
+    text = p.read_text(encoding="utf-8")
+    suffix = p.suffix.lower()
+    if suffix in (".yaml", ".yml"):
+        import yaml  # PyYAML, only needed for YAML configs.
+
+        data = yaml.safe_load(text)
+    elif suffix == ".json":
+        data = json.loads(text)
+    else:
+        raise ValueError(f"Unsupported config extension: {p.suffix!r}")
+
+    if data is not None and not isinstance(data, dict):
+        raise ValueError(f"Config file {p} must contain a mapping at the top level")
+
+    log.info("Loaded config from %s", p)
+    return apply_env_overrides(AppConfig.from_dict(data))
+
+
+# A documented, copy-pasteable example covering every section and its defaults.
+DEFAULT_CONFIG_YAML: str = """\
+# Vanchor-NG configuration. Every key is optional; omitted keys use defaults.
+
+sim:
+  start_lat: 59.66275
+  start_lon: 13.32247
+  physics_hz: 20.0
+  model: fossen          # "fossen" (3-DOF, bow-mount aware) or "simple"
+  time_scale: 1.0
+
+boat:
+  length_m: 4.1
+  beam_m: 1.7
+  mass_kg: 300.0
+  max_speed_mps: 1.6
+  max_thrust_n: 250.0    # ~55 lbf trolling motor
+  reverse_efficiency: 0.6   # reverse prop thrust as a fraction of forward
+  thruster_mount: bow    # bow | stern | center
+  thruster_offset_m: null  # explicit CG->thruster distance (+fwd); overrides mount
+  thruster_y_m: 0.0      # lateral CG->thruster offset (+ = starboard); off-centre yaws under thrust
+  thrust_yaw_ff: null    # FF steer angle (rad) to cancel that yaw; null = derive atan2(y,|x|)
+  thrust_yaw_ff_trim: 0.0  # calibration-measured FF refinement (rad), added on top
+  max_steer_angle_deg: 180.0   # full mechanical swing (manual reaches this)
+  autopilot_steer_deg: 35.0    # authority the autopilot actually uses
+  max_steer_rate_dps: 50.0  # how fast the steering head can physically rotate (deg/s)
+  max_turn_rate_deg: 18.0  # used by the "simple" model only
+  hull_tracking: 1.0     # directional stability: ~0.35 jon boat (loose) .. 1.0 skiff .. ~2.5 keel (tracks)
+  shaft_dia_mm: 25.4         # trolling-motor shaft (steering gearbox)
+  steer_range_deg: 185.0     # +/- cable-wrap mechanical limit of the head
+  steer_reduction: 4.0       # pinion -> ring reduction
+  sonar_cone_deg: 20.0       # sonar transducer beam angle; sizes depth-map footprint (2*d*tan(cone/2))
+
+environment:
+  current_speed: 0.0
+  current_dir: 0.0
+  wind_speed: 0.0
+  wind_dir: 0.0
+  gust_amplitude_mps: 0.0     # gust std on top of the base wind (0 = steady)
+  gust_tau_s: 5.0             # how slowly gusts build and fade
+  wind_variability: 0.0       # slow session-scale wander of wind speed+dir, [0,1] (0 = steady)
+  current_variability: 0.0    # slow session-scale wander of current, [0,1] (0 = steady)
+
+sensors:
+  gps_hz: 1.0
+  compass_hz: 5.0
+  depth_hz: 2.0
+  gps_noise_m: 0.35   # denoised plotter output (steady), not raw-receiver scatter
+  compass_noise_deg: 1.0
+  position_jump_max_m: 15.0    # reject GPS jumps bigger than this (unless confirmed)
+  heading_jump_max_deg: 30.0   # reject heading spikes bigger than this per sample
+
+control:
+  tick_hz: 5.0
+  heading_kp: 0.035
+  heading_ki: 0.0
+  heading_kd: 0.012
+  steer_tau: 0.6              # low-pass (s) on steering so the head isn't noise-driven
+  anchor_kp: 0.12             # thrust per metre of position error
+  anchor_kd: 0.6              # braking thrust per (m/s) closing speed (enables reverse)
+  anchor_radius_m: 5.0
+  anchor_idle_deadband_m: 0.8 # idle within this band of the mark (avoids GPS-noise hunting)
+  waypoint_throttle: 0.6
+  waypoint_arrival_m: 5.0
+  waypoint_xte_gain: 2.0
+  jog_increment_m: 1.5        # Spot-Lock Jog step (~5 ft)
+  cruise_kp: 0.64             # Cruise Control (constant speed-over-ground) PID
+  cruise_ki: 0.25
+  track_min_distance_m: 5.0   # record a breadcrumb every N metres
+  drift_kp: 0.5               # Drift mode (controlled drift speed) PID
+  drift_ki: 0.25
+  drift_default_knots: 0.5
+
+safety:
+  max_thrust_slew_per_s: 2.0
+  reverse_delay_s: 0.5
+  fix_timeout_s: 5.0
+  drag_alarm_factor: 2.0
+  min_depth_m: 0.0           # cut thrust below this sounded depth (0 = disabled) (#62)
+  nogo_lookahead_m: 5.0      # also stop within this distance of a no-go zone (#62)
+  rtl_margin_m: 100.0        # warn when range-home nears battery range (#61)
+  auto_rtl: false            # if true, auto-engage Return-to-Launch (not just recommend) (#61)
+  link_loss_timeout_s: 20.0  # no-UI-client time before hold-position failsafe (#64)
+
+battery:
+  capacity_ah: 100.0         # pack capacity (amp-hours) (#60)
+  nominal_v: 12.0            # nominal terminal voltage
+  reserve_pct: 15.0          # usable-charge reserve (%) kept in hand
+
+server:
+  host: 127.0.0.1
+  port: 8000
+
+hardware:
+  enabled: false            # master switch: false = full sim, true = all serial
+  gps_port: /dev/ttyUSB0
+  compass_port: /dev/ttyUSB1
+  motor_port: /dev/ttyUSB2
+  baudrate: 4800
+  # Per-device source overrides (null = follow `enabled`). Mix sim + real freely:
+  #   gps_source: nmea       # GPS from external NMEA (phone/plotter via nmea_tcp)
+  #   motor_source: both     # drive the sim boat AND a real servo (bench testing)
+  gps_source: null           # sim | serial | nmea
+  compass_source: null       # sim | serial | nmea
+  depth_source: null         # sim | nmea
+  motor_source: null         # sim | serial | both
+
+nmea_tcp:
+  enabled: false
+  host: 0.0.0.0
+  port: 10110
+"""

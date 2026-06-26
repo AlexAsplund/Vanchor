@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#05080d" />
+  <title>Vanchor-NG</title>
+  <!-- PWA: installable, loads fully offline on the boat (#82). -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Vanchor" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png" />
+  <!-- Self-hosted libraries + fonts so a fresh load works with zero internet. -->
+  <link rel="stylesheet" href="/static/vendor/fonts/fonts.css" />
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="/static/vendor/uplot/uPlot.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- The map is the living backdrop for the whole app. -->
+  <div id="map"></div>
+
+  <!-- Tactical HUD overlay: corner reticles, range rings, radar sweep, heading
+       tape. Purely decorative / non-interactive (pointer-events: none). -->
+  <div id="hud-frame" class="hud-frame" aria-hidden="true">
+    <div class="reticle tl"></div><div class="reticle tr"></div>
+    <div class="reticle bl"></div><div class="reticle br"></div>
+    <div id="tac-center" class="tac-center">
+      <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+      <div class="radar-sweep"></div>
+      <div class="cross-h"></div><div class="cross-v"></div>
+    </div>
+    <div id="heading-tape" class="heading-tape glass">
+      <div class="ht-window"><div class="ht-track" id="ht-track"></div></div>
+      <div class="ht-marker"></div>
+      <div class="ht-read" id="ht-read">—°</div>
+    </div>
+  </div>
+
+  <!-- ================= TOP STATUS BAR (instrument chips) ================= -->
+  <header id="topbar" class="topbar glass">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">VANCHOR<span class="brand-ng">NG</span></span>
+    </div>
+    <div class="chips" id="chips">
+      <div class="chip" id="chip-conn" data-state="connecting">
+        <span class="chip-dot"></span>
+        <span class="chip-text" id="chip-conn-text">connecting…</span>
+      </div>
+      <div class="chip" id="chip-fix">
+        <span class="chip-label">GPS</span>
+        <span class="chip-val" id="chip-fix-val">—</span>
+      </div>
+      <div class="chip" id="chip-speed">
+        <span class="chip-label">SOG</span>
+        <span class="chip-val"><b id="chip-sog">—</b><small>kn</small></span>
+      </div>
+      <div class="chip" id="chip-hdg">
+        <span class="chip-label">HDG</span>
+        <span class="chip-val"><b id="chip-hdg-val">—</b><small>°</small></span>
+      </div>
+      <div class="chip" id="chip-depth">
+        <span class="chip-label">DEPTH</span>
+        <span class="chip-val"><b id="chip-depth-val">—</b><small>m</small></span>
+      </div>
+      <div class="chip chip-route hidden" id="chip-route" title="Route progress — traveled ▸ remaining · time taken / time left">
+        <span class="chip-label">ROUTE</span>
+        <span class="chip-val"><b id="chip-route-trav">—</b> ▸ <b id="chip-route-left">—</b></span>
+        <span class="chip-route-eta" id="chip-route-eta">⏱ <b id="chip-route-taken">—</b> / ~<b id="chip-route-tleft">—</b> left</span>
+      </div>
+      <div class="chip chip-batt hidden" id="chip-batt" data-level="ok" title="Battery">
+        <span class="chip-batt-icon" aria-hidden="true"><span class="chip-batt-fill" id="chip-batt-fill"></span></span>
+        <span class="chip-val"><b id="chip-batt-val">—</b><small>%</small></span>
+      </div>
+      <div class="chip chip-link hidden" id="chip-link" data-state="ok" title="Remote link">
+        <span class="chip-label">LINK</span>
+        <span class="chip-val" id="chip-link-val">—</span>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="alerts-open" class="btn-icon alerts-bell" title="Alert history" aria-label="Alert history">
+        🔔<span id="alerts-badge" class="alerts-badge hidden">0</span>
+      </button>
+      <button id="settings-open" class="btn-icon" title="Settings &amp; advanced" aria-label="Settings">☰</button>
+    </div>
+  </header>
+
+  <!-- Alert history (#97): a dialog listing recent safety alerts, newest first.
+       Driven by VA.logAlert(); persisted to localStorage. -->
+  <dialog id="alerts-dialog" class="alerts-dialog">
+    <div class="alerts-head">
+      <strong>Alert history</strong>
+      <div class="alerts-head-actions">
+        <button id="alerts-clear" class="alerts-clear" type="button">Clear</button>
+        <button id="alerts-close" class="alerts-close" type="button" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <ul id="alerts-list" class="alerts-list"></ul>
+    <p id="alerts-empty" class="alerts-empty">No alerts yet.</p>
+  </dialog>
+
+  <!-- ============================ GLASSY HUD ============================ -->
+  <section id="hud" class="hud glass">
+    <div class="hud-widget" data-hud="speed">
+      <div class="hud-label">Speed</div>
+      <div class="hud-big"><span id="hud-sog">—</span><small>kn</small></div>
+      <div class="hud-sub"><span id="hud-ms">—</span> m/s</div>
+    </div>
+    <div class="hud-widget hud-compass-widget" data-hud="heading">
+      <div class="hud-label">Heading</div>
+      <div class="hud-compass">
+        <svg viewBox="0 0 80 80" width="92" height="92" aria-hidden="true">
+          <circle cx="40" cy="40" r="37" class="hud-rose-ring" />
+          <circle cx="40" cy="40" r="30" class="hud-rose-ring2" />
+          <!-- Fixed, upright cardinal ring (north-up). -->
+          <line x1="40" y1="5" x2="40" y2="12" class="hud-tick hud-tick-n" />
+          <line x1="40" y1="68" x2="40" y2="75" class="hud-tick" />
+          <line x1="5" y1="40" x2="12" y2="40" class="hud-tick" />
+          <line x1="68" y1="40" x2="75" y2="40" class="hud-tick" />
+          <text x="40" y="22" class="hud-rose-n">N</text>
+          <text x="66" y="44" class="hud-rose-c">E</text>
+          <text x="40" y="67" class="hud-rose-c">S</text>
+          <text x="14" y="44" class="hud-rose-c">W</text>
+          <!-- Needle rotates to point where the boat is heading. -->
+          <g id="hud-rose">
+            <polygon points="40,18 35,42 45,42" class="hud-needle-n" />
+            <polygon points="40,62 35.5,42 44.5,42" class="hud-needle-s" />
+          </g>
+          <circle cx="40" cy="40" r="3.5" class="hud-rose-hub" />
+        </svg>
+      </div>
+      <div class="hud-big hud-hdg-readout"><span id="hud-hdg">—</span><small>°</small></div>
+    </div>
+    <div class="hud-widget" data-hud="depth">
+      <div class="hud-label">Depth</div>
+      <div class="hud-big"><span id="hud-depth">—</span><small>m</small></div>
+    </div>
+    <div class="hud-widget" data-hud="anchor">
+      <div class="hud-label">Dist→Anchor</div>
+      <div class="hud-big"><span id="hud-anchor">—</span><small>m</small></div>
+    </div>
+    <div class="hud-widget hud-battery-widget" data-hud="battery">
+      <div class="hud-label">Battery</div>
+      <div class="hud-batt-row">
+        <div class="batt-icon" id="hud-batt-icon" data-level="ok" aria-hidden="true">
+          <div class="batt-fill" id="hud-batt-fill"></div>
+          <div class="batt-cap"></div>
+        </div>
+        <div class="hud-big hud-batt-soc"><span id="hud-batt-soc">—</span><small>%</small></div>
+      </div>
+      <div class="hud-sub"><span id="hud-batt-volts">—</span> V</div>
+      <div class="hud-sub hud-batt-range"><span id="hud-batt-range">—</span></div>
+    </div>
+  </section>
+
+  <!-- Catch logger launcher — a standalone floating button so it doesn't wrap
+       the numeric HUD row. Toggled by the Catch-logger HUD pref (data-hud). -->
+  <button id="catch-open" class="catch-fab glass" data-hud="catch" type="button" title="Log a catch" aria-label="Log a catch">
+    <span class="catch-ic" aria-hidden="true">🎣</span>
+    <span class="catch-count" id="catch-count">0</span>
+  </button>
+
+  <!-- ====================== STEERING GAUGE (highlight) ====================== -->
+  <!-- Closed-loop steering: commanded vs feedback angle, with cable-wrap arc. -->
+  <section id="steering-gauge" class="steering-gauge glass" data-hud="steering">
+    <div class="sg-head">
+      <span class="sg-title">Steering</span>
+      <span class="sg-fb" id="sg-feedback">—</span>
+    </div>
+    <svg viewBox="0 0 200 130" class="sg-svg" aria-hidden="true">
+      <!-- range track + wrap fill are populated by steering.js -->
+      <path id="sg-track" class="sg-track" d="" />
+      <path id="sg-wrap" class="sg-wrap" d="" />
+      <!-- tick marks -->
+      <g id="sg-ticks"></g>
+      <!-- commanded (ghost) + feedback (solid) needles -->
+      <line id="sg-cmd" class="sg-needle sg-cmd" x1="100" y1="100" x2="100" y2="30" />
+      <line id="sg-angle" class="sg-needle sg-angle" x1="100" y1="100" x2="100" y2="30" />
+      <circle cx="100" cy="100" r="6" class="sg-hub" />
+    </svg>
+    <div class="sg-foot">
+      <div class="sg-stat"><span>Cmd</span><b id="sg-cmd-val">—</b></div>
+      <div class="sg-stat"><span>Angle</span><b id="sg-angle-val">—</b></div>
+      <div class="sg-stat sg-wrap-stat"><span>Wrap</span><b id="sg-wrap-val">—</b></div>
+    </div>
+  </section>
+
+  <!-- Depth-map legend — shown only when the depth overlay is on. -->
+  <div id="depth-legend" class="depth-legend glass hidden">
+    <div class="depth-legend-bar"></div>
+    <div class="depth-legend-labels"><span id="depth-legend-min">—</span><span id="depth-legend-max">—</span></div>
+    <div class="depth-legend-cap">depth (m)</div>
+  </div>
+
+  <!-- Drop-marker FAB: arms marker placement; tap the map to drop (or long-press
+       the map). Icon is chosen in Settings → Map markers. -->
+  <button id="marker-fab" class="map-fab" title="Drop a marker (tap map to place)" aria-label="Drop a marker">
+    <span class="fab-ic" aria-hidden="true">📍</span>
+  </button>
+
+  <!-- Safety / status banner — hidden unless telemetry.safety reports trouble. -->
+  <div id="banner" class="hidden" role="alert"></div>
+
+  <!-- Stacked safety banners for battery RTL / shallow / no-go / MOB / link-loss
+       (tasks #61-#64). Sits below the #banner pill, above the map controls. -->
+  <div id="safety-banners" class="safety-banners" role="alert" aria-live="assertive">
+    <div id="rtl-banner" class="sbanner sbanner-warn hidden">
+      <span class="sb-msg">⚠ Low battery — return now?</span>
+      <button id="rtl-banner-go" class="sb-act" type="button">Return to Launch</button>
+    </div>
+    <div id="shallow-banner" class="sbanner sbanner-alarm hidden">
+      <span class="sb-msg" id="shallow-banner-msg">⚠ SHALLOW — auto-stopped</span>
+    </div>
+    <div id="mob-banner" class="sbanner sbanner-mob hidden">
+      <span class="sb-msg">🛟 MAN OVERBOARD — returning</span>
+      <button id="mob-banner-clear" class="sb-act" type="button">Clear</button>
+    </div>
+    <div id="link-banner" class="sbanner sbanner-alarm hidden">
+      <span class="sb-msg">📡 Connection lost — holding position</span>
+    </div>
+  </div>
+
+  <!-- Mobile-only recenter/follow FAB: re-enables follow-the-boat panning. -->
+  <button id="follow-fab" class="follow-fab" type="button" title="Recenter on boat" aria-label="Recenter on boat">
+    <span class="fab-ic" aria-hidden="true">⊕</span>
+  </button>
+
+  <!-- Replay indicator — shown while a recorded session is playing back. -->
+  <div id="replay-indicator" class="replay-indicator hidden">
+    <span class="rec-dot"></span> REPLAY <b id="replay-ind-pct">0%</b>
+    <button id="replay-ind-stop" aria-label="Stop replay">✕</button>
+  </div>
+
+  <!-- ===================== PRIMARY CONTROL DOCK ===================== -->
+  <!-- Mode rail (segmented) + a contextual panel that swaps with the mode. -->
+  <nav id="dock" class="dock glass">
+    <button class="dock-handle" id="dock-handle" aria-label="Expand or collapse controls">
+      <span class="dh-grip"></span><span class="dh-label">Controls</span><span class="dh-chev">⌃</span>
+    </button>
+
+    <!-- ===== Mobile bottom-sheet header (peek). Hidden on desktop. =====
+         Grab handle drives the snap states; the instrument strip mirrors the
+         HUD's key numbers so they stay visible even in the peek state. -->
+    <div id="sheet-head" class="sheet-head" aria-hidden="false">
+      <button id="sheet-grip" class="sheet-grip" type="button"
+              aria-label="Drag to resize controls; tap to cycle">
+        <span class="sheet-grip-bar"></span>
+      </button>
+      <div class="sheet-instruments" id="sheet-instruments">
+        <div class="si-tile"><span class="si-label">SOG</span><span class="si-val"><b id="m-sog">—</b><small>kn</small></span></div>
+        <div class="si-tile"><span class="si-label">HDG</span><span class="si-val"><b id="m-hdg">—</b><small>°</small></span></div>
+        <div class="si-tile"><span class="si-label">DEPTH</span><span class="si-val"><b id="m-depth">—</b><small>m</small></span></div>
+        <div class="si-tile"><span class="si-label">BATT</span><span class="si-val"><b id="m-batt">—</b><small>%</small></span></div>
+      </div>
+      <div class="sheet-peekbar">
+        <button id="sheet-collapse" class="sheet-collapse" type="button" aria-label="Back to map">⌄&nbsp;Map</button>
+        <span class="sheet-mode" id="sheet-mode">Manual</span>
+        <button id="sheet-stop" class="sheet-stop" type="button">■ STOP</button>
+      </div>
+    </div>
+    <div class="mode-rail" id="mode-rail" role="tablist" aria-label="Autopilot mode">
+      <button class="mode-btn" data-mode="manual" role="tab" title="Manual">
+        <span class="mi" aria-hidden="true">🕹</span><span class="ml">Manual</span>
+      </button>
+      <button class="mode-btn" data-mode="anchor_hold" role="tab" title="Anchor hold">
+        <span class="mi" aria-hidden="true">⚓</span><span class="ml">Anchor</span>
+      </button>
+      <button class="mode-btn" data-mode="heading_hold" role="tab" title="Heading hold">
+        <span class="mi" aria-hidden="true">🧭</span><span class="ml">Heading</span>
+      </button>
+      <button class="mode-btn" data-mode="waypoint" role="tab" title="Waypoint / route">
+        <span class="mi" aria-hidden="true">📍</span><span class="ml">Route</span>
+      </button>
+      <button class="mode-btn" data-mode="follow_apb" role="tab" title="Follow APB route">
+        <span class="mi" aria-hidden="true">🛰</span><span class="ml">APB</span>
+      </button>
+      <button class="mode-btn" data-mode="drift" role="tab" title="Drift">
+        <span class="mi" aria-hidden="true">🌀</span><span class="ml">Drift</span>
+      </button>
+      <button class="mode-btn mode-stop" data-mode="stop" title="Stop all">
+        <span class="mi" aria-hidden="true">■</span><span class="ml">Stop</span>
+      </button>
+      <button class="mode-btn mode-remote" id="remote-toggle" title="Remote helm">
+        <span class="mi" aria-hidden="true">🎮</span><span class="ml">Remote</span>
+      </button>
+      <!-- Overflow: guided "fishing" modes — keeps the rail tidy (#57/#58/#59). -->
+      <button class="mode-btn mode-more" id="more-toggle" title="More guided modes" aria-haspopup="true" aria-expanded="false">
+        <span class="mi" aria-hidden="true">🎣</span><span class="ml">More</span>
+      </button>
+    </div>
+
+    <!-- Flyout grouping the new guided/fishing modes. Toggled by the More button;
+         each item activates its mode's contextual panel below. -->
+    <div class="mode-more-menu hidden" id="more-menu" role="menu" aria-label="Guided fishing modes">
+      <button class="more-item" data-mode="contour_follow" role="menuitem">
+        <span class="mi" aria-hidden="true">🪜</span><span class="ml">Contour</span>
+      </button>
+      <button class="more-item" data-mode="orbit" role="menuitem">
+        <span class="mi" aria-hidden="true">🎯</span><span class="ml">Orbit</span>
+      </button>
+      <button class="more-item" data-mode="trolling" role="menuitem">
+        <span class="mi" aria-hidden="true">〰</span><span class="ml">Troll</span>
+      </button>
+    </div>
+
+    <!-- Always-on nav bar: speed control + pause/resume/stop. Shown while in a
+         guided mode (route/heading/APB/drift) — task #49 + #50. -->
+    <div class="dock-navbar hidden" id="dock-navbar">
+      <div class="navbar-speed" id="navbar-speed">
+        <div class="nspeed-head">
+          <span class="nspeed-label">Speed</span>
+          <button id="speed-unit" class="speed-unit" type="button" title="Toggle knots / % engine">kn</button>
+        </div>
+        <div class="nspeed-row">
+          <button id="speed-dn" class="speed-step" type="button" aria-label="Slower">−</button>
+          <div class="nspeed-val"><b id="speed-val">2.0</b><small id="speed-unit-lbl">kn</small></div>
+          <button id="speed-up" class="speed-step" type="button" aria-label="Faster">+</button>
+        </div>
+        <input type="range" id="speed-slider" min="0" max="3.5" step="0.1" value="2.0" />
+      </div>
+      <div class="navbar-prs" id="navbar-prs">
+        <button id="nav-pause" class="prs-btn prs-pause" type="button">⏸ Pause</button>
+        <button id="nav-resume" class="prs-btn prs-resume" type="button">▶ Resume</button>
+        <button id="nav-stop" class="prs-btn prs-stop" type="button">■ Stop</button>
+      </div>
+      <div class="navbar-rtl" id="navbar-rtl">
+        <button id="nav-rtl" class="prs-btn prs-rtl" type="button" title="Return to launch point">🏠 Return to Launch</button>
+        <button id="nav-set-launch" class="prs-btn prs-setlaunch" type="button" title="Mark the current position as launch">⚑ Set launch here</button>
+      </div>
+      <div id="nav-paused-banner" class="nav-paused-banner hidden">PAUSED — route held</div>
+    </div>
+
+    <!-- Contextual panels: only the active mode's panel is shown. -->
+    <div class="dock-panels" id="dock-panels">
+
+      <!-- MANUAL -->
+      <div class="ctx-panel" id="ctx-manual" data-for="manual">
+        <div class="slider-row">
+          <label>Thrust <output id="thrust-val">0.0</output></label>
+          <input type="range" id="thrust" min="-1" max="1" step="0.05" value="0" />
+        </div>
+        <div class="slider-row">
+          <label>Steering <output id="steer-val">0.0</output></label>
+          <input type="range" id="steer" min="-1" max="1" step="0.05" value="0" />
+        </div>
+      </div>
+
+      <!-- ANCHOR -->
+      <div class="ctx-panel" id="ctx-anchor_hold" data-for="anchor_hold">
+        <div class="slider-row">
+          <label>Anchor radius <output id="ar-val">5</output> m</label>
+          <input type="range" id="ar" min="1" max="50" step="1" value="5" />
+        </div>
+        <label class="switch"><input type="checkbox" id="hold-hdg" checked /><span class="track"></span> Hold heading while anchored</label>
+        <button id="anchor-go" class="btn-primary wide">⚓ Drop anchor here</button>
+        <div class="ctx-sub">Jog anchor</div>
+        <div class="dpad">
+          <button id="jog-fwd" class="dpad-up" aria-label="Jog forward">↑</button>
+          <button id="jog-left" class="dpad-left" aria-label="Jog left">←</button>
+          <button id="jog-right" class="dpad-right" aria-label="Jog right">→</button>
+          <button id="jog-back" class="dpad-down" aria-label="Jog back">↓</button>
+        </div>
+      </div>
+
+      <!-- HEADING -->
+      <div class="ctx-panel" id="ctx-heading_hold" data-for="heading_hold">
+        <div class="slider-row">
+          <label>Target heading <output id="hdg-val">0</output>°</label>
+          <input type="range" id="hdg" min="0" max="359" step="1" value="0" />
+        </div>
+        <button id="hdg-go" class="btn-primary wide">🧭 Hold this heading</button>
+      </div>
+
+      <!-- WAYPOINT / ROUTE -->
+      <div class="ctx-panel" id="ctx-waypoint" data-for="waypoint">
+        <div class="hint">Turn on <b>Add waypoints</b> to drop pins by tapping the map; otherwise map taps do nothing.</div>
+        <div class="btn-row">
+          <button id="wp-arm" class="btn-primary wide">＋ Add waypoints</button>
+        </div>
+        <ol id="wp-list" class="wp-list"></ol>
+        <div class="btn-row">
+          <button id="wp-go" class="btn-primary">▶ Start route</button>
+          <button id="wp-clear" class="btn-ghost">Clear</button>
+          <span id="loop-indicator" class="loop-indicator hidden" title="This route loops continuously around the island">↻ loop</span>
+        </div>
+
+        <!-- Save / Load named routes (task #48). Persisted in localStorage. -->
+        <details class="mini" id="route-store-card">
+          <summary>Saved routes <span id="route-store-state" class="badge"></span></summary>
+          <div class="btn-row">
+            <button id="route-save" class="btn-primary">💾 Save route</button>
+            <button id="route-load-go" class="btn-ghost">Load</button>
+          </div>
+          <label for="route-load-select">Saved routes</label>
+          <select id="route-load-select"><option value="">— none saved —</option></select>
+          <div class="btn-row">
+            <button id="route-delete" class="btn-ghost">Delete</button>
+            <button id="route-export" class="btn-ghost">Export GPX</button>
+          </div>
+          <label class="btn-ghost wide file-btn" for="route-import">Import GPX
+            <input type="file" id="route-import" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden /></label>
+          <div id="route-store-status" class="hint"></div>
+        </details>
+
+        <!-- Smart routing: "Take me here". Picks a destination + asks the
+             backend to plan a route, loading it into the editor above. -->
+        <details class="mini" id="route-plan-card">
+          <summary>Take me here (smart route)</summary>
+          <div class="hint">Pick a spot, then plan a route. Review the waypoints above and press Start route.</div>
+          <button id="route-pick" class="btn-primary wide">Pick destination</button>
+          <label for="route-mode">Routing mode</label>
+          <select id="route-mode">
+            <option value="fastest" selected>Fastest (direct)</option>
+            <option value="shoreline">Along shoreline</option>
+          </select>
+          <div class="slider-row hidden" id="route-offset-row">
+            <label>Shoreline offset <output id="route-offset-val">30</output> m</label>
+            <input type="range" id="route-offset" min="5" max="200" step="5" value="30" />
+          </div>
+          <button id="route-plan-go" class="btn-primary wide" disabled>Plan route</button>
+          <div id="route-plan-status" class="hint"></div>
+        </details>
+
+        <!-- Map mode: area survey (#47). Draw a box or freehand polygon over an
+             area, set pass spacing, and plan a back-and-forth survey route. -->
+        <details class="mini" id="survey-card">
+          <summary>Survey area (map mode)</summary>
+          <div class="hint">Draw an area, set pass spacing, then plan a back-and-forth survey route. Review the waypoints above and press Start route.</div>
+          <div class="btn-row">
+            <button id="survey-box" class="btn-primary">▭ Box</button>
+            <button id="survey-free" class="btn-primary">✎ Freehand</button>
+            <button id="survey-clear" class="btn-ghost hidden">Clear</button>
+          </div>
+          <div id="survey-opts" class="hidden">
+            <div class="slider-row">
+              <label>Pass spacing <output id="survey-spacing-val">20</output> m</label>
+              <input type="range" id="survey-spacing" min="2" max="100" step="1" value="20" />
+            </div>
+            <button id="survey-plan" class="btn-primary wide" disabled>Plan survey</button>
+          </div>
+          <div id="survey-status" class="hint"></div>
+        </details>
+
+        <!-- Loop around island (#77). Tap a landmass; the backend returns a
+             ring of waypoints offset from the shore. Loaded UNSTARTED for review;
+             starting it sends loop:true so the boat circles continuously. -->
+        <details class="mini" id="island-card">
+          <summary>Loop around island <span id="island-loop-badge" class="badge hidden">↻ loop</span></summary>
+          <div class="hint">Tap an island surrounded by water to plan a loop the boat can circle continuously. Review the waypoints above and press Start route.</div>
+          <button id="island-pick" class="btn-primary wide">Tap the island</button>
+          <div class="slider-row">
+            <label>Shore offset <output id="island-offset-val">20</output> m</label>
+            <input type="range" id="island-offset" min="5" max="200" step="5" value="20" />
+          </div>
+          <div id="island-status" class="hint"></div>
+        </details>
+      </div>
+
+      <!-- FOLLOW APB -->
+      <div class="ctx-panel" id="ctx-follow_apb" data-for="follow_apb">
+        <div class="hint">Follow steering from an external chartplotter's APB sentences.</div>
+        <button id="apb-go" class="btn-primary wide">🛰 Follow APB</button>
+        <div class="row"><span>Last APB</span><b id="apb-last">—</b></div>
+      </div>
+
+      <!-- DRIFT -->
+      <div class="ctx-panel" id="ctx-drift" data-for="drift">
+        <div class="slider-row">
+          <label>Drift speed <output id="drift-knots-val">0.5</output> kn</label>
+          <input type="range" id="drift-knots" min="0" max="2.0" step="0.1" value="0.5" />
+        </div>
+        <div class="slider-row">
+          <label>Target heading <output id="drift-hdg-val">0</output>°</label>
+          <input type="range" id="drift-hdg" min="0" max="359" step="1" value="0" />
+        </div>
+        <button id="drift-go" class="btn-primary wide">🌀 Start drift</button>
+      </div>
+
+      <!-- CONTOUR FOLLOW (#57) — hold a target depth contour. -->
+      <div class="ctx-panel" id="ctx-contour_follow" data-for="contour_follow">
+        <div class="hint">Follow a depth contour: the boat steers to keep the sounder on your target depth.</div>
+        <div class="slider-row">
+          <label>Target depth <output id="contour-depth-val">5.0</output> m</label>
+          <input type="range" id="contour-depth" min="0.5" max="50" step="0.5" value="5.0" />
+        </div>
+        <div class="ctx-sub">Keep deeper / shallower water on</div>
+        <div class="seg" id="contour-side">
+          <button type="button" data-val="deep" class="on">Deep side</button>
+          <button type="button" data-val="shallow">Shallow side</button>
+        </div>
+        <div class="slider-row">
+          <label>Speed <output id="contour-speed-val">2.0</output> kn</label>
+          <input type="range" id="contour-speed" min="0" max="3.5" step="0.1" value="2.0" />
+        </div>
+        <!-- Live depth vs target with a centred error bar. -->
+        <div class="contour-live">
+          <div class="row"><span>Current depth</span><b><span id="contour-now">—</span> m</b></div>
+          <div class="row"><span>Target depth</span><b><span id="contour-tgt">—</span> m</b></div>
+          <div class="errbar" id="contour-errbar" aria-hidden="true">
+            <div class="errbar-center"></div>
+            <div class="errbar-fill" id="contour-errfill"></div>
+          </div>
+          <div class="row"><span>Error</span><b id="contour-err">—</b></div>
+        </div>
+        <button id="contour-go" class="btn-primary wide">🪜 Follow contour</button>
+      </div>
+
+      <!-- ORBIT / CIRCLE (#58) — circle a point at a fixed radius. -->
+      <div class="ctx-panel" id="ctx-orbit" data-for="orbit">
+        <div class="hint">Tap the map to set the orbit centre, then circle it at the chosen radius.</div>
+        <button id="orbit-pick" class="btn-primary wide">📍 Tap map to set centre</button>
+        <div class="row"><span>Centre</span><b id="orbit-center">— not set —</b></div>
+        <div class="slider-row">
+          <label>Radius <output id="orbit-radius-val">25</output> m</label>
+          <input type="range" id="orbit-radius" min="5" max="200" step="1" value="25" />
+        </div>
+        <div class="ctx-sub">Direction</div>
+        <div class="seg" id="orbit-dir">
+          <button type="button" data-val="cw" class="on">↻ CW</button>
+          <button type="button" data-val="ccw">↺ CCW</button>
+        </div>
+        <div class="slider-row">
+          <label>Speed <output id="orbit-speed-val">2.0</output> kn</label>
+          <input type="range" id="orbit-speed" min="0" max="3.5" step="0.1" value="2.0" />
+        </div>
+        <div class="contour-live">
+          <div class="row"><span>Range to centre</span><b><span id="orbit-range">—</span> m</b></div>
+          <div class="row"><span>Target radius</span><b><span id="orbit-rtgt">—</span> m</b></div>
+        </div>
+        <button id="orbit-go" class="btn-primary wide" disabled>🎯 Start orbit</button>
+      </div>
+
+      <!-- TROLLING PATTERN (#59) — weave around the current heading. -->
+      <div class="ctx-panel" id="ctx-trolling" data-for="trolling">
+        <div class="hint">Weave back and forth around your current heading to cover water while trolling.</div>
+        <div class="slider-row">
+          <label>Amplitude <output id="troll-amp-val">20</output>°</label>
+          <input type="range" id="troll-amp" min="5" max="60" step="1" value="20" />
+        </div>
+        <div class="slider-row">
+          <label>Period <output id="troll-period-val">30</output> s</label>
+          <input type="range" id="troll-period" min="5" max="120" step="1" value="30" />
+        </div>
+        <div class="slider-row">
+          <label>Speed <output id="troll-speed-val">2.0</output> kn</label>
+          <input type="range" id="troll-speed" min="0" max="3.5" step="0.1" value="2.0" />
+        </div>
+        <!-- Live weave indicator. -->
+        <div class="troll-weave" aria-hidden="true">
+          <div class="weave-track"><div class="weave-dot" id="troll-dot"></div></div>
+        </div>
+        <button id="troll-go" class="btn-primary wide">〰 Start trolling</button>
+      </div>
+
+      <!-- Shared quick tools strip (cruise / track / go-to), always available. -->
+      <div class="ctx-tools" id="ctx-tools">
+        <details class="mini" id="cruise-card">
+          <summary>Cruise <span id="cruise-state" class="badge"></span></summary>
+          <label class="switch"><input type="checkbox" id="cruise-on" /><span class="track"></span> Hold constant speed</label>
+          <div class="slider-row">
+            <label>Target <output id="cruise-val">2.0</output> kn</label>
+            <input type="range" id="cruise-kn" min="0" max="3.5" step="0.1" value="2.0" />
+          </div>
+        </details>
+        <details class="mini" id="track-card">
+          <summary>Track <span id="track-state" class="badge"></span></summary>
+          <button id="track-rec" class="btn-primary wide">● Record</button>
+          <div class="btn-row">
+            <button id="track-replay" class="btn-ghost">▶ Replay</button>
+            <button id="track-back" class="btn-ghost">◀ Backtrack</button>
+          </div>
+          <button id="track-clear" class="btn-ghost wide">Clear track</button>
+        </details>
+        <details class="mini" id="goto-card">
+          <summary>Go-to (tap map)</summary>
+          <label for="goto-action">On arrival</label>
+          <select id="goto-action">
+            <option value="anchor" selected>Anchor on arrival</option>
+            <option value="stop">Stop on arrival</option>
+            <option value="none">Keep position</option>
+          </select>
+          <button id="goto-arm" class="btn-primary wide">Tap map to go</button>
+        </details>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ============== SETTINGS / SIMULATOR / ADVANCED DRAWER ============== -->
+  <div id="settings-scrim" class="scrim hidden"></div>
+  <aside id="settings" class="drawer glass hidden" aria-label="Settings and advanced">
+    <div class="drawer-head">
+      <b>Settings &amp; Advanced</b>
+      <button id="settings-close" class="btn-icon" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+
+      <div class="drawer-section drawer-section-first">Boat &amp; calibration</div>
+
+      <button id="setup-open" class="btn-primary wide drawer-setup" title="Init / calibrate the boat">⚙ Set up / calibrate boat</button>
+
+      <details class="card" id="boat-card">
+        <summary>Boat <span id="boat-card-state" class="badge"></span></summary>
+
+        <!-- Profiles: hidden gracefully if the profiles endpoints 404. -->
+        <div id="boat-profiles" class="hidden">
+          <div class="ctx-sub">Profiles</div>
+          <div class="row">
+            <label for="boat-profile-select">Active boat</label>
+            <select id="boat-profile-select"></select>
+          </div>
+          <div class="btn-row">
+            <button id="boat-profile-add" class="btn-ghost">＋ Add boat</button>
+            <button id="boat-profile-rename" class="btn-ghost">Rename</button>
+            <button id="boat-profile-delete" class="btn-ghost">Delete</button>
+          </div>
+          <div id="boat-profile-status" class="hint"></div>
+        </div>
+
+        <!-- Live spec editor for the active boat. -->
+        <div class="ctx-sub">Specs <span id="boat-applied" class="boat-applied hidden">applied ✓</span></div>
+        <div class="hint">Changing any value applies to the boat live and updates the active profile. Max speed is measured by calibration, not set here.</div>
+        <div class="spec-grid" id="boat-spec-grid">
+          <div class="spec" data-field="length_m">
+            <label>Length <span class="unit">m</span><output class="spec-out">—</output></label>
+            <input type="range" min="1" max="12" step="0.1" />
+          </div>
+          <div class="spec" data-field="beam_m">
+            <label>Beam <span class="unit">m</span><output class="spec-out">—</output></label>
+            <input type="range" min="0.5" max="4" step="0.05" />
+          </div>
+          <div class="spec" data-field="mass_kg">
+            <label>Mass <span class="unit">kg</span><output class="spec-out">—</output></label>
+            <input type="range" min="50" max="3000" step="10" />
+          </div>
+          <div class="spec" data-field="max_thrust_n">
+            <label>Max thrust <span class="unit">N</span><output class="spec-out">—</output></label>
+            <input type="range" min="50" max="2000" step="10" />
+          </div>
+          <div class="spec" data-field="reverse_efficiency">
+            <label>Reverse eff <output class="spec-out">—</output></label>
+            <input type="range" min="0" max="1" step="0.05" />
+          </div>
+          <div class="spec" data-field="max_steer_angle_deg">
+            <label>Max steer <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="20" max="270" step="1" />
+          </div>
+          <div class="spec" data-field="autopilot_steer_deg">
+            <label>Autopilot steer <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="5" max="90" step="1" />
+          </div>
+          <div class="spec" data-field="shaft_dia_mm">
+            <label>Shaft dia <span class="unit">mm</span><output class="spec-out">—</output></label>
+            <input type="range" min="10" max="80" step="1" />
+          </div>
+          <div class="spec" data-field="steer_range_deg">
+            <label>Steer range <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="60" max="720" step="5" />
+          </div>
+          <div class="spec" data-field="steer_reduction">
+            <label>Steer reduction <output class="spec-out">—</output></label>
+            <input type="range" min="1" max="20" step="0.5" />
+          </div>
+          <div class="spec" data-field="sonar_cone_deg">
+            <label>Sonar cone <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="5" max="60" step="1" />
+          </div>
+          <div class="spec spec-hull" data-field="hull_tracking">
+            <label>Hull character <output class="spec-out" id="boat-hull-out">—</output></label>
+            <input type="range" id="boat-hull" min="0.35" max="2.5" step="0.05" value="1" />
+            <div class="hull-anchors" aria-hidden="true">
+              <span>Jon boat</span><span>Skiff</span><span>Semi-V</span><span>Deep-V</span><span>Keelboat</span>
+            </div>
+            <div class="spec-help hull-caption" id="boat-hull-caption">Skiff — balanced</div>
+          </div>
+          <div class="spec spec-mount" data-field="thruster_mount">
+            <label>Motor position</label>
+            <div class="mp-host" id="boat-mp"></div>
+            <div class="spec-help">Pick Bow or Stern, then tap the boat where the
+              trolling motor is mounted — including off to one side.</div>
+          </div>
+        </div>
+        <div id="boat-spec-status" class="hint"></div>
+      </details>
+
+      <details class="card" id="gpscal-card">
+        <summary>GPS calibration <span id="gpscal-state" class="badge"></span></summary>
+        <div class="hint">Correct a fixed GPS offset: tap your true location on the map and the boat's reported position is shifted to match.</div>
+        <button id="gpscal-adjust" class="btn-primary wide">📍 Adjust GPS position</button>
+        <div class="row"><span>Offset (lat)</span><b id="gpscal-dlat">—</b></div>
+        <div class="row"><span>Offset (lon)</span><b id="gpscal-dlon">—</b></div>
+        <button id="gpscal-reset" class="btn-ghost wide">Reset offset</button>
+        <div id="gpscal-status" class="hint"></div>
+      </details>
+
+      <details class="card" id="tune-card">
+        <summary>Auto-tune (PID)</summary>
+        <div class="hint">Tunes the live sim's control gains. Apply updates the running controller (not saved to config).</div>
+        <div class="btn-grid" id="tune-jobs">
+          <button data-job="heading" class="btn-ghost">Heading</button>
+          <button data-job="anchor" class="btn-ghost">Anchor</button>
+          <button data-job="cruise" class="btn-ghost">Cruise</button>
+          <button data-job="drift" class="btn-ghost">Drift</button>
+        </div>
+        <div id="tune-status" class="hint"></div>
+        <div id="tune-result"></div>
+        <button id="tune-apply" class="btn-primary wide" disabled hidden>Apply live</button>
+      </details>
+
+      <div class="drawer-section">Display</div>
+
+      <details class="card">
+        <summary>Appearance</summary>
+        <label class="switch"><input type="checkbox" id="theme-toggle-box" checked /><span class="track"></span> Dark theme</label>
+      </details>
+
+      <details class="card" id="hud-card">
+        <summary>HUD overlay</summary>
+        <label class="switch"><input type="checkbox" id="hud-show" checked /><span class="track"></span> Show HUD</label>
+        <label class="switch"><input type="checkbox" id="hud-frame-toggle" /><span class="track"></span> Tactical HUD frame (heading tape + reticles)</label>
+        <label class="slider-row">HUD opacity <output id="hud-opacity-val">100</output>%
+          <input type="range" id="hud-opacity" min="30" max="100" step="5" value="100" />
+        </label>
+        <label class="switch"><input type="checkbox" id="hud-fade-text" /><span class="track"></span> Keep numbers sharp (fade only the box, not the text)</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="speed" checked /><span class="track"></span> Speed</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="heading" checked /><span class="track"></span> Compass</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="depth" checked /><span class="track"></span> Depth</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="anchor" checked /><span class="track"></span> Dist→Anchor</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="battery" checked /><span class="track"></span> Battery</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="steering" checked /><span class="track"></span> Steering gauge</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="catch" checked /><span class="track"></span> Catch logger</label>
+      </details>
+
+      <details class="card" id="layout-card">
+        <summary>Layout &amp; profiles</summary>
+        <div class="hint">Drag the HUD, steering gauge and control dock by their grip handles. Profiles capture panel positions, overlays, theme and HUD prefs.</div>
+        <label for="profile-select">Profile</label>
+        <select id="profile-select"></select>
+        <div class="btn-row">
+          <button id="profile-saveas" class="btn-ghost">Save as…</button>
+          <button id="profile-delete" class="btn-ghost">Delete</button>
+        </div>
+        <button id="layout-reset" class="btn-ghost wide">Reset layout</button>
+      </details>
+
+      <div class="drawer-section">Map &amp; charts</div>
+
+      <details class="card" id="markers-card">
+        <summary>Map markers <span id="marker-state" class="badge"></span></summary>
+        <label class="switch"><input type="checkbox" id="marker-overlay-show" checked /><span class="track"></span> Show markers overlay</label>
+        <div class="ctx-sub">Drop icon</div>
+        <div id="marker-icon-chooser" class="mm-icons"></div>
+        <label class="switch"><input type="checkbox" id="marker-sticky" /><span class="track"></span> Keep placing (don't disarm after drop)</label>
+        <div class="hint">Tap the 📍 button (bottom-right of the map) to arm, then tap the map. Long-press the map also drops a marker. Drag markers to move; tap to rename / re-icon / delete.</div>
+        <div class="ctx-sub">Import / export</div>
+        <label class="btn-ghost wide file-btn" for="marker-import">Import GPX / GeoJSON
+          <input type="file" id="marker-import" accept=".gpx,.geojson,.json,application/geo+json,application/json,application/gpx+xml" hidden /></label>
+        <div class="btn-row">
+          <button id="marker-export" class="btn-ghost">Export GeoJSON</button>
+          <button id="marker-clear" class="btn-ghost">Clear all</button>
+        </div>
+        <div id="marker-import-status" class="hint"></div>
+      </details>
+
+      <details class="card" id="depth-card">
+        <summary>Depth map <span id="depth-state" class="badge"></span></summary>
+        <label class="switch"><input type="checkbox" id="depth-show" /><span class="track"></span> Show depth overlay</label>
+        <div class="row"><span>Current depth</span><b id="depth-now">—</b></div>
+        <div class="row"><span>Soundings</span><b id="depth-count">0</b></div>
+        <div class="slider-row">
+          <label>Sonar cone angle <output id="sonar-cone-val">20</output>°</label>
+          <input type="range" id="sonar-cone" min="5" max="60" step="1" value="20" />
+        </div>
+        <div class="hint">Soundings are averaged into a colored depth chart (cell size scales with zoom). Shallow = red, deep = blue. The cone angle only affects the per-dot fallback used when the depth-grid backend is unavailable.</div>
+      </details>
+
+      <details class="card" id="charts-card">
+        <summary>Charts</summary>
+        <button id="charts-clear" class="btn-ghost">Clear</button>
+        <div id="charts"></div>
+      </details>
+
+      <!-- Offline maps (#52): pre-download tiles into IndexedDB so the map works
+           offline on the boat, plus prefetch nautical charts for offline routing. -->
+      <details class="card" id="offline-card">
+        <summary>Offline maps</summary>
+        <div class="hint">Pre-download map tiles for an area so the map works without a connection on the boat. Pick an area, a zoom range and a base layer.</div>
+        <button id="offline-pick" class="btn-primary wide">Select area on map</button>
+        <div class="row">
+          <label for="offline-base">Base layer</label>
+          <select id="offline-base"></select>
+        </div>
+        <div class="row">
+          <label for="offline-zmin">Zoom from</label>
+          <select id="offline-zmin"></select>
+          <label for="offline-zmax">to</label>
+          <select id="offline-zmax"></select>
+        </div>
+        <div class="row">
+          <label for="offline-cap">Max tiles</label>
+          <input type="number" id="offline-cap" min="1000" max="500000" step="1000" value="50000" />
+        </div>
+        <div id="offline-est" class="hint"></div>
+        <div class="btn-row">
+          <button id="offline-download" class="btn-primary" disabled>⬇ Download tiles</button>
+          <button id="offline-cancel" class="btn-ghost hidden">Cancel</button>
+        </div>
+        <div id="offline-bar" class="dl-bar hidden"><div id="offline-fill" class="dl-fill"></div></div>
+        <div id="offline-status" class="hint"></div>
+        <div class="row"><span>Cache</span><b id="offline-used">—</b></div>
+        <button id="offline-clear" class="btn-ghost wide">Clear tile cache</button>
+
+        <div class="ctx-sub">Offline charts (routing)</div>
+        <div class="hint">Prefetch nautical charts for the selected area so routing works offline too.</div>
+        <div class="btn-row">
+          <button id="offline-charts" class="btn-primary">⚓ Prefetch charts</button>
+          <button id="offline-charts-clear" class="btn-ghost">Clear charts</button>
+        </div>
+        <div id="offline-charts-status" class="hint"></div>
+        <div id="offline-charts-list"></div>
+      </details>
+
+      <div class="drawer-section">Fishing</div>
+
+      <details class="card" id="catch-card">
+        <summary>Catch logger <span id="catch-card-state" class="badge"></span></summary>
+        <label class="switch"><input type="checkbox" id="catch-overlay-show" checked /><span class="track"></span> Show catches overlay</label>
+        <label class="switch"><input type="checkbox" id="catch-heatmap-show" /><span class="track"></span> Show catch heatmap</label>
+        <button id="catch-analytics-open2" class="btn-ghost wide">📊 Catch analytics</button>
+        <div class="ctx-sub">Species</div>
+        <div class="hint">Tap the 🎣 HUD button to log a catch at the current position. Edit your species list here.</div>
+        <ol id="species-list" class="species-list"></ol>
+        <div class="btn-row">
+          <input type="text" id="species-new" class="species-new" placeholder="Add species…" aria-label="new species" />
+          <button id="species-add" class="btn-ghost">Add</button>
+        </div>
+        <button id="species-reset" class="btn-ghost wide">Reset to defaults</button>
+        <div class="ctx-sub">Catch log</div>
+        <div class="btn-row">
+          <button id="catch-export" class="btn-ghost">Export</button>
+          <button id="catch-clear" class="btn-ghost">Clear all</button>
+        </div>
+        <div id="catch-card-status" class="hint"></div>
+      </details>
+
+      <details class="card hidden" id="trips-card">
+        <summary>Trips <span id="trips-card-state" class="badge"></span></summary>
+        <div class="hint">Record a trip to log distance, duration and speed. The live readout shows while a trip is active.</div>
+        <div class="ctx-sub">Live trip</div>
+        <div id="trip-live" class="trip-live trip-live-idle">
+          <div class="trip-live-name" id="trip-live-name">No active trip</div>
+          <div class="trip-stats">
+            <div class="trip-stat"><span>Distance</span><b id="trip-dist">—</b></div>
+            <div class="trip-stat"><span>Duration</span><b id="trip-dur">—</b></div>
+            <div class="trip-stat"><span>Avg speed</span><b id="trip-avg">—</b></div>
+            <div class="trip-stat"><span>Max speed</span><b id="trip-max">—</b></div>
+          </div>
+        </div>
+        <div class="btn-row">
+          <input type="text" id="trip-name" class="species-new" placeholder="Trip name…" aria-label="trip name" />
+          <button id="trip-start" class="btn-primary">▶ Start</button>
+        </div>
+        <button id="trip-stop" class="btn-stop wide hidden">■ Stop trip</button>
+        <div id="trip-status" class="hint"></div>
+        <div class="ctx-sub">Past trips</div>
+        <ol id="trips-list" class="trips-list"></ol>
+      </details>
+
+      <div class="drawer-section">Safety</div>
+
+      <details class="card" id="safety-card">
+        <summary>Safety &amp; power <span id="safety-card-state" class="badge"></span></summary>
+
+        <div class="ctx-sub">Battery</div>
+        <div class="row"><span>State of charge</span><b id="set-batt-soc">—</b></div>
+        <div class="row"><span>Voltage</span><b id="set-batt-volts">—</b></div>
+        <div class="row"><span>Draw</span><b id="set-batt-draw">—</b></div>
+        <div class="row"><span>Range left</span><b id="set-batt-range">—</b></div>
+        <div class="row"><span>Time to empty</span><b id="set-batt-tte">—</b></div>
+
+        <div class="ctx-sub">Return to Launch</div>
+        <div class="row"><span>Launch set</span><b id="set-launch-state">no</b></div>
+        <div class="btn-row">
+          <button id="set-set-launch" class="btn-ghost">⚑ Set launch here</button>
+          <button id="set-rtl" class="btn-primary">🏠 Return to Launch</button>
+        </div>
+
+        <div class="ctx-sub">No-go / shallow zones</div>
+        <div class="hint">Draw red no-go polygons the boat must avoid. Min depth triggers a shallow auto-stop. Zones persist on this device.</div>
+        <label class="switch"><input type="checkbox" id="nogo-show" checked /><span class="track"></span> Show no-go overlay</label>
+        <div class="slider-row">
+          <label>Min depth <output id="min-depth-val">0.0</output> m</label>
+          <input type="range" id="min-depth" min="0" max="5" step="0.1" value="0.0" />
+        </div>
+        <div class="btn-row">
+          <button id="nogo-draw" class="btn-primary">✏ Draw no-go zone</button>
+          <button id="nogo-cancel" class="btn-ghost hidden">Cancel</button>
+        </div>
+        <div class="row"><span>Zones</span><b id="nogo-count">0</b></div>
+        <button id="nogo-clear" class="btn-ghost wide">Clear all zones</button>
+        <div id="nogo-status" class="hint"></div>
+
+        <div class="ctx-sub">Remote link</div>
+        <div class="row"><span>Client</span><b id="set-link-state">—</b></div>
+        <div class="row"><span>Failsafe</span><b id="set-link-failsafe">—</b></div>
+
+        <div class="ctx-sub">Test (simulator)</div>
+        <div class="slider-row">
+          <label>Set battery SOC <output id="batt-test-val">80</output> %</label>
+          <input type="range" id="batt-test" min="0" max="100" step="1" value="80" />
+        </div>
+        <button id="batt-test-send" class="btn-ghost wide">Apply test SOC</button>
+      </details>
+
+      <div class="drawer-section">Devices</div>
+
+      <!-- Hardware / device config. Lazy-loads GET /api/config/devices on first
+           open (devices.js). Hidden gracefully if that endpoint 404s. -->
+      <details class="card" id="devices-card">
+        <summary>Devices &amp; hardware <span id="dev-state" class="badge"></span></summary>
+        <div class="hint">Pick where each sensor and the motor get their data. Changes apply <b>on restart</b>, not live.</div>
+
+        <div id="dev-unavailable" class="hint err hidden">This build of the app can't configure devices (older backend).</div>
+
+        <div id="dev-body" class="hidden">
+          <div class="ctx-sub">Mode</div>
+          <div class="seg dev-seg" id="dev-mode" role="group" aria-label="Device mode">
+            <button type="button" data-mode="sim" data-on="false">Simulation</button>
+            <button type="button" data-mode="hw" data-on="true">Hardware</button>
+          </div>
+          <div class="hint" id="dev-mode-help">Simulation runs an entirely fake boat. Hardware talks to real sensors and the motor.</div>
+
+          <div class="ctx-sub">Sources</div>
+          <div class="dev-srcgrid">
+            <label class="dev-srcrow">
+              <span>GPS</span>
+              <select id="dev-src-gps" data-kind="sensor"></select>
+            </label>
+            <label class="dev-srcrow">
+              <span>Compass</span>
+              <select id="dev-src-compass" data-kind="sensor"></select>
+            </label>
+            <label class="dev-srcrow">
+              <span>Depth</span>
+              <select id="dev-src-depth" data-kind="sensor"></select>
+            </label>
+            <label class="dev-srcrow">
+              <span>Motor</span>
+              <select id="dev-src-motor" data-kind="motor"></select>
+            </label>
+          </div>
+          <div class="hint">Auto = follows the Mode above. NMEA = from a phone/plotter over NMEA. Both = drive the sim boat + the real servo, for bench-testing.</div>
+
+          <div id="dev-serial" class="hidden">
+            <div class="ctx-sub">Serial ports</div>
+            <label class="dev-srcrow">
+              <span>GPS port</span>
+              <input type="text" id="dev-gps-port" placeholder="/dev/ttyAMA0" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="dev-srcrow">
+              <span>Compass port</span>
+              <input type="text" id="dev-compass-port" placeholder="/dev/ttyUSB0" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="dev-srcrow">
+              <span>Motor port</span>
+              <input type="text" id="dev-motor-port" placeholder="/dev/ttyACM0" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="dev-srcrow">
+              <span>Baud rate</span>
+              <input type="number" id="dev-baudrate" min="1200" step="100" placeholder="115200" autocomplete="off" />
+            </label>
+          </div>
+
+          <div class="ctx-sub">NMEA bridge</div>
+          <label class="switch"><input type="checkbox" id="dev-nmea-enabled" /><span class="track"></span> Listen for NMEA over TCP</label>
+          <label class="dev-srcrow" id="dev-nmea-port-row">
+            <span>TCP port</span>
+            <input type="number" id="dev-nmea-port" min="1" max="65535" step="1" placeholder="10110" autocomplete="off" />
+          </label>
+
+          <div class="btn-row dev-actions">
+            <button id="dev-save" class="btn-primary" type="button">Save</button>
+            <button id="dev-reset" class="btn-ghost" type="button">Reset to current</button>
+          </div>
+          <div id="dev-status" class="hint"></div>
+        </div>
+      </details>
+
+      <div class="drawer-section">Data &amp; diagnostics</div>
+
+      <details class="card">
+        <summary>Live data</summary>
+        <div class="row"><span>Mode</span><b id="r-mode">—</b></div>
+        <div class="row"><span>Heading</span><b id="r-heading">—</b></div>
+        <div class="row"><span>SOG</span><b id="r-sog">—</b></div>
+        <div class="row"><span>Dist→Anchor</span><b id="r-anchor">—</b></div>
+        <div class="row"><span>Dist→WP</span><b id="r-wp">—</b></div>
+        <div class="row"><span>XTE</span><b id="r-xte">—</b></div>
+        <div class="row"><span>Bearing</span><b id="r-brg">—</b></div>
+        <div class="row"><span>Thrust</span><b id="r-thrust">—</b></div>
+        <div class="row"><span>Steer</span><b id="r-steer">—</b></div>
+        <div class="row"><span>Cruise</span><b id="r-cruise">off</b></div>
+        <div class="hint" id="sensors-rejected">rejected: hdg —, pos —</div>
+      </details>
+
+      <details class="card" id="debug-card">
+        <summary>Debug recorder <span id="debug-state" class="badge"></span></summary>
+        <div class="hint">Record everything — telemetry, NMEA, commands, logs — to a gzipped file you can download and replay. For debugging real boats.</div>
+        <div class="btn-row">
+          <button id="debug-rec" class="btn-primary">● Start recording</button>
+          <button id="debug-refresh" class="btn-ghost">Refresh list</button>
+        </div>
+        <div id="debug-rec-info" class="hint"></div>
+        <div class="ctx-sub">Sessions</div>
+        <ol id="debug-sessions" class="debug-sessions"></ol>
+        <div id="replay-bar" class="replay-bar hidden">
+          ▶ Replaying <b id="replay-name">—</b> · <span id="replay-pct">0%</span>
+          <button id="replay-stop" class="btn-ghost">Stop</button>
+        </div>
+      </details>
+
+      <details class="card" id="console-card">
+        <summary>NMEA / log console</summary>
+        <button id="log-clear" class="btn-ghost">Clear log</button>
+        <pre id="log" class="log"></pre>
+      </details>
+
+      <!-- Backup & restore. Download bundles all "vanchor-" localStorage into a
+           server-built ZIP; Restore uploads one back and reloads (backup.js).
+           Needs the matching /api/backup + /api/restore backend. -->
+      <details class="card" id="backup-card">
+        <summary>Backup &amp; restore</summary>
+        <div class="hint">Save a full backup of your settings and on-device data to a ZIP file, or restore one. Restoring overwrites the current data and reloads the app.</div>
+
+        <div class="ctx-sub">Download backup</div>
+        <div class="btn-row backup-actions">
+          <button id="backup-download" class="btn-primary" type="button">Download backup</button>
+        </div>
+        <div id="backup-dl-status" class="hint"></div>
+
+        <div class="ctx-sub">Restore from file</div>
+        <label class="backup-file-row">
+          <span>Backup file</span>
+          <input type="file" id="backup-file" accept=".zip,application/zip" />
+        </label>
+        <div class="btn-row backup-actions">
+          <button id="backup-restore" class="btn-ghost" type="button">Restore</button>
+        </div>
+        <div id="backup-rs-status" class="hint"></div>
+      </details>
+
+      <div class="drawer-section">Simulator</div>
+
+      <!-- Simulator-only: revealed only when telemetry.sim_enabled is true. -->
+      <details class="card sim-only hidden" id="sim-card">
+        <summary>Simulator <span class="badge">SIM</span></summary>
+        <div class="hint">Environment forcing &amp; teleport — simulation only.</div>
+        <div class="ctx-sub">Boat</div>
+        <div class="hint">Pick a preset hull/motor for the simulated boat.</div>
+        <div class="btn-row">
+          <button id="select-boat-open" class="btn-primary" type="button">⛵ Select Boat</button>
+        </div>
+        <div id="select-boat-current" class="hint"></div>
+        <div class="row hidden" id="weather-preset-row">
+          <label for="weather-preset">Weather preset</label>
+          <select id="weather-preset"><option value="">— choose —</option></select>
+        </div>
+        <div class="slider-row"><label>Wind variability <output id="wv-val">0</output></label>
+          <input type="range" id="wv" min="0" max="1" step="0.05" value="0" /></div>
+        <div class="slider-row"><label>Current speed <output id="cs-val">0</output> m/s</label>
+          <input type="range" id="cs" min="0" max="2" step="0.05" value="0.25" /></div>
+        <div class="slider-row"><label>Current dir <output id="cd-val">90</output>°</label>
+          <input type="range" id="cd" min="0" max="359" step="1" value="90" /></div>
+        <div class="slider-row"><label>Wind speed <output id="ws-val">0</output> m/s</label>
+          <input type="range" id="ws" min="0" max="15" step="0.5" value="3" /></div>
+        <div class="slider-row"><label>Wind dir <output id="wd-val">120</output>°</label>
+          <input type="range" id="wd" min="0" max="359" step="1" value="120" /></div>
+        <div class="slider-row"><label>Gusts <output id="ga-val">0</output> m/s</label>
+          <input type="range" id="ga" min="0" max="8" step="0.5" value="0" /></div>
+        <div class="hint" id="env-now">wind now: —</div>
+        <div class="ctx-sub">Teleport boat</div>
+        <div class="hint">Instantly relocate the simulated boat. Tap the map, or type coordinates.</div>
+        <div class="btn-row">
+          <button id="teleport-pick" class="btn-primary">🛰 Teleport boat</button>
+        </div>
+        <div class="row">
+          <label for="teleport-lat">Lat</label>
+          <input type="number" id="teleport-lat" inputmode="decimal" step="0.000001" placeholder="lat" />
+          <label for="teleport-lon">Lon</label>
+          <input type="number" id="teleport-lon" inputmode="decimal" step="0.000001" placeholder="lon" />
+          <button id="teleport-go" class="btn-ghost">Go</button>
+        </div>
+        <div id="teleport-status" class="hint"></div>
+      </details>
+    </div>
+  </aside>
+
+  <!-- Select-boat dialog (#96): lists preset boats as cards; each "Select"
+       activates the profile via POST /api/boat/profiles/{id}/activate. -->
+  <dialog id="select-boat-dialog" class="selectboat-dialog">
+    <div class="sb-head">
+      <strong>Select Boat</strong>
+      <button id="select-boat-close" class="sb-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div id="select-boat-cards" class="sb-cards"></div>
+    <div id="select-boat-status" class="sb-status"></div>
+  </dialog>
+
+  <!-- ===================== REMOTE HELM (giant buttons) ===================== -->
+  <div id="remote" class="remote hidden" role="dialog" aria-label="Remote helm">
+    <div class="remote-status">
+      <div class="rs-item"><div class="rs-label">Mode</div><div class="rs-val" id="rm-mode">—</div></div>
+      <div class="rs-item"><div class="rs-label">Heading</div><div class="rs-val"><span id="rm-hdg">—</span>°</div></div>
+      <div class="rs-item"><div class="rs-label">Dist→Anchor</div><div class="rs-val"><span id="rm-anchor">—</span> m</div></div>
+      <div class="rs-item"><div class="rs-label">Depth</div><div class="rs-val"><span id="rm-depth">—</span> m</div></div>
+    </div>
+    <div id="rm-paused-banner" class="nav-paused-banner hidden">PAUSED — route held</div>
+    <div class="remote-grid">
+      <button id="rm-anchor-here" class="rbtn rbtn-anchor">⚓ Anchor here</button>
+      <button id="rm-stop" class="rbtn rbtn-stop">■ STOP</button>
+      <button id="rm-hold-hdg" class="rbtn rbtn-hdg">🧭 Hold heading</button>
+    </div>
+    <div class="remote-section">
+      <div class="remote-cap">Navigation</div>
+      <div class="remote-prs">
+        <button id="rm-pause" class="rbtn rbtn-pause">⏸ Pause</button>
+        <button id="rm-resume" class="rbtn rbtn-resume">▶ Resume</button>
+      </div>
+    </div>
+    <div class="remote-section">
+      <div class="remote-cap">Safety</div>
+      <div class="remote-grid">
+        <button id="rm-rtl" class="rbtn rbtn-rtl">🏠 Return to Launch</button>
+        <button id="rm-set-launch" class="rbtn rbtn-setlaunch">⚑ Set launch</button>
+      </div>
+      <div id="rm-mob-banner" class="nav-paused-banner sbanner-mob hidden">🛟 MOB — returning <button id="rm-mob-clear" class="rm-mob-clear">Clear</button></div>
+    </div>
+    <div class="remote-section">
+      <div class="remote-cap">Jog anchor</div>
+      <div class="remote-dpad">
+        <button id="rm-jog-fwd" class="rbtn dpad-up" aria-label="Jog forward">↑</button>
+        <button id="rm-jog-left" class="rbtn dpad-left" aria-label="Jog left">←</button>
+        <button id="rm-jog-right" class="rbtn dpad-right" aria-label="Jog right">→</button>
+        <button id="rm-jog-back" class="rbtn dpad-down" aria-label="Jog back">↓</button>
+      </div>
+    </div>
+    <div class="remote-section">
+      <div class="remote-cap">Manual nudge <span id="rm-manual-state" class="rm-manual-state">thr 0.0 · str 0.0</span></div>
+      <div class="remote-nudge">
+        <button id="rm-thr-up" class="rbtn">▲ Thrust +</button>
+        <button id="rm-thr-dn" class="rbtn">▼ Thrust −</button>
+        <button id="rm-str-l" class="rbtn">◀ Steer −</button>
+        <button id="rm-str-r" class="rbtn">Steer + ▶</button>
+      </div>
+    </div>
+    <button id="rm-exit" class="rbtn rbtn-exit">✕ Exit Remote</button>
+  </div>
+
+  <!-- ===================== CATCH LOGGER (task #56) ===================== -->
+  <div id="catch-scrim" class="scrim hidden"></div>
+  <div id="catch-panel" class="catch-panel glass hidden" role="dialog" aria-label="Catch logger">
+    <div class="catch-head">
+      <b>🎣 Catch logger</b>
+      <div class="catch-head-actions">
+        <button id="catch-analytics-open" class="btn-icon" title="Catch analytics" aria-label="Catch analytics">📊</button>
+        <button id="catch-close" class="btn-icon" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="catch-body">
+      <!-- Step 1: pick species -->
+      <div id="catch-species-step">
+        <div class="ctx-sub">Species</div>
+        <div id="catch-species-grid" class="catch-species-grid"></div>
+      </div>
+      <!-- Step 2: length + weight entry -->
+      <div id="catch-entry-step" class="hidden">
+        <div class="catch-entry-species">
+          <button id="catch-back" class="btn-ghost">‹ Back</button>
+          <b id="catch-entry-name">—</b>
+        </div>
+        <div class="catch-field">
+          <label>Length <output id="catch-len-val">30</output> cm</label>
+          <div class="catch-stepper">
+            <button class="catch-step" data-target="len" data-d="-5" type="button">−5</button>
+            <button class="catch-step" data-target="len" data-d="-1" type="button">−1</button>
+            <input type="number" id="catch-len" min="0" max="300" step="1" value="30" inputmode="decimal" />
+            <button class="catch-step" data-target="len" data-d="1" type="button">+1</button>
+            <button class="catch-step" data-target="len" data-d="5" type="button">+5</button>
+          </div>
+        </div>
+        <div class="catch-field">
+          <label>Weight <output id="catch-wt-val">1.0</output> kg</label>
+          <div class="catch-stepper">
+            <button class="catch-step" data-target="wt" data-d="-0.5" type="button">−0.5</button>
+            <button class="catch-step" data-target="wt" data-d="-0.1" type="button">−0.1</button>
+            <input type="number" id="catch-wt" min="0" max="100" step="0.1" value="1.0" inputmode="decimal" />
+            <button class="catch-step" data-target="wt" data-d="0.1" type="button">+0.1</button>
+            <button class="catch-step" data-target="wt" data-d="0.5" type="button">+0.5</button>
+          </div>
+        </div>
+        <button id="catch-save" class="btn-primary wide">💾 Save catch</button>
+      </div>
+      <div class="ctx-sub">Logged catches</div>
+      <ol id="catch-log-list" class="catch-log-list"></ol>
+      <div id="catch-status" class="hint"></div>
+    </div>
+  </div>
+
+  <!-- ===================== CATCH ANALYTICS (#65) ===================== -->
+  <div id="ca-scrim" class="scrim hidden"></div>
+  <div id="ca-panel" class="ca-panel glass hidden" role="dialog" aria-label="Catch analytics">
+    <div class="catch-head">
+      <b>📊 Catch analytics</b>
+      <button id="ca-close" class="btn-icon" aria-label="Close">✕</button>
+    </div>
+    <div class="ca-body">
+      <div id="ca-empty" class="hint hidden">No catches logged yet — log some catches to see analytics.</div>
+
+      <div id="ca-content">
+        <div class="ca-totals" id="ca-totals"></div>
+
+        <div class="ctx-sub">Per-species breakdown</div>
+        <div class="ca-table-wrap">
+          <table class="ca-table">
+            <thead>
+              <tr><th>Species</th><th>#</th><th>Avg L</th><th>Max L</th><th>Avg W</th><th>Max W</th></tr>
+            </thead>
+            <tbody id="ca-species-body"></tbody>
+          </table>
+        </div>
+
+        <div class="ctx-sub">Best time of day <small class="ca-sub-note">catches per hour</small></div>
+        <div id="ca-hours" class="ca-bars"></div>
+
+        <div class="ctx-sub">Best depth <small class="ca-sub-note">catches per depth band</small></div>
+        <div id="ca-depth" class="ca-bars"></div>
+        <div id="ca-depth-note" class="hint"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== INIT BOAT SETUP WIZARD ===================== -->
+  <div id="wiz-scrim" class="wiz-scrim hidden"></div>
+  <div id="wizard" class="wizard hidden" role="dialog" aria-modal="true" aria-label="Boat setup wizard">
+    <div class="wiz-card glass">
+      <div class="wiz-head">
+        <div class="wiz-title">
+          <span class="wiz-mark" aria-hidden="true">⚓</span>
+          <div>
+            <div class="wiz-h1">Init Boat</div>
+            <div class="wiz-h2" id="wiz-subtitle">Set up &amp; auto-calibrate your vessel</div>
+          </div>
+        </div>
+        <button id="wiz-close" class="btn-icon" aria-label="Close wizard">✕</button>
+      </div>
+
+      <!-- Stepper -->
+      <ol class="wiz-stepper" id="wiz-stepper">
+        <li class="step active" data-step="0"><span class="dot">1</span><span class="lbl">Welcome</span></li>
+        <li class="step" data-step="1"><span class="dot">2</span><span class="lbl">Boat specs</span></li>
+        <li class="step" data-step="2"><span class="dot">3</span><span class="lbl">Calibrate</span></li>
+        <li class="step" data-step="3"><span class="dot">4</span><span class="lbl">Results</span></li>
+      </ol>
+
+      <div class="wiz-body">
+        <!-- STEP 1: Welcome + disclaimer -->
+        <section class="wiz-step" data-step="0">
+          <p class="wiz-lead">This wizard sets up your boat profile and runs an automatic
+            calibration drive so the autopilot learns how your boat moves.</p>
+          <div class="wiz-warn">
+            <div class="warn-ic" aria-hidden="true">⚠</div>
+            <div>
+              <b>Auto-calibration will DRIVE the boat.</b>
+              <ul>
+                <li>Be in open water, clear of obstacles, docks and swimmers.</li>
+                <li>Make sure the propeller is clear and safe to spin.</li>
+                <li>Stay ready to take manual control or hit Stop at any time.</li>
+              </ul>
+            </div>
+          </div>
+          <label class="switch wiz-consent"><input type="checkbox" id="wiz-consent" /><span class="track"></span>
+            I confirm the area is clear and it is safe to drive the boat.</label>
+        </section>
+
+        <!-- STEP 2: Boat specs -->
+        <section class="wiz-step hidden" data-step="1">
+          <p class="wiz-lead">Tune the profile to match your boat. Values are prefilled from the
+            current profile and saved live.</p>
+          <div class="spec-grid" id="spec-grid">
+            <div class="spec" data-field="length_m">
+              <label>Length <span class="unit">m</span><output class="spec-out">—</output></label>
+              <input type="range" min="1" max="12" step="0.1" />
+              <div class="spec-help">Hull length overall.</div>
+            </div>
+            <div class="spec" data-field="beam_m">
+              <label>Beam <span class="unit">m</span><output class="spec-out">—</output></label>
+              <input type="range" min="0.5" max="4" step="0.05" />
+              <div class="spec-help">Width at the widest point.</div>
+            </div>
+            <div class="spec" data-field="mass_kg">
+              <label>Mass <span class="unit">kg</span><output class="spec-out">—</output></label>
+              <input type="range" min="50" max="3000" step="10" />
+              <div class="spec-help">Loaded displacement.</div>
+            </div>
+            <div class="spec" data-field="max_thrust_n">
+              <label>Max thrust <span class="unit">N</span><output class="spec-out">—</output></label>
+              <input type="range" min="50" max="2000" step="10" />
+              <div class="spec-help">Peak motor thrust.</div>
+            </div>
+            <div class="spec" data-field="shaft_dia_mm">
+              <label>Shaft dia <span class="unit">mm</span><output class="spec-out">—</output></label>
+              <input type="range" min="10" max="80" step="1" />
+              <div class="spec-help">Steering shaft diameter.</div>
+            </div>
+            <div class="spec" data-field="steer_range_deg">
+              <label>Steer range <span class="unit">°</span><output class="spec-out">—</output></label>
+              <input type="range" min="60" max="720" step="5" />
+              <div class="spec-help">Total cable-wrap travel.</div>
+            </div>
+            <div class="spec spec-hull" data-field="hull_tracking">
+              <label>Hull character <output class="spec-out" id="wiz-hull-out">—</output></label>
+              <input type="range" id="wiz-hull" min="0.35" max="2.5" step="0.05" value="1" />
+              <div class="hull-anchors" aria-hidden="true">
+                <span>Jon boat</span><span>Skiff</span><span>Semi-V</span><span>Deep-V</span><span>Keelboat</span>
+              </div>
+              <div class="spec-help hull-caption" id="wiz-hull-caption">Skiff — balanced</div>
+            </div>
+            <div class="spec spec-mount" data-field="thruster_mount">
+              <label>Motor position</label>
+              <div class="mp-host" id="wiz-mp"></div>
+              <div class="spec-help">Pick Bow or Stern, then tap the boat where the
+                trolling motor is mounted — including off to one side.</div>
+            </div>
+          </div>
+          <div class="hint" id="spec-status"></div>
+        </section>
+
+        <!-- STEP 3: Auto-calibration drive -->
+        <section class="wiz-step hidden" data-step="2">
+          <p class="wiz-lead">Run a short automatic drive — straight runs, turns and a coast —
+            to measure your boat and auto-tune the controllers.</p>
+          <div class="calib-stage" id="calib-stage">
+            <div class="calib-phase" id="calib-phase">Idle</div>
+            <div class="calib-message" id="calib-message">Press “Start calibration” when ready.</div>
+            <div class="calib-bar"><div class="calib-fill" id="calib-fill"></div></div>
+            <div class="calib-live">
+              <div class="cl"><span>Speed</span><b><span id="calib-sog">—</span> kn</b></div>
+              <div class="cl"><span>Heading</span><b><span id="calib-hdg">—</span>°</b></div>
+              <div class="cl"><span>Progress</span><b><span id="calib-pct">0</span>%</b></div>
+            </div>
+            <div class="calib-phases" id="calib-phases">
+              <span data-phase="straight">Straight</span>
+              <span data-phase="turn">Turn</span>
+              <span data-phase="coast">Coast</span>
+              <span data-phase="tuning">Tuning</span>
+              <span data-phase="done">Done</span>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="calib-start" class="btn-primary wide">▶ Start calibration</button>
+            <button id="calib-cancel" class="btn-stop wide hidden">■ Cancel</button>
+          </div>
+        </section>
+
+        <!-- STEP 4: Results -->
+        <section class="wiz-step hidden" data-step="3">
+          <div class="wiz-done-ic" aria-hidden="true">✓</div>
+          <p class="wiz-lead">Calibration complete. Your boat has been measured and the controllers
+            auto-tuned and applied.</p>
+          <div class="results-grid" id="results-grid"></div>
+          <details class="card" id="results-gains-card">
+            <summary>Tuned gains</summary>
+            <div class="tune-grid" id="results-gains"></div>
+          </details>
+        </section>
+      </div>
+
+      <div class="wiz-foot">
+        <button id="wiz-back" class="btn-ghost" disabled>Back</button>
+        <div class="wiz-foot-spacer"></div>
+        <button id="wiz-next" class="btn-primary" disabled>Next</button>
+        <button id="wiz-finish" class="btn-primary hidden">Apply &amp; Finish</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script src="/static/vendor/uplot/uPlot.iife.min.js"></script>
+  <script src="/static/core.js"></script>
+  <script src="/static/map.js"></script>
+  <script src="/static/hudframe.js"></script>
+  <script src="/static/hud.js"></script>
+  <script src="/static/steering.js"></script>
+  <script src="/static/motorplace.js"></script>
+  <script src="/static/wizard.js"></script>
+  <script src="/static/boat.js"></script>
+  <script src="/static/selectboat.js"></script>
+  <script src="/static/debug.js"></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/markers.js"></script>
+  <script src="/static/routing.js"></script>
+  <script src="/static/survey.js"></script>
+  <script src="/static/island.js"></script>
+  <script src="/static/offline.js"></script>
+  <script src="/static/layout.js"></script>
+  <script src="/static/routestore.js"></script>
+  <script src="/static/navctl.js"></script>
+  <script src="/static/catch.js"></script>
+  <script src="/static/analytics.js"></script>
+  <script src="/static/trips.js"></script>
+  <script src="/static/gpscal.js"></script>
+  <script src="/static/devices.js"></script>
+  <script src="/static/backup.js"></script>
+  <script src="/static/teleport.js"></script>
+  <script src="/static/guided.js"></script>
+  <script src="/static/alerts.js"></script>
+  <script src="/static/safety.js"></script>
+  <script src="/static/measure.js"></script>
+  <script src="/static/mobile.js"></script>
+</body>
+</html>

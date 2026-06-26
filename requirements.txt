@@ -1,0 +1,16 @@
+# Runtime dependencies for the simulator + web UI.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9   # file uploads (POST /api/restore)
+numpy>=1.24
+pyyaml>=6.0
+
+# Smart "Take me here" water routing (POST /api/route/plan). Optional but
+# required for the routing feature; all install from prebuilt aarch64 wheels.
+shapely>=2.0
+networkx>=3.0
+pyproj>=3.5
+requests>=2.28
+
+# Optional: real serial hardware (pip install pyserial pyserial-asyncio)
+# Dev/test (install with: pip install -r requirements-dev.txt)

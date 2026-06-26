@@ -1,0 +1,141 @@
+/* Vanchor-NG — core module.
+ *
+ * Owns the single WebSocket to /ws (5 Hz telemetry down, command JSON up),
+ * the command sender, defensive formatting helpers, the NMEA/log console,
+ * the continuous (unwrapped) angle accumulator, and a tiny render-subscriber
+ * registry so the feature modules (map / hud / steering / app) can each hook
+ * the telemetry frame without one giant render() function.
+ *
+ * Everything is hung off a global `VA` namespace so the non-module <script>
+ * files can share it without a build step.
+ */
+"use strict";
+
+const VA = (window.VA = window.VA || {});
+
+// Latest telemetry frame (so late-loading UI, e.g. the wizard, can read it).
+VA.last = null;
+VA.simEnabled = false;
+
+// ---- defensive formatting ------------------------------------------------
+VA.fmt = function (v, d = 1) {
+  return v === null || v === undefined || !Number.isFinite(Number(v))
+    ? "—" : Number(v).toFixed(d);
+};
+VA.num = function (v, d) {
+  return v === null || v === undefined || !Number.isFinite(Number(v))
+    ? "—" : Number(v).toFixed(d);
+};
+VA.fin = function (v) { return Number.isFinite(v) ? v : null; };
+VA.setText = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+// ---- continuous unwrapped angle (short-way rotation) ---------------------
+// Accumulates the shortest signed delta each frame, keyed per element, so a
+// 359°→0° wrap animates the short way instead of spinning all the way around.
+const _contRot = {};
+VA.continuousAngle = function (key, deg) {
+  if (!Number.isFinite(deg)) return _contRot[key] || 0;
+  const last = _contRot[key];
+  if (last === undefined) { _contRot[key] = deg; return deg; }
+  const delta = ((deg - (last % 360) + 540) % 360) - 180; // shortest, [-180,180)
+  _contRot[key] = last + delta;
+  return _contRot[key];
+};
+
+// ---- NMEA / event console ------------------------------------------------
+const MAX_LOG = 40;
+const logBuf = [];
+VA.logLine = function (text) {
+  const stamp = new Date().toLocaleTimeString();
+  logBuf.push(`[${stamp}] ${text}`);
+  while (logBuf.length > MAX_LOG) logBuf.shift();
+  const el = document.getElementById("log");
+  if (el) { el.textContent = logBuf.join("\n"); el.scrollTop = el.scrollHeight; }
+};
+VA.clearLog = function () {
+  logBuf.length = 0;
+  const el = document.getElementById("log");
+  if (el) el.textContent = "";
+};
+let lastApbStr = null;
+function logTelemetry(t) {
+  const pos = t.position ? `${VA.num(t.position.lat, 5)},${VA.num(t.position.lon, 5)}` : "no-fix";
+  VA.logLine(
+    `${t.mode || "?"} hdg=${VA.num(t.heading_deg, 0)} sog=${VA.num(t.sog_knots, 2)} ` +
+    `xte=${VA.num(t.cross_track_m, 1)} pos=${pos}`
+  );
+  if (t.last_apb && t.last_apb !== lastApbStr) {
+    lastApbStr = t.last_apb;
+    VA.logLine("APB: " + t.last_apb);
+  }
+}
+
+// ---- render-subscriber registry ------------------------------------------
+const subscribers = [];
+VA.onTelemetry = function (fn) { subscribers.push(fn); };
+
+function dispatch(t) {
+  VA.last = t;
+  VA.simEnabled = !!t.sim_enabled;
+  for (const fn of subscribers) {
+    try { fn(t); } catch (err) { VA.logLine("render error: " + err); }
+  }
+  logTelemetry(t);
+}
+
+// ---- websocket -----------------------------------------------------------
+let ws;
+const connListeners = [];
+VA.onConnState = function (fn) { connListeners.push(fn); };
+function setConn(state, text) {
+  for (const fn of connListeners) { try { fn(state, text); } catch (e) { /* ignore */ } }
+}
+
+VA.connect = function () {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => setConn("connected", "connected");
+  ws.onclose = () => { setConn("disconnected", "reconnecting…"); setTimeout(VA.connect, 1000); };
+  ws.onerror = () => setConn("disconnected", "connection error");
+  ws.onmessage = (ev) => {
+    let t;
+    try { t = JSON.parse(ev.data); } catch (err) { VA.logLine("bad telemetry: " + err); return; }
+    dispatch(t);
+  };
+};
+
+// Send a command (WS up; falls back to POST /api/command if the socket is down).
+VA.send = function (cmd) {
+  VA.logLine("» " + JSON.stringify(cmd));
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(cmd));
+  else fetch("/api/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cmd),
+  }).catch((e) => VA.logLine("command POST failed: " + e));
+};
+
+// Convenience JSON REST helpers used by the wizard / tuner.
+VA.getJSON = async function (url) {
+  const r = await fetch(url);
+  return r.json();
+};
+VA.postJSON = async function (url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  return r.json();
+};
+
+// ---- PWA service worker (#82) -------------------------------------------
+// Register the service worker so the app shell + vendored libs are precached
+// and the page loads fully offline on the boat. Served at root scope by the
+// server so it can control the whole origin. Guarded for support / failures.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      console.warn("[vanchor] service worker registration failed:", err);
+    });
+  });
+}
