@@ -20,3 +20,7 @@ analysis_output/
 
 # OS
 .DS_Store
+
+# Claude Code local files
+.claude/
+.claude

@@ -1,12 +1,12 @@
-# Vanchor-NG v2.0-alpha — Release Notes
+# Vanchor-NG v1.0-alpha — Release Notes
 
-**Vanchor-NG v2.0-alpha** is a **ground-up rewrite** of Vanchor that **replaces
-the original 1.x project**. It is software-first: the entire GPS
+**Vanchor-NG v1.0-alpha** is a **ground-up rewrite** of Vanchor that **replaces
+the original 0.1-alpha project**. It is software-first: the entire GPS
 autopilot / anchoring / waypoint stack runs and is tested in simulation, with no
 hardware required, and ships as an installable, offline-capable PWA.
 
-This is the **first alpha of the new 2.0 line.** It is meant for development and
-testing. Expect rough edges and breaking changes before 2.0 stabilises.
+This is the **first alpha of the new 1.0 line.** It is meant for development and
+testing. Expect rough edges and breaking changes before 1.0 stabilises.
 
 ## What's new (the headline feature set)
 
@@ -58,13 +58,13 @@ could trip the fix-loss failsafe mid-operation. Today, `POST /api/config/devices
 restart** (`restart_required: true`). A `Runtime.reload_devices()` method exists
 but is **not auto-invoked**.
 
-## Migrating from 1.x
+## Migrating from 0.1-alpha
 
-Vanchor-NG 2.0 is a **full replacement** for the original Vanchor (1.x), not an
+Vanchor-NG 1.0 is a **full replacement** for the original Vanchor (0.1-alpha), not an
 in-place upgrade. **This repository supersedes the old one.** There is no
 automatic data migration:
 
-- **Back up any old Vanchor (1.x) data** before switching.
+- **Back up any old Vanchor (0.1-alpha) data** before switching.
 - Install and run Vanchor-NG fresh (see the [Quick start](README.md#quick-start)).
 - Recreate boat profiles, routes and settings in the new app; use its **backup /
   restore** to preserve state going forward.
@@ -76,20 +76,20 @@ automatic data migration:
 
 Suggested release steps:
 
-1. **Tag the old project** so the final 1.x state is preserved:
+1. **Tag the old project** so the final 0.1-alpha state is preserved:
    ```bash
    # in the OLD vanchor repo
-   git tag -a 1.0-beta -m "Final 1.x release before the 2.0 rewrite"
-   git push origin 1.0-beta
+   git tag -a 0.1-alpha -m "Final 0.1-alpha release before the 1.0 rewrite"
+   git push origin 0.1-alpha
    ```
-2. **Publish this rewrite as `2.0-alpha`** (it replaces the old project):
+2. **Publish this rewrite as `1.0-alpha`** (it replaces the old project):
    ```bash
    # in THIS vanchor-ng repo
-   git tag -a 2.0-alpha -m "Vanchor-NG 2.0-alpha — ground-up software-first rewrite"
-   git push origin 2.0-alpha
+   git tag -a 1.0-alpha -m "Vanchor-NG 1.0-alpha — ground-up software-first rewrite"
+   git push origin 1.0-alpha
    ```
-3. Create a GitHub release from the `2.0-alpha` tag, linking these notes, and note
-   in the old project's README that it is superseded by Vanchor-NG 2.0.
+3. Create a GitHub release from the `1.0-alpha` tag, linking these notes, and note
+   in the old project's README that it is superseded by Vanchor-NG 1.0.
 
 Before tagging, verify the suite is green:
 

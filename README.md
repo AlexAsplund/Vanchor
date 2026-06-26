@@ -1,7 +1,7 @@
 # Vanchor-NG
 
-> **v2.0-alpha** — the start of a new major version. Vanchor-NG is a ground-up,
-> software-first rewrite that **replaces the original [Vanchor](https://github.com/AlexAsplund/Vanchor) (1.x)**.
+> **v1.0-alpha** — the start of a new major version. Vanchor-NG is a ground-up,
+> software-first rewrite that **replaces the original [Vanchor](https://github.com/AlexAsplund/Vanchor) (0.1-alpha)**.
 
 ## What it is
 
@@ -20,7 +20,7 @@ drives it — only the device construction changes.
 It is a **PWA** (Progressive Web App): installable, works offline, and served by
 the boat's own Raspberry Pi.
 
-> **This is 2.0-alpha** — a from-scratch rewrite that supersedes the 1.x project.
+> **This is 1.0-alpha** — a from-scratch rewrite that supersedes the 0.1-alpha project.
 > See [`RELEASE.md`](RELEASE.md) for release notes and migration notes.
 
 ## Screenshots
@@ -32,7 +32,7 @@ the boat's own Raspberry Pi.
 | ![Settings](docs/images/settings.png) | ![Mobile mode](docs/images/mobile.png) |
 | **Settings** — every control, grouped into clear categories | **Mobile mode** — full-bleed map + bottom sheet for the phone at the helm |
 
-> Screenshots are from the built-in simulator (no hardware, no internet for map tiles) — the dark backdrop is the live map pane.
+> All four are running on the **built-in simulator** — no hardware, no boat, just `vanchor` on a laptop.
 
 ## Highlights
 
@@ -199,11 +199,11 @@ docs/           human docs + docs/llms/ AI developer guide
 
 ## Alpha status
 
-This is an **early alpha (2.0-alpha)** intended for **development and testing**.
+This is an **early alpha (1.0-alpha)** intended for **development and testing**.
 The project is **sim-first**: the simulation path is the mature, well-tested one.
 Real-hardware support is provided and mirrors the simulated devices, but is far
 less exercised — treat it as experimental. Expect rough edges and breaking
-changes as 2.0 takes shape.
+changes as 1.0 takes shape.
 
 ## License
 

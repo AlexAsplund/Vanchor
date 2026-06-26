@@ -3,7 +3,7 @@ import sys
 from playwright.sync_api import sync_playwright
 
 URL = "http://127.0.0.1:8000/"
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/claude-1000/-home-alex-projects-vanchor-ng/c2764d2c-7102-48ba-b8b7-6ad9f8af3f78/scratchpad/ui_mobile.png"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "screenshot.png"
 
 with sync_playwright() as p:
     b = p.chromium.launch(args=["--no-sandbox"])

@@ -46,7 +46,7 @@ OVERPASS_ENDPOINTS = (
 )
 # The public endpoint returns HTTP 406 without a real User-Agent (verified).
 # Override with ``VANCHOR_USER_AGENT``.
-USER_AGENT = "vanchor-ng/2.0 (+https://github.com/your-org/vanchor-ng)"
+USER_AGENT = "vanchor-ng/1.0 (+https://github.com/your-org/vanchor-ng)"
 
 
 def overpass_endpoints() -> tuple[str, ...]:
