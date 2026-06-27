@@ -32,17 +32,17 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from experiments.anchor_policy.env import AnchorEnv
-from experiments.anchor_policy.policy import TinyPolicy
+from experiments.anchor_policy.policy import ACT_DIM, OBS_DIM, TinyPolicy
 from experiments.anchor_policy.scenarios import scenario_batch, validation_batch
 
 CKPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
 
 # Defaults (overridable via CLI).
-SIZES = (8, 24, 16, 2)
+HIDDEN = (32, 16)   # net shape = (OBS_DIM*history,) + HIDDEN + (ACT_DIM,)
 DT = 0.1            # training step (runtime is 0.05; physics is identical here)
 DURATION = 120.0    # seconds per episode
 RADIUS = 5.0        # watch-circle radius (m)
-K_TRAIN = 6         # scenarios scored per candidate per generation
+K_TRAIN = 10        # scenarios scored per candidate per generation (v2: lower variance)
 K_VALID = 64        # held-out validation scenarios
 
 
@@ -64,17 +64,17 @@ def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
 
 def _score(args):
     """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation)."""
-    theta, sizes, gen_seed, k, dt, dur, rad = args
+    theta, sizes, gen_seed, k, dt, dur, rad, history, arate = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate)
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
 
-def _metrics(theta, sizes, dt, dur, rad):
+def _metrics(theta, sizes, dt, dur, rad, history, arate):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate)
     win, md, en, rr = [], [], [], []
     for sc in validation_batch(K_VALID):
         ret, dists, energy = _rollout(pol, env, sc)
@@ -108,11 +108,14 @@ def main():
     ap.add_argument("--duration", type=float, default=DURATION)
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--no-resume", action="store_true")
+    ap.add_argument("--history", type=int, default=1)    # v2: stacked obs frames
+    ap.add_argument("--arate", type=float, default=0.0)   # v2: action-rate penalty
     args = ap.parse_args()
 
     os.makedirs(CKPT_DIR, exist_ok=True)
     rng = np.random.default_rng(0)
-    proto = TinyPolicy(sizes=SIZES, rng=rng)
+    sizes = (OBS_DIM * args.history,) + HIDDEN + (ACT_DIM,)
+    proto = TinyPolicy(sizes=sizes, rng=rng)
     n = proto.n_params
     theta = proto.get_params()
     m_adam = np.zeros(n); v_adam = np.zeros(n)
@@ -137,7 +140,8 @@ def main():
             gen_seed = (gen * 7919 + 1) & 0x7FFFFFFF
             eps = rng.standard_normal((args.pop, n))
             cands = np.concatenate([theta + args.sigma * eps, theta - args.sigma * eps])
-            jobs = [(c, SIZES, gen_seed, args.k, args.dt, args.duration, RADIUS) for c in cands]
+            jobs = [(c, sizes, gen_seed, args.k, args.dt, args.duration, RADIUS,
+                     args.history, args.arate) for c in cands]
             rewards = np.array(pool.map(_score, jobs))
             util = _centered_ranks(rewards)
             up, um = util[:args.pop], util[args.pop:]
@@ -154,7 +158,8 @@ def main():
             theta = theta + args.lr * mhat / (np.sqrt(vhat) + eps_a)
 
             if gen % 5 == 0 or gen == args.gens - 1:
-                mt = _metrics(theta, SIZES, args.dt, args.duration, RADIUS)
+                mt = _metrics(theta, sizes, args.dt, args.duration, RADIUS,
+                              args.history, args.arate)
                 rate = (gen - start_gen + 1) / (time.time() - t0)
                 rec = {"gen": gen, "train_return": float(rewards.mean()),
                        "gens_per_s": round(rate, 2), **mt}
@@ -163,11 +168,11 @@ def main():
                 print(f"gen {gen:5d} | val_ret {mt['val_return']:8.1f} | "
                       f"within {mt['within_pct']:5.1f}% | mean_dist {mt['mean_dist_m']:4.2f}m | "
                       f"energy {mt['energy']:.3f} | {rate:.1f} gen/s", flush=True)
-                TinyPolicy(sizes=SIZES, params=theta).save(
+                TinyPolicy(sizes=sizes, params=theta).save(
                     os.path.join(CKPT_DIR, "latest_policy.json"))
                 if mt["val_return"] > best_val:
                     best_val = mt["val_return"]
-                    TinyPolicy(sizes=SIZES, params=theta).save(
+                    TinyPolicy(sizes=sizes, params=theta).save(
                         os.path.join(CKPT_DIR, "best_policy.json"))
                 np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
                          gen=gen + 1, best_val=best_val, adam_t=adam_t)

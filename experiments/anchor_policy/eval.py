@@ -1,9 +1,14 @@
-"""Evaluate a trained anchor policy -- and check it transfers from the training
-dt (0.1 s) to the runtime dt (0.05 s), confirming the "speed-up" didn't change
-the physics the policy relies on. Also reports a simple PD baseline for context.
+"""Evaluate a trained anchor policy on held-out scenarios.
 
-    python -m experiments.anchor_policy.eval                       # best, dt=0.05
-    python -m experiments.anchor_policy.eval --policy checkpoints/latest_policy.json --dt 0.1
+Reports: (1) the held-out hold metrics, (2) **transfer** from the training step
+(dt=0.1) to the runtime step (dt=0.05) -- confirming the "speed-up" didn't change
+the physics the policy relies on, and (3) a comparison against a faithful
+re-implementation of the PID `AnchorHoldMode` control law (the classical baseline
+every DP-RL paper includes). v2 frame-stacked policies are handled automatically
+(history is inferred from the network's input width).
+
+    python -m experiments.anchor_policy.eval
+    python -m experiments.anchor_policy.eval --policy checkpoints/best_policy.json --k 128
 """
 
 from __future__ import annotations
@@ -20,25 +25,29 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from experiments.anchor_policy.env import AnchorEnv
-from experiments.anchor_policy.policy import TinyPolicy
+from experiments.anchor_policy.policy import OBS_DIM, TinyPolicy
 from experiments.anchor_policy.scenarios import validation_batch
 
 CKPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
 
 
-def _pd_action(obs):
-    """A hand-tuned PD reference: point at the anchor and thrust by range/closing."""
-    e_fwd, e_lat = obs[0] * 10.0, obs[1] * 10.0
-    vg_fwd = obs[2] * 1.5
+def _anchor_pid(obs, kp=0.12, kd=0.6):
+    """The PID `AnchorHoldMode` law (src/vanchor/controller/modes.py AnchorConfig):
+    thrust = kp*range - kd*closing_speed (the kd term anticipates drift via the
+    ground-velocity component toward the mark), bow pointed at the mark. Reads the
+    last observation frame, so it works for v1 and v2 policies' envs alike."""
+    f = obs[-OBS_DIM:]
+    e_fwd, e_lat = f[0] * 10.0, f[1] * 10.0          # un-normalise (see env._frame)
+    vg_fwd, vg_lat = f[2] * 1.5, f[3] * 1.5
     dist = math.hypot(e_fwd, e_lat)
-    bearing = math.atan2(e_lat, e_fwd)               # anchor dir in body frame
-    steer = float(np.clip(bearing / (math.pi / 3), -1.0, 1.0))
-    thrust = float(np.clip(0.25 * dist - 0.4 * vg_fwd, -1.0, 1.0))
+    closing = (vg_fwd * e_fwd + vg_lat * e_lat) / dist if dist > 1e-6 else 0.0
+    thrust = float(np.clip(kp * dist - kd * closing, -1.0, 1.0))
+    steer = float(np.clip(math.atan2(e_lat, e_fwd) / (math.pi / 3), -1.0, 1.0))
     return np.array([thrust, steer])
 
 
-def _evaluate(action_fn, dt, dur, rad, k):
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad)
+def _evaluate(action_fn, dt, dur, rad, k, history):
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history)
     win, md, en = [], [], []
     for sc in validation_batch(k):
         obs = env.reset(sc)
@@ -58,20 +67,24 @@ def _evaluate(action_fn, dt, dur, rad, k):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--policy", default=os.path.join(CKPT_DIR, "best_policy.json"))
-    ap.add_argument("--dt", type=float, default=0.05)     # runtime step
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--radius", type=float, default=5.0)
     ap.add_argument("--k", type=int, default=128)
     args = ap.parse_args()
 
-    print(f"validation: {args.k} held-out scenarios, dt={args.dt}s, {args.duration}s episodes\n")
     pol = TinyPolicy.load(args.policy)
-    w, d, e = _evaluate(lambda o: pol.forward(o), args.dt, args.duration, args.radius, args.k)
-    print(f"  POLICY ({os.path.basename(args.policy)}): within {w:5.1f}% | "
-          f"mean_dist {d:4.2f} m | energy {e:.3f}")
-    w2, d2, e2 = _evaluate(_pd_action, args.dt, args.duration, args.radius, args.k)
-    print(f"  PD baseline             : within {w2:5.1f}% | "
-          f"mean_dist {d2:4.2f} m | energy {e2:.3f}")
+    history = max(1, pol.sizes[0] // OBS_DIM)
+    print(f"policy: {os.path.basename(args.policy)}  sizes={pol.sizes}  history={history}")
+    print(f"validation: {args.k} held-out scenarios, {args.duration}s episodes\n")
+
+    # Transfer check: train dt (0.1) vs runtime dt (0.05) should match closely.
+    for dt in (0.10, 0.05):
+        w, d, e = _evaluate(lambda o: pol.forward(o), dt, args.duration, args.radius, args.k, history)
+        tag = "train dt" if dt == 0.10 else "RUNTIME dt"
+        print(f"  POLICY @ dt={dt:.2f} ({tag:9s}): within {w:5.1f}% | mean_dist {d:4.2f} m | energy {e:.3f}")
+
+    w2, d2, e2 = _evaluate(_anchor_pid, 0.05, args.duration, args.radius, args.k, 1)
+    print(f"  PID AnchorHoldMode @ dt=0.05    : within {w2:5.1f}% | mean_dist {d2:4.2f} m | energy {e2:.3f}")
 
 
 if __name__ == "__main__":

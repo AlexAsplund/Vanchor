@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections import deque
 
 import numpy as np
 
@@ -30,11 +31,17 @@ _M_PER_DEG = 111320.0
 
 class AnchorEnv:
     def __init__(self, dt: float = 0.1, duration_s: float = 120.0, radius_m: float = 5.0,
-                 deadband_m: float = 1.0):
+                 history: int = 1, arate: float = 0.0):
         self.dt = dt
         self.duration_s = duration_s
         self.radius_m = radius_m
-        self.deadband_m = deadband_m
+        # v2: stack the last ``history`` observation frames so a memoryless MLP
+        # can infer the unobserved wind/current from the recent motion trend
+        # (the literature's #1 fix), and an action-rate penalty ``arate`` to
+        # smooth thrust (CAPS) -- energy/wear without the accuracy hit a thrust
+        # penalty causes. history=1, arate=0 reproduce v1 exactly.
+        self.history = max(1, int(history))
+        self.arate = float(arate)
 
     # -- lifecycle -------------------------------------------------------- #
     def reset(self, scenario: dict) -> np.ndarray:
@@ -72,7 +79,9 @@ class AnchorEnv:
         )
         self._prev = np.zeros(2)
         self.t = 0.0
-        return self._obs()
+        f = self._frame()
+        self._hist = deque([f] * self.history, maxlen=self.history)
+        return np.concatenate(self._hist)
 
     # -- helpers ---------------------------------------------------------- #
     def _err_ned(self):
@@ -82,7 +91,7 @@ class AnchorEnv:
         de = (self.anchor.lon - b.lon) * _M_PER_DEG * coslat
         return dn, de
 
-    def _obs(self) -> np.ndarray:
+    def _frame(self) -> np.ndarray:
         dn, de = self._err_ned()
         h = math.radians(self.boat.state.heading_deg)
         ch, sh = math.cos(h), math.sin(h)
@@ -102,6 +111,7 @@ class AnchorEnv:
     def step(self, action):
         th = float(np.clip(action[0], -1.0, 1.0))
         st = float(np.clip(action[1], -1.0, 1.0))
+        dth, dst = th - self._prev[0], st - self._prev[1]   # action rate (CAPS)
         env = self.env
         # Slow weather wander (exactly as simulator.step does it).
         if env.wind_variability > 0.0 or env.current_variability > 0.0:
@@ -126,6 +136,12 @@ class AnchorEnv:
         # penalties / wide deadbands were tried and consistently WRECKED the hold
         # (a single vectored thruster needs the thrust to hold the hard cases --
         # that energy cost is inherent to GPS spot-lock), so they were reverted.
-        reward = -dist - 0.08 * (th * th) - (0.6 if dist > self.radius_m else 0.0)
+        reward = (
+            -dist
+            - 0.08 * (th * th)
+            - (0.6 if dist > self.radius_m else 0.0)
+            - self.arate * (dth * dth + dst * dst)   # smooth thrust (no accuracy hit)
+        )
         done = self.t >= self.duration_s
-        return self._obs(), reward, done, {"dist": dist}
+        self._hist.append(self._frame())
+        return np.concatenate(self._hist), reward, done, {"dist": dist}
