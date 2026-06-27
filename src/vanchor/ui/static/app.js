@@ -26,7 +26,7 @@ function applyModePanels(mode) {
 }
 
 // stop has no panel of its own; show the manual panel when stopped.
-const panelFor = (m) => (m === "stop" ? "manual" : m);
+const panelFor = (m) => (m === "stop" ? "manual" : m === "anchor_ml" ? "anchor_hold" : m);
 
 function highlightRail() {
   document.querySelectorAll(".mode-btn[data-mode]").forEach((b) =>
@@ -59,6 +59,9 @@ VA.onTelemetry(function renderModes(t) {
   if (t.mode !== lastTelemetryMode) {
     lastTelemetryMode = t.mode;
     applyModePanels(panelFor(t.mode));
+    // Keep the ML toggle in sync with whichever spot-lock is actually running.
+    if (t.mode === "anchor_ml") mlBox.checked = true;
+    else if (t.mode === "anchor_hold") mlBox.checked = false;
   }
   highlightRail();
   updateCruise(t.cruise);
@@ -128,8 +131,9 @@ function updateDrift(t) {
 // ===== anchor + jog ========================================================
 const arSlider = $("ar");
 const holdHdgBox = $("hold-hdg");
+const mlBox = $("anchor-ml");
 function applyAnchor(redrop) {
-  const cmd = { type: "anchor_hold", radius_m: parseFloat(arSlider.value), hold_heading: holdHdgBox.checked };
+  const cmd = { type: mlBox.checked ? "anchor_ml" : "anchor_hold", radius_m: parseFloat(arSlider.value), hold_heading: holdHdgBox.checked };
   const last = VA.map.getLastAnchor();
   if (!redrop && last) cmd.anchor = { lat: last.lat, lon: last.lon };
   send(cmd);
@@ -137,6 +141,7 @@ function applyAnchor(redrop) {
 bindSlider("ar", "ar-val");
 arSlider.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
 holdHdgBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
+mlBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
 $("anchor-go").addEventListener("click", () => applyAnchor(true));
 [["jog-fwd", "forward"], ["jog-back", "back"], ["jog-left", "left"], ["jog-right", "right"]]
   .forEach(([id, direction]) => {
@@ -795,7 +800,7 @@ if (remoteToggle) remoteToggle.addEventListener("click", () => setRemote(true));
 const rmExit = $("rm-exit");
 if (rmExit) rmExit.addEventListener("click", () => setRemote(false));
 const rmBind = (id, fn) => { const el = $(id); if (el) el.addEventListener("click", fn); };
-rmBind("rm-anchor-here", () => send({ type: "anchor_hold", radius_m: 5 }));
+rmBind("rm-anchor-here", () => send({ type: mlBox.checked ? "anchor_ml" : "anchor_hold", radius_m: 5 }));
 rmBind("rm-stop", () => { rmThrust = 0; rmSteer = 0; rmUpdateManualState(); send({ type: "stop" }); });
 rmBind("rm-hold-hdg", () => send({ type: "heading_hold", throttle: 0.4 }));
 [["rm-jog-fwd", "forward"], ["rm-jog-back", "back"], ["rm-jog-left", "left"], ["rm-jog-right", "right"]]
