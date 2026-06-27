@@ -119,27 +119,13 @@ class AnchorEnv:
         self.t += self.dt
         dn, de = self._err_ned()
         dist = math.hypot(dn, de)
-        r_rate = math.radians(self.boat.yaw_rate_dps)
-        # Reward: stay in the watch circle with MINIMAL energy. A central deadband
-        # removes any incentive to thrash the motor to sit dead on the anchor
-        # (the cause of the brute-force, near-full-thrust local optimum). Past the
-        # deadband a gentle pull; once outside the circle a firm pull. The energy
-        # term then makes the policy idle and correct only as needed; a small
-        # anti-spin term discourages burning thrust to pirouette in place.
-        #
-        # HOLDING-FIRST: the linear distance pull is the job. A 1 m deadband just
-        # spares the motor the last metre. Modest energy + anti-rock + anti-spin
-        # nudges trim *some* waste without making the policy lazy -- an aggressive
-        # energy penalty was found to wreck the hold (and ES creeps thrust back up
-        # anyway, because a single vectored thruster needs it to hold the hard
-        # cases). So: hold tight, shave the obvious waste, accept the rest.
-        over = max(0.0, dist - self.deadband_m)
-        speed2 = self.boat.state.ground_ve ** 2 + self.boat.state.ground_vn ** 2
-        reward = (
-            -over
-            - 0.15 * (th * th)
-            - 0.04 * speed2
-            - 0.02 * (r_rate * r_rate)
-        )
+        # Reward (HOLDING-FIRST): a linear pull toward the anchor is the job; a
+        # firm extra penalty outside the watch circle keeps the boat in; a light
+        # energy term trims the most obvious waste. Empirically this is what
+        # reaches a tight ~80% / ~6 m hold across all scenarios. Stronger energy
+        # penalties / wide deadbands were tried and consistently WRECKED the hold
+        # (a single vectored thruster needs the thrust to hold the hard cases --
+        # that energy cost is inherent to GPS spot-lock), so they were reverted.
+        reward = -dist - 0.08 * (th * th) - (0.6 if dist > self.radius_m else 0.0)
         done = self.t >= self.duration_s
         return self._obs(), reward, done, {"dist": dist}
