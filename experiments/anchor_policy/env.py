@@ -30,7 +30,7 @@ _M_PER_DEG = 111320.0
 
 class AnchorEnv:
     def __init__(self, dt: float = 0.1, duration_s: float = 120.0, radius_m: float = 5.0,
-                 deadband_m: float = 2.0):
+                 deadband_m: float = 4.0):
         self.dt = dt
         self.duration_s = duration_s
         self.radius_m = radius_m
@@ -126,11 +126,18 @@ class AnchorEnv:
         # deadband a gentle pull; once outside the circle a firm pull. The energy
         # term then makes the policy idle and correct only as needed; a small
         # anti-spin term discourages burning thrust to pirouette in place.
+        #
+        # The deadband is wide (~circle radius) on purpose: a real anchor watch
+        # lets the boat drift *anywhere* inside the watch circle and only corrects
+        # near the edge. A narrow deadband makes the policy actively hold a tight
+        # point, which it does by bang-banging full thrust -> max energy waste.
         over = max(0.0, dist - self.deadband_m)
+        speed2 = self.boat.state.ground_ve ** 2 + self.boat.state.ground_vn ** 2
         reward = (
             -over
             - (0.8 if dist > self.radius_m else 0.0)
-            - 0.20 * (th * th)
+            - 0.6 * (th * th)        # ENERGY: strongly prefer idling over thrust
+            - 0.15 * speed2          # come to REST inside the circle, don't rock
             - 0.02 * (r_rate * r_rate)
         )
         done = self.t >= self.duration_s
