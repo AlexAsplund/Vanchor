@@ -612,7 +612,7 @@ environment:
   current_variability: 0.0    # slow session-scale wander of current, [0,1] (0 = steady)
 
 sensors:
-  gps_hz: 1.0
+  gps_hz: 5.0
   compass_hz: 5.0
   depth_hz: 2.0
   gps_noise_m: 0.35   # denoised plotter output (steady), not raw-receiver scatter
