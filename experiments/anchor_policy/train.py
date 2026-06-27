@@ -116,7 +116,7 @@ def main():
     n = proto.n_params
     theta = proto.get_params()
     m_adam = np.zeros(n); v_adam = np.zeros(n)
-    start_gen, best_val = 0, -1e18
+    start_gen, best_val, adam_t = 0, -1e18, 0
     b1, b2, eps_a = 0.9, 0.999, 1e-8
 
     state_path = os.path.join(CKPT_DIR, "state.npz")
@@ -124,6 +124,7 @@ def main():
         st = np.load(state_path)
         theta, m_adam, v_adam = st["theta"], st["m"], st["v"]
         start_gen, best_val = int(st["gen"]), float(st["best_val"])
+        adam_t = int(st["adam_t"]) if "adam_t" in st.files else start_gen
         print(f"resumed at gen {start_gen} (best_val={best_val:.1f}, params={n})")
     else:
         print(f"fresh start: {n} params, pop={args.pop}x2, workers={args.workers}, dt={args.dt}")
@@ -142,11 +143,14 @@ def main():
             up, um = util[:args.pop], util[args.pop:]
             grad = ((up - um)[:, None] * eps).sum(0) / (2 * args.pop * args.sigma)
             grad -= 0.001 * theta                       # mild L2
-            # Adam ascent
+            # Adam ascent (bias-correct with a MONOTONIC step that survives
+            # resume -- not gen-start_gen, which would reset after a restart and
+            # blow up the first few steps).
+            adam_t += 1
             m_adam = b1 * m_adam + (1 - b1) * grad
             v_adam = b2 * v_adam + (1 - b2) * (grad * grad)
-            mhat = m_adam / (1 - b1 ** (gen - start_gen + 1))
-            vhat = v_adam / (1 - b2 ** (gen - start_gen + 1))
+            mhat = m_adam / (1 - b1 ** adam_t)
+            vhat = v_adam / (1 - b2 ** adam_t)
             theta = theta + args.lr * mhat / (np.sqrt(vhat) + eps_a)
 
             if gen % 5 == 0 or gen == args.gens - 1:
@@ -166,13 +170,13 @@ def main():
                     TinyPolicy(sizes=SIZES, params=theta).save(
                         os.path.join(CKPT_DIR, "best_policy.json"))
                 np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
-                         gen=gen + 1, best_val=best_val)
+                         gen=gen + 1, best_val=best_val, adam_t=adam_t)
     except KeyboardInterrupt:
         print("\ninterrupted -- state is checkpointed; rerun to resume.")
     finally:
         pool.close(); pool.join()
         np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
-                 gen=gen + 1, best_val=best_val)
+                 gen=gen + 1, best_val=best_val, adam_t=adam_t)
         print("checkpoint saved.")
 
 
