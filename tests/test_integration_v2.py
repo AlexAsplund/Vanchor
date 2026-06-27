@@ -114,16 +114,18 @@ def test_drift_estimator_learns_the_drift():
 
 
 def test_anchor_anticipates_drift_and_holds_tight():
-    # With true ground velocity in COG/SOG, the controller's velocity term
-    # anticipates the drift -- it should hold ~100% within radius with little
-    # oscillation even under a strong wind + current.
+    # Wind and current are now true aerodynamic / hydrodynamic FORCES (not a
+    # kinematic position bias), so holding station means actively fighting them.
+    # The controller's velocity term still anticipates the drift and keeps the
+    # boat within radius nearly always -- with realistic darting as it works
+    # against the real load (the old <2 m assumed disturbance-free station-keep).
     from vanchor.analysis.metrics import anchor_metrics
     from vanchor.analysis.runner import run_scenario
     from vanchor.analysis.scenarios import SCENARIOS
 
     m = anchor_metrics(run_scenario(SCENARIOS["anchor_drift"]))
     assert m.within_radius_pct >= 95.0
-    assert m.steady_peak_to_peak_m < 2.0  # calm, not darting
+    assert m.steady_peak_to_peak_m < 4.0
 
 
 def test_anchor_hold_does_not_spin_on_station():

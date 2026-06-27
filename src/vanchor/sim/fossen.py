@@ -9,11 +9,19 @@ rate).
 The structure is inspired by the MIT-licensed Fossen "otter" USV from
 ``cybergalactic/PythonVehicleSimulator``:
 
-    (M_rb + M_a) * nu_dot + (D_lin + D_quad(nu)) * nu = tau
+    M * nu_dot + C(nu_r) * nu_r + (D_lin + D_quad(nu_r)) * nu_r = tau
 
-where ``nu = [u, v, r]`` are body velocities, ``M_rb`` is the rigid-body mass /
-inertia, ``M_a`` is added mass, ``D_lin`` / ``D_quad`` are linear and quadratic
-damping, and ``tau`` is the generalized force/moment produced by the thruster.
+where ``nu = [u, v, r]`` are body velocities, ``M = M_rb + M_a`` is the rigid-body
+plus added mass, ``C(nu)`` is the Coriolis-centripetal matrix (the body-frame /
+rotating-hull coupling + added-mass Munk moment -- NOT the negligible planetary
+Earth-rotation Coriolis effect), ``D_lin`` / ``D_quad`` are linear and quadratic
+damping, and ``tau`` is the generalized
+force/moment from the thruster plus the aerodynamic wind force. The hydrodynamic
+terms act on the velocity **through the water** ``nu_r = nu - nu_c`` (so a current
+advects the hull and is felt as drag), while the kinematics integrate the
+absolute velocity ``nu``. Wind enters ``tau`` as a quadratic aerodynamic force /
+yaw moment (not a fixed leeway), so leeway and weathervaning emerge from the
+force balance.
 
 Thrust mapping: this models a **single steerable trolling motor mounted at the
 bow**, at a signed longitudinal offset ``thruster_x_m`` from the centre of
@@ -36,8 +44,8 @@ the damping / added-mass matrices makes the boat visibly "crab" (sway) during a
 turn.
 
 Integration is semi-implicit Euler: solve for ``nu_dot``, advance ``nu``, then
-update heading by ``r*dt`` and the NED position from the body velocity rotated
-into the local tangent plane plus the environmental drift.
+update heading by ``r*dt`` and the NED position from the absolute body velocity
+rotated into the local tangent plane (current/wind already live inside ``nu``).
 """
 
 from __future__ import annotations
@@ -52,6 +60,14 @@ from ..core.geo import normalize_deg, offset_meters
 from ..core.models import BoatState, Environment, GeoPoint, MotorCommand
 
 logger = logging.getLogger("vanchor.sim")
+
+# Aerodynamic wind-force constants (Fossen Handbook ch. 10 / OCIMF / Isherwood).
+# A small-craft approximation: C_X≈cx·cos γ, C_Y≈cy·sin γ, C_N≈cn·sin 2γ on the
+# apparent (relative) wind. See FossenBoat._tau_wind.
+RHO_AIR = 1.225  # kg/m^3
+WIND_CX = 0.6
+WIND_CY = 0.9
+WIND_CN = 0.1
 
 
 @dataclass
@@ -142,6 +158,13 @@ class FossenParams:
         # balance and producing a non-physical negative linear drag.
         self.x_u: float = -max(x_u_mag, 1.0)
 
+        # Above-water windage areas for the aerodynamic wind force, derived from
+        # geometry assuming a low skiff freeboard (~0.35 m frontal, ~0.45 m
+        # lateral profile). Defaults: A_F≈0.6 m^2, A_L≈1.85 m^2 for the 4.1 m
+        # boat -- matching typical small-craft wind-tunnel reference areas.
+        self.area_front: float = self.beam * 0.35
+        self.area_lateral: float = self.length * 0.45
+
 
 class FossenBoat:
     """A 3-DOF surge-sway-yaw boat. Drop-in for :class:`~vanchor.sim.boat.Boat`."""
@@ -174,6 +197,11 @@ class FossenBoat:
             ],
             dtype=float,
         )
+
+        # Added mass must be symmetric (Fossen: M_A = M_Aᵀ for a port/starboard
+        # symmetric hull). Enforce it so a user setting y_rdot ≠ n_vdot can't make
+        # the model physically inconsistent (and so C(ν) via m2c stays exact).
+        m_a = 0.5 * (m_a + m_a.T)
 
         self._mass_matrix = m_rb + m_a
         self._mass_inv = np.linalg.inv(self._mass_matrix)
@@ -226,6 +254,78 @@ class FossenBoat:
         yaw_moment = p.thruster_x_m * fy - p.thruster_y_m * fx
         return np.array([fx, fy, yaw_moment], dtype=float)
 
+    def _coriolis(self, nu: np.ndarray) -> np.ndarray:
+        """Coriolis-centripetal matrix C(ν) = C_RB + C_A.
+
+        NOT the planetary (Earth-rotation) Coriolis effect -- that is ~0.06 N for
+        this boat and is correctly ignored. This is the *body-frame* Coriolis-
+        centripetal coupling: the fictitious-force terms that arise from writing
+        the dynamics in the hull-fixed frame (which rotates as the boat yaws),
+        plus the added-mass "Munk moment" (C_A). It scales with the boat's OWN
+        motion (u·r, v·r), so it matters precisely when the boat is turning --
+        regardless of vessel size.
+
+        Computed by Fossen's ``m2c`` 3-DOF formula on the full (symmetric) mass
+        matrix -- the same term the otter USV uses. Skew-symmetric (νᵀC ν ≡ 0).
+        This is the centripetal sway/yaw coupling that makes the boat crab
+        *into* a turn; omitting it (as before) inverted the crab and overstated
+        sway by ~4× in hard turns.
+        """
+        m = self._mass_matrix
+        u, v, r = nu
+        c02 = -m[1, 1] * v - m[1, 2] * r
+        c12 = m[0, 0] * u
+        return np.array(
+            [[0.0, 0.0, c02], [0.0, 0.0, c12], [-c02, -c12, 0.0]], dtype=float
+        )
+
+    def _current_body(self, env: Environment, heading_deg: float) -> np.ndarray:
+        """The water current expressed in the body frame ``[u_c, v_c, 0]``.
+
+        The hull is advected by the water, so the hydrodynamic forces act on the
+        velocity *relative to the water* ν_r = ν − ν_c (not the ground velocity).
+        """
+        if env.current_speed == 0.0:
+            return np.zeros(3, dtype=float)
+        ce = env.current_speed * math.sin(math.radians(env.current_dir))
+        cn = env.current_speed * math.cos(math.radians(env.current_dir))
+        h = math.radians(heading_deg)
+        u_c = cn * math.cos(h) + ce * math.sin(h)
+        v_c = -cn * math.sin(h) + ce * math.cos(h)
+        return np.array([u_c, v_c, 0.0], dtype=float)
+
+    def _tau_wind(self, env: Environment, nu: np.ndarray, heading_deg: float) -> np.ndarray:
+        """Aerodynamic wind force/moment ``[X, Y, N]`` on the above-water hull.
+
+        Quadratic in the *apparent* (relative) wind: τ_wind = ½ρ_air·C(γ)·A·V_rw²
+        (Fossen ch. 10 / OCIMF). Unlike a fixed leeway fraction this is
+        heading-dependent, produces a yaw moment (weathervaning -- the dominant
+        disturbance a heading/anchor-hold autopilot must reject), grows with V²,
+        and exerts a real force the thruster must fight. Leeway then *emerges*
+        from this sway force balanced against the hull's sway damping.
+        """
+        p = self.params
+        vw = env.wind_speed
+        if vw <= 0.0:
+            return np.zeros(3, dtype=float)
+        psi = math.radians(heading_deg)
+        bw = math.radians(env.wind_dir)  # "toward which the wind pushes"
+        wu = vw * math.cos(bw - psi)  # wind velocity in the body frame
+        wv = vw * math.sin(bw - psi)
+        # Apparent wind = wind velocity minus the boat's own motion. The drag
+        # force acts ALONG it (downwind), so gw is its body-frame angle (no sign
+        # flip -- the cross-checked beam-on magnitude is ½ρ·cy·A_L·V² ≈ 54 N at
+        # 7 m/s, and a beam wind gives zero yaw).
+        aw_u = wu - nu[0]
+        aw_v = wv - nu[1]
+        vrw = math.hypot(aw_u, aw_v)
+        gw = math.atan2(aw_v, aw_u)
+        q = 0.5 * RHO_AIR * vrw * vrw
+        x = q * WIND_CX * math.cos(gw) * p.area_front
+        y = q * WIND_CY * math.sin(gw) * p.area_lateral
+        n = q * WIND_CN * math.sin(2.0 * gw) * p.area_lateral * p.length
+        return np.array([x, y, n], dtype=float)
+
     # ------------------------------------------------------------------ #
     # Integration
     # ------------------------------------------------------------------ #
@@ -235,10 +335,19 @@ class FossenBoat:
         s = self.state
         nu = self._nu
 
-        # Solve M * nu_dot + D(nu) * nu = tau  ->  nu_dot.
-        tau = self._tau(command)
-        damping = self._damping(nu)
-        nu_dot = self._mass_inv @ (tau - damping @ nu)
+        # Current advects the hull: the hydrodynamic forces (Coriolis + damping)
+        # act on the velocity through the WATER, nu_r = nu - nu_c, not the ground
+        # velocity. Wind enters as an aerodynamic force on tau. Position then
+        # integrates the ABSOLUTE velocity nu, so the boat genuinely drifts with
+        # the water (nu relaxes toward nu_c under drag) -- no kinematic offset.
+        nu_c = self._current_body(env, s.heading_deg)
+        nu_r = nu - nu_c
+
+        # Solve M*nu_dot + C(nu_r)*nu_r + D(nu_r)*nu_r = tau_thrust + tau_wind.
+        tau = self._tau(command) + self._tau_wind(env, nu, s.heading_deg)
+        cor = self._coriolis(nu_r)
+        damping = self._damping(nu_r)
+        nu_dot = self._mass_inv @ (tau - cor @ nu_r - damping @ nu_r)
 
         # Semi-implicit Euler: advance the velocities first.
         nu = nu + nu_dot * dt
@@ -248,21 +357,21 @@ class FossenBoat:
         # Heading from the yaw rate (r is rad/s).
         s.heading_deg = normalize_deg(s.heading_deg + math.degrees(r) * dt)
 
-        # Rotate the body velocity into NED. Heading 0 = north, +heading =
-        # clockwise (toward east); +sway (v) is to starboard.
+        # Rotate the absolute body velocity into NED -> velocity over ground.
+        # Heading 0 = north, +heading = clockwise (toward east); +sway (v) is to
+        # starboard. Current/wind already live inside nu, so nothing is added.
         h = math.radians(s.heading_deg)
         sin_h, cos_h = math.sin(h), math.cos(h)
         north = u * cos_h - v * sin_h
         east = u * sin_h + v * cos_h
+        s.ground_ve = east
+        s.ground_vn = north
+        s.point = offset_meters(s.point, east * dt, north * dt)
 
-        de, dn = env.drift_vector()
-        s.ground_ve = east + de
-        s.ground_vn = north + dn
-        s.point = offset_meters(s.point, s.ground_ve * dt, s.ground_vn * dt)
-
-        # Scalar forward speed exposed to the rest of the system (speed through
-        # the water along the hull's velocity vector).
-        s.speed_mps = math.hypot(u, v)
+        # Forward speed THROUGH THE WATER (|nu_r|) for the rest of the system;
+        # speed-over-ground = hypot(ground_ve, ground_vn) and differs when a
+        # current flows.
+        s.speed_mps = math.hypot(u - nu_c[0], v - nu_c[1])
         s.timestamp += dt
 
     def teleport(self, point: GeoPoint, heading: float | None = None) -> None:

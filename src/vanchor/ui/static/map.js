@@ -773,19 +773,55 @@
   });
 
   // ---- depth overlay -----------------------------------------------------
-  function depthColor(d, min, max) {
+  // Selectable depth palettes (#palette). Two opposing chart conventions per the
+  // research doc (docs/research/depth-map-design.md §1–2), and DELIBERATELY not
+  // mixed within one ramp:
+  //   "angler"  — high-contrast, shallow = warm/light, deep = dark (the public's
+  //               stated preference): coral shoal -> amber -> sand -> teal ->
+  //               blue -> deep navy.
+  //   "nautical" — S-52 / Navionics navigational convention: shallow = saturated
+  //               dark blue (= danger, stands out), deep = pale near-white. Hexes
+  //               blend the S-52 DAY_BRIGHT four-shade table with the GEBCO-style
+  //               smooth blue ramp so the offscreen upscale yields a continuous
+  //               field rather than hard bands.
+  const DEPTH_PALETTES = {
+    angler: {
+      label: "Angler",
+      // shallow -> deep
+      stops: [
+        [0.0, [201, 76, 60]], [0.15, [232, 163, 61]], [0.35, [233, 217, 122]],
+        [0.55, [121, 197, 163]], [0.75, [61, 143, 181]], [1.0, [31, 79, 122]],
+      ],
+    },
+    nautical: {
+      label: "Nautical",
+      // shallow (saturated blue) -> deep (pale near-white)
+      stops: [
+        [0.0, [63, 117, 186]], [0.18, [98, 153, 207]], [0.40, [152, 197, 242]],
+        [0.62, [186, 213, 225]], [0.82, [212, 234, 238]], [1.0, [240, 249, 255]],
+      ],
+    },
+  };
+  const PALETTE_KEY = "vanchor-depth-palette";
+  let depthPalette = (function () {
+    try { const v = localStorage.getItem(PALETTE_KEY); if (v && DEPTH_PALETTES[v]) return v; }
+    catch (e) { /* ignore */ }
+    return "angler";
+  })();
+
+  function depthColorRGB(d, min, max) {
     const span = max - min;
     const f = span > 1e-6 ? Math.max(0, Math.min(1, (d - min) / span)) : 0.5;
-    const stops = [
-      [0.0, [215, 48, 31]], [0.2, [252, 141, 89]], [0.4, [254, 224, 139]],
-      [0.6, [145, 207, 96]], [0.8, [69, 117, 180]], [1.0, [49, 54, 135]],
-    ];
+    const stops = (DEPTH_PALETTES[depthPalette] || DEPTH_PALETTES.angler).stops;
     let a = stops[0], b = stops[stops.length - 1];
     for (let i = 0; i < stops.length - 1; i++) {
       if (f >= stops[i][0] && f <= stops[i + 1][0]) { a = stops[i]; b = stops[i + 1]; break; }
     }
     const tt = b[0] === a[0] ? 0 : (f - a[0]) / (b[0] - a[0]);
-    const c = a[1].map((ch, i) => Math.round(ch + (b[1][i] - ch) * tt));
+    return a[1].map((ch, i) => Math.round(ch + (b[1][i] - ch) * tt));
+  }
+  function depthColor(d, min, max) {
+    const c = depthColorRGB(d, min, max);
     return `rgb(${c[0]},${c[1]},${c[2]})`;
   }
   // ---- sonar-cone footprint (#47) ----------------------------------------
@@ -866,6 +902,51 @@
     renderDepthDots();
   }
 
+  // ---- relief / hillshade + depth-range highlight state (#relief #highlight)
+  // Both ride INSIDE the fast offscreen grid pass (no per-pixel canvas filters):
+  // the shade is baked per-lattice-cell into the same low-res offscreen that is
+  // then upscaled in one blit. Persisted toggles, mirrored into the layers panel
+  // + Settings.
+  const RELIEF_KEY = "vanchor-depth-relief";
+  let reliefShow = (function () {
+    try { const v = localStorage.getItem(RELIEF_KEY); if (v === "0") return false; if (v === "1") return true; }
+    catch (e) { /* ignore */ }
+    return true;     // sensible default: relief ON (the most-praised look)
+  })();
+  // Light from the NW (azimuth 315°, elevation 45°) per the research doc §5.
+  // Precompute the light vector in screen/grid space: +x = east, +y = south
+  // (canvas y grows downward), z up. azimuth measured clockwise from north.
+  const HILLSHADE = (function () {
+    const azDeg = 315, elDeg = 45;
+    const az = azDeg * Math.PI / 180, el = elDeg * Math.PI / 180;
+    const cosEl = Math.cos(el);
+    // direction the light comes FROM, projected to grid axes (i = north→+, j = east→+)
+    return {
+      // light vector components in (east, north, up)
+      lx: cosEl * Math.sin(az),     // east component
+      ly: cosEl * Math.cos(az),     // north component
+      lz: Math.sin(el),             // up
+      strength: 0.32,               // composite strength (~32%, research §5)
+      zScale: 4.0,                  // vertical exaggeration so subtle ledges read
+    };
+  })();
+
+  // Depth-range highlight (Humminbird LakeMaster style, research §8). Cells whose
+  // depth is within [hlMin, hlMax] get a bright green glow; the rest are dimmed
+  // slightly so the band "lights up" across the whole map.
+  const HL_KEY = "vanchor-depth-highlight";
+  const hlState = (function () {
+    const def = { on: false, min: 3, max: 5 };
+    try {
+      const raw = localStorage.getItem(HL_KEY);
+      if (raw) { const o = JSON.parse(raw); if (o && typeof o === "object") return Object.assign(def, o); }
+    } catch (e) { /* ignore */ }
+    return def;
+  })();
+  function saveHlState() {
+    try { localStorage.setItem(HL_KEY, JSON.stringify(hlState)); } catch (e) { /* ignore */ }
+  }
+
   // ---- averaged colored depth grid (canvas overlay) ----------------------
   // A real depth-chart look: the backend buckets ~100k soundings into cells of
   // cell_m metres and returns one averaged depth per cell. We paint every cell
@@ -940,8 +1021,32 @@
       this._min = Number.isFinite(min) ? min : 0;
       this._max = Number.isFinite(max) ? max : 1;
       this._cellM = Number.isFinite(cellM) && cellM > 0 ? cellM : null;
+      this._buildField();
       this._forceDraw = true;        // new data → always repaint
       this._scheduleReset();
+    },
+    // Index the cells onto an integer (i,j) metric lattice (i = north, j = east)
+    // and store each cell's depth keyed "i,j". This lets the hillshade pass read
+    // a cell's N/S and E/W neighbours to estimate the bottom gradient — the same
+    // lattice ContourLayer builds for marching squares. Built once per setData.
+    _buildField() {
+      this._field = null;
+      const cells = this._cells;
+      if (!cells || cells.length < 4) return;
+      let lat0 = Infinity, lon0 = Infinity;
+      for (const k of cells) { if (!k) continue; if (k.lat < lat0) lat0 = k.lat; if (k.lon < lon0) lon0 = k.lon; }
+      const cellM = this._cellM || 5;
+      const cosLat = Math.cos(lat0 * Math.PI / 180) || 1e-6;
+      const dlat = cellM / 111320, dlon = dlat / cosLat;
+      const f = new Map();
+      for (const k of cells) {
+        if (!k) continue;
+        const i = Math.round((k.lat - lat0) / dlat);
+        const j = Math.round((k.lon - lon0) / dlon);
+        k._i = i; k._j = j;            // remember each cell's lattice index
+        f.set(i + "," + j, +k.depth);
+      }
+      this._field = { f, cellM };
     },
     _reset() {
       const c = this._canvas, m = this._map;
@@ -965,28 +1070,33 @@
       if (!cells || !cells.length) return;
       const min = this._min, max = this._max;
       const bounds = m.getBounds().pad(0.25);
-      // Hoist bounds getters out of the per-cell hot loop.
       const bS = bounds.getSouth(), bN = bounds.getNorth(), bW = bounds.getWest(), bE = bounds.getEast();
-      // Measured cells paint at full overlay opacity; radiated (nearest-
-      // neighbour assumed) cells are solid but noticeably more transparent so
-      // the measured -> assumed hierarchy reads at a glance.
-      const ALPHA_MEASURED = 0.62, ALPHA_RADIATED = 0.34;
-      ctx.globalAlpha = ALPHA_MEASURED;
-      // Cell half-extent in degrees (lon half scaled by latitude). When the
-      // backend reports cell_m we draw true-sized cells; otherwise we infer a
-      // small footprint so points still read as a filled patch.
       const cellM = this._cellM || 5;
-      const halfLatDeg = (cellM / 2) / 111320;
-      // Cells are a uniform metric lattice, so over one (small) viewport their
-      // on-screen size is effectively constant. Compute the cell box size in px
-      // ONCE from the metres-per-pixel at the view centre, so the per-cell loop
-      // only needs ONE projection (the cell centre) instead of two corners —
-      // halving the dominant latLngToContainerPoint cost. (perf)
+      // One projection per cell (cells are a uniform metric lattice, so on-screen
+      // size is ~constant over the viewport — derive it once from m/px).
       const centerLat = (bS + bN) / 2;
       const mpp = (40075016.686 * Math.cos((centerLat * Math.PI) / 180)) / Math.pow(2, m.getZoom() + 8);
-      // +1px so adjacent cells overlap slightly and tile without gaps.
-      const w = cellM / mpp + 1, h = w;
-      const halfW = w / 2, halfH = h / 2;
+      const wpx = cellM / mpp;            // cell size on screen (CSS px)
+
+      // Relief: precompute the per-lattice gradient → Lambert shade factor once.
+      // light·normal in [0..1]; we map to a multiply/screen tint baked into each
+      // blob's colour (NO per-pixel canvas filter — all in the cheap offscreen).
+      const fd = this._field;
+      const doRelief = reliefShow && fd && fd.f.size > 3;
+      // Depth-range highlight (#highlight): cells in [hlMin,hlMax] glow green; the
+      // rest are dimmed. Cheap recolour at blob time.
+      const doHl = hlState.on;
+      const hlLo = Math.min(hlState.min, hlState.max), hlHi = Math.max(hlState.min, hlState.max);
+
+      // SMOOTH SURFACE, fast: project the visible cells, paint them SHARP into a
+      // small low-res offscreen, then blit it up to full size with bilinear
+      // smoothing. One GPU upscale turns the blocky mosaic into a continuous
+      // bathymetric field — far cheaper than a per-cell blur (which hangs).
+      const xs = [], ys = [], cols = [];
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const f = fd ? fd.f : null;
+      // Horizontal grid spacing in metres for the slope (one cell).
+      const cellMeters = cellM || 5;
       for (let i = 0; i < cells.length; i++) {
         const k = cells[i];
         if (!k) continue;
@@ -994,46 +1104,166 @@
         if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(d)) continue;
         if (lat < bS || lat > bN || lon < bW || lon > bE) continue;
         const pc = m.latLngToContainerPoint([lat, lon]);
-        const x = pc.x - halfW, y = pc.y - halfH;
-        // Classify by kind (back-compat: missing kind -> est? interp : measured).
-        const kind = k.kind || (k.est === true ? "interp" : "measured");
-        ctx.fillStyle = depthColor(d, min, max);
-        // Radiated cells are the same depth colour but drawn more transparent.
-        ctx.globalAlpha = kind === "radiated" ? ALPHA_RADIATED : ALPHA_MEASURED;
-        ctx.fillRect(x, y, w, h);
-        // Interpolated (enclosed-gap) cells: same depth color, but overlaid
-        // with thin gray diagonal hatching so they clearly read as "guessed".
-        if (kind === "interp") {
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(x, y, w, h);
-          ctx.clip();
-          ctx.globalAlpha = 0.9;
-          ctx.strokeStyle = "rgba(60,60,60,0.85)";
-          ctx.lineWidth = 0.75;
-          const step = 4;  // px between hatch lines
-          // Diagonal lines (top-left → bottom-right) across the cell box.
-          for (let o = -h; o < w; o += step) {
-            ctx.moveTo(x + o, y);
-            ctx.lineTo(x + o + h, y + h);
+        let rgb = depthColorRGB(d, min, max);
+
+        if (doRelief && k._i !== undefined) {
+          // Central differences on DEPTH (positive = deeper). Treat the bottom as
+          // an elevation = -depth so a shoaling ledge (gets shallower toward the
+          // light) catches light. Fall back to the centre cell at gaps.
+          const ii = k._i, jj = k._j;
+          const dN = f.get((ii + 1) + "," + jj), dS = f.get((ii - 1) + "," + jj);
+          const dE = f.get(ii + "," + (jj + 1)), dW = f.get(ii + "," + (jj - 1));
+          const zN = -(dN === undefined ? d : dN), zS = -(dS === undefined ? d : dS);
+          const zE = -(dE === undefined ? d : dE), zW = -(dW === undefined ? d : dW);
+          // gradient of elevation: d/dEast, d/dNorth (metres per metre)
+          const gE = (zE - zW) / (2 * cellMeters) * HILLSHADE.zScale;
+          const gN = (zN - zS) / (2 * cellMeters) * HILLSHADE.zScale;
+          // surface normal ~ (-gE, -gN, 1); Lambert with the NW light vector.
+          const inv = 1 / Math.sqrt(gE * gE + gN * gN + 1);
+          let dot = (-gE * HILLSHADE.lx + (-gN) * HILLSHADE.ly + HILLSHADE.lz) * inv;
+          if (dot < 0) dot = 0; if (dot > 1) dot = 1;
+          // shade in [-1..1]: >0 lit (lighten), <0 in shadow (darken), at strength.
+          const shade = (dot - 0.5) * 2 * HILLSHADE.strength;
+          if (shade >= 0) {
+            rgb = [rgb[0] + (255 - rgb[0]) * shade, rgb[1] + (255 - rgb[1]) * shade, rgb[2] + (255 - rgb[2]) * shade];
+          } else {
+            const s = 1 + shade;        // darken toward black
+            rgb = [rgb[0] * s, rgb[1] * s, rgb[2] * s];
           }
-          ctx.stroke();
-          ctx.restore();
-          ctx.globalAlpha = 0.62;
         }
+
+        let inBand = false;
+        if (doHl) {
+          inBand = d >= hlLo && d <= hlHi;
+          if (inBand) {
+            // bright green glow: blend strongly toward green, keep some depth tint.
+            rgb = [rgb[0] * 0.25 + 51 * 0.75, rgb[1] * 0.25 + 220 * 0.75, rgb[2] * 0.25 + 71 * 0.75];
+          } else {
+            rgb = [rgb[0] * 0.55, rgb[1] * 0.55, rgb[2] * 0.6];   // dim the rest
+          }
+        }
+
+        xs.push(pc.x); ys.push(pc.y);
+        cols.push(`rgb(${Math.round(rgb[0])},${Math.round(rgb[1])},${Math.round(rgb[2])})`);
+        if (pc.x < minX) minX = pc.x; if (pc.x > maxX) maxX = pc.x;
+        if (pc.y < minY) minY = pc.y; if (pc.y > maxY) maxY = pc.y;
       }
+      if (!xs.length) return;
+      const pad = wpx + 6;
+      minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+      const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+      const SCALE = 0.5;                  // offscreen resolution vs screen
+      const ow = Math.max(1, Math.round(bw * SCALE)), oh = Math.max(1, Math.round(bh * SCALE));
+      const off = document.createElement("canvas");
+      off.width = ow; off.height = oh;
+      const octx = off.getContext("2d");
+      // Generous blobs so the (sparse, ribbon-like) soundings melt into a solid,
+      // continuous surface rather than faint scattered dots.
+      const rs = Math.max(3.5, wpx * SCALE * 2.6);   // big enough to merge solidly
+      for (let i = 0; i < xs.length; i++) {
+        octx.fillStyle = cols[i];
+        octx.fillRect((xs[i] - minX) * SCALE - rs / 2, (ys[i] - minY) * SCALE - rs / 2, rs, rs);
+      }
+      // Bold + opaque; the half-res bilinear upscale supplies the smoothing
+      // (no extra blur — that just thins a narrow survey ribbon).
+      ctx.globalAlpha = 0.92;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(off, 0, 0, ow, oh, minX, minY, bw, bh);
       ctx.globalAlpha = 1;
     },
   }));
   const gridLayer = new GridLayer();
+
+  // ---- contour polyline chaining + Chaikin smoothing (#chaikin) -----------
+  // Marching squares emits disjoint segments; to smooth an isobath we first chain
+  // segments that share an endpoint into continuous polylines, then apply Chaikin
+  // corner-cutting so the blocky lattice zigzag becomes a smooth curve. Endpoints
+  // are quantised to a small grid so floating-point near-matches still join.
+  // Input: flat [x0,y0,x1,y1,...]. Output: array of polylines (each [x,y,...]).
+  function chainSegments(seg) {
+    const Q = 2;                                  // quantise key (px) for joins
+    const key = (x, y) => Math.round(x / Q) + ":" + Math.round(y / Q);
+    const adj = new Map();                        // node key -> [{to, x0,y0,x1,y1, used}]
+    const node = (k) => { let a = adj.get(k); if (!a) { a = []; adj.set(k, a); } return a; };
+    const edges = [];
+    for (let s = 0; s < seg.length; s += 4) {
+      const x0 = seg[s], y0 = seg[s + 1], x1 = seg[s + 2], y1 = seg[s + 3];
+      const ka = key(x0, y0), kb = key(x1, y1);
+      const e = { ka, kb, x0, y0, x1, y1, used: false };
+      edges.push(e);
+      node(ka).push(e); node(kb).push(e);
+    }
+    const lines = [];
+    for (const start of edges) {
+      if (start.used) continue;
+      // Walk forward from this edge, then backward, building one polyline.
+      const pts = [start.x0, start.y0, start.x1, start.y1];
+      start.used = true;
+      // forward: extend from the current tail key
+      let tailKey = start.kb, tx = start.x1, ty = start.y1;
+      let grew = true;
+      while (grew) {
+        grew = false;
+        const cand = adj.get(tailKey);
+        if (!cand) break;
+        for (const e of cand) {
+          if (e.used) continue;
+          if (e.ka === tailKey) { pts.push(e.x1, e.y1); tx = e.x1; ty = e.y1; tailKey = e.kb; }
+          else if (e.kb === tailKey) { pts.push(e.x0, e.y0); tx = e.x0; ty = e.y0; tailKey = e.ka; }
+          else continue;
+          e.used = true; grew = true; break;
+        }
+      }
+      // backward from the head
+      let headKey = start.ka;
+      grew = true;
+      while (grew) {
+        grew = false;
+        const cand = adj.get(headKey);
+        if (!cand) break;
+        for (const e of cand) {
+          if (e.used) continue;
+          if (e.ka === headKey) { pts.unshift(e.x1, e.y1); headKey = e.kb; }
+          else if (e.kb === headKey) { pts.unshift(e.x0, e.y0); headKey = e.ka; }
+          else continue;
+          e.used = true; grew = true; break;
+        }
+      }
+      lines.push(pts);
+    }
+    return lines;
+  }
+  // Chaikin corner-cutting on a flat [x,y,...] polyline. `iter` passes (1–2).
+  // Detects a closed ring (first ≈ last) and keeps it closed.
+  function chaikin(pts, iter) {
+    for (let it = 0; it < iter; it++) {
+      const n = pts.length;
+      if (n < 6) break;                           // <3 points: nothing to cut
+      const closed = Math.abs(pts[0] - pts[n - 2]) < 0.6 && Math.abs(pts[1] - pts[n - 1]) < 0.6;
+      const out = [];
+      if (!closed) { out.push(pts[0], pts[1]); }
+      const last = n - 2;
+      for (let i = 0; i < last; i += 2) {
+        const ax = pts[i], ay = pts[i + 1], bx = pts[i + 2], by = pts[i + 3];
+        out.push(ax + (bx - ax) * 0.25, ay + (by - ay) * 0.25);
+        out.push(ax + (bx - ax) * 0.75, ay + (by - ay) * 0.75);
+      }
+      if (!closed) { out.push(pts[last], pts[last + 1]); }
+      else { out.push(out[0], out[1]); }          // re-close the ring
+      pts = out;
+    }
+    return pts;
+  }
 
   // ---- depth contours (isobaths via marching squares) (#105) -------------
   // A separate, toggleable cartographic overlay: thin isobath lines computed
   // CLIENT-SIDE from the very same gridded depth cells the colored heatmap
   // uses (no backend/API change). We rebuild a regular (i,j) scalar field from
   // the cells (snapping each to its lattice index via cell_m), run marching
-  // squares per cell at each isobath level, and stroke the segments. Deeper
-  // isobaths are drawn darker; a few segments carry inline depth labels.
+  // squares per cell at each isobath level, then chain the segments into
+  // polylines, Chaikin-smooth them, and stroke. Deeper isobaths read stronger; a
+  // few points carry inline depth labels.
   // Default off; registered in the unified layers panel + persisted.
   const ContourLayer = L.Layer.extend(Object.assign({}, CanvasOverlayMixin, {
     onAdd(m) {
@@ -1095,8 +1325,8 @@
     _levels() {
       let lo = Math.ceil(this._min), hi = Math.floor(this._max);
       if (!(hi > lo)) return [];
-      let step = 1;
-      while ((hi - lo) / step > 24) step *= 2;   // cap ~24 isobaths
+      let step = 2;                               // ~2 m isobaths (less clutter)
+      while ((hi - lo) / step > 14) step *= 2;    // cap the line count
       const out = [];
       for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) out.push(v);
       return out;
@@ -1146,7 +1376,7 @@
       };
       const get = (i, j) => f.get(i + "," + j);
 
-      const labelEvery = 7;            // sample inline labels sparsely
+      const labelEvery = 14;           // sample inline labels sparsely
       let labelTick = 0;
       ctx.lineWidth = 1;
       ctx.lineJoin = "round";
@@ -1235,24 +1465,37 @@
         const seg = segsByLvl[l];
         if (!seg.length && !labelsByLvl[l].length) continue;
         const lvl = levels[l];
-        // Deeper isobaths darker: shade from light to dark with depth.
-        const t = Math.max(0, Math.min(1, (lvl - this._min) / span));
-        const shade = Math.round(210 - t * 150);   // 210 (shallow) -> 60 (deep)
-        ctx.strokeStyle = `rgba(${shade},${shade},${shade},0.85)`;
-        ctx.lineWidth = 1;
+        // Thin, semi-transparent WHITE isobaths (Navionics / nautical-chart
+        // style): clean accents over the colour-shaded surface. Major lines
+        // (every 5 m) read stronger; a bold warm SHOAL/safety contour flags
+        // shallow water (a praised Humminbird-LakeMaster-style feature).
+        const major = lvl % 5 === 0;
+        const safety = lvl <= 3;            // shoal-warning isobath (<= 3 m)
+        if (safety) {
+          ctx.strokeStyle = "rgba(255,110,80,0.92)"; ctx.lineWidth = 1.8;
+        } else {
+          ctx.strokeStyle = major ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.38)";
+          ctx.lineWidth = major ? 1.0 : 0.7;
+        }
+        // Chain the disjoint marching-squares segments into polylines, then
+        // Chaikin-smooth (2 passes) so the blocky lattice zigzag becomes a smooth
+        // isobath curve before stroking. (#chaikin)
         ctx.beginPath();
-        for (let s = 0; s < seg.length; s += 4) {
-          ctx.moveTo(seg[s], seg[s + 1]);
-          ctx.lineTo(seg[s + 2], seg[s + 3]);
+        const lines = chainSegments(seg);
+        for (let li = 0; li < lines.length; li++) {
+          const poly = chaikin(lines[li], 2);
+          if (poly.length < 4) continue;
+          ctx.moveTo(poly[0], poly[1]);
+          for (let p = 2; p < poly.length; p += 2) ctx.lineTo(poly[p], poly[p + 1]);
         }
         ctx.stroke();
         const labs = labelsByLvl[l];
-        if (labs.length) {
+        if (labs.length && (major || safety)) {   // label major + shoal isobaths
           const txt = lvl.toFixed(0);
           ctx.save();
           ctx.globalAlpha = 0.9;
-          ctx.fillStyle = `rgba(${Math.max(0, shade - 30)},${Math.max(0, shade - 30)},${Math.max(0, shade - 30)},0.95)`;
-          ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.55)";
+          ctx.fillStyle = "rgba(255,255,255,0.95)";
+          ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.6)";
           for (let p = 0; p < labs.length; p += 2) {
             ctx.strokeText(txt, labs[p], labs[p + 1]);
             ctx.fillText(txt, labs[p], labs[p + 1]);
@@ -1416,6 +1659,123 @@
     if (on && !map.hasLayer(contourProxy)) contourProxy.addTo(map);
     else if (!on && map.hasLayer(contourProxy)) map.removeLayer(contourProxy);
     contourSyncing = false;
+  }
+
+  // ---- relief / hillshade toggle (#relief) -------------------------------
+  // Relief is a render MODE of the existing grid layer (the shade is baked into
+  // the same offscreen pass), so toggling it just flips the flag and forces the
+  // grid to repaint — no separate canvas. A proxy layer fronts the control
+  // checkbox so it lives in the unified layers panel alongside Depth/Contours.
+  const reliefProxy = L.layerGroup();
+  let reliefSyncing = false;
+  function repaintGrid() {
+    if (depthShow && map.hasLayer(gridLayer)) { gridLayer._forceDraw = true; gridLayer._scheduleReset(); }
+  }
+  function setReliefShow(on) {
+    on = !!on;
+    reliefShow = on;
+    try { localStorage.setItem(RELIEF_KEY, on ? "1" : "0"); } catch (e) { /* ignore */ }
+    repaintGrid();
+    const box = document.getElementById("relief-show");
+    if (box) box.checked = on;
+    reliefSyncing = true;
+    if (on && !map.hasLayer(reliefProxy)) reliefProxy.addTo(map);
+    else if (!on && map.hasLayer(reliefProxy)) map.removeLayer(reliefProxy);
+    reliefSyncing = false;
+  }
+
+  // ---- palette + depth-range highlight setters (#palette #highlight) ------
+  function setDepthPalette(name) {
+    if (!DEPTH_PALETTES[name]) name = "angler";
+    depthPalette = name;
+    try { localStorage.setItem(PALETTE_KEY, name); } catch (e) { /* ignore */ }
+    repaintGrid();
+    // The legend bar is a CSS gradient; refresh it to the active ramp.
+    refreshLegendRamp();
+  }
+  function setHighlight(opts) {
+    if (opts && typeof opts === "object") {
+      if (opts.on !== undefined) hlState.on = !!opts.on;
+      if (Number.isFinite(opts.min)) hlState.min = opts.min;
+      if (Number.isFinite(opts.max)) hlState.max = opts.max;
+    }
+    saveHlState();
+    repaintGrid();
+  }
+
+  // Paint the legend bar with the active palette's ramp so it always matches the
+  // map. The legend bar element is .depth-legend-bar inside #depth-legend.
+  function refreshLegendRamp() {
+    const bar = document.querySelector("#depth-legend .depth-legend-bar");
+    if (!bar) return;
+    const stops = (DEPTH_PALETTES[depthPalette] || DEPTH_PALETTES.angler).stops;
+    const css = stops.map((s) => `rgb(${s[1][0]},${s[1][1]},${s[1][2]}) ${Math.round(s[0] * 100)}%`).join(", ");
+    bar.style.background = `linear-gradient(90deg, ${css})`;
+  }
+
+  // ---- Settings: depth palette + relief + depth-range highlight UI --------
+  // Injected into the existing #depth-card so the controls sit with the depth
+  // overlay settings. Mirrors the existing inject* pattern; all inputs persist
+  // via the setters above and reflect the restored state on load.
+  function injectDepthControls() {
+    const card = document.getElementById("depth-card");
+    if (!card || document.getElementById("depth-enh-controls")) return;
+    if (!document.getElementById("depth-enh-css")) {
+      const st = document.createElement("style");
+      st.id = "depth-enh-css";
+      st.textContent = `
+        #depth-enh-controls #depth-palette { width: auto; min-width: 110px; margin: 0; }
+        #depth-enh-controls #depth-palette { flex: 0 0 auto; }
+        #depth-enh-controls .num {
+          padding: 6px 8px; font-size: 13px; border-radius: var(--r-sm, 8px);
+          color: var(--text, #eaf6fb); background: var(--glass-solid, rgba(255,255,255,0.06));
+          border: 1px solid var(--line, rgba(255,255,255,0.12));
+        }
+        #depth-enh-controls #hl-range { margin-top: 6px; }`;
+      document.head.appendChild(st);
+    }
+    const wrap = document.createElement("div");
+    wrap.id = "depth-enh-controls";
+    const palOpts = Object.keys(DEPTH_PALETTES)
+      .map((k) => `<option value="${k}"${k === depthPalette ? " selected" : ""}>${DEPTH_PALETTES[k].label}</option>`)
+      .join("");
+    wrap.innerHTML =
+      `<div class="row" style="margin-top:8px">
+         <label for="depth-palette">Palette</label>
+         <select id="depth-palette" class="sel">${palOpts}</select>
+       </div>
+       <label class="switch"><input type="checkbox" id="relief-show"${reliefShow ? " checked" : ""} /><span class="track"></span> Relief (hillshade)</label>
+       <label class="switch"><input type="checkbox" id="hl-on"${hlState.on ? " checked" : ""} /><span class="track"></span> Depth-range highlight</label>
+       <div class="row" id="hl-range" style="gap:8px;align-items:center">
+         <label style="white-space:nowrap">Band (m)</label>
+         <input type="number" id="hl-min" class="num" min="0" max="200" step="0.5" value="${hlState.min}" style="width:64px" />
+         <span>–</span>
+         <input type="number" id="hl-max" class="num" min="0" max="200" step="0.5" value="${hlState.max}" style="width:64px" />
+       </div>
+       <div class="hint">Relief shades drop-offs (NW light). The highlight lights up cells whose depth falls in the band (green) and dims the rest — like a Humminbird depth-range highlight.</div>`;
+    card.appendChild(wrap);
+
+    const pal = wrap.querySelector("#depth-palette");
+    if (pal) pal.addEventListener("change", () => setDepthPalette(pal.value));
+    const rel = wrap.querySelector("#relief-show");
+    if (rel) rel.addEventListener("change", () => setReliefShow(rel.checked));
+    const hlOn = wrap.querySelector("#hl-on");
+    const hlMin = wrap.querySelector("#hl-min");
+    const hlMax = wrap.querySelector("#hl-max");
+    const pushHl = () => setHighlight({
+      on: hlOn.checked,
+      min: parseFloat(hlMin.value),
+      max: parseFloat(hlMax.value),
+    });
+    if (hlOn) hlOn.addEventListener("change", pushHl);
+    if (hlMin) hlMin.addEventListener("change", pushHl);
+    if (hlMax) hlMax.addEventListener("change", pushHl);
+    refreshLegendRamp();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", injectDepthControls);
+  } else {
+    injectDepthControls();
   }
 
   // ---- recorded track ----------------------------------------------------
@@ -1614,6 +1974,24 @@
     },
   });
 
+  // Relief / hillshade. A render mode of the Depth map (shade baked into the same
+  // offscreen pass); the proxy just fronts the control checkbox. Default ON (the
+  // most-praised look); its own pref (RELIEF_KEY) is the source of truth, with
+  // the unified layers record kept in sync so it survives via either path.
+  addOverlay("Relief (hillshade)", reliefProxy, {
+    persistKey: "depth-relief",
+    onToggle(on) {
+      if (reliefSyncing) return;
+      setReliefShow(on);
+    },
+  });
+  // Seed the relief proxy membership from its own pref so the checkbox reflects
+  // the default-on state on first load (restoreLayers below only re-adds saved
+  // overlays; a brand-new user has no record, so honour RELIEF_KEY here).
+  reliefSyncing = true;
+  if (reliefShow && !map.hasLayer(reliefProxy)) reliefProxy.addTo(map);
+  reliefSyncing = false;
+
   // Now that the built-in overlays (Sea marks + Depth map) are registered,
   // restore the saved basemap + overlay selection. Overlays registered later
   // by other modules (Catches, Catch heatmap, No-go zones) restore through
@@ -1638,6 +2016,11 @@
     setGotoMarker, clearGotoMarker,
     setDepthShow,
     setContourShow,
+    setReliefShow,
+    setDepthPalette,
+    getDepthPalette() { return depthPalette; },
+    setHighlight,
+    getHighlight() { return Object.assign({}, hlState); },
     getLastAnchor() { return lastAnchor; },
     // pending-waypoint editor accessors
     pending() { return pendingWaypoints; },

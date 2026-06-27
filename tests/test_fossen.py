@@ -103,9 +103,15 @@ def test_reverse_thrust_drives_backwards():
 def test_current_drift_moves_idle_boat():
     boat = FossenBoat(BoatState(point=HERE, heading_deg=0.0), FossenParams())
     env = Environment(current_speed=1.0, current_dir=90.0)  # flowing east
-    _run(boat, MotorCommand(thrust=0.0, steering=0.0), env, seconds=5.0)
-    assert haversine_m(HERE, boat.state.point) == pytest.approx(5.0, rel=0.1)
+    # An idle hull is *advected* by the water: it accelerates (over a few s, not
+    # instantly) until it drifts with the current, then translates east with it.
+    _run(boat, MotorCommand(thrust=0.0, steering=0.0), env, seconds=40.0)
     assert initial_bearing(HERE, boat.state.point) == pytest.approx(90.0, abs=2.0)
+    # Settled: speed over ground ~ current speed, and speed THROUGH the water ~ 0
+    # (no relative motion once drifting with the flow).
+    sog = math.hypot(boat.state.ground_ve, boat.state.ground_vn)
+    assert sog == pytest.approx(1.0, rel=0.1)
+    assert boat.state.speed_mps < 0.1
 
 
 def test_zero_dt_is_noop():
@@ -124,3 +130,38 @@ def test_truth_is_a_snapshot():
     _run(boat, MotorCommand(thrust=1.0), Environment(), seconds=2.0)
     # The earlier snapshot is unaffected by subsequent stepping.
     assert t.point == p_before
+
+
+def test_wind_is_a_force_that_pushes_downwind_and_yaws():
+    """Wind is an aerodynamic force, not a fixed leeway: a quartering wind on an
+    idle boat pushes it downwind (leeway emerges from the force vs sway damping)
+    and imparts a yaw moment (weathervaning)."""
+    boat = FossenBoat(BoatState(point=HERE, heading_deg=0.0), FossenParams())
+    env = Environment(wind_speed=8.0, wind_dir=45.0)  # blowing toward the NE
+    _run(boat, MotorCommand(thrust=0.0, steering=0.0), env, seconds=12.0)
+    # Drifts roughly downwind (toward the NE), not upwind.
+    brg = initial_bearing(HERE, boat.state.point)
+    assert abs(((brg - 45.0) + 180.0) % 360.0 - 180.0) < 45.0
+    # A quartering wind yaws the bow (a pure beam/head wind would not).
+    assert abs(boat.state.heading_deg) > 1.0
+
+
+def test_no_wind_no_current_idle_boat_is_still():
+    boat = FossenBoat(BoatState(point=HERE, heading_deg=0.0), FossenParams())
+    _run(boat, MotorCommand(thrust=0.0, steering=0.0), Environment(), seconds=10.0)
+    assert haversine_m(HERE, boat.state.point) < 0.01
+    assert boat.state.heading_deg == pytest.approx(0.0, abs=1e-6)
+    assert boat.state.speed_mps == pytest.approx(0.0, abs=1e-9)
+
+
+def test_head_current_makes_sog_less_than_stw():
+    """A current is felt as drag on the hull: motoring against it, the boat makes
+    way through the water (STW ~ top speed) but its speed over ground is less."""
+    boat = FossenBoat(BoatState(point=HERE, heading_deg=0.0), FossenParams())
+    env = Environment(current_speed=0.6, current_dir=180.0)  # flowing south
+    _run(boat, MotorCommand(thrust=1.0, steering=0.0), env, seconds=40.0)
+    stw = boat.state.speed_mps
+    sog = math.hypot(boat.state.ground_ve, boat.state.ground_vn)
+    # The southward current eats ~0.6 m/s of the northward ground progress.
+    assert stw > sog + 0.3
+    assert sog == pytest.approx(stw - 0.6, abs=0.15)

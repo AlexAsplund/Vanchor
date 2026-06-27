@@ -129,7 +129,10 @@ def test_low_tracking_knocked_off_heading_more_by_a_beam_kick():
         boat._nu[1] += 0.8   # sway (m/s)
         boat._nu[2] += 0.25  # yaw rate (rad/s)
         _run(boat, cmd, Environment(), seconds=8.0)
-        return abs(normalize_deg(boat.state.heading_deg))
+        # Angular deviation from the original heading (0), in [0, 180]. (Use the
+        # symmetric wrap, not abs(normalize_deg): a hull that holds heading and
+        # settles a hair negative would otherwise read as ~360, not ~0.)
+        return abs((boat.state.heading_deg + 180.0) % 360.0 - 180.0)
 
     loose = heading_after_kick(0.35)
     tight = heading_after_kick(2.5)
