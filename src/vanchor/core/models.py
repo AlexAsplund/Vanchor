@@ -17,6 +17,7 @@ class ControlModeName(str, Enum):
 
     MANUAL = "manual"
     ANCHOR_HOLD = "anchor_hold"
+    ANCHOR_ML = "anchor_ml"  # learned (tiny-NN) station-keeper
     HEADING_HOLD = "heading_hold"
     WAYPOINT = "waypoint"
     FOLLOW_APB = "follow_apb"

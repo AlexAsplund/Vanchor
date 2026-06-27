@@ -224,6 +224,15 @@ class Controller:
             ControlModeName.ORBIT: OrbitMode(orbit_config),
             ControlModeName.TROLLING: TrollingMode(trolling_config),
         }
+        # Learned spot-lock (optional): registered only if the shipped tiny-NN
+        # model loads, so a missing/invalid model never breaks startup -- the
+        # mode simply isn't offered.
+        try:
+            from .anchor_ml import AnchorMLMode
+
+            self.modes[ControlModeName.ANCHOR_ML] = AnchorMLMode()
+        except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
+            logger.warning("anchor_ml mode unavailable: %s", exc)
         self.safety = SafetyGovernor(safety_config)
         self.safety_status = SafetyStatus()
         self._last_fix_seq = state.fix_seq
@@ -336,6 +345,22 @@ class Controller:
             # holds this passively once on station (no active heading slew).
             self.state.anchor_heading = self.state.heading_deg
             self.set_mode(ControlModeName.ANCHOR_HOLD)
+        elif ctype == "anchor_ml":
+            # Learned spot-lock: same mark-setting as anchor_hold, but driven by
+            # the tiny NN. Falls back to the PID mode if the model isn't loaded.
+            anchor = command.get("anchor")
+            if anchor:
+                self.state.anchor = GeoPoint(float(anchor["lat"]), float(anchor["lon"]))
+            elif self.state.position is not None:
+                self.state.anchor = self.state.position
+            if "radius_m" in command:
+                self.state.anchor_radius_m = float(command["radius_m"])
+            self.state.anchor_heading = self.state.heading_deg
+            self.set_mode(
+                ControlModeName.ANCHOR_ML
+                if ControlModeName.ANCHOR_ML in self.modes
+                else ControlModeName.ANCHOR_HOLD
+            )
         elif ctype == "heading_hold":
             heading = command.get("heading")
             self.state.target_heading = (
