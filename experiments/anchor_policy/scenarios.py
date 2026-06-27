@@ -22,11 +22,15 @@ def sample_scenario(seed: int) -> dict:
 
     # ~20% of scenarios are calm, so the policy keeps a strong "just hold still"
     # signal; the rest span up to a stiff blow and a real current.
-    calm = rng.random() < 0.2
+    # ~15% are "at rest on the mark, calm": the boat starts ON the anchor, dead
+    # still, no disturbance -- so the policy explicitly learns to IDLE at zero
+    # (the case the v2 policy mis-extrapolated to full reverse, the live failure).
+    rest = rng.random() < 0.15
+    calm = rest or rng.random() < 0.2
     # Cap wind at ~9 m/s (a stiff ~18 kn): beyond that a small trolling boat
     # can't physically hold station, and those unwinnable scenarios only cap the
     # metrics + add gradient noise.
-    wind = 0.0 if calm and rng.random() < 0.5 else rng.uniform(0.0, 9.0)
+    wind = 0.0 if (rest or (calm and rng.random() < 0.5)) else rng.uniform(0.0, 9.0)
     cur = 0.0 if calm else rng.uniform(0.0, 1.2)
     mount = _MOUNTS[rng.choice(["bow", "stern", "center"], p=[0.6, 0.2, 0.2])]
 
@@ -47,11 +51,11 @@ def sample_scenario(seed: int) -> dict:
         "thruster_x_m": float(mount),
         "max_thrust_n": float(rng.uniform(210.0, 300.0)),
         # start condition
-        "start_dist": float(rng.uniform(0.0, 12.0)),
+        "start_dist": float(rng.uniform(0.0, 1.5) if rest else rng.uniform(0.0, 12.0)),
         "start_bearing": float(rng.uniform(0.0, 2 * math.pi)),
         "heading": float(rng.uniform(0.0, 360.0)),
-        "u0": float(rng.uniform(-0.3, 0.6)),
-        "v0": float(rng.uniform(-0.3, 0.3)),
+        "u0": float(0.0 if rest else rng.uniform(-0.3, 0.6)),
+        "v0": float(0.0 if rest else rng.uniform(-0.3, 0.3)),
     }
 
 

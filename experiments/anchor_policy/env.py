@@ -1,15 +1,19 @@
-"""The anchor (station-keeping) task as a tiny RL environment over the REAL
-Fossen physics + the REAL gust/weather disturbance pipeline.
+"""The anchor (station-keeping) task over the REAL Fossen physics -- now driven
+by the SAME perceived, noisy, low-rate sensor pipeline the deployed controller
+sees (v3). This closes the sim-to-real gap that made the v1/v2 policy (trained on
+clean 10 Hz ground truth) drive off in the field:
 
-The observation is everything a real boat actually has (position error to the
-anchor, its own velocity, heading rate) expressed in the BODY frame so the
-policy is heading-invariant and directly deployable from GPS + compass. The
-action is a MotorCommand [thrust, steering].
+  * physics integrates finely (0.05 s) but the POLICY acts at the control rate
+    (5 Hz, dt 0.2 s) -- the motor command is held between control ticks;
+  * GPS is 1 Hz: position is NOISY (0.35 m) and STALE (held ~1 s between fixes);
+    SOG/COG come from the (stale) ground velocity, and COG -> heading when slow
+    (exactly as SimGps does);
+  * the compass is 5 Hz with 1 deg noise; the yaw rate is ESTIMATED from
+    perceived-heading differences (no rate sensor), as the deployed mode does;
+  * a configurable action-rate penalty (CAPS) discourages the bang-bang thrust
+    that the clean-feedback training produced.
 
-Time is "sped up" purely by not pacing to wall-clock and (optionally) using a
-slightly larger dt -- the integrator is ~30x inside its stability limit, so a
-0.1 s training step gives the same physics as the 0.05 s runtime step (validate
-with eval.py --dt 0.05).
+history=1 still gives a single frame; history>1 stacks frames for memory.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from collections import deque
 
 import numpy as np
 
+from vanchor.core.geo import normalize_deg, offset_meters
 from vanchor.core.models import BoatState, Environment, GeoPoint, MotorCommand
 from vanchor.sim.fossen import FossenBoat, FossenParams
 from vanchor.sim.gust import GustModel
@@ -30,18 +35,20 @@ _M_PER_DEG = 111320.0
 
 
 class AnchorEnv:
-    def __init__(self, dt: float = 0.1, duration_s: float = 120.0, radius_m: float = 5.0,
-                 history: int = 1, arate: float = 0.0):
-        self.dt = dt
+    def __init__(self, dt: float = 0.2, duration_s: float = 120.0, radius_m: float = 5.0,
+                 history: int = 1, arate: float = 0.0, physics_dt: float = 0.05,
+                 gps_hz: float = 1.0, compass_hz: float = 5.0,
+                 gps_noise_m: float = 0.35, heading_noise_deg: float = 1.0):
+        self.dt = dt                       # CONTROL period (policy acts each step)
         self.duration_s = duration_s
         self.radius_m = radius_m
-        # v2: stack the last ``history`` observation frames so a memoryless MLP
-        # can infer the unobserved wind/current from the recent motion trend
-        # (the literature's #1 fix), and an action-rate penalty ``arate`` to
-        # smooth thrust (CAPS) -- energy/wear without the accuracy hit a thrust
-        # penalty causes. history=1, arate=0 reproduce v1 exactly.
         self.history = max(1, int(history))
         self.arate = float(arate)
+        self.physics_dt = physics_dt
+        self.gps_period = 1.0 / gps_hz
+        self.compass_period = 1.0 / compass_hz
+        self.gps_noise_m = gps_noise_m
+        self.heading_noise_deg = heading_noise_deg
 
     # -- lifecycle -------------------------------------------------------- #
     def reset(self, scenario: dict) -> np.ndarray:
@@ -50,98 +57,106 @@ class AnchorEnv:
         coslat = math.cos(math.radians(self.anchor.lat))
         dn = s["start_dist"] * math.cos(s["start_bearing"])
         de = s["start_dist"] * math.sin(s["start_bearing"])
-        start = GeoPoint(
-            self.anchor.lat + dn / _M_PER_DEG,
-            self.anchor.lon + de / (_M_PER_DEG * coslat),
-        )
-        params = FossenParams(
-            mass=s["mass"],
-            hull_tracking=s["hull_tracking"],
-            thruster_x_m=s["thruster_x_m"],
-            max_thrust_n=s["max_thrust_n"],
-        )
+        start = GeoPoint(self.anchor.lat + dn / _M_PER_DEG,
+                         self.anchor.lon + de / (_M_PER_DEG * coslat))
+        params = FossenParams(mass=s["mass"], hull_tracking=s["hull_tracking"],
+                              thruster_x_m=s["thruster_x_m"], max_thrust_n=s["max_thrust_n"])
         self.boat = FossenBoat(BoatState(point=start, heading_deg=s["heading"]), params)
         self.boat._nu[:] = [s["u0"], s["v0"], 0.0]
         self.base_env = Environment(
             current_speed=s["current_speed"], current_dir=s["current_dir"],
             wind_speed=s["wind_speed"], wind_dir=s["wind_dir"],
             gust_amplitude_mps=s["gust"], gust_tau_s=s["gust_tau"],
-            wind_variability=s["wind_var"], current_variability=s["cur_var"],
-        )
+            wind_variability=s["wind_var"], current_variability=s["cur_var"])
         self.env = dataclasses.replace(self.base_env)
         self._base_wind = self.base_env.wind_speed
         self._base_wind_dir = self.base_env.wind_dir
         self._base_cur = self.base_env.current_speed
         self._gust = GustModel(s["gust"], s["gust_tau"], seed=s["seed"] & 0x7FFFFFFF)
-        self._weather = WeatherModel(
-            wind_variability=s["wind_var"], current_variability=s["cur_var"],
-            seed=(s["seed"] >> 1) & 0x7FFFFFFF,
-        )
+        self._weather = WeatherModel(wind_variability=s["wind_var"],
+                                     current_variability=s["cur_var"],
+                                     seed=(s["seed"] >> 1) & 0x7FFFFFFF)
+        # Independent RNG for sensor noise (so it's decoupled from gust/weather).
+        self._srng = np.random.default_rng((s["seed"] * 2654435761) & 0xFFFFFFFF)
+        self._t = 0.0
+        self._next_gps = 0.0
+        self._next_compass = 0.0
         self._prev = np.zeros(2)
-        self.t = 0.0
+        # Perceived sensor state -- sampled once now (a real fix at t=0).
+        self._p_heading = None
+        self._sample_gps(); self._sample_compass()
+        self._prev_p_heading = self._p_heading
         f = self._frame()
         self._hist = deque([f] * self.history, maxlen=self.history)
         return np.concatenate(self._hist)
 
-    # -- helpers ---------------------------------------------------------- #
-    def _err_ned(self):
-        b = self.boat.state.point
-        coslat = math.cos(math.radians(self.anchor.lat))
-        dn = (self.anchor.lat - b.lat) * _M_PER_DEG
-        de = (self.anchor.lon - b.lon) * _M_PER_DEG * coslat
-        return dn, de
+    # -- perceived sensors (mirror SimGps / SimCompass) ------------------- #
+    def _sample_gps(self) -> None:
+        s = self.boat.state
+        n = self.gps_noise_m
+        self._p_pos = offset_meters(s.point, self._srng.normal(0.0, n), self._srng.normal(0.0, n))
+        sog = math.hypot(s.ground_ve, s.ground_vn)
+        self._p_sog = sog
+        # COG is undefined when nearly stationary -> report heading (as SimGps).
+        self._p_cog = (math.degrees(math.atan2(s.ground_ve, s.ground_vn)) % 360.0
+                       if sog > 0.05 else s.heading_deg)
 
+    def _sample_compass(self) -> None:
+        self._p_heading = self.boat.state.heading_deg + self._srng.normal(0.0, self.heading_noise_deg)
+
+    # -- observation (from PERCEIVED state, like the deployed mode) -------- #
     def _frame(self) -> np.ndarray:
-        dn, de = self._err_ned()
-        h = math.radians(self.boat.state.heading_deg)
+        coslat = math.cos(math.radians(self.anchor.lat))
+        dn = (self.anchor.lat - self._p_pos.lat) * _M_PER_DEG
+        de = (self.anchor.lon - self._p_pos.lon) * _M_PER_DEG * coslat
+        h = math.radians(self._p_heading)
         ch, sh = math.cos(h), math.sin(h)
-        e_fwd = dn * ch + de * sh        # anchor position relative to the bow
+        e_fwd = dn * ch + de * sh
         e_lat = -dn * sh + de * ch
-        vn, ve = self.boat.state.ground_vn, self.boat.state.ground_ve
-        vg_fwd = vn * ch + ve * sh       # boat velocity over ground, body frame
+        cog = math.radians(self._p_cog)
+        vn, ve = self._p_sog * math.cos(cog), self._p_sog * math.sin(cog)
+        vg_fwd = vn * ch + ve * sh
         vg_lat = -vn * sh + ve * ch
-        r = math.radians(self.boat.yaw_rate_dps)
+        r = math.radians(normalize_deg(self._p_heading - self._prev_p_heading)) / self.dt
         dist = math.hypot(dn, de)
-        return np.array([
-            e_fwd / 10.0, e_lat / 10.0, vg_fwd / 1.5, vg_lat / 1.5,
-            r / 0.5, self._prev[0], self._prev[1], dist / 10.0,
-        ])
+        return np.array([e_fwd / 10.0, e_lat / 10.0, vg_fwd / 1.5, vg_lat / 1.5,
+                         r / 0.5, self._prev[0], self._prev[1], dist / 10.0])
 
-    # -- step ------------------------------------------------------------- #
+    # -- step (sub-steps physics; samples sensors at their rates) --------- #
     def step(self, action):
         th = float(np.clip(action[0], -1.0, 1.0))
         st = float(np.clip(action[1], -1.0, 1.0))
-        dth, dst = th - self._prev[0], st - self._prev[1]   # action rate (CAPS)
-        env = self.env
-        # Slow weather wander (exactly as simulator.step does it).
-        if env.wind_variability > 0.0 or env.current_variability > 0.0:
-            self._weather.step(self.dt)
-            env.wind_speed = self._weather.wind_speed(self._base_wind)
-            env.wind_dir = self._weather.wind_dir(self._base_wind_dir)
-            env.current_speed = self._weather.current_speed(self._base_cur)
-        # Gusts ride on top of the base wind for this step only.
-        gust = self._gust.step(self.dt)
-        step_env = env
-        if gust:
-            step_env = dataclasses.replace(env, wind_speed=max(0.0, env.wind_speed + gust))
-        self.boat.step(self.dt, MotorCommand(thrust=th, steering=st), step_env)
+        dth, dst = th - self._prev[0], st - self._prev[1]
+        cmd = MotorCommand(thrust=th, steering=st)
+        n_sub = max(1, round(self.dt / self.physics_dt))
+        pdt = self.dt / n_sub
+        self._prev_p_heading = self._p_heading
+        for _ in range(n_sub):
+            env = self.env
+            if env.wind_variability > 0.0 or env.current_variability > 0.0:
+                self._weather.step(pdt)
+                env.wind_speed = self._weather.wind_speed(self._base_wind)
+                env.wind_dir = self._weather.wind_dir(self._base_wind_dir)
+                env.current_speed = self._weather.current_speed(self._base_cur)
+            gust = self._gust.step(pdt)
+            step_env = (dataclasses.replace(env, wind_speed=max(0.0, env.wind_speed + gust))
+                        if gust else env)
+            self.boat.step(pdt, cmd, step_env)
+            self._t += pdt
+            if self._t >= self._next_compass:
+                self._sample_compass(); self._next_compass += self.compass_period
+            if self._t >= self._next_gps:
+                self._sample_gps(); self._next_gps += self.gps_period
+
         self._prev = np.array([th, st])
-        self.t += self.dt
-        dn, de = self._err_ned()
+        # Reward on GROUND TRUTH (the real objective), control on perceived obs.
+        dn, de = (self.anchor.lat - self.boat.state.point.lat) * _M_PER_DEG, \
+                 (self.anchor.lon - self.boat.state.point.lon) * _M_PER_DEG * math.cos(math.radians(self.anchor.lat))
         dist = math.hypot(dn, de)
-        # Reward (HOLDING-FIRST): a linear pull toward the anchor is the job; a
-        # firm extra penalty outside the watch circle keeps the boat in; a light
-        # energy term trims the most obvious waste. Empirically this is what
-        # reaches a tight ~80% / ~6 m hold across all scenarios. Stronger energy
-        # penalties / wide deadbands were tried and consistently WRECKED the hold
-        # (a single vectored thruster needs the thrust to hold the hard cases --
-        # that energy cost is inherent to GPS spot-lock), so they were reverted.
-        reward = (
-            -dist
-            - 0.08 * (th * th)
-            - (0.6 if dist > self.radius_m else 0.0)
-            - self.arate * (dth * dth + dst * dst)   # smooth thrust (no accuracy hit)
-        )
-        done = self.t >= self.duration_s
+        reward = (-dist
+                  - 0.08 * (th * th)
+                  - (0.6 if dist > self.radius_m else 0.0)
+                  - self.arate * (dth * dth + dst * dst))   # CAPS: smooth thrust
+        done = self._t >= self.duration_s
         self._hist.append(self._frame())
         return np.concatenate(self._hist), reward, done, {"dist": dist}

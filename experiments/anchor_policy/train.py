@@ -39,7 +39,7 @@ CKPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints
 
 # Defaults (overridable via CLI).
 HIDDEN = (32, 16)   # net shape = (OBS_DIM*history,) + HIDDEN + (ACT_DIM,)
-DT = 0.1            # training step (runtime is 0.05; physics is identical here)
+DT = 0.2            # CONTROL period = the 5 Hz runtime rate (physics sub-steps internally)
 DURATION = 120.0    # seconds per episode
 RADIUS = 5.0        # watch-circle radius (m)
 K_TRAIN = 10        # scenarios scored per candidate per generation (v2: lower variance)

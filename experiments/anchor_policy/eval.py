@@ -75,16 +75,13 @@ def main():
     pol = TinyPolicy.load(args.policy)
     history = max(1, pol.sizes[0] // OBS_DIM)
     print(f"policy: {os.path.basename(args.policy)}  sizes={pol.sizes}  history={history}")
-    print(f"validation: {args.k} held-out scenarios, {args.duration}s episodes\n")
+    print(f"validation: {args.k} held-out scenarios, {args.duration}s episodes, deployment pipeline\n")
 
-    # Transfer check: train dt (0.1) vs runtime dt (0.05) should match closely.
-    for dt in (0.10, 0.05):
-        w, d, e = _evaluate(lambda o: pol.forward(o), dt, args.duration, args.radius, args.k, history)
-        tag = "train dt" if dt == 0.10 else "RUNTIME dt"
-        print(f"  POLICY @ dt={dt:.2f} ({tag:9s}): within {w:5.1f}% | mean_dist {d:4.2f} m | energy {e:.3f}")
-
-    w2, d2, e2 = _evaluate(_anchor_pid, 0.05, args.duration, args.radius, args.k, 1)
-    print(f"  PID AnchorHoldMode @ dt=0.05    : within {w2:5.1f}% | mean_dist {d2:4.2f} m | energy {e2:.3f}")
+    # Deployment conditions (5 Hz control, 1 Hz noisy/stale GPS) are baked into the env.
+    w, d, e = _evaluate(lambda o: pol.forward(o), 0.2, args.duration, args.radius, args.k, history)
+    print(f"  POLICY            : within {w:5.1f}% | mean_dist {d:4.2f} m | energy {e:.3f}")
+    w2, d2, e2 = _evaluate(_anchor_pid, 0.2, args.duration, args.radius, args.k, 1)
+    print(f"  PID AnchorHoldMode: within {w2:5.1f}% | mean_dist {d2:4.2f} m | energy {e2:.3f}")
 
 
 if __name__ == "__main__":
