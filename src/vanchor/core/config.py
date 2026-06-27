@@ -142,7 +142,7 @@ class SensorConfig:
     ``SimCompass(update_hz)``.
     """
 
-    gps_hz: float = 1.0
+    gps_hz: float = 5.0  # a reconfigured u-blox runs at 5 Hz; far tighter station-keeping
     compass_hz: float = 5.0
     depth_hz: float = 2.0
     # Per-fix position jitter (m, 1-sigma). Real marine GPS/chart-plotters

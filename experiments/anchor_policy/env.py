@@ -38,9 +38,13 @@ _M_PER_DEG = 111320.0
 class AnchorEnv:
     def __init__(self, dt: float = 0.2, duration_s: float = 120.0, radius_m: float = 5.0,
                  history: int = 1, arate: float = 0.0, physics_dt: float = 0.05,
-                 gps_hz: float = 1.0, compass_hz: float = 5.0,
+                 gps_hz: float = 5.0, compass_hz: float = 5.0,
                  gps_noise_m: float = 0.35, heading_noise_deg: float = 1.0,
-                 residual_scale: float = 0.3):
+                 residual_scale: float = 0.3, anticip: float = 0.0):
+        # anticip: extra reward (penalty) for letting the boat drift OUTWARD from
+        # the anchor -- rewards arresting drift *before* it becomes position error,
+        # i.e. anticipatory / feed-forward control rather than chase-after-the-fact.
+        self.anticip = float(anticip)
         # v5 RESIDUAL: the command is the robust PID base + a bounded learned
         # correction: clip(pid + residual_scale * policy(obs)). residual_scale=0
         # => pure PID; the policy starts near zero so it begins at PID quality and
@@ -165,12 +169,17 @@ class AnchorEnv:
         dn, de = (self.anchor.lat - self.boat.state.point.lat) * _M_PER_DEG, \
                  (self.anchor.lon - self.boat.state.point.lon) * _M_PER_DEG * math.cos(math.radians(self.anchor.lat))
         dist = math.hypot(dn, de)
+        # Anticipation: penalize OUTWARD radial speed (the boat drifting away from
+        # the mark) so the policy learns to arrest drift before it becomes error.
+        s = self.boat.state
+        out = max(0.0, -(s.ground_vn * dn + s.ground_ve * de) / dist) if dist > 0.1 else 0.0
         # Lighter shaping than the pure-ML versions: the PID base already provides
         # smoothness + anti-saturation, so the residual just needs to improve the hold.
         reward = (-dist
                   - (0.6 if dist > self.radius_m else 0.0)
                   - 0.05 * (th * th)
-                  - self.arate * (dth * dth + dst * dst))
+                  - self.arate * (dth * dth + dst * dst)
+                  - self.anticip * out)
         done = self._t >= self.duration_s
         new_f = self._frame()
         self._hist.append(new_f)

@@ -64,17 +64,17 @@ def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
 
 def _score(args):
     """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation)."""
-    theta, sizes, gen_seed, k, dt, dur, rad, history, arate = args
+    theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip)
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
 
-def _metrics(theta, sizes, dt, dur, rad, history, arate):
+def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip)
     win, md, en, rr = [], [], [], []
     for sc in validation_batch(K_VALID):
         ret, dists, energy = _rollout(pol, env, sc)
@@ -110,6 +110,7 @@ def main():
     ap.add_argument("--no-resume", action="store_true")
     ap.add_argument("--history", type=int, default=1)    # v2: stacked obs frames
     ap.add_argument("--arate", type=float, default=0.0)   # v2: action-rate penalty
+    ap.add_argument("--anticip", type=float, default=0.0)  # v6: anticipation (outward-drift) penalty
     args = ap.parse_args()
 
     os.makedirs(CKPT_DIR, exist_ok=True)
@@ -141,7 +142,7 @@ def main():
             eps = rng.standard_normal((args.pop, n))
             cands = np.concatenate([theta + args.sigma * eps, theta - args.sigma * eps])
             jobs = [(c, sizes, gen_seed, args.k, args.dt, args.duration, RADIUS,
-                     args.history, args.arate) for c in cands]
+                     args.history, args.arate, args.anticip) for c in cands]
             rewards = np.array(pool.map(_score, jobs))
             util = _centered_ranks(rewards)
             up, um = util[:args.pop], util[args.pop:]
@@ -159,7 +160,7 @@ def main():
 
             if gen % 5 == 0 or gen == args.gens - 1:
                 mt = _metrics(theta, sizes, args.dt, args.duration, RADIUS,
-                              args.history, args.arate)
+                              args.history, args.arate, args.anticip)
                 rate = (gen - start_gen + 1) / (time.time() - t0)
                 rec = {"gen": gen, "train_return": float(rewards.mean()),
                        "gens_per_s": round(rate, 2), **mt}
