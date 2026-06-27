@@ -154,9 +154,10 @@ class AnchorEnv:
                  (self.anchor.lon - self.boat.state.point.lon) * _M_PER_DEG * math.cos(math.radians(self.anchor.lat))
         dist = math.hypot(dn, de)
         reward = (-dist
-                  - 0.08 * (th * th)
                   - (0.6 if dist > self.radius_m else 0.0)
-                  - self.arate * (dth * dth + dst * dst))   # CAPS: smooth thrust
+                  - 0.10 * (th * th)                          # energy
+                  - 0.30 * (th ** 4)                          # v4: anti-saturation (steep at +-1)
+                  - self.arate * (dth * dth + dst * dst))     # action-rate: anti bang-bang
         done = self._t >= self.duration_s
         self._hist.append(self._frame())
         return np.concatenate(self._hist), reward, done, {"dist": dist}
