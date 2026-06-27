@@ -23,7 +23,10 @@ def sample_scenario(seed: int) -> dict:
     # ~20% of scenarios are calm, so the policy keeps a strong "just hold still"
     # signal; the rest span up to a stiff blow and a real current.
     calm = rng.random() < 0.2
-    wind = 0.0 if calm and rng.random() < 0.5 else rng.uniform(0.0, 12.0)
+    # Cap wind at ~9 m/s (a stiff ~18 kn): beyond that a small trolling boat
+    # can't physically hold station, and those unwinnable scenarios only cap the
+    # metrics + add gradient noise.
+    wind = 0.0 if calm and rng.random() < 0.5 else rng.uniform(0.0, 9.0)
     cur = 0.0 if calm else rng.uniform(0.0, 1.2)
     mount = _MOUNTS[rng.choice(["bow", "stern", "center"], p=[0.6, 0.2, 0.2])]
 
@@ -42,7 +45,7 @@ def sample_scenario(seed: int) -> dict:
         "mass": float(rng.uniform(200.0, 400.0)),
         "hull_tracking": float(rng.uniform(0.35, 2.5)),
         "thruster_x_m": float(mount),
-        "max_thrust_n": float(rng.uniform(180.0, 300.0)),
+        "max_thrust_n": float(rng.uniform(210.0, 300.0)),
         # start condition
         "start_dist": float(rng.uniform(0.0, 12.0)),
         "start_bearing": float(rng.uniform(0.0, 2 * math.pi)),

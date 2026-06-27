@@ -29,10 +29,12 @@ _M_PER_DEG = 111320.0
 
 
 class AnchorEnv:
-    def __init__(self, dt: float = 0.1, duration_s: float = 120.0, radius_m: float = 5.0):
+    def __init__(self, dt: float = 0.1, duration_s: float = 120.0, radius_m: float = 5.0,
+                 deadband_m: float = 2.0):
         self.dt = dt
         self.duration_s = duration_s
         self.radius_m = radius_m
+        self.deadband_m = deadband_m
 
     # -- lifecycle -------------------------------------------------------- #
     def reset(self, scenario: dict) -> np.ndarray:
@@ -117,9 +119,19 @@ class AnchorEnv:
         self.t += self.dt
         dn, de = self._err_ned()
         dist = math.hypot(dn, de)
-        # Reward: hold the anchor TIGHT and cheap. Time-integrated distance is the
-        # dominant term; a small energy penalty discourages thrashing the motor;
-        # an extra penalty outside the watch circle pulls it back in.
-        reward = -dist - 0.08 * (th * th) - (0.6 if dist > self.radius_m else 0.0)
+        r_rate = math.radians(self.boat.yaw_rate_dps)
+        # Reward: stay in the watch circle with MINIMAL energy. A central deadband
+        # removes any incentive to thrash the motor to sit dead on the anchor
+        # (the cause of the brute-force, near-full-thrust local optimum). Past the
+        # deadband a gentle pull; once outside the circle a firm pull. The energy
+        # term then makes the policy idle and correct only as needed; a small
+        # anti-spin term discourages burning thrust to pirouette in place.
+        over = max(0.0, dist - self.deadband_m)
+        reward = (
+            -over
+            - (0.8 if dist > self.radius_m else 0.0)
+            - 0.20 * (th * th)
+            - 0.02 * (r_rate * r_rate)
+        )
         done = self.t >= self.duration_s
         return self._obs(), reward, done, {"dist": dist}
