@@ -24,6 +24,7 @@ from collections import deque
 
 import numpy as np
 
+from vanchor.controller.anchor_ml import pid_base
 from vanchor.core.geo import normalize_deg, offset_meters
 from vanchor.core.models import BoatState, Environment, GeoPoint, MotorCommand
 from vanchor.sim.fossen import FossenBoat, FossenParams
@@ -38,7 +39,13 @@ class AnchorEnv:
     def __init__(self, dt: float = 0.2, duration_s: float = 120.0, radius_m: float = 5.0,
                  history: int = 1, arate: float = 0.0, physics_dt: float = 0.05,
                  gps_hz: float = 1.0, compass_hz: float = 5.0,
-                 gps_noise_m: float = 0.35, heading_noise_deg: float = 1.0):
+                 gps_noise_m: float = 0.35, heading_noise_deg: float = 1.0,
+                 residual_scale: float = 0.3):
+        # v5 RESIDUAL: the command is the robust PID base + a bounded learned
+        # correction: clip(pid + residual_scale * policy(obs)). residual_scale=0
+        # => pure PID; the policy starts near zero so it begins at PID quality and
+        # only searches small improvements (no bang-bang local optimum).
+        self.residual_scale = residual_scale
         self.dt = dt                       # CONTROL period (policy acts each step)
         self.duration_s = duration_s
         self.radius_m = radius_m
@@ -87,6 +94,7 @@ class AnchorEnv:
         self._sample_gps(); self._sample_compass()
         self._prev_p_heading = self._p_heading
         f = self._frame()
+        self._cur_frame = f                # frame the policy acts on (for the PID base)
         self._hist = deque([f] * self.history, maxlen=self.history)
         return np.concatenate(self._hist)
 
@@ -123,9 +131,13 @@ class AnchorEnv:
                          r / 0.5, self._prev[0], self._prev[1], dist / 10.0])
 
     # -- step (sub-steps physics; samples sensors at their rates) --------- #
-    def step(self, action):
-        th = float(np.clip(action[0], -1.0, 1.0))
-        st = float(np.clip(action[1], -1.0, 1.0))
+    def step(self, residual):
+        # v5: command = robust PID base (from the frame the policy acted on) + a
+        # bounded learned residual.
+        f = self._cur_frame
+        pid_th, pid_st = pid_base(f[0] * 10.0, f[1] * 10.0, f[2] * 1.5, f[3] * 1.5)
+        th = float(np.clip(pid_th + self.residual_scale * float(residual[0]), -1.0, 1.0))
+        st = float(np.clip(pid_st + self.residual_scale * float(residual[1]), -1.0, 1.0))
         dth, dst = th - self._prev[0], st - self._prev[1]
         cmd = MotorCommand(thrust=th, steering=st)
         n_sub = max(1, round(self.dt / self.physics_dt))
@@ -153,11 +165,14 @@ class AnchorEnv:
         dn, de = (self.anchor.lat - self.boat.state.point.lat) * _M_PER_DEG, \
                  (self.anchor.lon - self.boat.state.point.lon) * _M_PER_DEG * math.cos(math.radians(self.anchor.lat))
         dist = math.hypot(dn, de)
+        # Lighter shaping than the pure-ML versions: the PID base already provides
+        # smoothness + anti-saturation, so the residual just needs to improve the hold.
         reward = (-dist
                   - (0.6 if dist > self.radius_m else 0.0)
-                  - 0.10 * (th * th)                          # energy
-                  - 0.30 * (th ** 4)                          # v4: anti-saturation (steep at +-1)
-                  - self.arate * (dth * dth + dst * dst))     # action-rate: anti bang-bang
+                  - 0.05 * (th * th)
+                  - self.arate * (dth * dth + dst * dst))
         done = self._t >= self.duration_s
-        self._hist.append(self._frame())
+        new_f = self._frame()
+        self._hist.append(new_f)
+        self._cur_frame = new_f
         return np.concatenate(self._hist), reward, done, {"dist": dist}

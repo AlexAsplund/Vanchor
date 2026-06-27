@@ -33,6 +33,23 @@ _M_PER_DEG = 111320.0
 _OBS_DIM = 8
 
 
+def pid_base(e_fwd, e_lat, vg_fwd, vg_lat, kp=0.12, kd=0.6, deadband=0.8):
+    """Robust spot-lock base law (the AnchorHoldMode behaviour), from body-frame
+    anchor error + ground velocity -> (thrust, steering). Idles inside a deadband;
+    otherwise drives toward the mark, BACKING straight up when the mark is astern
+    (instead of looping around, the naive-PID divergence). The shared base for the
+    training env AND the deployed hybrid mode, so they match exactly."""
+    dist = math.hypot(e_fwd, e_lat)
+    if dist <= deadband:
+        return 0.0, 0.0
+    closing = (vg_fwd * e_fwd + vg_lat * e_lat) / dist   # +ve = approaching
+    mag = min(1.0, max(0.0, kp * dist - kd * closing))
+    if e_fwd >= 0.0:                                      # mark ahead -> forward
+        return mag, max(-1.0, min(1.0, math.atan2(e_lat, e_fwd) / (math.pi / 4)))
+    # mark astern -> reverse straight back; steering sign flips under reverse thrust
+    return -mag, max(-1.0, min(1.0, -math.atan2(e_lat, -e_fwd) / (math.pi / 4)))
+
+
 class _TinyMLP:
     """tanh-MLP inference; matches ``experiments/anchor_policy/policy.py``."""
 
