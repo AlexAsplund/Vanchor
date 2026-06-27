@@ -1,6 +1,10 @@
-"""The learned virtual-anchor mode (``anchor_ml``) + its controller wiring."""
+"""The hybrid learned virtual-anchor mode (``anchor_ml``) + its controller wiring.
 
-from vanchor.controller.anchor_ml import AnchorMLMode
+``anchor_ml`` is now a hybrid: command = clip(pid_base + 0.3*residual). The base
+guarantees robustness (deadband idle, reverse-when-astern); the bounded residual
+only tightens the hold."""
+
+from vanchor.controller.anchor_ml import AnchorMLMode, pid_base
 from vanchor.core.models import (
     ControlModeName,
     Environment,
@@ -55,3 +59,36 @@ def test_anchor_ml_falls_back_to_pid_when_model_unavailable():
     del h.controller.modes[ControlModeName.ANCHOR_ML]   # simulate a missing model
     h.command({"type": "anchor_ml"})
     assert h.controller.state.mode == ControlModeName.ANCHOR_HOLD
+
+
+def test_pid_base_idles_in_deadband_and_reverses_when_astern():
+    assert pid_base(0.5, 0.0, 0.0, 0.0) == (0.0, 0.0)   # inside deadband -> idle
+    th_ahead, _ = pid_base(5.0, 0.0, 0.0, 0.0)          # mark ahead -> forward
+    th_astern, _ = pid_base(-5.0, 0.0, 0.0, 0.0)        # mark astern -> reverse
+    assert th_ahead > 0.0
+    assert th_astern < 0.0
+
+
+def test_hybrid_command_stays_near_the_pid_base():
+    """The residual is bounded (+-0.3), so the command can never run away from
+    the robust base -- the worst case is just the PID."""
+    m = AnchorMLMode()
+    st = NavigationState()
+    st.fix = GpsFix(point=GeoPoint(59.001, 18.001), sog_knots=0.4, cog_deg=90.0)
+    st.anchor = GeoPoint(59.0, 18.0)
+    st.heading_deg = 20.0
+    sp = m.update(st, 0.2)
+    frame = m._frame(st, 0.2)
+    base_th, base_st = pid_base(frame[0] * 10, frame[1] * 10, frame[2] * 1.5, frame[3] * 1.5)
+    assert abs(sp.thrust - base_th) <= m.residual_scale + 1e-6
+    assert abs(sp.steering - base_st) <= m.residual_scale + 1e-6
+
+
+def test_hybrid_holds_from_rest_no_driveoff():
+    """The live v2 failure: engaged from rest it drove off. The hybrid holds."""
+    h = Harness(model="fossen")          # boat starts at rest
+    h.command({"type": "anchor_ml", "radius_m": 6.0})
+    distances = h.run(seconds=120)
+    settled = distances[-90:]
+    assert max(settled) < 6.0            # stays in the watch circle (not 21 m)
+    assert sum(settled) / len(settled) < 3.0

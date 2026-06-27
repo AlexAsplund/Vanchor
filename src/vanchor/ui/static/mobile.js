@@ -213,7 +213,7 @@
 
   function prettyMode(m) {
     const names = {
-      manual: "Manual", anchor_hold: "Anchor", anchor_ml: "Anchor (ML)", heading_hold: "Heading",
+      manual: "Manual", anchor_hold: "Anchor", anchor_ml: "Anchor (Smart)", heading_hold: "Heading",
       waypoint: "Route", follow_apb: "Follow APB", drift: "Drift",
       stop: "Stopped", remote: "Remote", contour_follow: "Contour",
       orbit: "Orbit", trolling: "Trolling",
