@@ -24,3 +24,6 @@ analysis_output/
 # Claude Code local files
 .claude/
 .claude
+
+# Training experiment checkpoints (regenerated, can be large)
+experiments/*/checkpoints/
