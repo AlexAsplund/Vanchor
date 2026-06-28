@@ -125,6 +125,27 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         runtime.handle_command(payload)
         return {"ok": True}
 
+    @app.post("/api/restart")
+    async def restart() -> dict:
+        """Restart the server process in place (applies device/config changes).
+
+        Re-execs with the same argv after flushing the response. The listening
+        socket is non-inheritable (closed on exec), so the fresh process rebinds
+        the port. Works whether launched bare, under nohup, or via a supervisor.
+        """
+        import os
+        import sys
+
+        async def _reexec() -> None:
+            await asyncio.sleep(0.4)  # let the HTTP response flush first
+            with contextlib.suppress(Exception):
+                await runtime.stop()
+            logger.warning("restart requested -- re-execing %s", sys.argv)
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+
+        asyncio.ensure_future(_reexec())
+        return {"ok": True, "restarting": True}
+
     @app.post("/api/route/plan")
     async def route_plan(payload: dict) -> dict:
         """Plan a water-only route to a destination and return waypoints.

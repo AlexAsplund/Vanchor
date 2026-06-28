@@ -314,6 +314,20 @@
   const resetBtn = $("dev-reset");
   if (resetBtn) resetBtn.addEventListener("click", load);
 
+  const restartBtn = $("dev-restart");
+  if (restartBtn) restartBtn.addEventListener("click", function () {
+    if (!confirm("Restart the server now? The connection will drop for a few seconds.")) return;
+    setStatus("Restarting the server…", "ok");
+    // The response may not arrive before the process re-execs; ignore errors.
+    VA.postJSON("/api/restart", {}).catch(function () {});
+    // Poll until the server is back up, then reload the page.
+    setTimeout(function waitBack() {
+      fetch("/api/state")
+        .then(function () { location.reload(); })
+        .catch(function () { setTimeout(waitBack, 800); });
+    }, 2500);
+  });
+
   // Lazy: fetch only on the card's first open.
   card.addEventListener("toggle", () => {
     if (card.open && !loaded) load();
