@@ -43,10 +43,18 @@ def clean_env(monkeypatch):
 
 
 def test_boat_thruster_offset_signs() -> None:
-    assert BoatConfig(length_m=4.1, thruster_mount="bow").thruster_x_m() > 0
-    assert BoatConfig(length_m=4.1, thruster_mount="stern").thruster_x_m() < 0
-    assert BoatConfig(thruster_mount="center").thruster_x_m() == 0.0
-    # An explicit offset overrides the mount keyword.
+    bow = BoatConfig(length_m=4.1, thruster_mount="bow").thruster_x_m()
+    stern = BoatConfig(length_m=4.1, thruster_mount="stern").thruster_x_m()
+    assert bow > 0 and stern < 0
+    # The CG sits aft of centre, so a bow motor's lever arm is LONGER than a
+    # stern motor's (the heart of the "turns sharper" effect).
+    assert bow > abs(stern)
+    # With the CG at the geometric centre (cg_aft_frac=0) a centre mount has no arm.
+    assert BoatConfig(thruster_mount="center", cg_aft_frac=0.0).thruster_x_m() == 0.0
+    # A further-aft CG lengthens a bow motor's arm (sharper turn).
+    base = BoatConfig(length_m=4.1, thruster_mount="bow", cg_aft_frac=0.0).thruster_x_m()
+    assert BoatConfig(length_m=4.1, thruster_mount="bow", cg_aft_frac=0.2).thruster_x_m() > base
+    # An explicit offset overrides the mount keyword (CG already encoded in it).
     assert BoatConfig(thruster_mount="bow", thruster_offset_m=-0.9).thruster_x_m() == -0.9
 
 

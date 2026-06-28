@@ -60,6 +60,13 @@ class BoatConfig:
     thruster_mount: str = "bow"  # "bow" | "stern" | "center"
     thruster_offset_m: float | None = None  # explicit CG->thruster (+fwd); overrides mount
     thruster_y_m: float = 0.0  # lateral CG->thruster offset (+ = starboard)
+    # Longitudinal CG position, as a fraction of length AFT of the geometric
+    # centre. Real boats carry their mass aft (battery, fuel, outboard/engine,
+    # the helm seat), so the CG sits behind centre -- which LENGTHENS the lever
+    # arm from the CG to a bow motor (sharper turns) and shortens it for a stern
+    # motor. 0 = CG at centre (old behaviour); ~0.1 is typical. Folded into
+    # thruster_x_m() below (and thus the Fossen yaw moment).
+    cg_aft_frac: float = 0.10
     # Thrust-yaw feed-forward: a steering deflection that pre-cancels the yaw a
     # laterally-offset thruster induces under straight thrust. None = derive from
     # geometry (atan2(thruster_y_m, |thruster_x_m|)); a number overrides it. A
@@ -86,11 +93,18 @@ class BoatConfig:
     sonar_cone_deg: float = 20.0
 
     def thruster_x_m(self) -> float:
-        """Signed longitudinal distance from CG to the thruster (+ = forward)."""
+        """Signed longitudinal distance from CG to the thruster (+ = forward).
+
+        The mount fixes the thruster's position relative to the hull's geometric
+        centre (bow ~+0.42L, stern ~-0.42L); the CG sits ``cg_aft_frac`` of a
+        length BEHIND that centre, so the CG->thruster arm is the gap between
+        them. An explicit ``thruster_offset_m`` already encodes the CG distance
+        and is used verbatim.
+        """
         if self.thruster_offset_m is not None:
             return self.thruster_offset_m
         frac = {"bow": 0.42, "stern": -0.42, "center": 0.0}.get(self.thruster_mount, 0.42)
-        return frac * self.length_m
+        return frac * self.length_m + self.cg_aft_frac * self.length_m
 
     def thrust_yaw_ff_angle(self) -> float:
         """Feed-forward steering deflection (radians) that cancels the straight-
