@@ -273,16 +273,77 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         return runtime.clear_charts()
 
     @app.get("/api/depth/grid")
-    async def depth_grid(cell_m: float = 15.0) -> dict:
-        """Server-side gridded depth map for the depth overlay.
+    async def depth_grid(
+        cell_m: float = 15.0,
+        west: float | None = None,
+        south: float | None = None,
+        east: float | None = None,
+        north: float | None = None,
+        field: str = "depth",
+    ) -> dict:
+        """Server-side gridded chart for the depth / bottom-hardness overlay.
 
-        Bins all soundings into ~``cell_m`` metre cells (clamped 2..200),
-        averaging depth per cell so the UI can paint an averaged colour chart
-        instead of thousands of individual dots. The depth map changes slowly, so
-        the UI polls this occasionally rather than reading the 5 Hz telemetry.
-        Returns ``{ok, cell_m, min_depth, max_depth, count, cells}``.
+        Bins soundings into ~``cell_m`` metre cells (clamped 2..200), averaging
+        the value per cell so the UI can paint an averaged colour chart instead
+        of thousands of individual dots. When ``west``/``south``/``east``/
+        ``north`` are given, only that viewport window is gridded (Tier-1
+        windowing) so a large chart ships just what's on screen. ``field`` is
+        ``depth`` (default) or ``hardness`` (bottom-hardness, 0..127).
+        Returns ``{ok, field, cell_m, min_depth, max_depth, count, cells}``.
         """
-        return runtime.depth_grid(cell_m)
+        bbox = None
+        if None not in (west, south, east, north):
+            bbox = (west, south, east, north)
+        return runtime.depth_grid(cell_m, bbox=bbox, field=field)
+
+    @app.get("/api/depth/contours")
+    async def depth_contours(
+        west: float | None = None,
+        south: float | None = None,
+        east: float | None = None,
+        north: float | None = None,
+    ) -> dict:
+        """Imported depth-contour polylines (isobaths) for the contour
+        overlay, windowed to the viewport. With ``west``/``south``/``east``/
+        ``north`` only contours intersecting that window are returned (a large
+        chart has 80k+ lines). Returns ``{ok, count, contours}`` where each is
+        ``{d: depth_m, pts: [[lat, lon], ...]}``.
+        """
+        bbox = None
+        if None not in (west, south, east, north):
+            bbox = (west, south, east, north)
+        return runtime.depth_contours(bbox=bbox)
+
+    @app.get("/api/depth/composition")
+    async def depth_composition(
+        west: float | None = None,
+        south: float | None = None,
+        east: float | None = None,
+        north: float | None = None,
+    ) -> dict:
+        """Imported bottom-composition POLYGONS, windowed to the
+        viewport. Returns ``{ok, count, polygons}`` where each polygon is
+        ``{pct: 0..100, ring: [[lat, lon], ...]}`` -- rendered filled, YlOrBr."""
+        bbox = None
+        if None not in (west, south, east, north):
+            bbox = (west, south, east, north)
+        return runtime.depth_composition(bbox=bbox)
+
+    @app.get("/api/depth/water")
+    async def depth_water(
+        west: float, south: float, east: float, north: float,
+    ) -> dict:
+        """OSM water polygon(s) for the bbox, to CLIP overlays to water (don't
+        draw composition over land). Cached; fetched from Overpass if absent.
+        Returns ``{ok, water}`` (GeoJSON MultiPolygon coords, lon/lat)."""
+        return runtime.water_polygon((west, south, east, north))
+
+    @app.post("/api/depth/import")
+    async def depth_import(file: UploadFile = File(...), replace: bool = False) -> dict:
+        """Import an open-format depth file (CSV/XYZ or GeoJSON) into the depth
+        chart. ``replace=true`` swaps the whole chart; the default merges."""
+        data = await file.read()
+        return runtime.import_depth_map(file.filename or "", data, replace=bool(replace))
 
     @app.get("/api/weather/presets")
     async def weather_presets() -> dict:
@@ -497,5 +558,15 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             clients.discard(websocket)
             runtime.client_disconnected()
 
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    class _NoCacheStatic(StaticFiles):
+        """Static assets with ``Cache-Control: no-cache`` so browsers + the
+        service worker always revalidate (cheap ETag 304s) and never keep serving
+        a heuristically-cached stale shell after an update."""
+
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    app.mount("/static", _NoCacheStatic(directory=STATIC_DIR), name="static")
     return app

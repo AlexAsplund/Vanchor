@@ -69,6 +69,10 @@ class NavigationState:
     # e.g. the "around island" route) instead of completing -- the boat circles
     # continuously. Set via the goto/load_route "loop" flag.
     route_loop: bool = False
+    # When True, reaching either END of the route reverses direction and runs it
+    # back the other way -- a continuous there-and-back "patrol" (distinct from
+    # route_loop, which closes the ring). Set via the goto/load_route "patrol" flag.
+    route_patrol: bool = False
 
     # --- Return-to-Launch (#61): the recorded home/launch point. --------- #
     launch: GeoPoint | None = None  # first good fix, or set via set_launch
@@ -135,6 +139,7 @@ class NavigationState:
             ],
             "active_waypoint": self.active_waypoint,
             "route_loop": self.route_loop,
+            "route_patrol": self.route_patrol,
             "motor": {
                 **asdict(self.motor_command),
                 # Trolling-motor azimuth relative to the bow (deg), for the UI

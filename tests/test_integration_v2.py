@@ -34,9 +34,11 @@ def test_follow_apb_steers_to_bearing():
 
 
 def test_loss_of_fix_failsafe_stops_motor():
-    # Manual full ahead, but starve the controller of GPS fixes: the safety
-    # governor must cut thrust once the fix goes stale.
+    # Manual full ahead, but starve the controller of GPS fixes: with the
+    # loss-of-fix failsafe ENABLED, the safety governor must cut thrust once the
+    # fix goes stale. (The failsafe is OFF by default now; turn it on here.)
     h = Harness(environment=Environment(), gps_hz=1.0)
+    h.controller.safety.config.fix_failsafe_enabled = True
     h.command({"type": "manual", "thrust": 1.0, "steering": 0.0})
     # Run the control + physics loop WITHOUT feeding any new GPS fixes.
     dt = 0.05

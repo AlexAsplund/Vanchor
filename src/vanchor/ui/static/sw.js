@@ -19,7 +19,7 @@
  */
 "use strict";
 
-const VERSION = "vanchor-shell-v17";
+const VERSION = "vanchor-shell-v39";
 const CACHE = VERSION;
 
 // The app shell. Kept in sync with index.html's <link>/<script> tags. "/" and
@@ -60,14 +60,25 @@ const SHELL = [
   "/static/icons/apple-touch-icon.png",
   // App scripts (every <script src="/static/*.js"> in index.html).
   "/static/core.js",
-  "/static/map.js",
+  "/static/map-core.js",
+  "/static/map-boaticon.js",
+  "/static/map-boat.js",
+  "/static/map-anchor.js",
+  "/static/map-track.js",
+  "/static/map-waypoints.js",
+  "/static/map-depth.js",
   "/static/hudframe.js",
   "/static/hud.js",
   "/static/steering.js",
   "/static/wizard.js",
   "/static/boat.js",
   "/static/debug.js",
-  "/static/app.js",
+  "/static/appcore.js",
+  "/static/controls.js",
+  "/static/route.js",
+  "/static/settings.js",
+  "/static/charts.js",
+  "/static/remote.js",
   "/static/markers.js",
   "/static/routing.js",
   "/static/survey.js",
@@ -149,7 +160,10 @@ self.addEventListener("fetch", (event) => {
   // tile cache + the bypassed /api keep the map + live data working offline.
   if (url.origin === self.location.origin || req.mode === "navigate") {
     event.respondWith(
-      fetch(req)
+      // cache:"reload" bypasses the HTTP cache so network-first means *network*,
+      // not a heuristically-cached stale copy (the reason a CSS/JS change could
+      // still not show up even though the server already had the new file).
+      fetch(req, { cache: "reload" })
         .then((resp) => {
           if (resp && resp.ok && resp.type === "basic") {
             const copy = resp.clone();

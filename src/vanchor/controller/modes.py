@@ -364,25 +364,42 @@ class WaypointMode(ControlMode):
         self.config = config or WaypointConfig()
         self._leg_start: GeoPoint | None = None
         self._reverse = False  # hysteresis on the forward/reverse decision
+        self._step = 1         # traversal direction: +1 forward, -1 back (patrol)
 
     def activate(self, state: NavigationState) -> None:
         self._leg_start = state.position
         self._reverse = False
+        self._step = 1
         state.route_complete = False
+
+    def _wrap_or_bounce(self, state: NavigationState, pos: GeoPoint) -> bool:
+        """``active_waypoint`` has run off an END of the route. ``route_loop``
+        wraps to the start and keeps circling; ``route_patrol`` reverses direction
+        and runs back the other way; a plain route completes. Returns True when
+        the route is now COMPLETE."""
+        n = len(state.waypoints)
+        if state.route_loop:
+            state.active_waypoint = 0
+            self._step = 1
+            self._leg_start = pos
+            return False
+        if state.route_patrol and n >= 2:
+            self._step = -self._step
+            state.active_waypoint += 2 * self._step  # off-the-end -> adjacent in-range mark
+            self._leg_start = pos
+            return False
+        state.route_complete = True
+        return True
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
         pos = state.position
         if pos is None or not state.waypoints:
             return ManualSetpoint(0.0, 0.0)
 
-        if state.active_waypoint >= len(state.waypoints):
-            if state.route_loop:
-                # Closed loop (e.g. "around island"): wrap to the start and keep
-                # circling instead of completing.
-                state.active_waypoint = 0
-                self._leg_start = pos
-            else:
-                state.route_complete = True
+        # Off either END of the route (>= len going forward, or < 0 going back in
+        # a patrol)? loop wraps, patrol reverses, a plain route completes.
+        if not 0 <= state.active_waypoint < len(state.waypoints):
+            if self._wrap_or_bounce(state, pos):
                 return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
 
         if self._leg_start is None:
@@ -393,15 +410,11 @@ class WaypointMode(ControlMode):
         state.distance_to_waypoint_m = distance
 
         if distance <= self.config.arrival_radius_m:
-            # Arrived: advance to the next leg.
-            state.active_waypoint += 1
+            # Arrived: advance to the next leg (in the current direction).
+            state.active_waypoint += self._step
             self._leg_start = target
-            if state.active_waypoint >= len(state.waypoints):
-                if state.route_loop:
-                    # Closed loop: wrap back to the first waypoint and keep going.
-                    state.active_waypoint = 0
-                else:
-                    state.route_complete = True
+            if not 0 <= state.active_waypoint < len(state.waypoints):
+                if self._wrap_or_bounce(state, pos):
                     return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
             target = state.waypoints[state.active_waypoint].point
             distance = haversine_m(pos, target)

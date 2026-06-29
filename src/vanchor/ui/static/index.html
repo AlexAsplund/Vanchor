@@ -193,7 +193,7 @@
   <div id="depth-legend" class="depth-legend glass hidden">
     <div class="depth-legend-bar"></div>
     <div class="depth-legend-labels"><span id="depth-legend-min">—</span><span id="depth-legend-max">—</span></div>
-    <div class="depth-legend-cap">depth (m)</div>
+    <div class="depth-legend-cap" id="depth-legend-cap">depth (m)</div>
   </div>
 
   <!-- Drop-marker FAB: arms marker placement; tap the map to drop (or long-press
@@ -382,10 +382,12 @@
           <button id="wp-arm" class="btn-primary wide">＋ Add waypoints</button>
         </div>
         <ol id="wp-list" class="wp-list"></ol>
+        <label class="switch" title="At the end of the route, reverse and run it back — patrolling there-and-back continuously."><input type="checkbox" id="wp-patrol" /><span class="track"></span> Patrol (there &amp; back)</label>
         <div class="btn-row">
           <button id="wp-go" class="btn-primary">▶ Start route</button>
           <button id="wp-clear" class="btn-ghost">Clear</button>
           <span id="loop-indicator" class="loop-indicator hidden" title="This route loops continuously around the island">↻ loop</span>
+          <span id="patrol-indicator" class="loop-indicator hidden" title="This route patrols there-and-back continuously">↩ patrol</span>
         </div>
 
         <!-- Save / Load named routes (task #48). Persisted in localStorage. -->
@@ -775,6 +777,15 @@
           <input type="range" id="sonar-cone" min="5" max="60" step="1" value="20" />
         </div>
         <div class="hint">Soundings are averaged into a colored depth chart (cell size scales with zoom). Shallow = red, deep = blue. The cone angle only affects the per-dot fallback used when the depth-grid backend is unavailable.</div>
+
+        <div class="ctx-sub">Import chart</div>
+        <div class="hint">Load an open-format depth file — CSV/XYZ (<code>lat,lon,depth</code> per row) or GeoJSON points. Merges into the chart unless "replace" is ticked.</div>
+        <label class="switch"><input type="checkbox" id="depth-import-replace" /><span class="track"></span> Replace existing chart</label>
+        <div class="btn-row">
+          <button id="depth-import-btn" class="btn-primary">⬆ Import depth map…</button>
+        </div>
+        <input type="file" id="depth-import-file" accept=".csv,.xyz,.txt,.geojson,.json" class="hidden" />
+        <div id="depth-import-status" class="hint"></div>
       </details>
 
       <details class="card" id="charts-card">
@@ -887,6 +898,9 @@
           <button id="set-set-launch" class="btn-ghost">⚑ Set launch here</button>
           <button id="set-rtl" class="btn-primary">🏠 Return to Launch</button>
         </div>
+
+        <div class="ctx-sub">Failsafes</div>
+        <label class="switch" title="When ON, the motor is cut if the GPS fix is lost for longer than the timeout. OFF (default) holds the last command through a fix dropout."><input type="checkbox" id="fix-failsafe" /><span class="track"></span> Stop motor on GPS-fix loss</label>
 
         <div class="ctx-sub">No-go / shallow zones</div>
         <div class="hint">Draw red no-go polygons the boat must avoid. Min depth triggers a shallow auto-stop. Zones persist on this device.</div>
@@ -1391,7 +1405,13 @@
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/vendor/uplot/uPlot.iife.min.js"></script>
   <script src="/static/core.js"></script>
-  <script src="/static/map.js"></script>
+  <script src="/static/map-core.js"></script>
+  <script src="/static/map-boaticon.js"></script>
+  <script src="/static/map-boat.js"></script>
+  <script src="/static/map-anchor.js"></script>
+  <script src="/static/map-track.js"></script>
+  <script src="/static/map-waypoints.js"></script>
+  <script src="/static/map-depth.js"></script>
   <script src="/static/hudframe.js"></script>
   <script src="/static/hud.js"></script>
   <script src="/static/steering.js"></script>
@@ -1400,7 +1420,12 @@
   <script src="/static/boat.js"></script>
   <script src="/static/selectboat.js"></script>
   <script src="/static/debug.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/appcore.js"></script>
+  <script src="/static/controls.js"></script>
+  <script src="/static/route.js"></script>
+  <script src="/static/settings.js"></script>
+  <script src="/static/charts.js"></script>
+  <script src="/static/remote.js"></script>
   <script src="/static/markers.js"></script>
   <script src="/static/routing.js"></script>
   <script src="/static/survey.js"></script>

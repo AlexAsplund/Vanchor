@@ -98,7 +98,7 @@ def test_coming_to_stop_is_not_a_blocked_reversal():
 
 
 def test_fix_lost_after_timeout_forces_zero():
-    gov = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=3.0)
+    gov = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=3.0, fix_failsafe_enabled=True)
     # Build up thrust with a fresh fix.
     cmd, status = gov.govern(MotorCommand(thrust=0.9), _state(), dt=0.2, fix_is_fresh=True)
     assert cmd.thrust > 0 and not status.fix_lost
@@ -114,8 +114,18 @@ def test_fix_lost_after_timeout_forces_zero():
     assert cmd.thrust == 0.0
 
 
+def test_fix_failsafe_off_by_default_keeps_thrust():
+    """The loss-of-fix failsafe is OFF by default: a long fix dropout does NOT
+    cut thrust (the boat holds its command). This is the removed 'deadman'."""
+    gov = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=3.0)  # default: disabled
+    for _ in range(10):  # 20 s without a fresh fix, way past the timeout
+        cmd, status = gov.govern(MotorCommand(thrust=0.9), _state(), dt=2.0, fix_is_fresh=False)
+    assert not status.fix_lost
+    assert cmd.thrust > 0
+
+
 def test_fresh_fix_resets_loss_timer():
-    gov = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=1.0)
+    gov = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=1.0, fix_failsafe_enabled=True)
     gov.govern(MotorCommand(thrust=0.5), _state(), dt=0.9, fix_is_fresh=False)
     # Fresh fix arrives, clearing the accumulated gap.
     cmd, status = gov.govern(MotorCommand(thrust=0.5), _state(), dt=0.9, fix_is_fresh=True)

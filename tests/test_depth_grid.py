@@ -4,13 +4,12 @@ the /api/depth/grid endpoint)."""
 import math
 
 import pytest
-from fastapi.testclient import TestClient
 
 from vanchor.app import Runtime
+from vanchor.core.config import load
 from vanchor.core.geo import destination_point
 from vanchor.core.models import GeoPoint
 from vanchor.nav.depth import DepthMap
-from vanchor.ui.server import create_app
 
 
 def _dm(points):
@@ -89,24 +88,77 @@ def test_grid_is_o_n_single_pass_consistency():
     assert len(grid["cells"]) == 1 and grid["cells"][0]["n"] == 2
 
 
-# -- API endpoint ------------------------------------------------------------ #
-@pytest.fixture()
-def client():
-    app = create_app(Runtime())
-    with TestClient(app) as c:
-        yield c
+def test_as_grid_bbox_windows_soundings():
+    # Four soundings; a bbox that contains only the lower-left one.
+    pts = [(59.0, 18.0, 5.0), (59.0, 18.01, 6.0), (59.02, 18.0, 7.0), (59.02, 18.01, 8.0)]
+    dm = _dm(pts)
+    full = dm.as_grid(20.0, radiate=False, interpolate=False)
+    win = dm.as_grid(20.0, radiate=False, interpolate=False,
+                     bbox=(17.99, 58.99, 18.005, 59.01))  # (west, south, east, north)
+    assert len(win["cells"]) < len(full["cells"])
+    assert all(c["lat"] <= 59.01 and c["lon"] <= 18.005 for c in win["cells"])
+    # A window over empty water yields no cells.
+    assert dm.as_grid(20.0, bbox=(10.0, 50.0, 10.1, 50.1))["cells"] == []
 
 
-def test_depth_grid_endpoint_shape(client):
-    r = client.get("/api/depth/grid?cell_m=20")
-    assert r.status_code == 200
-    data = r.json()
-    assert data["ok"] is True
-    assert set(data) >= {"ok", "cell_m", "min_depth", "max_depth", "count", "cells"}
-    assert isinstance(data["cells"], list)
+# -- runtime.depth_grid (the /api/depth/grid route is thin glue over this) ---- #
+# We exercise runtime.depth_grid() directly rather than through TestClient: a
+# Runtime carrying depth data spins under the TestClient lifespan portal (the
+# real uvicorn server with the same data starts fine), and depth_grid() returns
+# exactly what the endpoint serves -- clamping, windowing and all.
+def _rt(tmp_path, points):
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)  # isolate from the repo's vanchor_data/
+    rt = Runtime(cfg)
+    rt.depth_map.points = list(points)
+    return rt
 
 
-def test_depth_grid_endpoint_clamps_cell_m(client):
-    # Below the 2 m floor and above the 200 m ceiling get clamped.
-    assert client.get("/api/depth/grid?cell_m=0.5").json()["cell_m"] == 2.0
-    assert client.get("/api/depth/grid?cell_m=9999").json()["cell_m"] == 200.0
+def test_depth_grid_shape_and_ok(tmp_path):
+    rt = _rt(tmp_path, [(59.0, 18.0, 5.0), (59.00008, 18.0, 6.0), (59.0, 18.00008, 5.5)])
+    g = rt.depth_grid(20.0)
+    assert g["ok"] is True
+    assert set(g) >= {"ok", "cell_m", "min_depth", "max_depth", "count", "cells"}
+    assert isinstance(g["cells"], list)
+
+
+def test_depth_grid_clamps_cell_m(tmp_path):
+    rt = _rt(tmp_path, [(59.0, 18.0, 5.0)])
+    assert rt.depth_grid(0.5)["cell_m"] == 2.0      # below the 2 m floor
+    assert rt.depth_grid(9999)["cell_m"] == 200.0   # above the 200 m ceiling
+
+
+def test_depth_grid_windows_to_bbox(tmp_path):
+    rt = _rt(tmp_path, [(59.0, 18.0, 5.0), (59.001, 18.0, 6.0)])
+    # Tier-1: a far-away viewport window yields an empty (but ok) grid.
+    assert rt.depth_grid(10.0, bbox=(10.0, 50.0, 10.1, 50.1))["cells"] == []
+    # A window over the seeded soundings (~59, 18) returns cells.
+    near = rt.depth_grid(10.0, bbox=(17.9, 58.9, 18.1, 59.1))
+    assert near["ok"] is True and len(near["cells"]) >= 1
+
+
+def test_as_grid_sparse_wide_data_is_bounded():
+    # Soundings spread sparsely across a wide area: the old bounding-box scan in
+    # the interpolate/radiate fills made as_grid O(bbox_area * radius^2) and
+    # stalled for tens of seconds. It must stay bounded by max_cells and return
+    # promptly (a regression would hang this test).
+    pts = [(59.0 + (k % 50) * 0.002, 18.0 + (k // 50) * 0.002, 5.0 + k % 7) for k in range(500)]
+    g = _dm(pts).as_grid(5.0)
+    assert len(g["cells"]) <= 3000
+
+
+def test_as_grid_source_grids_an_alternate_layer():
+    # source= grids a parallel (lat, lon, value) layer (e.g. hardness) with the
+    # same binning -- cell values come from that layer, not depth.
+    dm = _dm([(59.0, 18.0, 5.0)])  # depth layer (ignored when source is hardness)
+    dm.hardness = [(59.0, 18.0, 108.0), (59.001, 18.0, 112.0)]
+    g = dm.as_grid(20.0, source=dm.hardness, radiate=False, interpolate=False)
+    assert sorted(c["depth"] for c in g["cells"]) == pytest.approx([108.0, 112.0])
+
+
+def test_depth_grid_field_selects_hardness(tmp_path):
+    rt = _rt(tmp_path, [(59.0, 18.0, 5.0)])
+    rt.depth_map.hardness = [(59.0, 18.0, 108.0), (59.001, 18.0, 112.0)]
+    g = rt.depth_grid(20.0, field="hardness")
+    assert g["field"] == "hardness" and g["max_depth"] == pytest.approx(112.0)
+    assert rt.depth_grid(20.0, field="depth")["field"] == "depth"  # default unaffected

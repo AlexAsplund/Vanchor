@@ -221,7 +221,8 @@ class Runtime:
         # Accumulates depth soundings for the auto depth-map overlay.
         self.depth_map = DepthMap()
         self._depth_map_path = os.path.join(cfg.data_dir, "depthmap.json")
-        self.depth_map.load(self._depth_map_path)
+        self._depth_chart_path = os.path.join(cfg.data_dir, "depthchart.json")
+        self.depth_map.load(self._depth_map_path, self._depth_chart_path)
         self._depth_saved_n = len(self.depth_map.points)
 
         # --- navigator + controller (identical for sim or hardware) ------- #
@@ -276,6 +277,7 @@ class Runtime:
                 max_steer_slew_per_s=cfg.boat.max_steer_rate_dps / cfg.boat.max_steer_angle_deg,
                 reverse_delay_s=cfg.safety.reverse_delay_s,
                 fix_timeout_s=cfg.safety.fix_timeout_s,
+                fix_failsafe_enabled=cfg.safety.fix_failsafe_enabled,
                 drag_alarm_factor=cfg.safety.drag_alarm_factor,
                 min_depth_m=cfg.safety.min_depth_m,
                 nogo_lookahead_m=cfg.safety.nogo_lookahead_m,
@@ -551,7 +553,7 @@ class Runtime:
         # Depth map: reload the restored soundings from disk.
         try:
             self.depth_map = DepthMap()
-            self.depth_map.load(self._depth_map_path)
+            self.depth_map.load(self._depth_map_path, self._depth_chart_path)
             self._depth_saved_n = len(self.depth_map.points)
         except Exception:  # pragma: no cover - defensive
             logger.exception("restore: reloading depth map failed")
@@ -1340,22 +1342,114 @@ class Runtime:
     # ------------------------------------------------------------------ #
     # Depth-map gridding (server-side averaging for the depth overlay)
     # ------------------------------------------------------------------ #
-    def depth_grid(self, cell_m: float = 15.0) -> dict:
-        """Server-side gridded depth map: bins soundings into ~``cell_m`` metre
-        cells averaging depth per cell, so the UI can paint an averaged colour
-        chart instead of 100k individual dots. ``cell_m`` is clamped to 2..200.
+    def depth_grid(self, cell_m: float = 15.0, bbox=None, field: str = "depth") -> dict:
+        """Server-side gridded chart: bins soundings into ~``cell_m`` metre cells
+        averaging the value per cell, so the UI can paint an averaged colour chart
+        instead of 100k individual dots. ``cell_m`` is clamped to 2..200.
 
-        Returns ``{ok, cell_m, min_depth, max_depth, count, cells}``; the depth
-        map changes slowly, so the UI polls this occasionally rather than reading
-        it from the 5 Hz telemetry."""
+        ``bbox`` = (west, south, east, north) limits the grid to that viewport
+        window (Tier-1 windowing) so a large chart only ships what's on screen.
+        ``field`` selects the layer: ``"depth"`` (default) or ``"hardness"``
+        (bottom-hardness, raw 0..127) -- same gridding, different source.
+
+        Returns ``{ok, field, cell_m, min_depth, max_depth, count, cells}``; the
+        chart changes slowly, so the UI polls this rather than the 5 Hz telemetry.
+        """
         try:
             cell = float(cell_m)
         except (TypeError, ValueError):
             cell = 15.0
         cell = max(2.0, min(200.0, cell))
-        grid = self.depth_map.as_grid(cell)
+        source = self.depth_map.hardness if field == "hardness" else None
+        grid = self.depth_map.as_grid(cell, bbox=bbox, source=source)
         grid["ok"] = True
+        grid["field"] = field
         return grid
+
+    def depth_contours(self, bbox=None, limit: int = 20000) -> dict:
+        """Imported depth contours (isobath polylines) windowed to a
+        (west, south, east, north) bbox. Returns ``{ok, count, contours}`` where
+        each contour is ``{d: depth_m, pts: [[lat, lon], ...]}``."""
+        cs = self.depth_map.contours_in(bbox=bbox, limit=limit)
+        return {"ok": True, "count": len(cs), "contours": cs}
+
+    def depth_composition(self, bbox=None, limit: int = 30000) -> dict:
+        """Imported bottom-composition polygons, windowed to a
+        (west, south, east, north) bbox. Returns ``{ok, count, polygons}`` where
+        each is ``{pct: 0..100, ring: [[lat, lon], ...]}`` -- rendered FILLED
+        (a vector polygon layer; not rasterised)."""
+        ps = self.depth_map.composition_in(bbox=bbox, limit=limit)
+        return {"ok": True, "count": len(ps), "polygons": ps}
+
+    def water_polygon(self, bbox) -> dict:
+        """OSM water polygon(s) for a (west, south, east, north) bbox, used to
+        CLIP the depth overlays to water (don't draw composition over land). Uses
+        the same offline WaterCache as routing; fetches from Overpass + caches if
+        absent (so offline it needs the area pre-downloaded). Returns
+        ``{ok, water}`` where water is GeoJSON-style MultiPolygon coords
+        ``[[[ [lon,lat], ... ]=exterior, [ ... ]=hole, ... ], ...]`` (empty if none)."""
+        from .nav import water
+        w, s, e, n = bbox
+        wbbox = (s, w, n, e)                       # water.py order: (S, W, N, E)
+        cache = water.WaterCache(self.config.data_dir)
+        try:
+            geom = cache.find_covering(wbbox)
+            if geom is None:
+                geom = water.assemble_water(water.fetch_overpass(*wbbox))
+                if geom is not None and not geom.is_empty:
+                    cache.store(wbbox, geom)
+        except Exception as exc:  # noqa: BLE001 - network/parse; clip is optional
+            logger.warning("water fetch for clip failed: %s", exc)
+            return {"ok": False, "water": []}
+        if geom is None or geom.is_empty:
+            return {"ok": True, "water": []}
+        polys = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
+        out = []
+        for p in polys:
+            rings = [list(p.exterior.coords)] + [list(r.coords) for r in p.interiors]
+            out.append([[[round(x, 6), round(y, 6)] for (x, y) in ring] for ring in rings])
+        return {"ok": True, "water": out}
+
+    def import_depth_map(self, filename: str, data: bytes, replace: bool = False) -> dict:
+        """Import soundings from an uploaded open-format depth file (CSV/XYZ or
+        GeoJSON). ``replace`` swaps the whole chart; otherwise the soundings are
+        merged in. Persists to ``depthmap.json`` so the import survives restarts."""
+        from .nav.depth import parse_depth_features
+
+        try:
+            parsed = parse_depth_features(filename, data)
+        except Exception as exc:  # noqa: BLE001 - any parse error -> clean message
+            logger.warning("depth import parse failed: %s", exc)
+            return {"ok": False, "error": f"could not parse the file: {exc}", "imported": 0}
+        pts = parsed["soundings"]
+        hard = parsed["hardness"]
+        cont = parsed.get("contours", [])
+        comp = parsed.get("composition", [])
+        if not pts and not hard and not cont and not comp:
+            return {"ok": False, "error": "no valid (lat, lon, depth) soundings found in the file",
+                    "imported": 0}
+        dm = self.depth_map
+        if replace:
+            dm.points = []
+            dm.hardness = []
+            dm.contours = []
+            dm.composition = []
+            dm._last = None
+        dm.points.extend(pts)
+        dm.hardness.extend(hard)
+        dm.contours.extend(cont)
+        dm.composition.extend(comp)
+        if len(dm.points) > dm.max_points:
+            dm.points = dm.points[-dm.max_points:]
+        if len(dm.hardness) > dm.max_points:
+            dm.hardness = dm.hardness[-dm.max_points:]
+        dm.save(self._depth_map_path)           # soundings
+        dm.save_chart(self._depth_chart_path)   # static chart (hardness/contours/composition)
+        self._depth_saved_n = len(dm.points)
+        logger.info("imported %d soundings + %d hardness + %d contours + %d composition from %s",
+                    len(pts), len(hard), len(cont), len(comp), filename)
+        return {"ok": True, "imported": len(pts), "hardness": len(hard),
+                "contours": len(cont), "composition": len(comp), "total": len(dm.points)}
 
     def telemetry(self) -> dict:
         # During replay, play recorded frames back instead of live state.

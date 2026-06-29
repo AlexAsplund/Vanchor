@@ -146,9 +146,11 @@
   const NOGO_KEY = "vanchor-nogo-zones";
   const NOGO_VIS_KEY = "vanchor-nogo-visible";
   const MINDEPTH_KEY = "vanchor-min-depth";
+  const FAILSAFE_KEY = "vanchor-fix-failsafe";
   let zones = [];            // [[ [lat,lon], ... ], ...]
   let nogoVisible = true;
   let minDepth = 0;
+  let fixFailsafe = false;   // loss-of-fix failsafe; OFF by default
   const nogoLayer = (map && L) ? L.layerGroup() : null;
 
   function loadZones() {
@@ -156,6 +158,7 @@
     catch (e) { /* ignore */ }
     try { nogoVisible = localStorage.getItem(NOGO_VIS_KEY) !== "0"; } catch (e) { /* ignore */ }
     try { const d = parseFloat(localStorage.getItem(MINDEPTH_KEY)); if (Number.isFinite(d)) minDepth = d; } catch (e) { /* ignore */ }
+    try { fixFailsafe = localStorage.getItem(FAILSAFE_KEY) === "1"; } catch (e) { /* ignore */ }
   }
   function saveZones() { try { localStorage.setItem(NOGO_KEY, JSON.stringify(zones)); } catch (e) { /* ignore */ } }
   function sendZones() { send({ type: "set_nogo_zones", zones: zones }); }
@@ -246,6 +249,17 @@
       minDepth = Number.isFinite(v) ? v : 0;
       try { localStorage.setItem(MINDEPTH_KEY, String(minDepth)); } catch (e) { /* ignore */ }
       send({ type: "set_min_depth", min_depth_m: minDepth });
+    });
+  }
+
+  // loss-of-fix failsafe switch (off by default): stop the motor if GPS drops out
+  const failsafeEl = $("fix-failsafe");
+  function applyFailsafeUI() { if (failsafeEl) failsafeEl.checked = fixFailsafe; }
+  if (failsafeEl) {
+    failsafeEl.addEventListener("change", () => {
+      fixFailsafe = failsafeEl.checked;
+      try { localStorage.setItem(FAILSAFE_KEY, fixFailsafe ? "1" : "0"); } catch (e) { /* ignore */ }
+      send({ type: "set_fix_failsafe", enabled: fixFailsafe });
     });
   }
 
@@ -342,6 +356,7 @@
   // ======================================================================
   loadZones();
   applyMinDepthUI();
+  applyFailsafeUI();
   if (nogoLayer) {
     redrawZones();
     // Register the No-go zones overlay into the shared layers control (#86) so
@@ -361,6 +376,7 @@
   setTimeout(() => {
     if (zones.length) sendZones();
     if (minDepth > 0) send({ type: "set_min_depth", min_depth_m: minDepth });
+    if (fixFailsafe) send({ type: "set_fix_failsafe", enabled: true });
   }, 1500);
 
   VA.safety = {

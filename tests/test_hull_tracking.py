@@ -148,13 +148,15 @@ def test_boatconfig_has_hull_tracking_default():
     assert BoatConfig().hull_tracking == 1.0
 
 
-def test_runtime_applies_hull_tracking_live():
+def test_runtime_applies_hull_tracking_live(tmp_path):
     """POST /api/boat -> update_boat -> _apply_boat_specs rebuilds the physics
     with the new hull_tracking, changing the live turn rate."""
     from vanchor.app import Runtime
     from vanchor.core.config import AppConfig
 
-    rt = Runtime(AppConfig())
+    cfg = AppConfig()
+    cfg.data_dir = str(tmp_path)  # isolate: never write the repo's boats.json
+    rt = Runtime(cfg)
     try:
         sim = rt.simulator
         assert sim is not None
@@ -195,13 +197,16 @@ def test_jon_boat_preset_tracks_looser_than_outboard():
     assert presets["15 HP stern outboard"]["hull_tracking"] > 1.0
 
 
-def test_hull_tracking_biases_autopilot_tuning():
+def test_hull_tracking_biases_autopilot_tuning(tmp_path):
     """Hull character also tunes the CONTROLLER (works on real hardware, not just
     sim physics): a stiff/tracking hull gets MORE steering authority and LESS
     command smoothing; a loose/skittish hull the reverse. At 1.0 it's a no-op."""
     from vanchor.app import Runtime
+    from vanchor.core.config import AppConfig
 
-    rt = Runtime()
+    cfg = AppConfig()
+    cfg.data_dir = str(tmp_path)  # isolate: never write the repo's boats.json
+    rt = Runtime(cfg)
     base_tau = rt.config.control.steer_tau
 
     rt._apply_boat_specs({"hull_tracking": 1.0})

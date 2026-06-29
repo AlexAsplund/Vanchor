@@ -183,12 +183,13 @@ def test_post_coerces_int_port_from_string(client):
     assert client.get("/api/config/devices").json()["nmea_tcp"]["port"] == 10120
 
 
-async def test_reload_applies_live_no_restart():
+async def test_reload_applies_live_no_restart(tmp_path):
     """A sim-compatible device change applies LIVE (no process restart): switching
     GPS to external NMEA drops the internal GPS device immediately."""
     from vanchor.app import Runtime
     from vanchor.core.config import load
-    rt = Runtime(load(None))
+    cfg = load(None); cfg.data_dir = str(tmp_path)   # isolate: never write the repo's devices.json
+    rt = Runtime(cfg)
     assert type(rt.gps).__name__ == "SimGps"
     rt.set_device_config({"hardware": {"gps_source": "nmea"}})
     res = await rt.reload_devices()
@@ -197,12 +198,13 @@ async def test_reload_applies_live_no_restart():
     assert rt.simulator is not None             # sim boat still present (compass/motor sim)
 
 
-async def test_reload_bad_serial_keeps_current_devices():
+async def test_reload_bad_serial_keeps_current_devices(tmp_path):
     """If the live rebuild fails (e.g. a serial port that doesn't exist), the
     current devices stay up and the call reports applied=False with an error."""
     from vanchor.app import Runtime
     from vanchor.core.config import load
-    rt = Runtime(load(None))
+    cfg = load(None); cfg.data_dir = str(tmp_path)   # isolate: never write the repo's devices.json
+    rt = Runtime(cfg)
     before = rt.gps
     rt.set_device_config({"hardware": {"enabled": True}})  # all serial -> ports absent
     res = await rt.reload_devices()

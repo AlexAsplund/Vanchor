@@ -62,6 +62,10 @@ class SafetyConfig:
     reverse_delay_s: float = 1.0
     # Seconds without a fresh fix before thrust is forced to zero.
     fix_timeout_s: float = 3.0
+    # Loss-of-fix failsafe master switch. OFF by default: losing the GPS fix does
+    # NOT cut thrust (the boat holds its last command). Enable it to force a stop
+    # after fix_timeout_s without a fresh fix.
+    fix_failsafe_enabled: bool = False
     # Anchor drag alarm trips beyond this multiple of the anchor radius.
     drag_alarm_factor: float = 2.0
     # --- Shallow-water / geofence auto-stop (#62) ----------------------- #
@@ -208,7 +212,7 @@ class SafetyGovernor:
             self._time_since_fix_s = 0.0
         else:
             self._time_since_fix_s += dt
-        if self._time_since_fix_s > cfg.fix_timeout_s:
+        if cfg.fix_failsafe_enabled and self._time_since_fix_s > cfg.fix_timeout_s:
             status.fix_lost = True
             status.messages.append(
                 f"fix lost for {self._time_since_fix_s:.1f}s > "

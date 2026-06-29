@@ -133,6 +133,16 @@ VA.postJSON = async function (url, body) {
 // and the page loads fully offline on the boat. Served at root scope by the
 // server so it can control the whole origin. Guarded for support / failures.
 if ("serviceWorker" in navigator) {
+  // When a NEW service worker activates and takes control (after an update), the
+  // page is still showing the OLD cached shell/CSS/JS. Reload once so it swaps to
+  // the fresh assets instead of lingering stale — the reason a UI change could
+  // "not show up" until a manual hard-refresh. Guarded against reload loops.
+  let _swReloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (_swReloading) return;
+    _swReloading = true;
+    window.location.reload();
+  });
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch((err) => {
       console.warn("[vanchor] service worker registration failed:", err);

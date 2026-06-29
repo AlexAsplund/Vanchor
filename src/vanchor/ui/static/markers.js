@@ -212,11 +212,65 @@
     });
   }
 
-  // Long-press the map to drop a marker (mobile-friendly) — Leaflet contextmenu
-  // fires on long-press on touch and right-click on desktop.
-  map.on("contextmenu", (e) => {
-    createMarker(e.latlng.lat, e.latlng.lng, selectedIcon);
-  });
+  // Long-press the map (or right-click on desktop) opens a small CHOICE menu at
+  // that point instead of silently dropping a marker: place a marker, or navigate
+  // there (fastest direct line, or a water-only route around the shoreline).
+  function openMapMenu(latlng) {
+    const lat = latlng.lat, lon = latlng.lng;
+    const popup = L.popup({ className: "map-menu-wrap", closeButton: true, autoPanPadding: [24, 24] })
+      .setLatLng(latlng)
+      .setContent(
+        `<div class="map-menu">
+           <button class="mm-btn" data-act="marker">📍 Place marker here</button>
+           <div class="mm-sep">Navigate here</div>
+           <button class="mm-btn" data-act="fast">⚡ Fastest (direct)</button>
+           <button class="mm-btn" data-act="shore">🌊 Along shoreline</button>
+         </div>`)
+      .openOn(map);
+    const goto = () => VA.send({ type: "goto", waypoints: [{ name: "GOTO", lat, lon }], throttle: 0.6, on_arrival: "anchor" });
+    const node = popup.getElement();
+    if (!node) return;
+    node.querySelector('[data-act="marker"]').addEventListener("click", () => {
+      createMarker(lat, lon, selectedIcon); map.closePopup(popup);
+    });
+    node.querySelector('[data-act="fast"]').addEventListener("click", () => {
+      goto(); map.closePopup(popup);
+    });
+    node.querySelector('[data-act="shore"]').addEventListener("click", async () => {
+      map.closePopup(popup);
+      if (VA.routing && VA.routing.planTo) {
+        const ok = await VA.routing.planTo(lat, lon, "shoreline");
+        if (ok && VA.routeEditor && VA.routeEditor.startRoute) VA.routeEditor.startRoute();
+      } else {
+        goto();  // smart routing module absent -> fall back to a direct goto
+      }
+    });
+
+    // If the long-press is on an ISLAND (land surrounded by the boat's water),
+    // swap "Along shoreline" for "Loop around island" — detected async so the
+    // menu still pops instantly (water presses bail out cheaply on the backend).
+    const shoreBtn = node.querySelector('[data-act="shore"]');
+    fetch("/api/route/island", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat, lon, offset_m: 20 }),
+    }).then((res) => (res.ok ? res.json() : null)).then((r) => {
+      if (!r || r.ok === false || !Array.isArray(r.waypoints) || !r.waypoints.length) return;
+      if (!shoreBtn || !shoreBtn.isConnected) return;       // popup closed before detect returned
+      const fresh = shoreBtn.cloneNode(false);              // shallow clone -> drops the shoreline listener
+      fresh.dataset.act = "island";
+      fresh.textContent = "🏝 Loop around island";
+      shoreBtn.replaceWith(fresh);
+      fresh.addEventListener("click", () => {
+        map.closePopup(popup);
+        if (VA.island && VA.island.planIsland) {
+          Promise.resolve(VA.island.planIsland(lat, lon, true)).then(() => {
+            if (VA.routeEditor && VA.routeEditor.startRoute) VA.routeEditor.startRoute();
+          });
+        }
+      });
+    }).catch(() => { /* endpoint absent -> keep 'Along shoreline' */ });
+  }
+  map.on("contextmenu", (e) => openMapMenu(e.latlng));
 
   // ---- import GPX / GeoJSON ----------------------------------------------
   function importGeoJSON(obj) {

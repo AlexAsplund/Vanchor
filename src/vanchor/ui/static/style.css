@@ -13,6 +13,26 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* Touch/marine UX: this is a control surface, not a document. Stop accidental
+   text selection, the iOS long-press callout, and the tap-highlight flash when
+   dragging sliders / panning / long-pressing a button.
+   Applied to EVERY element (not just body): iOS Safari does not reliably inherit
+   -webkit-user-select:none down to <button>/<label>, so long-pressing a mode
+   button would still select its label. Real inputs (and anything tagged
+   .selectable, e.g. a coordinate readout you want to copy) opt back in. */
+* {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+input, textarea, [contenteditable="true"], .selectable {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  user-select: text;
+}
+
 :root {
   --bg: #04060c;
   --text: #eaf2fb;
@@ -1798,4 +1818,65 @@ body.mobile.dock-collapsed .dock { padding-bottom: 0; }
    real layout so desktop (no body.mobile) is unaffected. */
 @media (max-width: 760px) {
   body.mobile .steering-gauge { display: none !important; }
+}
+
+/* ---- Active-mode badge beside the boat + the tappable boat info popup ---- */
+.boat-mode-badge { pointer-events: none; }
+.boat-mode-badge .bmb {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px 2px 6px; border-radius: 999px; white-space: nowrap;
+  font: 600 11px/1 "Inter", system-ui, sans-serif; color: var(--text);
+  background: rgba(10, 20, 28, 0.78);
+  border: 1px solid var(--line-bright, rgba(255, 255, 255, 0.18));
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4); backdrop-filter: blur(4px);
+}
+.boat-mode-badge .bmb-i { font-size: 12px; }
+.boat-mode-badge .bmb[data-mode="anchor_hold"],
+.boat-mode-badge .bmb[data-mode="anchor_ml"] { border-color: #ff5a7a; color: #ffd0d9; }
+.boat-mode-badge .bmb[data-mode="waypoint"],
+.boat-mode-badge .bmb[data-mode="follow_apb"] { border-color: var(--accent, #1be4ff); }
+.boat-mode-badge .bmb[data-mode="stop"] { border-color: #ffb454; color: #ffe2bd; }
+
+.boat-popup-wrap .leaflet-popup-content-wrapper {
+  background: rgba(12, 22, 30, 0.92); color: var(--text);
+  border: 1px solid var(--line-bright, rgba(255, 255, 255, 0.18));
+  border-radius: 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); backdrop-filter: blur(8px);
+}
+.boat-popup-wrap .leaflet-popup-content { margin: 10px 12px; min-width: 168px; }
+.boat-popup-wrap .leaflet-popup-tip { background: rgba(12, 22, 30, 0.92); }
+.boat-popup-wrap a.leaflet-popup-close-button { color: var(--muted, #9fb0bd); }
+.boat-popup .bp-mode { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; margin-bottom: 7px; }
+.boat-popup .bp-i { font-size: 16px; }
+.boat-popup .bp-rows { display: grid; gap: 3px; margin-bottom: 10px; }
+.boat-popup .bp-row { display: flex; justify-content: space-between; gap: 14px; font-size: 12px; }
+.boat-popup .bp-row > span { color: var(--muted, #9fb0bd); }
+.boat-popup .bp-actions { display: flex; flex-direction: column; gap: 6px; }
+.boat-popup .bp-btn {
+  width: 100%; padding: 8px 10px; border-radius: 9px; cursor: pointer;
+  font: 600 13px "Inter", system-ui, sans-serif; border: 1px solid transparent;
+}
+.boat-popup .bp-anchor { background: #ff5a7a; color: #1a0a0f; }
+.boat-popup .bp-weigh { background: transparent; color: var(--text); border-color: var(--line-bright, rgba(255, 255, 255, 0.2)); }
+.boat-popup .bp-btn:active { transform: scale(0.97); }
+
+/* ---- Long-press map choice menu (place marker / navigate here) ---- */
+.map-menu-wrap .leaflet-popup-content-wrapper {
+  background: rgba(12, 22, 30, 0.94); color: var(--text);
+  border: 1px solid var(--line-bright, rgba(255, 255, 255, 0.18));
+  border-radius: 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); backdrop-filter: blur(8px);
+}
+.map-menu-wrap .leaflet-popup-content { margin: 8px; min-width: 170px; }
+.map-menu-wrap .leaflet-popup-tip { background: rgba(12, 22, 30, 0.94); }
+.map-menu-wrap a.leaflet-popup-close-button { color: var(--muted, #9fb0bd); }
+.map-menu { display: flex; flex-direction: column; gap: 4px; }
+.map-menu .mm-btn {
+  width: 100%; text-align: left; padding: 9px 11px; border-radius: 9px; cursor: pointer;
+  font: 600 13px "Inter", system-ui, sans-serif; color: var(--text);
+  background: rgba(255, 255, 255, 0.05); border: 1px solid transparent;
+}
+.map-menu .mm-btn:hover { border-color: var(--accent, #1be4ff); background: rgba(27, 228, 255, 0.10); }
+.map-menu .mm-btn:active { transform: scale(0.98); }
+.map-menu .mm-sep {
+  font: 600 10px "Inter", system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted, #9fb0bd); padding: 4px 4px 1px; margin-top: 2px;
 }

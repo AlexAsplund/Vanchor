@@ -385,6 +385,8 @@ class Controller:
             self.state.route_on_arrival = str(command.get("on_arrival", "none"))
             # Closed-loop route (e.g. "around island"): circle continuously.
             self.state.route_loop = bool(command.get("loop", False))
+            # Patrol: at each end, reverse and run the route back (there-and-back).
+            self.state.route_patrol = bool(command.get("patrol", False))
             if "throttle" in command:
                 self.modes[ControlModeName.WAYPOINT].config.throttle = float(
                     command["throttle"]
@@ -395,6 +397,7 @@ class Controller:
             # runtime; just (re)start waypoint navigation.
             self.state.active_waypoint = 0
             self.state.route_loop = bool(command.get("loop", False))
+            self.state.route_patrol = bool(command.get("patrol", False))
             if "throttle" in command:
                 self.modes[ControlModeName.WAYPOINT].config.throttle = float(
                     command["throttle"]
@@ -459,6 +462,10 @@ class Controller:
         elif ctype == "set_min_depth":
             self.safety.config.min_depth_m = float(command.get("min_depth_m", 0.0))
             logger.info("min depth set: %.1f m", self.safety.config.min_depth_m)
+        elif ctype == "set_fix_failsafe":
+            self.safety.config.fix_failsafe_enabled = bool(command.get("enabled", False))
+            logger.info("loss-of-fix failsafe %s",
+                        "ON" if self.safety.config.fix_failsafe_enabled else "OFF")
         elif ctype == "set_launch":
             self._set_launch()
         elif ctype == "mob":
@@ -530,6 +537,7 @@ class Controller:
             "active_waypoint": self.state.active_waypoint,
             "route_on_arrival": self.state.route_on_arrival,
             "route_loop": self.state.route_loop,
+            "route_patrol": self.state.route_patrol,
             "target_heading": self.state.target_heading,
             "anchor": self.state.anchor,
             "anchor_radius_m": self.state.anchor_radius_m,
@@ -556,6 +564,7 @@ class Controller:
         self.state.active_waypoint = snap["active_waypoint"]
         self.state.route_on_arrival = snap["route_on_arrival"]
         self.state.route_loop = snap.get("route_loop", False)
+        self.state.route_patrol = snap.get("route_patrol", False)
         self.state.target_heading = snap["target_heading"]
         self.state.anchor = snap["anchor"]
         self.state.anchor_radius_m = snap["anchor_radius_m"]

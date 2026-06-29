@@ -220,6 +220,11 @@ class SafetyConfig:
     max_thrust_slew_per_s: float = 2.0
     reverse_delay_s: float = 0.5
     fix_timeout_s: float = 5.0
+    # Loss-of-fix failsafe. OFF by default (a switch in Settings -> Safety): when
+    # off, losing the GPS fix does NOT cut thrust. On = force a stop after the
+    # timeout. (Was previously always-on, which surfaced as a "deadman" cutting
+    # thrust whenever fixes lapsed.)
+    fix_failsafe_enabled: bool = False
     drag_alarm_factor: float = 2.0
     # Shallow-water / geofence auto-stop (#62).
     min_depth_m: float = 0.0  # cut thrust below this sounded depth (0 = disabled)
@@ -659,6 +664,7 @@ safety:
   max_thrust_slew_per_s: 2.0
   reverse_delay_s: 0.5
   fix_timeout_s: 5.0
+  fix_failsafe_enabled: false  # loss-of-fix failsafe; OFF by default (Settings -> Safety)
   drag_alarm_factor: 2.0
   min_depth_m: 0.0           # cut thrust below this sounded depth (0 = disabled) (#62)
   nogo_lookahead_m: 5.0      # also stop within this distance of a no-go zone (#62)

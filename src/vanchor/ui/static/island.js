@@ -292,4 +292,9 @@
 
   // No proactive probe (don't spam the parallel backend on load); the first tap
   // detects a 404 and self-gates, mirroring the smart-routing card.
+
+  // Expose for the map long-press menu (markers.js) so a press on an island can
+  // offer "Loop around island" using the same plan + load + winding logic.
+  window.VA = window.VA || {};
+  VA.island = Object.assign(VA.island || {}, { planIsland });
 })();

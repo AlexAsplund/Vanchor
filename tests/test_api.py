@@ -11,8 +11,12 @@ from vanchor.ui.server import create_app
 
 
 @pytest.fixture()
-def client():
-    app = create_app(Runtime())
+def client(tmp_path):
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)  # isolate: never write the repo's boats.json/devices.json
+    app = create_app(Runtime(cfg))
     with TestClient(app) as c:
         yield c
 
