@@ -254,6 +254,26 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             None, lambda: runtime.plan_survey(polygon, spacing_m, angle_deg)
         )
 
+    @app.post("/api/route/work_area")
+    async def route_work_area(payload: dict) -> dict:
+        """Generate Work Area spots: an even serpentine grid over a drawn area,
+        clipped to water. Body: ``{polygon: [[lat,lon],...], spacing_m: <f>}``.
+        Returns ``{ok, waypoints, message}`` -- the UI loads these as the spots
+        (then starts Work Area mode with a `work_area` command). Runs in an
+        executor (shapely)."""
+        polygon = payload.get("polygon")
+        if not isinstance(polygon, list) or len(polygon) < 3:
+            return {"ok": False, "waypoints": [],
+                    "message": "polygon must be a list of at least 3 [lat,lon] points."}
+        try:
+            spacing_m = float(payload.get("spacing_m"))
+        except (TypeError, ValueError):
+            return {"ok": False, "waypoints": [], "message": "spacing_m is required."}
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: runtime.plan_work_spots(polygon, spacing_m)
+        )
+
     @app.post("/api/route/prefetch")
     async def route_prefetch(payload: dict) -> dict:
         """Pre-download + cache the water/routing chart for an area (#52).

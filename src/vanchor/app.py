@@ -1187,6 +1187,49 @@ class Runtime:
             "message": result.message,
         }
 
+    def plan_work_spots(self, polygon_latlon: list, spacing_m: float) -> dict:
+        """Generate Work Area spots: an even serpentine grid over a drawn area,
+        clipped to water (spots on land are dropped). Pure CPU (shapely) + the
+        offline water cache; the UI endpoint calls it in an executor. Returns
+        ``{ok, waypoints, message}`` -- the UI loads these as the Work Area spots."""
+        from .nav import survey, water as water_mod
+        from shapely.geometry import Point as _Pt
+
+        try:
+            result = survey.plan_work_spots(polygon_latlon, float(spacing_m))
+        except (ValueError, TypeError) as exc:
+            logger.warning("work-area spots failed: %s", exc)
+            return {"ok": False, "waypoints": [], "message": f"Bad work-area request: {exc}"}
+        if not result.ok:
+            return {"ok": False, "waypoints": [], "message": result.message}
+
+        # Clip spots to water (drop any over land) using the cached water polygon
+        # for the area's bbox; if no water is cached, return the grid unclipped.
+        wps = result.waypoints
+        try:
+            lats = [w["lat"] for w in wps]
+            lons = [w["lon"] for w in wps]
+            cache = water_mod.WaterCache(self.config.data_dir)
+            bbox = water_mod.bbox_around(min(lats), min(lons), max(lats), max(lons))
+            geom = cache.find_covering(bbox)
+            if geom is not None and not geom.is_empty:
+                proj = water_mod.Projection.for_point(
+                    (min(lons) + max(lons)) / 2, (min(lats) + max(lats)) / 2
+                )
+                water_m = proj.to_metric(geom)
+                if not water_m.is_valid:
+                    water_m = water_m.buffer(0)
+                kept = [
+                    w for w in wps
+                    if water_m.covers(_Pt(*proj.point_to_metric(w["lon"], w["lat"])))
+                ]
+                if kept:  # only apply the clip if something survives (else keep all)
+                    wps = [dict(w, name=f"Spot {i + 1}") for i, w in enumerate(kept)]
+        except Exception as exc:  # noqa: BLE001 - clipping is best-effort
+            logger.warning("work-area water clip skipped: %s", exc)
+        return {"ok": True, "waypoints": wps,
+                "message": f"{len(wps)} work spots." if wps else result.message}
+
     # ------------------------------------------------------------------ #
     # Offline chart prefetch + management (#52)
     # ------------------------------------------------------------------ #

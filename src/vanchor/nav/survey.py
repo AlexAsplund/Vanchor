@@ -23,7 +23,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 
-from shapely.geometry import LineString, MultiLineString, Polygon
+from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 
 from .water import Projection
@@ -239,4 +239,72 @@ def plan_survey(
         passes=len(lines),
         spacing_m=float(spacing_m),
         angle_deg=sweep_ang,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Work Area spots: an even grid of discrete spots over a drawn area, visited in
+# a serpentine order (the "smart pattern" for Work Area mode).
+# --------------------------------------------------------------------------- #
+MAX_WORK_SPOTS = 250
+
+
+def plan_work_spots(polygon_latlon: list, spacing_m: float) -> SurveyResult:
+    """Even grid of work spots inside an area polygon (``[[lat, lon], ...]`` ring),
+    spaced ~``spacing_m`` apart and ordered serpentine (lawnmower) so the boat
+    works them in a tidy sweep. Returns ``SurveyResult`` with waypoints
+    ``[{name, lat, lon}]``. Pure CPU (shapely); run in an executor. Water-clipping
+    is applied by the caller (``Runtime.plan_work_spots``)."""
+    pts = [(float(lat), float(lon)) for lat, lon in polygon_latlon]
+    if len(pts) < 3:
+        return SurveyResult(False, message="A work area needs at least 3 points.")
+    if spacing_m is None or spacing_m < MIN_SPACING_M:
+        return SurveyResult(False, message=f"Spacing must be at least {MIN_SPACING_M:g} m.")
+
+    proj = Projection.for_point(pts[0][1], pts[0][0])
+    ring_m = [proj.point_to_metric(lon, lat) for lat, lon in pts]
+    poly_m = Polygon(ring_m)
+    if not poly_m.is_valid:
+        poly_m = poly_m.buffer(0)
+    if poly_m.is_empty or poly_m.area <= 0.0:
+        return SurveyResult(False, message="Degenerate work area.")
+
+    minx, miny, maxx, maxy = poly_m.bounds
+    # Pre-guard: refuse a too-small spacing before generating the grid.
+    if int((maxx - minx) / spacing_m + 1) * int((maxy - miny) / spacing_m + 1) > 50000:
+        return SurveyResult(False, message="Spacing too small for this area.")
+
+    rows: list[list[tuple[float, float]]] = []
+    y = miny + spacing_m / 2.0
+    ri = 0
+    while y <= maxy:
+        row = []
+        x = minx + spacing_m / 2.0
+        while x <= maxx:
+            if poly_m.contains(Point(x, y)):
+                row.append((x, y))
+            x += spacing_m
+        if ri % 2 == 1:
+            row.reverse()          # serpentine: alternate row direction
+        rows.append(row)
+        ri += 1
+        y += spacing_m
+
+    flat = [p for row in rows for p in row]
+    if not flat:
+        return SurveyResult(False, message="No spots fit inside the area at this spacing.")
+    if len(flat) > MAX_WORK_SPOTS:
+        return SurveyResult(
+            False,
+            message=f"{len(flat)} spots is too many; increase spacing (max {MAX_WORK_SPOTS}).",
+        )
+
+    waypoints = [
+        {"name": f"Spot {i + 1}", "lat": lat, "lon": lon}
+        for i, (x, y) in enumerate(flat)
+        for lon, lat in [proj.point_to_lonlat(x, y)]
+    ]
+    return SurveyResult(
+        True, waypoints=waypoints, spacing_m=spacing_m,
+        message=f"{len(waypoints)} spots on a {spacing_m:g} m grid.",
     )

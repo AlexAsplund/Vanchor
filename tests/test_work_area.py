@@ -112,3 +112,25 @@ def test_next_spot_command_sets_flag():
     ctl, st = _ctl()
     ctl.handle_command({"type": "next_spot"})
     assert st.work_next_requested is True
+
+
+# ---- Work Area spot generator (flavor C: draw area -> grid of spots) ------ #
+def test_plan_work_spots_grid_inside_area():
+    from vanchor.nav.survey import plan_work_spots
+    poly = [[59.000, 18.000], [59.002, 18.000], [59.002, 18.003], [59.000, 18.003]]
+    r = plan_work_spots(poly, spacing_m=50.0)
+    assert r.ok and len(r.waypoints) >= 4
+    for w in r.waypoints:
+        assert 59.0 <= w["lat"] <= 59.002 and 18.0 <= w["lon"] <= 18.003
+
+
+def test_plan_work_spots_rejects_too_many():
+    from vanchor.nav.survey import plan_work_spots
+    poly = [[59.0, 18.0], [59.02, 18.0], [59.02, 18.02], [59.0, 18.02]]  # ~2 km
+    r = plan_work_spots(poly, spacing_m=1.0)  # would be tens of thousands
+    assert not r.ok and "spacing" in r.message.lower() or "too many" in r.message.lower()
+
+
+def test_plan_work_spots_needs_three_points():
+    from vanchor.nav.survey import plan_work_spots
+    assert plan_work_spots([[59.0, 18.0], [59.1, 18.0]], 50.0).ok is False
