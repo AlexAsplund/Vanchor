@@ -72,7 +72,11 @@
   const overlayHooks = new Map();
   // Re-entrancy guard: while we sync a module's own toggle in response to a
   // control event (or restore layers), suppress the saveLayers feedback loop.
-  let suppressSave = 0;
+  // STARTS engaged (1): during load, overlay modules restore their overlays with
+  // layer.addTo(map) -> overlayadd -> saveLayers, which would otherwise persist
+  // the still-default basemap and CLOBBER the user's saved one before
+  // restoreLayers() reads it. restoreLayers() opens saving once restore is done.
+  let suppressSave = 1;
 
   function readLayerPrefs() {
     try {
@@ -133,22 +137,26 @@
   // built-in overlays); overlay modules that load later restore themselves
   // through their own persistence and addOverlay.
   function restoreLayers() {
-    const prefs = readLayerPrefs();
-    if (!prefs) return;
-    suppressSave++;
-    try {
-      if (prefs.base && base[prefs.base] && !map.hasLayer(base[prefs.base])) {
-        Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) map.removeLayer(base[n]); });
-        base[prefs.base].addTo(map);
-      }
-      if (Array.isArray(prefs.overlays)) {
-        prefs.overlays.forEach((name) => {
-          const layer = overlayByName.get(name);
-          if (layer && !map.hasLayer(layer)) layer.addTo(map);
-        });
-      }
-    } catch (e) { /* ignore */ }
-    suppressSave--;
+    const prefs = readLayerPrefs();   // read while saving is still suppressed, so
+                                      // it's the user's pref, not a load-time clobber
+    if (prefs) {
+      try {
+        if (prefs.base && base[prefs.base] && !map.hasLayer(base[prefs.base])) {
+          Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) map.removeLayer(base[n]); });
+          base[prefs.base].addTo(map);
+        }
+        if (Array.isArray(prefs.overlays)) {
+          prefs.overlays.forEach((name) => {
+            const layer = overlayByName.get(name);
+            if (layer && !map.hasLayer(layer)) layer.addTo(map);
+          });
+        }
+      } catch (e) { /* ignore */ }
+    }
+    // Load + restore complete: enable saving and persist the (restored or default)
+    // state once. From here, basemap/overlay changes save normally.
+    suppressSave = 0;
+    saveLayers();
   }
 
   // Faint, geo-anchored REFERENCE GRID. Over featureless dark water the boat's
