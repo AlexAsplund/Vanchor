@@ -34,6 +34,17 @@ the boat's own Raspberry Pi.
 
 > All four are running on the **built-in simulator** — no hardware, no boat, just `vanchor` on a laptop.
 
+### A few of the modes
+
+| | |
+|:---:|:---:|
+| ![Route](docs/images/mode-route.png) | ![Anchor / Spot-Lock](docs/images/mode-anchor.png) |
+| **Route** — build a path or tap "take me here"; smart water-only routing, with Loop / Patrol | **Anchor / Spot-Lock** — drop a virtual anchor and hold the spot, with a nudge jog |
+| ![Work Area](docs/images/mode-work-area.png) | ![Trolling](docs/images/mode-trolling.png) |
+| **Work Area** — visit a set of spots, hold at each, advance on a timer or the big button | **Trolling** — a sinusoidal S-curve weave at a held speed |
+
+> One guide per mode lives in **[`docs/modes/`](docs/modes/)**.
+
 ## Highlights
 
 **Navigation & control**
