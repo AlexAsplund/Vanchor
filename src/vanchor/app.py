@@ -1230,6 +1230,23 @@ class Runtime:
         return {"ok": True, "waypoints": wps,
                 "message": f"{len(wps)} work spots." if wps else result.message}
 
+    def contour_route(self, lat: float, lon: float, window_m: float = 700.0) -> dict:
+        """Build a route that follows the imported depth contour nearest
+        (lat, lon), chaining same-depth pieces into a continuous track (a closed
+        isobath comes back as a loop). Pure CPU (shapely); the UI endpoint calls it
+        in an executor. Returns ``{ok, waypoints, depth_m, loop, message}`` -- the
+        UI loads the waypoints as a route (patrol optional)."""
+        from .nav import contour_route as cr
+
+        dlat = window_m / 111_320.0
+        dlon = window_m / (111_320.0 * max(0.1, math.cos(math.radians(lat))))
+        bbox = (lon - dlon, lat - dlat, lon + dlon, lat + dlat)  # (w, s, e, n)
+        contours = self.depth_map.contours_in(bbox=bbox)
+        if not contours:
+            return {"ok": False, "waypoints": [],
+                    "message": "No depth contours loaded around there."}
+        return cr.contour_route_near(lat, lon, contours)
+
     # ------------------------------------------------------------------ #
     # Offline chart prefetch + management (#52)
     # ------------------------------------------------------------------ #

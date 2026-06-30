@@ -274,6 +274,20 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             None, lambda: runtime.plan_work_spots(polygon, spacing_m)
         )
 
+    @app.post("/api/route/contour")
+    async def route_contour(payload: dict) -> dict:
+        """Build a route that follows the imported depth contour nearest a clicked
+        point (chaining same-depth pieces into a continuous track). Body:
+        ``{lat, lon}``. Returns ``{ok, waypoints, depth_m, loop, message}`` -- the
+        UI loads the waypoints as a route (patrol optional). Runs in an executor."""
+        try:
+            lat = float(payload["lat"])
+            lon = float(payload["lon"])
+        except (KeyError, TypeError, ValueError):
+            return {"ok": False, "waypoints": [], "message": "lat and lon are required."}
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: runtime.contour_route(lat, lon))
+
     @app.post("/api/route/prefetch")
     async def route_prefetch(payload: dict) -> dict:
         """Pre-download + cache the water/routing chart for an area (#52).
