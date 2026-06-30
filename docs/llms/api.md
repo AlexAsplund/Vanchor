@@ -22,7 +22,8 @@ Telemetry includes (non-exhaustive — read `state.to_dict()` for the full set):
 position, heading_deg, fix (sog/cog), mode, waypoints + active_waypoint,
 cross_track_m, distance_to_waypoint_m, bearing_to_dest, depth_m, anchor +
 distance_to_anchor_m, battery, sim_enabled, route_loop, route_patrol,
-alerts/banners (battery
+work_holding, work_dwell_remaining_s, work_spot_count (Work Area mode; each
+waypoint also carries an optional `heading`), alerts/banners (battery
 RTL, shallow, no-go, link-loss, MOB), and the boat profile.
 
 ## Commands: `POST /api/command  { "type": "...", ... }`
@@ -34,12 +35,23 @@ Steering/mode commands (handled in `controller/controller.py`):
 `orbit` · `trolling` · `contour_follow` · `follow_apb` · `backtrack` · `jog` ·
 `set_throttle` · `set_launch` · `set_min_depth` · `set_nogo_zones` · `mob` /
 `mob_clear` · `pause_nav` / `resume_nav` · `record` · `load_route` · `start` /
-`clear`.
+`clear` · `work_area` · `next_spot`.
 
 `goto` and `load_route` both take an optional boolean `loop` (close the ring —
 circle the route continuously) and `patrol` (at each end reverse and run the
 route back — a there-and-back patrol); these surface as `route_loop` /
 `route_patrol` in telemetry.
+
+**Work Area mode** (`ControlModeName.WORK_AREA`): visit each spot, hold position
+there (spot-lock), then advance. `work_area` starts it —
+`{type:"work_area", waypoints:[{name,lat,lon,heading?}...], advance:"manual"|"timed",
+dwell_s, loop?, patrol?, throttle?}`. Each spot's optional `heading` is the boat
+orientation to hold there (best-effort). `advance:"manual"` waits for the
+`next_spot` command (the big on-screen "Go to next spot" button); `"timed"`
+auto-advances after `dwell_s` (the button still skips early). loop/patrol cycle
+the spots. Telemetry: `work_holding` (drives the button), `work_dwell_remaining_s`,
+`work_spot_count`, `active_waypoint`. Generate a spot grid from a drawn area with
+`POST /api/route/work_area` (below).
 
 Runtime/sim commands (handled in `app.py` `Runtime.handle_command`):
 
@@ -64,6 +76,7 @@ module via `VA.send({type:"..."})`.
 | `POST /api/route/island` | loop-around-island ring of waypoints |
 | `POST /api/route/rtl` | return-to-launch route |
 | `POST /api/route/survey` | lawnmower survey route over a polygon |
+| `POST /api/route/work_area` | `{polygon,spacing_m}` → grid of Work Area spots (water-clipped) |
 | `POST /api/route/prefetch` | pre-cache OSM water + tiles for a bbox (offline) |
 | `GET /api/route/charts` , `POST /api/route/charts/clear` | cached chart management |
 | `GET /api/depth/grid?cell_m=&west=&south=&east=&north=&field=` | gridded depth / bottom-hardness chart (see below) |

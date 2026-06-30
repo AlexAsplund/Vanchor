@@ -57,6 +57,22 @@ telemetry + route snapshots, set from a `goto`/`load_route` flag):
   adjacent in-range mark). Distinct from `route_loop`; a plain route (neither
   flag) completes and idles.
 
+**Work Area mode (`WorkAreaMode`).** Visit each spot, HOLD position there, then
+advance. The spots are `state.waypoints`; `active_waypoint` is the current spot.
+A two-phase machine: TRAVEL reuses the waypoint leg (cross-track + fwd/reverse);
+on arrival within `arrival_radius_m` it switches to HOLD, delegating to a private
+`AnchorHoldMode` (spot-lock). It advances when the `next_spot` button arrives
+(`state.work_next_requested`) and/or, in `advance="timed"`, after `dwell_s`
+(accumulated from `dt`, harness-friendly); `route_loop`/`route_patrol` cycle the
+spots via the same `_wrap_or_bounce`, else it holds the final spot. Each
+`Waypoint` may carry an optional `heading`: once on station the boat orients to
+it with a gentle `orient_thrust` (best-effort — a single bow thruster can't hold
+heading AND position, so the anchor's position recovery wins on drift-out).
+Telemetry: `work_holding` / `work_dwell_remaining_s` / `work_spot_count`. The
+mode shares the WaypointMode leg config (boat-spec tuning applies to both). The
+draw-an-area → grid spots generator is `survey.plan_work_spots` (→
+`Runtime.plan_work_spots`, water-clipped; endpoint `POST /api/route/work_area`).
+
 **Forward vs reverse manoeuvring:** `modes.maneuver_to_bearing(...)` decides
 whether to drive **forward** (bow at the mark) or **reverse** (stern at the mark)
 by lower estimated *time-to-arrive* = `turn_time + travel_time`. Reversing trades

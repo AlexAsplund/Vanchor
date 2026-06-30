@@ -63,6 +63,27 @@ absent early or on hardware.
 - **Pointer, not mouse**, for drawing/drag gestures, so touch works
   (`measure.js` uses `pointerdown/move/up` on `map.getContainer()`).
 
+## Work Area mode (`work-area.js`)
+
+A first-class mode (a `data-mode="work_area"` item in the More flyout + a
+`#ctx-work_area` contextual panel) for "visit spots, hold at each, advance". It
+**reuses** the pending-waypoint editor (`VA.map.addPending/pending/setPending`) so
+the spot markers + route line are shared, not forked — the spots are just
+waypoints. Two ways to define spots: tap (`#wa-arm` arms `VA.map.addClickConsumer`,
+returning `true` so it doesn't fight go-to/route clicks) or **draw an area**
+(`VA.map.startAreaSelect`, mirroring `survey.js`) → `POST /api/route/work_area`
+→ load the returned grid as pending. Each spot row carries an optional `heading`
+field hung on the pending object (the map module preserves extra fields across
+drags); it's emitted as `waypoints[i].heading` in the start command. Start sends
+`{type:"work_area", waypoints, advance, dwell_s, loop, patrol, throttle}`. The big
+**`#wa-next` FAB** (`.wa-next`, `position:fixed` bottom-center) is shown — via the
+`.hidden` class toggled on each telemetry frame — only when `mode=="work_area" &&
+work_holding`; its subline reads `Spot {active_waypoint+1} / {work_spot_count}`
+plus the `work_dwell_remaining_s` countdown (timed mode), and tapping it sends
+`{type:"next_spot"}`. See [api.md](api.md) + [backend.md](backend.md). (Note:
+`.wa-next` is `position:fixed`, so `offsetParent` is null even when shown — test
+its visibility via computed `display`, not `offsetParent`.)
+
 ## Layout & styling
 
 - `index.html` — the top bar (status chips + alert bell + menu), the map, the
