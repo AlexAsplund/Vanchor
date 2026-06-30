@@ -229,6 +229,13 @@
     <span class="fab-ic" aria-hidden="true">⊕</span>
   </button>
 
+  <!-- WORK AREA: the big "next spot" button. Shown ONLY while holding at a spot
+       in work_area mode (work-area.js). Large + thumb-friendly for boat use. -->
+  <button id="wa-next" class="wa-next hidden" type="button" aria-label="Go to next spot">
+    <span class="wa-next-main">Go to next spot →</span>
+    <span class="wa-next-sub" id="wa-next-sub">Spot — / —</span>
+  </button>
+
   <!-- Replay indicator — shown while a recorded session is playing back. -->
   <div id="replay-indicator" class="replay-indicator hidden">
     <span class="rec-dot"></span> REPLAY <b id="replay-ind-pct">0%</b>
@@ -304,6 +311,9 @@
       </button>
       <button class="more-item" data-mode="trolling" role="menuitem">
         <span class="mi" aria-hidden="true">〰</span><span class="ml">Troll</span>
+      </button>
+      <button class="more-item" data-mode="work_area" role="menuitem">
+        <span class="mi" aria-hidden="true">🪝</span><span class="ml">Work Area</span>
       </button>
     </div>
 
@@ -556,6 +566,59 @@
           <div class="weave-track"><div class="weave-dot" id="troll-dot"></div></div>
         </div>
         <button id="troll-go" class="btn-primary wide">〰 Start trolling</button>
+      </div>
+
+      <!-- WORK AREA — hop between fishing/work spots, holding each (optionally on a
+           heading) until you tap "next". Spots are placed by tapping the map or
+           generated from a drawn area. Reuses the route editor's pending API. -->
+      <div class="ctx-panel" id="ctx-work_area" data-for="work_area">
+        <div class="hint">Define a set of <b>spots</b>. The boat holds each spot until you tap <b>Go to next spot</b> (manual) or after a dwell time (timed). Place spots by tapping the map, or draw an area and auto-generate them.</div>
+        <div class="btn-row">
+          <button id="wa-arm" class="btn-primary wide">＋ Add spots</button>
+        </div>
+        <ol id="wa-list" class="wp-list wa-list"></ol>
+        <div class="btn-row">
+          <button id="wa-clear" class="btn-ghost wide">Clear spots</button>
+        </div>
+
+        <div class="ctx-sub">Advance</div>
+        <div class="seg" id="wa-advance">
+          <button type="button" data-val="manual" class="on">Manual</button>
+          <button type="button" data-val="timed">Timed</button>
+        </div>
+        <div class="slider-row" id="wa-dwell-row">
+          <label>Dwell per spot <output id="wa-dwell-val">60</output> s</label>
+          <input type="range" id="wa-dwell" min="5" max="600" step="5" value="60" />
+        </div>
+        <label class="switch" title="When ON, the boat holds each spot's heading while parked there. Per-spot headings override this."><input type="checkbox" id="wa-hold-hdg" /><span class="track"></span> Hold heading at each spot</label>
+        <label class="switch" title="At the end of the spots, loop back to the first and continue."><input type="checkbox" id="wa-loop" /><span class="track"></span> Loop (back to first)</label>
+        <label class="switch" title="At the end, reverse and work the spots back — there-and-back patrol."><input type="checkbox" id="wa-patrol" /><span class="track"></span> Patrol (there &amp; back)</label>
+        <div class="slider-row">
+          <label>Throttle <output id="wa-throttle-val">60</output>%</label>
+          <input type="range" id="wa-throttle" min="10" max="100" step="5" value="60" />
+        </div>
+        <button id="wa-go" class="btn-primary wide">▶ Start Work Area</button>
+        <div id="wa-status" class="hint"></div>
+
+        <!-- Generate spots from a drawn area (flavor C). Reuses the survey
+             polygon-draw UX, then POSTs /api/route/work_area. -->
+        <details class="mini" id="wa-area-card">
+          <summary>Generate spots from an area</summary>
+          <div class="hint">Draw an area, set the spot spacing, then generate a grid of spots. Review them above and press Start Work Area.</div>
+          <div class="btn-row">
+            <button id="wa-area-box" class="btn-primary">▭ Box</button>
+            <button id="wa-area-free" class="btn-primary">✎ Freehand</button>
+            <button id="wa-area-clear" class="btn-ghost hidden">Clear</button>
+          </div>
+          <div id="wa-area-opts" class="hidden">
+            <div class="slider-row">
+              <label>Spot spacing <output id="wa-spacing-val">40</output> m</label>
+              <input type="range" id="wa-spacing" min="5" max="200" step="5" value="40" />
+            </div>
+            <button id="wa-generate" class="btn-primary wide" disabled>Generate spots</button>
+          </div>
+          <div id="wa-area-status" class="hint"></div>
+        </details>
       </div>
 
       <!-- Shared quick tools strip (cruise / track / go-to), always available. -->
@@ -1442,6 +1505,7 @@
   <script src="/static/backup.js"></script>
   <script src="/static/teleport.js"></script>
   <script src="/static/guided.js"></script>
+  <script src="/static/work-area.js"></script>
   <script src="/static/alerts.js"></script>
   <script src="/static/safety.js"></script>
   <script src="/static/measure.js"></script>

@@ -1327,6 +1327,45 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 
 /* orbit pick button armed state reuses .active glow */
 #orbit-pick.active, #contour-go.active { border-color: var(--accent); box-shadow: var(--glow); }
+#wa-arm.active { border-color: var(--accent); box-shadow: var(--glow); }
+#wa-area-box.active, #wa-area-free.active { border-color: var(--accent); box-shadow: var(--glow); }
+
+/* Work Area: per-spot heading input in the shared spot list. */
+.wa-list input.wa-hdg {
+  flex: 0 0 56px; width: 56px; min-width: 0; font-size: 12px; padding: 5px 6px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--glass-solid);
+  color: var(--text); -moz-appearance: textfield; text-align: center;
+}
+.wa-list input.wa-hdg:focus { outline: none; border-color: var(--accent); }
+/* Dimmed (but still usable) dwell row when not in timed mode. */
+#wa-dwell-row.dim { opacity: 0.45; }
+
+/* Work Area: the big "Go to next spot" floating action. Large + thumb-friendly,
+   bottom-centre, above the control dock; shown only while holding at a spot. */
+.wa-next {
+  position: fixed; left: 50%; bottom: 150px; transform: translateX(-50%);
+  z-index: 1480; min-width: 260px; max-width: calc(100vw - 32px);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 14px 28px; border-radius: 16px; cursor: pointer;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-2) 38%, var(--glass-solid)), color-mix(in srgb, var(--accent-2) 14%, var(--glass-solid)));
+  border: 1px solid var(--accent-2); color: var(--text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 40%, transparent), 0 8px 28px rgba(0,0,0,0.45), 0 0 22px color-mix(in srgb, var(--accent-2) 35%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+.wa-next:active { transform: translateX(-50%) scale(0.97); }
+.wa-next.hidden { display: none; }
+.wa-next .wa-next-main {
+  font: 800 18px var(--font-display); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text); text-shadow: 0 0 12px color-mix(in srgb, var(--accent-2) 50%, transparent);
+}
+.wa-next .wa-next-sub { font: 600 12px var(--font-num); color: var(--muted); letter-spacing: 0.03em; }
+
+/* On mobile the dock is a bottom sheet — lift the button so it sits above the
+   peek sheet, and hide it once the sheet covers the map. */
+body.mobile .wa-next { bottom: calc(12vh + 24px + env(safe-area-inset-bottom)); }
+body.mobile[data-sheet="mid"] .wa-next { bottom: calc(46vh + 16px + env(safe-area-inset-bottom)); }
+body.mobile[data-sheet="full"] .wa-next { display: none; }
 
 @media (max-width: 760px) {
   .mode-more-menu { grid-template-columns: repeat(3, 1fr); }
