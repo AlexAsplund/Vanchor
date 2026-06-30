@@ -48,6 +48,10 @@ the boat's own Raspberry Pi.
   coast, into bays). Routes load editable and unstarted for review.
 - **Loop-around-island routing** and **area-survey "map mode"** (lawnmower
   coverage over a drawn box/polygon).
+- **Work Area mode** — work a set of spots: tap them in, or draw an area and
+  auto-generate a grid; the boat travels to each, **holds station**, then advances
+  — on a **dwell timer** or a big on-screen **"Go to next spot"** button — with an
+  optional **per-spot hold heading**, and loop / there-and-back patrol over the set.
 - **Cruise control** (hold knots) and **% engine-power** throttle.
 - **Pause / resume / stop** mid-route; **record-a-track / replay / BackTrack**; GPX import.
 
