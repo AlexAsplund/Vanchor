@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 if TYPE_CHECKING:
     from ..app import Runtime
@@ -31,11 +32,20 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     async def broadcaster() -> None:
         period = 1.0 / telemetry_hz
+        frame_n = 0
         while True:
             snapshot = runtime.telemetry()
-            runtime.recorder.record(snapshot)
+            runtime.recorder.record(snapshot)   # recorder keeps the COMPLETE frame
             if clients:
-                message = json.dumps(snapshot)
+                frame_n += 1
+                # depth_points (~28 KB) is the bulk of a frame; over the high-rate
+                # WS send it only ~1 Hz (every 5th frame), not every frame.
+                # depth_count is always present and the client retains the last
+                # points when the array is omitted. (/api/state still returns full.)
+                out = snapshot
+                if frame_n % 5 != 1 and "depth_points" in snapshot:
+                    out = {k: v for k, v in snapshot.items() if k != "depth_points"}
+                message = json.dumps(out)
                 for ws in list(clients):
                     try:
                         await ws.send_text(message)
@@ -56,6 +66,7 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             await runtime.stop()
 
     app = FastAPI(title="Vanchor-NG", lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -294,7 +305,10 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         bbox = None
         if None not in (west, south, east, north):
             bbox = (west, south, east, north)
-        return runtime.depth_grid(cell_m, bbox=bbox, field=field)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: runtime.depth_grid(cell_m, bbox=bbox, field=field)
+        )
 
     @app.get("/api/depth/contours")
     async def depth_contours(
@@ -312,7 +326,8 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         bbox = None
         if None not in (west, south, east, north):
             bbox = (west, south, east, north)
-        return runtime.depth_contours(bbox=bbox)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: runtime.depth_contours(bbox=bbox))
 
     @app.get("/api/depth/composition")
     async def depth_composition(
@@ -327,7 +342,8 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         bbox = None
         if None not in (west, south, east, north):
             bbox = (west, south, east, north)
-        return runtime.depth_composition(bbox=bbox)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: runtime.depth_composition(bbox=bbox))
 
     @app.get("/api/depth/water")
     async def depth_water(
@@ -336,14 +352,22 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         """OSM water polygon(s) for the bbox, to CLIP overlays to water (don't
         draw composition over land). Cached; fetched from Overpass if absent.
         Returns ``{ok, water}`` (GeoJSON MultiPolygon coords, lon/lat)."""
-        return runtime.water_polygon((west, south, east, north))
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: runtime.water_polygon((west, south, east, north))
+        )
 
     @app.post("/api/depth/import")
     async def depth_import(file: UploadFile = File(...), replace: bool = False) -> dict:
         """Import an open-format depth file (CSV/XYZ or GeoJSON) into the depth
         chart. ``replace=true`` swaps the whole chart; the default merges."""
         data = await file.read()
-        return runtime.import_depth_map(file.filename or "", data, replace=bool(replace))
+        filename = file.filename or ""
+        replace_flag = bool(replace)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: runtime.import_depth_map(filename, data, replace=replace_flag)
+        )
 
     @app.get("/api/weather/presets")
     async def weather_presets() -> dict:

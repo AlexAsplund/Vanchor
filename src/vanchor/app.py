@@ -1403,11 +1403,38 @@ class Runtime:
             return {"ok": False, "water": []}
         if geom is None or geom.is_empty:
             return {"ok": True, "water": []}
-        polys = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
+        # The cached water geometry can be 9-20 MB / ~930k vertices, but this is
+        # a purely VISUAL clip mask, so coarse is fine. Shrink it before sending:
+        #   (a) clip to a slightly-padded request bbox (cover a bit past the view)
+        #   (b) simplify to a few-metre tolerance
+        #   (c) round coords to 5 decimals (~1 m)
+        import shapely.geometry as sgeom
+
+        pad = 0.10 * max(e - w, n - s)             # ~10% of the bbox span
+        clip_box = sgeom.box(w - pad, s - pad, e + pad, n + pad)
+        try:
+            geom = geom.intersection(clip_box)
+            geom = geom.simplify(1e-4, preserve_topology=True)  # ~11 m, coarse mask
+        except Exception as exc:  # noqa: BLE001 - degenerate geom; clip is optional
+            logger.warning("water clip/simplify failed: %s", exc)
+            return {"ok": True, "water": []}
+        if geom is None or geom.is_empty:
+            return {"ok": True, "water": []}
+        # Keep only polygonal parts (a clip can yield lines/points/collections).
+        if geom.geom_type == "Polygon":
+            polys = [geom]
+        elif geom.geom_type == "MultiPolygon":
+            polys = list(geom.geoms)
+        elif geom.geom_type == "GeometryCollection":
+            polys = [g for g in geom.geoms if g.geom_type == "Polygon"]
+        else:
+            polys = []
         out = []
         for p in polys:
+            if p.is_empty:
+                continue
             rings = [list(p.exterior.coords)] + [list(r.coords) for r in p.interiors]
-            out.append([[[round(x, 6), round(y, 6)] for (x, y) in ring] for ring in rings])
+            out.append([[[round(x, 5), round(y, 5)] for (x, y) in ring] for ring in rings])
         return {"ok": True, "water": out}
 
     def import_depth_map(self, filename: str, data: bytes, replace: bool = False) -> dict:
@@ -1505,6 +1532,13 @@ class Runtime:
         if len(self.depth_map.points) - self._depth_saved_n >= 25:
             self.depth_map.save(self._depth_map_path)
             self._depth_saved_n = len(self.depth_map.points)
+        # depth_count is a cheap scalar; depth_points (~28 KB) is the bulk of the
+        # frame. telemetry() returns the COMPLETE snapshot (so /api/state is
+        # deterministic + full); the high-rate WS broadcaster decimates
+        # depth_points to ~1 Hz (see ui/server.py:broadcaster). The frontend uses
+        # depth_count for the readout and retains the last points when the WS
+        # omits the array.
+        payload["depth_count"] = len(self.depth_map.points)
         payload["depth_points"] = self.depth_map.as_list()
 
         # Closed-loop steering unit: target (pre-slew) vs feedback (actual head

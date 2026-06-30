@@ -306,22 +306,42 @@
   // land or islands. Null = no water loaded -> draw unclipped. Apply between
   // ctx.save()/ctx.restore() in each layer's _draw.
   let waterMask = null;
+  // Bumps whenever `waterMask` is replaced (refetch). Part of the clip cache key
+  // so a new mask invalidates the cached Path2D even at an unchanged view.
+  let waterMaskVersion = 0;
+  // The ~930k-vertex OSM water polygon is identical across all three overlays
+  // within a frame and across frames at the same view, but its PROJECTION to
+  // screen changes on every pan/zoom. We tessellate it into a Path2D exactly
+  // once per (view, mask) and reuse it; `ctx.clip(path, "evenodd")` preserves
+  // the exterior-minus-holes semantics of the old per-draw beginPath/clip.
+  let _clipCache = null;        // { path, key } where path is a Path2D
+  function _clipCacheKey(m) {
+    const tl = m.containerPointToLayerPoint([0, 0]);
+    const size = m.getSize();
+    return waterMaskVersion + ":" + m.getZoom() + ":" + tl.x + ":" + tl.y +
+           ":" + size.x + ":" + size.y;
+  }
   function clipToWaterMask(ctx2, m) {
     if (!waterMask || !waterMask.length) return;
-    ctx2.beginPath();
-    for (const poly of waterMask) {
-      for (const ring of poly) {
-        if (!ring.length) continue;
-        const q0 = m.latLngToContainerPoint([ring[0][1], ring[0][0]]);  // ring=[lon,lat]
-        ctx2.moveTo(q0.x, q0.y);
-        for (let k = 1; k < ring.length; k++) {
-          const q = m.latLngToContainerPoint([ring[k][1], ring[k][0]]);
-          ctx2.lineTo(q.x, q.y);
+    const key = _clipCacheKey(m);
+    if (!_clipCache || _clipCache.key !== key) {
+      // Rebuild the Path2D from the mask projected to the current view.
+      const path = new Path2D();
+      for (const poly of waterMask) {
+        for (const ring of poly) {
+          if (!ring.length) continue;
+          const q0 = m.latLngToContainerPoint([ring[0][1], ring[0][0]]);  // ring=[lon,lat]
+          path.moveTo(q0.x, q0.y);
+          for (let k = 1; k < ring.length; k++) {
+            const q = m.latLngToContainerPoint([ring[k][1], ring[k][0]]);
+            path.lineTo(q.x, q.y);
+          }
+          path.closePath();
         }
-        ctx2.closePath();
       }
+      _clipCache = { path, key };
     }
-    ctx2.clip("evenodd");   // exterior minus island holes = water
+    ctx2.clip(_clipCache.path, "evenodd");   // exterior minus island holes = water
   }
 
   const GridLayer = L.Layer.extend(Object.assign({}, CanvasOverlayMixin, {
@@ -1019,17 +1039,24 @@
   let compositionShow = false;   // Composition overlay on/off (default off)
   let compositionBusy = false;
   let waterMaskBusy = false;
+  // The bbox (padded viewport) the current waterMask was fetched for. The mask
+  // is a slowly-changing visual clip, so we fetch it at most once per region:
+  // only when the padded viewport leaves the extent the current mask covers.
+  let waterMaskBBox = null;      // {w,s,e,n} or null = never fetched
   async function fetchWaterMask() {
     if (waterMaskBusy) return;               // dedupe concurrent fetches from the 3 overlays
     waterMaskBusy = true;
     try {
       const b = map.getBounds().pad(0.3);
+      waterMaskBBox = { w: b.getWest(), s: b.getSouth(), e: b.getEast(), n: b.getNorth() };
       const r = await VA.getJSON(
         "/api/depth/water?west=" + b.getWest() + "&south=" + b.getSouth() +
         "&east=" + b.getEast() + "&north=" + b.getNorth());
       waterMask = (r && r.ok && Array.isArray(r.water) && r.water.length) ? r.water : null;
+      waterMaskVersion++;          // invalidate the cached clip Path2D (new mask)
     } catch (e) {
       waterMask = null;   // no water available -> draw unclipped (graceful)
+      waterMaskVersion++;          // invalidate the cached clip Path2D
     } finally {
       waterMaskBusy = false;
     }
@@ -1038,6 +1065,20 @@
                                  [depthShow, gridLayer], [contourShow, contourLayer]]) {
       if (show && map.hasLayer(layer)) { layer._forceDraw = true; layer._scheduleReset(); }
     }
+  }
+  // Fetch the water clip only when the current padded viewport is NOT already
+  // covered by the bbox the mask was last fetched for. Called from the overlay
+  // fetch paths instead of unconditionally hitting /api/depth/water every 4 s
+  // poll + every move (the mask is a slowly-changing visual clip).
+  function maybeFetchWaterMask() {
+    const wb = waterMaskBBox;
+    if (waterMask && wb) {
+      const b = map.getBounds().pad(0.3);
+      // Already-covered: viewport fully inside the fetched extent -> reuse.
+      if (b.getWest() >= wb.w && b.getSouth() >= wb.s &&
+          b.getEast() <= wb.e && b.getNorth() <= wb.n) return;
+    }
+    fetchWaterMask();
   }
   async function fetchComposition() {
     if (!compositionShow || compositionBusy) return;
@@ -1052,7 +1093,7 @@
       compositionLayer.setData(ps);
     } catch (e) { /* leave the last good render */ }
     finally { compositionBusy = false; }
-    fetchWaterMask();   // async: composition shows now; clips when the water arrives
+    maybeFetchWaterMask();   // async: clips when the water arrives; reused per region
   }
   const compositionProxy = L.layerGroup();   // fronts the layers-panel checkbox
   let compositionSyncing = false;
@@ -1142,7 +1183,7 @@
     } finally {
       gridBusy = false;
     }
-    fetchWaterMask();   // keep the water clip current for depth/contours
+    maybeFetchWaterMask();   // keep the clip current for depth/contours (per region)
   }
 
   // Explicit imported contours (isobaths) fetched windowed to the
@@ -1173,13 +1214,24 @@
     } finally {
       contoursBusy = false;
     }
-    fetchWaterMask();   // keep the water clip current for the isobaths
+    maybeFetchWaterMask();   // keep the clip current for the isobaths (per region)
   }
 
+  // Routine poll: skip the refetch when the view hasn't moved since the last
+  // successful fetch (reusing the move-path's _viewMovedEnough/_lastView gate),
+  // since the visible window is unchanged. But every Nth poll, refresh
+  // unconditionally so newly-recorded soundings still show while stationary.
+  let _pollTick = 0;
+  const POLL_FORCE_EVERY = 8;   // ~every 32 s, unconditional refresh
+  function pollGridTick() {
+    _pollTick++;
+    if (_pollTick % POLL_FORCE_EVERY === 0) { fetchDepthGrid(); return; }
+    if (_viewMovedEnough()) fetchDepthGrid();   // only refetch when the window moved
+  }
   function startGridPoll() {
     if (gridTimer) return;
     fetchDepthGrid();
-    gridTimer = setInterval(fetchDepthGrid, 4000); // depth map changes slowly
+    gridTimer = setInterval(pollGridTick, 4000); // depth map changes slowly
   }
   function stopGridPoll() {
     // Keep polling while either consumer (heatmap or contours) is still on.
@@ -1224,10 +1276,14 @@
   function updateDepthMap(t) {
     const depth = VA.fin(t.depth_m);
     VA.setText("depth-now", depth === null ? "—" : depth.toFixed(1) + " m");
-    const pts = Array.isArray(t.depth_points) ? t.depth_points : [];
-    VA.setText("depth-count", String(pts.length));
+    // Backend sends `depth_count` (int) on EVERY frame; the full `depth_points`
+    // array only ~1 Hz. Use the count for the readout (always present); only act
+    // on points when they arrive, otherwise retain the last dot state.
+    const cnt = Number.isFinite(t.depth_count) ? t.depth_count : null;
+    if (cnt !== null) VA.setText("depth-count", String(cnt));
     if (!depthShow) return;
-    if (!gridOk) renderDepthDotsFrom(t);   // grid endpoint unavailable
+    // Dot fallback (no grid): repaint only when points are present this frame.
+    if (!gridOk && Array.isArray(t.depth_points)) renderDepthDotsFrom(t);
   }
 
   // A lightweight proxy layer registered in the shared layers control to
