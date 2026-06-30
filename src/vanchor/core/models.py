@@ -20,6 +20,7 @@ class ControlModeName(str, Enum):
     ANCHOR_ML = "anchor_ml"  # learned (tiny-NN) station-keeper
     HEADING_HOLD = "heading_hold"
     WAYPOINT = "waypoint"
+    WORK_AREA = "work_area"  # visit spots, hold at each, advance (timed/manual)
     FOLLOW_APB = "follow_apb"
     DRIFT = "drift"
     CONTOUR_FOLLOW = "contour_follow"
@@ -65,6 +66,9 @@ class HeadingReading:
 class Waypoint:
     name: str
     point: GeoPoint
+    # Optional desired boat heading (deg) to hold while spot-locked here in Work
+    # Area mode. None = don't force a heading (the boat weathervanes naturally).
+    heading: float | None = None
 
 
 @dataclass(frozen=True)

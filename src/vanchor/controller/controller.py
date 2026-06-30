@@ -51,6 +51,8 @@ from .modes import (
     TrollingMode,
     WaypointConfig,
     WaypointMode,
+    WorkAreaConfig,
+    WorkAreaMode,
 )
 from .safety import SafetyConfig, SafetyGovernor, SafetyStatus
 
@@ -213,11 +215,17 @@ class Controller:
         self.track = TrackRecorder(track_min_distance_m)
 
         self.manual = ManualMode()
+        # Share one WaypointConfig between waypoint + work-area travel so boat-spec
+        # tuning (app._apply_boat_specs) applies to both.
+        wp_cfg = waypoint_config or WaypointConfig()
         self.modes: dict[ControlModeName, ControlMode] = {
             ControlModeName.MANUAL: self.manual,
             ControlModeName.ANCHOR_HOLD: AnchorHoldMode(anchor_config),
             ControlModeName.HEADING_HOLD: HeadingHoldMode(),
-            ControlModeName.WAYPOINT: WaypointMode(waypoint_config),
+            ControlModeName.WAYPOINT: WaypointMode(wp_cfg),
+            ControlModeName.WORK_AREA: WorkAreaMode(
+                WorkAreaConfig(), waypoint_config=wp_cfg, anchor_config=anchor_config
+            ),
             ControlModeName.FOLLOW_APB: FollowApbMode(follow_apb_config),
             ControlModeName.DRIFT: DriftMode(drift_config),
             ControlModeName.CONTOUR_FOLLOW: ContourFollowMode(contour_config),
@@ -415,6 +423,33 @@ class Controller:
                     command["throttle"]
                 )
             self.set_mode(ControlModeName.WAYPOINT)
+        elif ctype == "work_area":
+            # Work Area: spots = waypoints (each with optional hold heading); visit
+            # each, spot-lock + hold, advance on the "next spot" button and/or a
+            # dwell timer. loop/patrol cycle the spots like a route.
+            wps = command.get("waypoints", [])
+            self.state.waypoints = [
+                Waypoint(
+                    name=str(w.get("name", f"Spot {i + 1}")),
+                    point=GeoPoint(float(w["lat"]), float(w["lon"])),
+                    heading=(float(w["heading"]) if w.get("heading") is not None else None),
+                )
+                for i, w in enumerate(wps)
+            ]
+            self.state.active_waypoint = 0
+            self.state.route_loop = bool(command.get("loop", False))
+            self.state.route_patrol = bool(command.get("patrol", False))
+            wa = self.modes[ControlModeName.WORK_AREA].config
+            if "dwell_s" in command:
+                wa.dwell_s = max(0.0, float(command["dwell_s"]))
+            if "advance" in command:
+                wa.advance = "timed" if str(command["advance"]) == "timed" else "manual"
+            if "throttle" in command:
+                wa.throttle = float(command["throttle"])
+            self.set_mode(ControlModeName.WORK_AREA)
+        elif ctype == "next_spot":
+            # The big on-screen "Go to next spot" button (Work Area mode).
+            self.state.work_next_requested = True
         elif ctype == "follow_apb":
             if "throttle" in command:
                 self.modes[ControlModeName.FOLLOW_APB].config.throttle = float(

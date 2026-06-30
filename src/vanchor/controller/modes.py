@@ -457,6 +457,175 @@ class WaypointMode(ControlMode):
 
 
 @dataclass
+class WorkAreaConfig:
+    """Work Area mode: visit each spot, hold position there, then advance."""
+
+    arrival_radius_m: float = 8.0   # within this of a spot -> begin the hold
+    dwell_s: float = 120.0          # auto-advance after this (when advance="timed")
+    advance: str = "manual"         # "manual" (on-screen button) | "timed" (dwell)
+    throttle: float = 0.6
+    orient_thrust: float = 0.12     # gentle thrust used to orient to a spot's
+                                    # desired hold heading once on station
+
+
+class WorkAreaMode(ControlMode):
+    """Work an area spot by spot: travel to ``state.waypoints[active]``, HOLD
+    position there (active spot-lock) while the user works, then advance to the
+    next spot -- after ``dwell_s`` ("timed" advance) and/or when the user taps
+    "Go to next spot" (``state.work_next_requested``). ``route_loop`` cycles the
+    spots; ``route_patrol`` runs them there-and-back; otherwise the boat holds the
+    final spot once the route is done.
+
+    Travel reuses the waypoint leg logic (cross-track + forward/reverse helm); the
+    hold delegates to AnchorHoldMode (spot-lock). Dwell time is accumulated from
+    ``dt`` so the deterministic harness drives it without a wall clock.
+    """
+
+    name = ControlModeName.WORK_AREA
+
+    def __init__(
+        self,
+        config: WorkAreaConfig | None = None,
+        *,
+        waypoint_config: WaypointConfig | None = None,
+        anchor_config: AnchorConfig | None = None,
+    ) -> None:
+        self.config = config or WorkAreaConfig()
+        self._travel = waypoint_config or WaypointConfig()  # shared leg-nav params
+        self._anchor = AnchorHoldMode(anchor_config)
+        self._phase = "travel"          # "travel" | "hold"
+        self._leg_start: GeoPoint | None = None
+        self._reverse = False
+        self._step = 1                  # +1 forward / -1 back (patrol)
+        self._dwell_elapsed = 0.0
+
+    def activate(self, state: NavigationState) -> None:
+        self._phase = "travel"
+        self._leg_start = state.position
+        self._reverse = False
+        self._step = 1
+        self._dwell_elapsed = 0.0
+        state.route_complete = False
+        state.work_holding = False
+        state.work_next_requested = False
+        state.work_dwell_remaining_s = 0.0
+
+    def _wrap_or_bounce(self, state: NavigationState, pos: GeoPoint) -> bool:
+        """Ran off an END of the spot list: loop wraps to the start, patrol
+        reverses direction, otherwise the work route completes (return True)."""
+        n = len(state.waypoints)
+        if state.route_loop:
+            state.active_waypoint = 0
+            self._step = 1
+            self._leg_start = pos
+            return False
+        if state.route_patrol and n >= 2:
+            self._step = -self._step
+            state.active_waypoint += 2 * self._step
+            self._leg_start = pos
+            return False
+        state.route_complete = True
+        return True
+
+    def _begin_hold(self, state: NavigationState, spot: GeoPoint, dt: float) -> Setpoint:
+        self._phase = "hold"
+        self._dwell_elapsed = 0.0
+        state.anchor = spot
+        state.anchor_heading = state.heading_deg
+        self._anchor.activate(state)
+        state.work_holding = True
+        return self._anchor.update(state, dt)
+
+    def update(self, state: NavigationState, dt: float) -> Setpoint:
+        pos = state.position
+        if pos is None or not state.waypoints:
+            state.work_holding = self._phase == "hold"
+            return ManualSetpoint(0.0, 0.0)
+
+        if not 0 <= state.active_waypoint < len(state.waypoints):
+            if self._wrap_or_bounce(state, pos):
+                state.work_holding = False
+                state.work_dwell_remaining_s = 0.0
+                return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
+
+        if self._phase == "hold":
+            sp = self._anchor.update(state, dt)  # spot-lock; sets distance_to_anchor_m
+            self._dwell_elapsed += dt
+            timed = self.config.advance == "timed"
+            want_advance = state.work_next_requested or (
+                timed and self._dwell_elapsed >= self.config.dwell_s
+            )
+            state.work_next_requested = False  # consume the button press
+            if want_advance and not state.route_complete:
+                self._leg_start = state.waypoints[state.active_waypoint].point
+                self._reverse = False
+                state.active_waypoint += self._step
+                if not 0 <= state.active_waypoint < len(state.waypoints):
+                    self._wrap_or_bounce(state, pos)  # loop/patrol, or sets route_complete
+                if state.route_complete:
+                    state.active_waypoint = max(
+                        0, min(state.active_waypoint, len(state.waypoints) - 1)
+                    )
+                else:
+                    self._phase = "travel"
+                    self._dwell_elapsed = 0.0
+                    state.work_holding = False
+                    state.work_dwell_remaining_s = 0.0
+                    # fall through to the travel leg below
+            if self._phase == "hold":
+                state.work_holding = True
+                state.work_dwell_remaining_s = (
+                    max(0.0, self.config.dwell_s - self._dwell_elapsed)
+                    if (timed and not state.route_complete) else 0.0
+                )
+                # On station, orient to the spot's desired heading if one is set.
+                # Best-effort: a single bow thruster can't perfectly hold heading
+                # AND position, so position recovery (the anchor) wins when the boat
+                # drifts out of the hold radius.
+                spot_hdg = state.waypoints[state.active_waypoint].heading
+                if spot_hdg is not None and state.distance_to_anchor_m <= max(state.anchor_radius_m, 1.0):
+                    return GuidedSetpoint(
+                        target_heading=spot_hdg % 360.0, thrust=self.config.orient_thrust
+                    )
+                return sp
+
+        # Travel toward the active spot.
+        if self._leg_start is None:
+            self._leg_start = pos
+        target = state.waypoints[state.active_waypoint].point
+        distance = haversine_m(pos, target)
+        state.distance_to_waypoint_m = distance
+        if distance <= self.config.arrival_radius_m:
+            return self._begin_hold(state, target, dt)
+
+        bearing = initial_bearing(pos, target)
+        xte = cross_track(self._leg_start, target, pos)
+        state.cross_track_m = xte.distance_m
+        state.bearing_to_dest = bearing
+        if self._travel.allow_reverse:
+            _, _, self._reverse = maneuver_to_bearing(
+                state.heading_deg, bearing, distance,
+                turn_rate_dps=self._travel.turn_rate_dps,
+                fwd_speed_mps=self._travel.boat_speed_mps,
+                reverse_efficiency=self._travel.reverse_efficiency,
+                currently_reverse=self._reverse,
+            )
+        else:
+            self._reverse = False
+        if self._reverse:
+            return GuidedSetpoint(
+                target_heading=normalize_deg(bearing - 180.0),
+                thrust=-self.config.throttle,
+            )
+        correction = max(
+            -self._travel.max_xte_correction_deg,
+            min(self._travel.max_xte_correction_deg, self._travel.xte_gain * xte.distance_m),
+        )
+        heading = normalize_deg(bearing - correction)
+        return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
+
+
+@dataclass
 class FollowApbConfig:
     throttle: float = 0.6
     xte_gain: float = 2.0  # degrees of correction per metre of cross-track error

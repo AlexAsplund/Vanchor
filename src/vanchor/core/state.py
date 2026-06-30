@@ -74,6 +74,13 @@ class NavigationState:
     # route_loop, which closes the ring). Set via the goto/load_route "patrol" flag.
     route_patrol: bool = False
 
+    # --- Work Area mode: visit spots, hold at each, then advance. -------- #
+    # The spots are state.waypoints; active_waypoint is the current spot. While
+    # holding, the UI shows a big "Go to next spot" button (driven by work_holding).
+    work_holding: bool = False             # currently spot-locked at a spot
+    work_dwell_remaining_s: float = 0.0    # countdown to auto-advance (timed mode)
+    work_next_requested: bool = False      # transient: the "next spot" button press
+
     # --- Return-to-Launch (#61): the recorded home/launch point. --------- #
     launch: GeoPoint | None = None  # first good fix, or set via set_launch
     rtl_recommended: bool = False  # battery can *just* make it home -> UI prompt
@@ -134,12 +141,16 @@ class NavigationState:
             "target_heading": round(self.target_heading, 2),
             "drift_target_knots": round(self.drift_target_knots, 2),
             "waypoints": [
-                {"name": w.name, "lat": w.point.lat, "lon": w.point.lon}
+                {"name": w.name, "lat": w.point.lat, "lon": w.point.lon,
+                 "heading": w.heading}
                 for w in self.waypoints
             ],
             "active_waypoint": self.active_waypoint,
             "route_loop": self.route_loop,
             "route_patrol": self.route_patrol,
+            "work_holding": self.work_holding,
+            "work_dwell_remaining_s": round(self.work_dwell_remaining_s, 1),
+            "work_spot_count": len(self.waypoints),
             "motor": {
                 **asdict(self.motor_command),
                 # Trolling-motor azimuth relative to the bow (deg), for the UI
