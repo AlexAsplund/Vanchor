@@ -45,6 +45,18 @@ see weaving, suspect noisy input (see the GPS-noise lesson in
 position (`_filtered_position`) + uses hysteresis to avoid GPS-noise
 overcorrection — a good pattern to copy if a mode hunts.
 
+**Route end-behaviour (loop vs patrol).** Reaching an end of the route is
+resolved by `WaypointMode._wrap_or_bounce`, driven by two `state` flags (both in
+telemetry + route snapshots, set from a `goto`/`load_route` flag):
+
+- `route_loop` — wrap the active index back to `0` and keep circling (closed
+  ring, e.g. "around island").
+- `route_patrol` — **bounce**: flip the internal `_step` (±1) and run the route
+  back the other way, a continuous there-and-back (`0→1→2→1→0…`). Needs ≥2
+  waypoints. Off-the-end correction is `active_waypoint += 2*_step` (lands on the
+  adjacent in-range mark). Distinct from `route_loop`; a plain route (neither
+  flag) completes and idles.
+
 **Forward vs reverse manoeuvring:** `modes.maneuver_to_bearing(...)` decides
 whether to drive **forward** (bow at the mark) or **reverse** (stern at the mark)
 by lower estimated *time-to-arrive* = `turn_time + travel_time`. Reversing trades
@@ -98,12 +110,83 @@ is what makes the forward/reverse decision use real data, not the 0.6 default.
   geometry (shapely/networkx); `water.py` caches water polygons in
   `vanchor_data/`. `routes.py` is the in-memory route model; `survey.py` builds
   lawnmower routes; island loops + RTL also live here.
-- `depth.py` — `DepthMap`: records soundings, `as_grid(cell_m)` bins+averages
-  them and (a) interpolates *enclosed* gaps and (b) *radiates* each reading to
-  nearby cells (nearest-neighbour, bounded radius). Per-cell `kind` is
-  `measured`/`radiated`/`interp`. Flows through `/api/depth/grid` unchanged.
+- `depth.py` — `DepthMap`: see the **depth chart** section below.
 - `track.py`, `trip.py` — breadcrumb track + trip log/GPX.
 - `nmea.py`, `nmea_net.py` — NMEA parse + TCP/UDP NMEA bridge.
+
+## Depth chart (`nav/depth.py`)
+
+`DepthMap` holds the live **soundings** the recorder accumulates *plus* three
+parallel **imported chart layers**:
+
+- `points` — `(lat, lon, depth_m)` soundings (recorded live as the boat moves, or
+  imported). The only layer the recorder grows.
+- `hardness` — `(lat, lon, index)`, bottom-hardness raw `0..127`. Empty for live
+  sonar (it has no hardness); imported only. Same `(lat, lon, value)` shape as
+  soundings, so it grids/windows identically (just a different `source`).
+- `contours` — list of `{"d": depth_m, "pts": [[lat, lon], ...]}` isobath
+  polylines. A **vector** overlay served windowed.
+- `composition` — list of `{"pct": 0..100, "ring": [[lat, lon], ...]}` polygons.
+  A **vector polygon** overlay rendered FILLED — never rasterised/interpolated
+  (that destroys the boundaries).
+
+**SPLIT persistence (two files, all writes ATOMIC).** Soundings and the static
+chart are stored separately because the recorder calls `save()` often:
+
+- `save(path)` writes **only** `points` → `vanchor_data/depthmap.json` (small;
+  the recorder's periodic save stays tiny).
+- `save_chart(path)` writes the static chart (`hardness`/`contours`/`composition`)
+  → `vanchor_data/depthchart.json`, written **once on import**, not per sounding.
+- `load(path, chart_path)` reads both back.
+
+Every write is `_atomic_write` (temp file + `os.replace`) — a kill/power-loss
+mid-write can't truncate the file. This fixed a mid-write truncation that
+corrupted the (large, slow-to-rewrite) chart.
+
+**`as_grid(cell_m, max_cells, interpolate, radiate, bbox=, source=)`** bins
+`(lat, lon, value)` points into ~`cell_m` square cells (local metres-per-degree
+frame; single O(n) pass) and averages per cell, then fills the gaps in two
+confidence-ordered passes: **interpolate** (enclosed-hole IDW → `kind:"interp"`,
+`est:true`) and **radiate** (nearest-neighbour/Voronoi out to a bounded radius →
+`kind:"radiated"`, `est:false`); measured cells are `kind:"measured"`. Cell size
+auto-grows (doubling) until the count is `≤ max_cells`, and the size used is
+returned. `bbox` (west, south, east, north) windows the input first. `source`
+picks the layer to grid — defaults to `points`; pass `self.hardness` etc.
+
+> **INVARIANT — do NOT reintroduce a bounding-box scan.** Both fill passes
+> (`_interpolate_holes`, `_radiate`) iterate the **measured** cells'
+> neighbourhoods → O(measured · radius²), independent of how widely the soundings
+> are spread. The old bounding-box scan was O(bbox_area · radius²) and pegged the
+> CPU / froze the event loop on sparse-but-wide charts (a few thousand soundings
+> over a whole lake).
+
+`contours_in(bbox)` / `composition_in(bbox)` window the two vector layers (kept
+if any vertex falls in the bbox, capped by `limit`).
+
+**Parsing imported files.** `parse_depth_features(filename, data) -> {soundings,
+hardness, contours, composition}` handles CSV/XYZ (`.xyz` = `lon,lat,z`; CSV =
+`lat,lon,depth`, header auto-detected) and GeoJSON, routing GeoJSON features by
+geometry: **Point/MultiPoint** → soundings (depth from a `depth`-ish property or
+Z); a **`hardness`** property → hardness; **LineString** → contours (depth from a
+property); **Polygon** with `composition_pct` → composition. `parse_depth_soundings`
+is a back-compat wrapper returning just `soundings`.
+
+### `Runtime` depth methods (`app.py`)
+
+- `import_depth_map(filename, data, replace=False)` — parse → `replace` swaps the
+  whole chart else merge all four layers (caps `points`/`hardness` at
+  `max_points`) → `save()` soundings + `save_chart()` the static chart. Returns
+  per-layer counts.
+- `depth_grid(cell_m, bbox, field="depth")` — `cell_m` clamped 2..200;
+  `field="hardness"` grids the hardness layer (passes `source=self.hardness`),
+  else soundings. Returns `{ok, field, cell_m, min_depth, max_depth, count, cells}`.
+  The chart changes slowly, so the UI polls this, not the 5 Hz telemetry.
+- `depth_contours(bbox)` / `depth_composition(bbox)` — windowed vector layers →
+  `{ok, count, contours}` / `{ok, count, polygons}`.
+- `water_polygon(bbox)` — OSM water MultiPolygon coords for the bbox, used to
+  **clip** the overlays to water (don't paint composition over land). Uses
+  `nav/water.py` `WaterCache` + Overpass (the same offline cache as routing), so
+  offline it needs the area pre-downloaded. Endpoints: see [api.md](api.md).
 
 ## Config + boat profiles (`core/config.py`, `core/boat_profiles.py`)
 

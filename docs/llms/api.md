@@ -21,7 +21,8 @@ also be sent over the socket, but the canonical path is `POST /api/command`.
 Telemetry includes (non-exhaustive — read `state.to_dict()` for the full set):
 position, heading_deg, fix (sog/cog), mode, waypoints + active_waypoint,
 cross_track_m, distance_to_waypoint_m, bearing_to_dest, depth_m, anchor +
-distance_to_anchor_m, battery, sim_enabled, route_loop, alerts/banners (battery
+distance_to_anchor_m, battery, sim_enabled, route_loop, route_patrol,
+alerts/banners (battery
 RTL, shallow, no-go, link-loss, MOB), and the boat profile.
 
 ## Commands: `POST /api/command  { "type": "...", ... }`
@@ -34,6 +35,11 @@ Steering/mode commands (handled in `controller/controller.py`):
 `set_throttle` · `set_launch` · `set_min_depth` · `set_nogo_zones` · `mob` /
 `mob_clear` · `pause_nav` / `resume_nav` · `record` · `load_route` · `start` /
 `clear`.
+
+`goto` and `load_route` both take an optional boolean `loop` (close the ring —
+circle the route continuously) and `patrol` (at each end reverse and run the
+route back — a there-and-back patrol); these surface as `route_loop` /
+`route_patrol` in telemetry.
 
 Runtime/sim commands (handled in `app.py` `Runtime.handle_command`):
 
@@ -60,7 +66,11 @@ module via `VA.send({type:"..."})`.
 | `POST /api/route/survey` | lawnmower survey route over a polygon |
 | `POST /api/route/prefetch` | pre-cache OSM water + tiles for a bbox (offline) |
 | `GET /api/route/charts` , `POST /api/route/charts/clear` | cached chart management |
-| `GET /api/depth/grid?cell_m=` | gridded depth map (measured/radiated/interp cells) |
+| `GET /api/depth/grid?cell_m=&west=&south=&east=&north=&field=` | gridded depth / bottom-hardness chart (see below) |
+| `POST /api/depth/import` | import an open-format depth file (CSV/XYZ or GeoJSON) |
+| `GET /api/depth/contours?west=&south=&east=&north=` | imported isobath polylines (windowed) |
+| `GET /api/depth/composition?west=&south=&east=&north=` | imported bottom-composition polygons (windowed) |
+| `GET /api/depth/water?west=&south=&east=&north=` | OSM water polygon(s) to clip overlays to water |
 | `GET /api/weather/presets` | named sim weather presets |
 | `GET/POST /api/boat` | read / live-update the active boat's `BoatConfig` fields |
 | `GET /api/boat/profiles` , `POST .../profiles[/{id}][/activate]` , `DELETE` | boat profile CRUD + activate |
@@ -134,6 +144,45 @@ Shapes:
 // POST /api/config/devices  body { "hardware": {...}, "nmea_tcp": {...} }  (both keys optional, partial OK)
 //   -> 200 { "ok": true, "restart_required": true }   (persisted to devices.json; applies on next restart)
 //   -> 400 { "ok": false, "error": "<msg>" }          (bad source / non-int port|baudrate)
+```
+
+**Depth overlays (`/api/depth/*`).** These feed the depth / bottom-hardness map
+overlay. The bbox params (`west,south,east,north`, lon/lat degrees) are Tier-1
+**viewport windowing** — only the soundings/features inside the window are
+returned/gridded, so a large chart ships just what's on screen.
+
+```jsonc
+// GET /api/depth/grid?cell_m=15&west=&south=&east=&north=&field=depth
+//   cell_m  : grid cell size in metres, clamped 2..200 (default 15)
+//   bbox    : west,south,east,north all optional; given => only that window is gridded
+//   field   : "depth" (default) | "hardness" (bottom-hardness, 0..127)
+//   Bins soundings into ~cell_m cells, averaging the value per cell.
+{ "ok": true, "field": "depth", "cell_m": 15.0,
+  "min_depth": 0.4, "max_depth": 31.2, "count": 1234,
+  "cells": [ { "lat": .., "lon": .., "depth": .., "n": 3, "est": false, "kind": "measured" }, ... ] }
+
+// POST /api/depth/import  multipart form field `file` (CSV/XYZ or GeoJSON), `?replace=<bool>`
+//   replace=true swaps the whole chart; default merges.
+//   -> { "ok": true, "imported": <n>, "hardness": <n>, "contours": <n>,
+//        "composition": <n>, "total": <n> }
+//   -> { "ok": false, "error": "<msg>", "imported": 0 }   (parse failure)
+
+// GET /api/depth/contours?west=&south=&east=&north=   (windowed)
+//   imported isobath polylines (a large chart has 80k+ lines)
+//   -> { "ok": true, "count": <n>,
+//        "contours": [ { "d": <depth_m>, "pts": [[lat,lon], ...] }, ... ] }
+
+// GET /api/depth/composition?west=&south=&east=&north=   (windowed)
+//   imported bottom-composition polygons (rendered filled)
+//   -> { "ok": true, "count": <n>,
+//        "polygons": [ { "pct": 0..100, "ring": [[lat,lon], ...] }, ... ] }
+
+// GET /api/depth/water?west=&south=&east=&north=
+//   OSM water polygon(s) to CLIP overlays to water. Cached via the routing
+//   WaterCache; fetched from Overpass + stored if absent (so offline the area
+//   must be pre-cached). GeoJSON-style MultiPolygon coords, lon/lat:
+//     [ [ [ [lon,lat], ... ]=exterior, [hole], ... ], ... ]
+//   -> { "ok": true, "water": <MultiPolygon coords> }
 ```
 
 ## Deeper references

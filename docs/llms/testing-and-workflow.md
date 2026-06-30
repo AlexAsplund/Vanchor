@@ -98,6 +98,26 @@ mask real failures.
    reopen the installed app. See [frontend.md](frontend.md).
 6. **Python heredocs in bash:** prefer `python - <<'EOF'` with `urllib` over
    `curl` + inline `-c` (escaped quotes break repeatedly).
+7. **`TestClient(Runtime(...))` spins when the Runtime carries depth data.**
+   `with TestClient(create_app(Runtime(cfg))) as c:` hangs at ~100% CPU on the
+   lifespan-portal when the Runtime has imported depth data loaded — the real
+   uvicorn server with the same data starts fine, so it's a TestClient quirk,
+   not a product bug. **FIX:** test the runtime methods *directly*
+   (`Runtime(cfg).depth_grid(...)`, `.import_depth_map(...)`) with no
+   TestClient — see the `_rt()` helpers in `tests/test_depth_grid.py` /
+   `tests/test_depth_import.py`. Verify the thin HTTP routes live instead.
+8. **Test isolation — always point `cfg.data_dir` at `tmp_path`.** A `Runtime`
+   built with the default data_dir writes into the repo's `vanchor_data/` and
+   corrupts `boats.json` / `devices.json` (the recurring-corruption root cause).
+   Worse: a large imported `vanchor_data/depthchart.json` (the static depth
+   chart, hundreds of MB) makes non-isolated tests slow enough to **time out the
+   whole suite** — a known isolation gap. Isolate *any* test that constructs a
+   Runtime.
+9. **Don't let a pipe mask the pytest exit code.** `python -m pytest … | tail;
+   echo $?` reports `tail`'s exit (0), hiding pytest timeouts/hangs (exit
+   124/143). Use `echo ${PIPESTATUS[0]}`, or redirect to a file and capture
+   `$?` right after the pytest call. Don't trust a background-task "exit 0" that
+   went through a pipe.
 
 ## Working in parallel (sub-agents)
 

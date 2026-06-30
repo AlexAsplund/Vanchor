@@ -112,6 +112,71 @@ to `POST /api/config/devices` and shows "Saved — restart the app to apply"
 backend) the card degrades to an "unavailable" notice. Empty source select →
 `null`; empty port text → `null`; baudrate/port coerced to numbers.
 
+## Depth overlays (`map-depth.js`)
+
+Three depth overlays, each registered via `VA.map.addOverlay(...)` so they land in
+the single layers panel (toggleable + persisted). All are canvas overlays sharing
+`CanvasOverlayMixin` and all clip to the OSM water polygon. Loads after
+`map-core.js` and registers the **last** built-in overlays, then calls
+`ctx.restoreLayers()` — so it must load before any later overlay-registering
+module (Catches, heatmap, no-go).
+
+- **Depth map** — the `GridLayer` heatmap: gridded soundings from
+  `GET /api/depth/grid` painted into one canvas (low-res offscreen, bilinear
+  upscale) as a continuous bathymetric field. Selectable palettes (Angler /
+  Nautical, `vanchor-depth-palette`), relief/hillshade (a render *mode* of the
+  grid — NW-light Lambert shade baked into the same offscreen pass, not a separate
+  canvas; default on, own `vanchor-depth-relief` pref), and a depth-range
+  highlight band. A **"Colour by: Depth / Bottom hardness"** selector recolours
+  the *same* grid by switching the fetched `field` (and the ramp + legend);
+  relief/highlight are depth-only and disable under hardness.
+- **Depth contours** — the `ContourLayer`: explicit imported isobaths from
+  `GET /api/depth/contours` are **preferred** (`setExplicit`, batched by depth
+  level + sparse haloed labels). When none are returned for the window it falls
+  back to deriving contours from the same grid via marching squares
+  (`setData` → chain segments → Chaikin smooth → stroke).
+- **Bottom composition** — the `CompositionLayer`: filled translucent YlOrBr
+  polygons from `GET /api/depth/composition`, drawn in its OWN map pane
+  (`composition`, z-index 350) so it sits **below** the contour lines.
+
+### `CanvasOverlayMixin` — two load-bearing invariants (do not regress)
+
+The shared canvas-overlay plumbing all three layers mix in (see also Performance &
+memory). Two things a future LLM must keep:
+
+- **Pan guard uses LAYER coords.** `_scheduleReset`'s "did the view move?" check
+  compares the canvas top-left (`containerPointToLayerPoint([0,0])`) — that point
+  shifts with every pan. Do **not** use the map centre in container coords: it's
+  always ~size/2 and never changes on pan, so the guard would always "skip", and
+  the overlay would freeze offset until a zoom forced a redraw.
+- **`_animateZoom` (bound to `zoomanim`)** scales + translates the canvas to track
+  the zoom animation. Without it the overlay shows wrong-scale content until the
+  `zoomend` redraw.
+
+### Water clip, alignment, windowed fetch
+
+- **Water clip.** `clipToWaterMask` clips **all** depth overlays to the OSM water
+  polygon (fetched from `GET /api/depth/water`, held in `waterMask`) so nothing
+  paints over land/islands. Apply between `ctx.save()`/`ctx.restore()` in each
+  `_draw`. No water available → draws unclipped (graceful).
+- **Alignment Adjust.** `VA.depthOffset()` returns a `{lat,lon}` nudge **added to
+  every rendered depth coordinate** (grid + contours + composition), for an
+  imported chart whose georeferencing sits slightly off the basemap. Set via a
+  two-click Adjust tool in the depth Settings card (click a point on the overlay,
+  then where it should sit; the delta is added so it converges), persisted in
+  `vanchor-depth-offset`.
+- **Tier-1 windowed fetch.** Overlays fetch only the padded viewport
+  (`map.getBounds().pad(0.3)`), not the whole chart. Pan-refetch is debounced and
+  **gated to >25% view moves** (`_viewMovedEnough`) — boat-follow micro-drift is
+  covered by the periodic 4 s grid poll, not per-tick refetches (refetching every
+  tick crashed a tab).
+
+`VA.map` is extended with `redrawDepth`, `setDepthShow`, `setContourShow`,
+`setReliefShow`, `setDepthPalette`/`getDepthPalette`, `setHighlight`/`getHighlight`
+(plus `VA.setCompositionShow`). Each overlay is fronted by a proxy
+`L.layerGroup()` so the layers-panel checkbox can drive the real start/stop while a
+`*Syncing` guard prevents re-entrancy.
+
 ## Backup & restore card (`backup.js`)
 
 Settings → **Data & diagnostics** section → "Backup & restore" (`#backup-card`).
