@@ -209,10 +209,13 @@
 
   // Live editing of an ACTIVE route: when the user drags or edits a committed
   // waypoint on the map, re-send the whole route so navigation adjusts live (#51).
-  if (VA.map.onRouteEdit) VA.map.onRouteEdit((waypoints) => {
+  if (VA.map.onRouteEdit) VA.map.onRouteEdit((waypoints, resume) => {
     if (!waypoints || !waypoints.length) { send({ type: "stop" }); setLoopFlag(false); return; }
     const cmd = { type: "goto", waypoints, throttle: 0.6 };
-    if (routeIsLoop) cmd.loop = true;   // preserve continuous loop across live edits
+    if (routeIsLoop) cmd.loop = true;   // (loop/patrol also preserved server-side on edits)
+    // active = resume index: keep navigating from the current target instead of
+    // restarting at waypoint 1 when a committed waypoint is dragged/edited (#51).
+    if (Number.isInteger(resume)) cmd.active = resume;
     send(cmd);
   });
 

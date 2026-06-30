@@ -32,7 +32,9 @@
   // menu. (#51)
   let editCommitted = [];     // [{name,lat,lon}] live-editable copy
   let editing = false;        // true while dragging / menu open (suppress sync)
-  let onRouteEdit = null;     // (waypoints) => void  — re-send the edited route
+  let onRouteEdit = null;     // (waypoints, resumeIx) => void — re-send edited route
+  let activeEditObj = null;   // the active waypoint object captured at edit start,
+                              // so we can remap the resume index after the edit
 
   function sameWps(a, b) {
     if (a.length !== b.length) return false;
@@ -90,7 +92,19 @@
   // Re-send the edited committed route through the same path startRoute uses.
   function sendRouteEdit() {
     const wps = editCommitted.map((w, i) => ({ name: w.name || "WP" + (i + 1), lat: w.lat, lon: w.lon }));
-    if (onRouteEdit) onRouteEdit(wps);
+    // Preserve navigation progress across the edit: locate where the previously-
+    // active waypoint landed in the edited list by OBJECT IDENTITY (so a
+    // reorder/insert/delete remaps to the right mark, a drag keeps its index, and
+    // a deleted active mark falls back to the clamped old index). The backend
+    // resumes from this index instead of restarting at waypoint 0.
+    let resume = lastActiveIx;
+    if (activeEditObj) {
+      const idx = editCommitted.indexOf(activeEditObj);
+      resume = idx >= 0 ? idx : Math.min(lastActiveIx, editCommitted.length - 1);
+    }
+    resume = Math.max(0, Math.min(resume, editCommitted.length - 1));
+    activeEditObj = null;
+    if (onRouteEdit) onRouteEdit(wps, resume);
   }
 
   // Drag to move; press-and-hold ~3 s (held still) opens an edit menu.
@@ -100,7 +114,7 @@
 
     const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
 
-    m.on("dragstart", () => { editing = true; dragged = true; clearLp(); closeWpMenu(); });
+    m.on("dragstart", () => { activeEditObj = editCommitted[lastActiveIx] || null; editing = true; dragged = true; clearLp(); closeWpMenu(); });
     m.on("drag", (e) => {
       const ll = e.target.getLatLng();
       if (editCommitted[ix]) { editCommitted[ix].lat = ll.lat; editCommitted[ix].lon = ll.lng; }
@@ -140,6 +154,7 @@
   function openWpMenu(marker, ix) {
     closeWpMenu();
     editing = true;
+    activeEditObj = editCommitted[lastActiveIx] || null;
     const pt = map.latLngToContainerPoint(marker.getLatLng());
     const menu = document.createElement("div");
     menu.className = "wp-menu glass";

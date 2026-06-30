@@ -380,18 +380,30 @@ class Controller:
                 )
                 for i, w in enumerate(wps)
             ]
-            self.state.active_waypoint = 0
-            # What to do when the route finishes: "anchor", "stop", or "none".
-            self.state.route_on_arrival = str(command.get("on_arrival", "none"))
-            # Closed-loop route (e.g. "around island"): circle continuously.
-            self.state.route_loop = bool(command.get("loop", False))
-            # Patrol: at each end, reverse and run the route back (there-and-back).
-            self.state.route_patrol = bool(command.get("patrol", False))
             if "throttle" in command:
                 self.modes[ControlModeName.WAYPOINT].config.throttle = float(
                     command["throttle"]
                 )
-            self.set_mode(ControlModeName.WAYPOINT)
+            # "active" present => a LIVE EDIT of the running route (the user
+            # dragged/inserted/deleted/reordered a committed waypoint and the UI
+            # re-sent it). Resume from the given index (clamped) instead of
+            # restarting at 0, and leave the route's mode/flags/progress intact so
+            # an edit doesn't make the boat start over. Absent => a fresh start.
+            resume = command.get("active")
+            if resume is None:
+                self.state.active_waypoint = 0
+                # What to do when the route finishes: "anchor", "stop", or "none".
+                self.state.route_on_arrival = str(command.get("on_arrival", "none"))
+                # Closed-loop route (e.g. "around island"): circle continuously.
+                self.state.route_loop = bool(command.get("loop", False))
+                # Patrol: at each end, reverse and run the route back.
+                self.state.route_patrol = bool(command.get("patrol", False))
+                self.set_mode(ControlModeName.WAYPOINT)
+            else:
+                n = len(self.state.waypoints)
+                self.state.active_waypoint = max(0, min(int(resume), n - 1)) if n else 0
+                if self.state.mode != ControlModeName.WAYPOINT:
+                    self.set_mode(ControlModeName.WAYPOINT)
         elif ctype == "load_route":
             # Waypoints already parsed (from GPX) and placed on the state by the
             # runtime; just (re)start waypoint navigation.
