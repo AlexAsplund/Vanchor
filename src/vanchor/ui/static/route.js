@@ -236,6 +236,37 @@
   }
   if (gotoArm) gotoArm.addEventListener("click", () => setGotoArmed(!VA.map.isGotoArmed()));
 
+  // ---- Along contour: tap a depth contour -> a track that follows it -------
+  // Arms a click consumer; the tapped point is sent to /api/route/contour, which
+  // returns the chained isobath as waypoints. They load into the editor (above)
+  // for review + Start (Patrol optional); a closed contour auto-sets Loop.
+  let contourArmed = false;
+  const contourBtn = $("wp-contour"), contourStatus = $("contour-status");
+  function setContourArmed(on) {
+    contourArmed = on;
+    if (contourBtn) {
+      contourBtn.classList.toggle("active", on);
+      contourBtn.textContent = on ? "Tap a contour… (cancel)" : "▽ Pick a contour";
+    }
+    if (on && VA.map.setContourShow) VA.map.setContourShow(true);  // show contours to tap
+  }
+  if (contourBtn) contourBtn.addEventListener("click", () => setContourArmed(!contourArmed));
+  VA.map.addClickConsumer((lat, lon) => {
+    if (!contourArmed) return false;        // not our turn -> let other handlers run
+    setContourArmed(false);
+    if (contourStatus) contourStatus.textContent = "Finding contour…";
+    VA.postJSON("/api/route/contour", { lat, lon }).then((r) => {
+      if (!r || !r.ok || !r.waypoints || !r.waypoints.length) {
+        if (contourStatus) contourStatus.textContent = (r && r.message) || "No contour there.";
+        return;
+      }
+      VA.map.setPending(r.waypoints); renderWpList(); setWpArmed(false);
+      setLoopFlag(!!r.loop);               // closed isobath -> loop
+      if (contourStatus) contourStatus.textContent = r.message + " Review, then Start route.";
+    }).catch(() => { if (contourStatus) contourStatus.textContent = "Contour lookup failed."; });
+    return true;                            // consumed the click
+  });
+
   // Render the (empty) waypoint list once at startup.
   renderWpList();
 })();

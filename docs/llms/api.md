@@ -77,6 +77,7 @@ module via `VA.send({type:"..."})`.
 | `POST /api/route/rtl` | return-to-launch route |
 | `POST /api/route/survey` | lawnmower survey route over a polygon |
 | `POST /api/route/work_area` | `{polygon,spacing_m}` → grid of Work Area spots (water-clipped) |
+| `POST /api/route/contour` | `{lat,lon}` → route along the nearest imported depth contour (chained same-depth pieces; `loop` for closed isobaths) |
 | `POST /api/route/prefetch` | pre-cache OSM water + tiles for a bbox (offline) |
 | `GET /api/route/charts` , `POST /api/route/charts/clear` | cached chart management |
 | `GET /api/depth/grid?cell_m=&west=&south=&east=&north=&field=` | gridded depth / bottom-hardness chart (see below) |

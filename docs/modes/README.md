@@ -18,6 +18,8 @@ use it, and exactly which on-screen controls drive it.
   smart water-only routing (Fastest / Along-shoreline), Loop, Patrol, GPX, around-island.
 - **[Work Area](work-area.md)** — visit a set of spots, hold station at each, and
   advance (timed or via a big "Go to next spot" button) — with an optional per-spot heading.
+- **[Along contour](along-contour.md)** — tap a depth contour on the chart and trace
+  a track along that isobath (chains same-depth pieces; closed contours loop).
 - **[Area survey ("map mode")](survey.md)** — lawnmower coverage over a drawn area.
 - **[Follow APB](follow-apb.md)** — steer from an external route source (chartplotter / phone app).
 

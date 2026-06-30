@@ -437,6 +437,15 @@
           <div id="route-plan-status" class="hint"></div>
         </details>
 
+        <!-- Along contour: tap a depth contour on the chart -> a track that
+             follows that isobath (chains the same-depth pieces). -->
+        <details class="mini" id="contour-card">
+          <summary>Along contour</summary>
+          <div class="hint">Turn this on, then tap a depth contour on the chart — it builds a track that follows that isobath. Review the waypoints above and press Start route. Closed contours loop automatically; tick <b>Patrol</b> to run it there-and-back.</div>
+          <button id="wp-contour" class="btn-primary wide">▽ Pick a contour</button>
+          <div id="contour-status" class="hint"></div>
+        </details>
+
         <!-- Map mode: area survey (#47). Draw a box or freehand polygon over an
              area, set pass spacing, and plan a back-and-forth survey route. -->
         <details class="mini" id="survey-card">
