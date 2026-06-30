@@ -42,6 +42,14 @@ ROUTE_SIMPLIFY_M = 8.0
 # Douglas-Peucker tolerance (m) and waypoint cap for the returned route.
 DEFAULT_SIMPLIFY_M = 10.0
 MAX_WAYPOINTS = 50
+# Bound the planning geometry on very large water bodies (e.g. a lake merged with
+# a far larger one via a connecting river -> a 70k-vertex basin). Both planners
+# are O(n^2)/O(perimeter), so without a bound they hang for minutes. We clip to a
+# corridor around the route and cap the vertex / ring-point counts.
+MAX_PLAN_VERTS = 800       # boundary-vertex cap fed to the planners
+MAX_RING_PTS = 1500        # cap on shoreline-walk ring points
+MIN_CORRIDOR_M = 2500.0    # route-corridor half-width bounds (excludes far water)
+MAX_CORRIDOR_M = 12000.0
 
 
 @dataclass
@@ -109,6 +117,41 @@ def _boundary_vertices(water_m: BaseGeometry) -> list[tuple[float, float]]:
         for ring in poly.interiors:
             verts.extend(ring.coords[:-1])
     return verts
+
+
+def _vertex_count(geom: BaseGeometry) -> int:
+    """Total boundary vertices (exterior + interiors) of a (Multi)Polygon."""
+    polys = geom.geoms if geom.geom_type == "MultiPolygon" else [geom]
+    return sum(
+        len(p.exterior.coords) + sum(len(r.coords) for r in p.interiors) for p in polys
+    )
+
+
+def _bounded_basin(
+    basin: BaseGeometry, start_m: Point, dest_m: Point,
+    corridor_m: float | None, vert_cap: int,
+) -> BaseGeometry:
+    """Bound the planning geometry on a huge water body so the visibility graph
+    and shoreline ring stay tractable. Optionally clip to a corridor (a buffer
+    around the straight start->dest line, which keeps the relevant water and drops
+    far-off reaches of a merged system), then Douglas-Peucker simplify until the
+    boundary is <= ``vert_cap`` vertices. Returns the boat's water sub-polygon of
+    the result (empty geometry if the clip removed it)."""
+    body = basin
+    if corridor_m is not None:
+        corr = LineString([(start_m.x, start_m.y), (dest_m.x, dest_m.y)]).buffer(corridor_m)
+        clipped = basin.intersection(corr)
+        if clipped.is_empty:
+            return clipped
+        body = _water_body_for(start_m, clipped)
+    tol = ROUTE_SIMPLIFY_M
+    while _vertex_count(body) > vert_cap and tol < 2000.0:
+        tol *= 1.7
+        simple = body.simplify(tol)
+        if simple.is_empty or not simple.is_valid:
+            break
+        body = _largest_polygon(simple) if simple.geom_type == "MultiPolygon" else simple
+    return body
 
 
 def _simplify_to_waypoints(
@@ -236,7 +279,8 @@ def _densify(line: LineString, step_m: float) -> list[Point]:
 
 
 def _plan_shoreline_metric(
-    start_m: Point, dest_m: Point, water_m: BaseGeometry, offset_m: float
+    start_m: Point, dest_m: Point, water_m: BaseGeometry, offset_m: float,
+    cancelled: Callable[[], bool] | None = None,
 ) -> tuple[LineString | None, str]:
     """Coast-hugging metric polyline, or (None, reason) if not tractable.
 
@@ -270,10 +314,12 @@ def _plan_shoreline_metric(
 
     ring = offset.boundary
     entry = nearest_points(start_m, ring)[1]
-    ring_pts = _densify(
-        ring if ring.geom_type == "LineString" else max(ring.geoms, key=lambda g: g.length),
-        max(5.0, used_off),
-    )
+    ring_geom = ring if ring.geom_type == "LineString" else max(ring.geoms, key=lambda g: g.length)
+    # Cap the ring-point count (= perimeter / step): a huge basin's ring would
+    # otherwise be tens of thousands of points. The corridor clip usually keeps the
+    # perimeter small; this bounds the rest so the walk can't blow up.
+    step = max(5.0, used_off, ring_geom.length / MAX_RING_PTS)
+    ring_pts = _densify(ring_geom, step)
     if not ring_pts:
         return None, "empty offset ring"
 
@@ -288,6 +334,7 @@ def _plan_shoreline_metric(
         seq = [entry]
         k = i_entry
         for _ in range(n):
+            _check_cancel(cancelled)   # the walk can be long -> stay cancellable
             p = ring_pts[k]
             seq.append(p)
             cut = LineString([p, dest_m])
@@ -394,16 +441,45 @@ def _plan_route_inner(
             mode=mode,
         )
 
-    message = ""
-    if mode == "shoreline":
-        line_m, reason = _plan_shoreline_metric(start_m, dest_m, basin, shoreline_offset_m)
-        if line_m is None:
+    req_mode = mode  # the requested mode (the retry loop must not flip it)
+
+    def _plan(b: BaseGeometry, s_m: Point, d_m: Point) -> tuple[LineString | None, str, str]:
+        """Plan on geometry ``b``; returns (line, result_mode, message)."""
+        if req_mode == "shoreline":
+            ln, reason = _plan_shoreline_metric(s_m, d_m, b, shoreline_offset_m, cancelled)
+            if ln is not None:
+                return ln, "shoreline", ""
             # Fall back to fastest rather than blocking the request.
-            line_m = _plan_fastest_metric(start_m, dest_m, basin, cancelled)
-            message = f"Shoreline mode unavailable ({reason}); returned fastest route instead."
-            mode = "fastest"
+            fb = _plan_fastest_metric(s_m, d_m, b, cancelled)
+            msg = f"Shoreline mode unavailable ({reason}); returned fastest route instead." if fb is not None else ""
+            return fb, "fastest", msg
+        return _plan_fastest_metric(s_m, d_m, b, cancelled), "fastest", ""
+
+    message = ""
+    if _vertex_count(basin) <= MAX_PLAN_VERTS:
+        line_m, mode, message = _plan(basin, start_m, dest_m)
     else:
-        line_m = _plan_fastest_metric(start_m, dest_m, basin, cancelled)
+        # Huge water body (e.g. a lake merged with a far larger one via a river):
+        # the O(n^2) visibility graph and the shoreline ring are intractable at
+        # full detail and would hang. Bound the planning geometry -- clip to a
+        # corridor around the route + cap the vertex count -- widening the corridor
+        # (and finally dropping it, but STILL capped) if no route is found, so a
+        # route is still produced. Every attempt is bounded; it can never hang.
+        direct = start_m.distance(dest_m)
+        base = min(MAX_CORRIDOR_M, max(MIN_CORRIDOR_M, direct * 0.15))
+        line_m = None
+        for corridor_m in (base, base * 3.0, None):
+            pb = _bounded_basin(basin, start_m, dest_m, corridor_m, MAX_PLAN_VERTS)
+            if pb.is_empty:
+                continue
+            s_m, ss = _snap_into_water(start_m, pb)
+            d_m, sd = _snap_into_water(dest_m, pb)
+            if ss > MAX_SNAP_M or sd > MAX_SNAP_M:
+                continue
+            line_m, mode, message = _plan(pb, s_m, d_m)
+            if line_m is not None:
+                basin = pb  # final waypoint simplify + coverage check use this geometry
+                break
 
     if line_m is None:
         return RouteResult(False, message="No water route to the destination.", mode=mode)
