@@ -27,7 +27,23 @@ VA.num = function (v, d) {
     ? "—" : Number(v).toFixed(d);
 };
 VA.fin = function (v) { return Number.isFinite(v) ? v : null; };
-VA.setText = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
+// setText: cache element lookup and last-written value to avoid redundant DOM
+// writes.  ~60-70 calls/frame app-wide with mostly-unchanged values.
+// Map<id, {el, last}> — invalidated via isConnected when panels are rebuilt.
+const _textCache = new Map();
+VA.setText = function (id, v) {
+  const s = String(v);
+  let entry = _textCache.get(id);
+  if (!entry || !entry.el.isConnected) {
+    const el = document.getElementById(id);
+    if (!el) { _textCache.delete(id); return; }
+    entry = { el, last: null };   // null forces first write
+    _textCache.set(id, entry);
+  }
+  if (entry.last === s) return;
+  entry.el.textContent = s;
+  entry.last = s;
+};
 
 // HTML-escape for safe interpolation into innerHTML (text OR attribute context).
 // Escapes the five characters that matter so values that arrive from an
@@ -54,12 +70,23 @@ VA.continuousAngle = function (key, deg) {
 // ---- NMEA / event console ------------------------------------------------
 const MAX_LOG = 40;
 const logBuf = [];
+// Lazy reference to the <details id="console-card"> element; stable once found.
+let _consoleCard = null;
+function _consoleOpen() {
+  if (!_consoleCard) _consoleCard = document.getElementById("console-card");
+  return !!(_consoleCard && _consoleCard.open);
+}
 VA.logLine = function (text) {
   const stamp = new Date().toLocaleTimeString();
   logBuf.push(`[${stamp}] ${text}`);
   while (logBuf.length > MAX_LOG) logBuf.shift();
   const el = document.getElementById("log");
-  if (el) { el.textContent = logBuf.join("\n"); el.scrollTop = el.scrollHeight; }
+  if (el) {
+    el.textContent = logBuf.join("\n");
+    // scrollHeight forces a synchronous layout — only pay that cost when the
+    // console <details> is actually open and the user can see it.
+    if (_consoleOpen()) el.scrollTop = el.scrollHeight;
+  }
 };
 VA.clearLog = function () {
   logBuf.length = 0;
@@ -68,15 +95,21 @@ VA.clearLog = function () {
 };
 let lastApbStr = null;
 function logTelemetry(t) {
+  // APB sentences are edge-triggered (rare state change) — always log them
+  // regardless of console visibility so they land in the buffer.
+  if (t.last_apb && t.last_apb !== lastApbStr) {
+    lastApbStr = t.last_apb;
+    VA.logLine("APB: " + t.last_apb);
+  }
+  // The per-frame telemetry summary is only useful when the console is open.
+  // Skipping it avoids: toLocaleTimeString(), a ~3 KB string join, a
+  // textContent write, and the forced-reflow scrollHeight read — every frame.
+  if (!_consoleOpen()) return;
   const pos = t.position ? `${VA.num(t.position.lat, 5)},${VA.num(t.position.lon, 5)}` : "no-fix";
   VA.logLine(
     `${t.mode || "?"} hdg=${VA.num(t.heading_deg, 0)} sog=${VA.num(t.sog_knots, 2)} ` +
     `xte=${VA.num(t.cross_track_m, 1)} pos=${pos}`
   );
-  if (t.last_apb && t.last_apb !== lastApbStr) {
-    lastApbStr = t.last_apb;
-    VA.logLine("APB: " + t.last_apb);
-  }
 }
 
 // ---- full-width safety banners (critical-send + staleness) ---------------

@@ -223,16 +223,26 @@
           img.onerror = () => done(new Error("cached tile decode failed"), img);
           return;
         }
-        // not cached: load from network, then store a copy if online.
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-          done(null, img);
-          if (cache.put) {
-            fetch(url).then((r) => (r.ok ? r.blob() : null)).then((b) => { if (b) cache.put(url, b); }).catch(() => {});
-          }
-        };
-        img.onerror = () => done(new Error("tile load failed"), img);
-        img.src = url;
+        // not cached: download the tile ONCE via fetch, then use that single blob
+        // for BOTH the <img> (object URL) and the cache. Previously we set
+        // img.src=url AND fetch(url) separately, downloading every uncached tile
+        // twice. (perf) The plain fetch of the same URL is CORS-safe (the old
+        // second fetch already worked).
+        fetch(url)
+          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("tile fetch failed"))))
+          .then((blob) => {
+            const obj = URL.createObjectURL(blob);
+            img.onload = () => { try { URL.revokeObjectURL(obj); } catch (e) {} done(null, img); };
+            img.onerror = () => { try { URL.revokeObjectURL(obj); } catch (e) {} done(new Error("tile load failed"), img); };
+            img.src = obj;
+            if (cache.put) { try { cache.put(url, blob); } catch (e) {} }
+          })
+          .catch(() => {
+            // Network fetch failed — fall back to a direct <img> load.
+            img.onload = () => done(null, img);
+            img.onerror = () => done(new Error("tile load failed"), img);
+            img.src = url;
+          });
       }).catch(() => {
         img.src = url;
         img.onload = () => done(null, img);

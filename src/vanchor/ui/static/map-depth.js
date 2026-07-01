@@ -266,6 +266,10 @@
         // the canvas size is unchanged. setData() bypasses this via _forceDraw.
         if (!this._forceDraw) {
           const z = m.getZoom();
+          // Zoom-aware pan epsilon: at high zoom (>= 18) cruising a few px/frame
+          // must NOT re-trigger the 50-110 ms grid redraw several times a second,
+          // so widen the skip threshold; keep the tight 6 px below z18. (perf)
+          const eps = z >= 18 ? 24 : VIEW_EPS_PX;
           // Track the canvas's top-left in LAYER coords -- this moves with every
           // pan. (The map centre in *container* coords is always ~size/2, so the
           // old check never detected a pan and skipped the redraw, leaving the
@@ -274,7 +278,7 @@
           const size = m.getSize();
           const lv = this._lastView;
           if (lv && lv.z === z && lv.sx === size.x && lv.sy === size.y &&
-              Math.abs(lv.tx - tl.x) < VIEW_EPS_PX && Math.abs(lv.ty - tl.y) < VIEW_EPS_PX) {
+              Math.abs(lv.tx - tl.x) < eps && Math.abs(lv.ty - tl.y) < eps) {
             // View unchanged -> just keep the canvas glued (cheap), skip redraw.
             L.DomUtil.setPosition(this._canvas, tl);
             return;
@@ -1089,8 +1093,31 @@
     }
     fetchWaterMask();
   }
+  // Below this zoom, the composition/contour queries + polygon/isobath rendering
+  // cover a huge low-zoom viewport and are the dominant frame cost, so we gate
+  // them: skip the fetch, clear the layer, and hint the user to zoom in. The
+  // zoomend flow (redrawDepth) re-invokes these fetches, so zooming past the
+  // gate restores the overlay automatically. (perf)
+  const DEPTH_MIN_ZOOM = 13;
+  const COMPOSITION_CAP_DEFAULT = "composition (0–100%, uncalibrated)";
+  // Reuse existing legend/state DOM for the hint rather than adding new nodes.
+  function compHint(msg) {
+    const cap = document.querySelector("#composition-legend .depth-legend-cap");
+    if (cap) cap.textContent = msg || COMPOSITION_CAP_DEFAULT;
+  }
+  function contourHint(msg) {
+    // The contour overlay has no dedicated legend; borrow the Depth-map state
+    // badge, but only when the heatmap isn't using it for its soundings count.
+    const badge = document.getElementById("depth-state");
+    if (badge && !depthShow) badge.textContent = msg || "";
+  }
   async function fetchComposition() {
     if (!compositionShow || compositionBusy) return;
+    if (map.getZoom() < DEPTH_MIN_ZOOM) {   // zoom gate (perf): clear + hint
+      compositionLayer.setData([]);
+      compHint("zoom in for composition");
+      return;
+    }
     compositionBusy = true;
     try {
       const b = map.getBounds().pad(0.3);
@@ -1100,6 +1127,8 @@
       const ps = r && Array.isArray(r.polygons) ? r.polygons : [];
       if (!map.hasLayer(compositionLayer)) compositionLayer.addTo(map);
       compositionLayer.setData(ps);
+      // Server may cap the payload (?limit=) and flag it — same zoom-in hint.
+      compHint(r && r.truncated ? "partial — zoom in" : "");
     } catch (e) { /* leave the last good render */ }
     finally { compositionBusy = false; }
     maybeFetchWaterMask();   // async: clips when the water arrives; reused per region
@@ -1178,7 +1207,9 @@
       }
       // Isobath contours: explicit imported isobaths (fetched separately) take
       // precedence; otherwise derive them from the grid via marching squares.
-      if (contourShow && !hasExplicitContours) {
+      // Below the zoom gate the contour overlay is cleared (see fetchContours),
+      // so don't let the shared grid poll re-populate it. (perf)
+      if (contourShow && !hasExplicitContours && map.getZoom() >= DEPTH_MIN_ZOOM) {
         if (!map.hasLayer(contourLayer)) contourLayer.addTo(map);
         contourLayer.setData(g.cells, min, max, cm);
       }
@@ -1204,6 +1235,13 @@
   let contoursBusy = false;
   async function fetchContours() {
     if (!contourShow || contoursBusy) return;
+    if (map.getZoom() < DEPTH_MIN_ZOOM) {   // zoom gate (perf): clear + hint
+      contourLayer.setExplicit(null);       // drop imported isobaths
+      contourLayer.setData([]);             // drop the marching-squares field
+      hasExplicitContours = false;
+      contourHint("zoom in for contours");
+      return;
+    }
     contoursBusy = true;
     try {
       const b = map.getBounds().pad(0.3);
@@ -1220,6 +1258,8 @@
       } else {
         contourLayer.setExplicit(null);   // none here -> marching-squares fallback
       }
+      // Server may cap the payload (?limit=) and flag it — same zoom-in hint.
+      contourHint(r && r.truncated ? "partial — zoom in" : "");
     } catch (e) {
       hasExplicitContours = false;
     } finally {

@@ -246,17 +246,34 @@
         applyBoatTransform();
         updateMotorIndicator(el, t.motor);
       }
-      trailPts.push([lat, lon]);
-      if (trailPts.length > 600) trailPts.shift();
-      trail.setLatLngs(trailPts);
+      // Only grow the trail (and re-set the polyline) when the boat has actually
+      // moved since the last pushed point — a stationary boat's 5 Hz frames would
+      // otherwise churn a 600-point polyline every tick for no visible change.
+      const lastPt = trailPts[trailPts.length - 1];
+      const TRAIL_EPS = 1e-6;   // ~0.1 m in lat/lon
+      if (!lastPt || Math.abs(lastPt[0] - lat) > TRAIL_EPS || Math.abs(lastPt[1] - lon) > TRAIL_EPS) {
+        trailPts.push([lat, lon]);
+        if (trailPts.length > 600) trailPts.shift();
+        trail.setLatLngs(trailPts);
+      }
       if (follow.boat) {
-        if (follow.offsetX || follow.offsetY) {
-          // Keep the boat at an off-centre point (e.g. right of the wizard panel).
-          const z = map.getZoom();
-          const p = map.project([lat, lon], z);
-          map.panTo(map.unproject([p.x - follow.offsetX, p.y - follow.offsetY], z), { animate: false });
-        } else {
-          map.panTo([lat, lon], { animate: false });
+        // Skip the follow-pan when the boat is already ~centred: at 5 Hz the
+        // sub-pixel drift otherwise fires a moveend cascade through all 4 tile
+        // layers every frame. Compare the boat's on-screen point to where it
+        // should sit (view centre, offset by the follow offset). (perf)
+        const size = map.getSize();
+        const bp = map.latLngToContainerPoint([lat, lon]);
+        const wantX = size.x / 2 + (follow.offsetX || 0);
+        const wantY = size.y / 2 + (follow.offsetY || 0);
+        if (Math.abs(bp.x - wantX) >= 2 || Math.abs(bp.y - wantY) >= 2) {
+          if (follow.offsetX || follow.offsetY) {
+            // Keep the boat at an off-centre point (e.g. right of the wizard panel).
+            const z = map.getZoom();
+            const p = map.project([lat, lon], z);
+            map.panTo(map.unproject([p.x - follow.offsetX, p.y - follow.offsetY], z), { animate: false });
+          } else {
+            map.panTo([lat, lon], { animate: false });
+          }
         }
       }
     }

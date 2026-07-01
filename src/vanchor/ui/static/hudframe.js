@@ -7,6 +7,14 @@
   const read = document.getElementById("ht-read");
   if (!track) return;
 
+  // Cache the tape container width to avoid a forced synchronous layout on
+  // every telemetry frame.  Refreshed on resize, orientationchange, and when
+  // the HUD frame is toggled (which may affect the layout).
+  let cachedWidth = track.parentElement.clientWidth;
+  function refreshWidth() { cachedWidth = track.parentElement.clientWidth; }
+  window.addEventListener("resize", refreshWidth);
+  window.addEventListener("orientationchange", refreshWidth);
+
   const PX = 4;          // pixels per degree
   const MIN = -100, MAX = 460;
   const cardinals = { 0: "N", 90: "E", 180: "S", 270: "W" };
@@ -54,7 +62,7 @@
       let jumped = false;
       while (disp < 0) { disp += 360; jumped = true; }
       while (disp >= 360) { disp -= 360; jumped = true; }
-      const win = track.parentElement.clientWidth;
+      const win = cachedWidth;
       const x = win / 2 - (disp - MIN) * PX;
       if (jumped) {
         const prev = track.style.transition;
@@ -76,6 +84,7 @@
   const applyFrame = (on) => {
     document.body.classList.toggle("hud-frame-on", on);
     if (frameBox) frameBox.checked = on;
+    refreshWidth();  // class change may affect tape container width
   };
   let frameOn = false;
   try { frameOn = localStorage.getItem(FRAME_KEY) === "1"; } catch (e) { /* ignore */ }

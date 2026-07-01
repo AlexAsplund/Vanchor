@@ -129,9 +129,19 @@
     const rec = !!(track && track.recording);
     const count = track && Number.isFinite(track.count) ? track.count : 0;
     const btn = $("track-rec");
-    if (btn) { btn.classList.toggle("recording", rec); btn.textContent = rec ? `● Recording (${count})` : "● Record"; }
+    if (btn) {
+      const label = rec ? `● Recording (${count})` : "● Record";
+      // classList.toggle + textContent every frame is wasteful; guard both on label change.
+      if (btn.textContent !== label) {
+        btn.classList.toggle("recording", rec);
+        btn.textContent = label;
+      }
+    }
     const badge = $("track-state");
-    if (badge) badge.textContent = rec ? "● rec " + count : (count ? count + " pts" : "");
+    if (badge) {
+      const badgeText = rec ? "● rec " + count : (count ? count + " pts" : "");
+      if (badge.textContent !== badgeText) badge.textContent = badgeText;
+    }
   }
 
   // stop mode is a bare command with no panel of its own. STOP must never gain

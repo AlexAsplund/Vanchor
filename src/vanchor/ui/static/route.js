@@ -146,6 +146,10 @@
     const pad = (n) => String(n).padStart(2, "0");
     return h > 0 ? `${h}:${pad(m)}:${pad(ss)}` : `${m}:${pad(ss)}`;
   }
+  // Decimated telemetry frames OMIT the `waypoints` array (scalar keys remain);
+  // cache the last-seen array so the route chip keeps computing progress on those
+  // frames instead of collapsing to "no route". Refreshed on every defined frame.
+  let lastWaypoints = [];
   // Route ETA state (#100): start time of the active route + a rolling SOG window.
   let routeStartMs = null;          // when the route first became active
   const SOG_WINDOW_MS = 45000;      // rolling-average window
@@ -166,7 +170,8 @@
     const sogKn = VA.fin ? VA.fin(t.sog_knots) : (Number.isFinite(t.sog_knots) ? t.sog_knots : null);
     if (sogKn !== null) sogSamples.push({ ms: nowMs, mps: sogKn * 0.514444 });
 
-    const wps = Array.isArray(t.waypoints) ? t.waypoints : [];
+    if (Array.isArray(t.waypoints)) lastWaypoints = t.waypoints;   // cache defined frames
+    const wps = Array.isArray(t.waypoints) ? t.waypoints : lastWaypoints;
     const pos = t.position || t.truth;
     if (t.mode !== "waypoint" || wps.length < 1 || !pos) {
       chip.classList.add("hidden");

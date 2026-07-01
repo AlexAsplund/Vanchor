@@ -6,7 +6,7 @@
   const $ = (id) => document.getElementById(id);
   const recBtn = $("debug-rec");
   if (!recBtn) return;
-  let recording = false;
+  let recording = null;   // null = not yet rendered (forces first-frame write)
 
   async function refresh() {
     let d;
@@ -49,9 +49,13 @@
   // Reflect live recording + replay state from telemetry.
   VA.onTelemetry((t) => {
     const dbg = t.debug || {};
-    recording = !!dbg.recording;
-    recBtn.textContent = recording ? "■ Stop recording" : "● Start recording";
-    recBtn.classList.toggle("btn-stop", recording);
+    const nowRecording = !!dbg.recording;
+    // Only touch the button when the recording state actually changes.
+    if (nowRecording !== recording) {
+      recording = nowRecording;
+      recBtn.textContent = recording ? "■ Stop recording" : "● Start recording";
+      recBtn.classList.toggle("btn-stop", recording);
+    }
     const badge = $("debug-state");
     if (badge) badge.textContent = recording ? "● REC" : "";
     const info = $("debug-rec-info");

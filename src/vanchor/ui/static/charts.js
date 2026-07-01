@@ -16,6 +16,8 @@
   let chartT0 = null;
   let charts = [];
   let chartsBuilt = false;
+  let lastRedrawTime = 0;             // performance.now() timestamp of last setData
+  const REDRAW_INTERVAL_MS = 500;     // cap full uPlot redraws at 2 Hz
   function defNum(v) { return Number.isFinite(v) ? v : null; }
 
   VA.onTelemetry(function pushChartSample(t) {
@@ -87,10 +89,26 @@
     const card = $("charts-card");
     if (!card || !card.open) return;
     if (!chartsBuilt) buildCharts();
+    // Throttle uPlot setData to REDRAW_INTERVAL_MS — data is sampled every
+    // frame above (full fidelity) but full redraws are expensive canvas ops.
+    const now = performance.now();
+    if (now - lastRedrawTime < REDRAW_INTERVAL_MS) return;
+    lastRedrawTime = now;
     charts.forEach((u) => u.setData(chartData(u._keys)));
   }
   const chartsCard = $("charts-card");
-  if (chartsCard) chartsCard.addEventListener("toggle", () => { if (chartsCard.open && !chartsBuilt) buildCharts(); });
+  if (chartsCard) chartsCard.addEventListener("toggle", () => {
+    if (chartsCard.open) {
+      if (!chartsBuilt) {
+        buildCharts();  // buildCharts seeds with current data already
+      } else {
+        // Card re-opened with pre-built charts: redraw immediately so the user
+        // doesn't see up-to-500 ms stale data, then reset the throttle clock.
+        charts.forEach((u) => u.setData(chartData(u._keys)));
+        lastRedrawTime = performance.now();
+      }
+    }
+  });
   $("charts-clear").addEventListener("click", () => {
     chartT.length = 0; for (const k in series) series[k].length = 0; chartT0 = null; redrawCharts();
   });

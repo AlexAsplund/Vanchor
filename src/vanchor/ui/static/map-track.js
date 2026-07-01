@@ -14,7 +14,13 @@
 
   let trackLine = null;
   function updateTrack(track) {
-    const pts = track && Array.isArray(track.points) ? track.points : [];
+    if (!track) return;                 // no track key this frame -> retain the line
+    const pts = track.points;
+    // Decimated frames carry `track` (scalar keys) but OMIT `points`; treat the
+    // absent array as "no change" and retain the current line. Only act when
+    // `points` is actually an array: draw when non-empty, clear when explicitly
+    // empty.
+    if (!Array.isArray(pts)) return;
     if (pts.length) {
       if (!trackLine) trackLine = L.polyline(pts, { color: "#c084fc", weight: 3, opacity: 0.85 }).addTo(map);
       else trackLine.setLatLngs(pts);

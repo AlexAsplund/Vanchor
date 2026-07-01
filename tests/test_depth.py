@@ -73,3 +73,43 @@ def test_depth_map_persists(tmp_path):
     dm2 = DepthMap()
     dm2.load(path)
     assert len(dm2.points) == 2 and dm2.points[1][2] == 9.5
+
+
+# ---- contours_in / composition_in: limit and truncation detection --------
+
+def test_contours_in_respects_limit():
+    """contours_in caps the returned list at the given limit."""
+    dm = DepthMap()
+    dm.contours = [{"d": float(i), "pts": [[59.0 + i * 0.001, 18.0]]} for i in range(20)]
+    assert len(dm.contours_in(limit=5)) == 5
+    assert len(dm.contours_in(limit=100)) == 20   # fewer than cap → all returned
+
+
+def test_contours_in_truncation_pattern():
+    """The server computes truncated = (len(result) == limit); verify the boundary."""
+    dm = DepthMap()
+    dm.contours = [{"d": float(i), "pts": [[59.0, 18.0 + i * 0.001]]} for i in range(10)]
+    assert len(dm.contours_in(limit=10)) == 10    # at limit → truncated
+    assert len(dm.contours_in(limit=11)) == 10    # below limit → not truncated
+
+
+def test_composition_in_respects_limit():
+    """composition_in caps the returned list at the given limit."""
+    dm = DepthMap()
+    dm.composition = [
+        {"pct": float(i % 100), "ring": [[59.0, 18.0], [59.001, 18.001], [59.001, 18.0]]}
+        for i in range(15)
+    ]
+    assert len(dm.composition_in(limit=4)) == 4
+    assert len(dm.composition_in(limit=100)) == 15   # fewer than cap → all returned
+
+
+def test_composition_in_truncation_pattern():
+    """The server computes truncated = (len(result) == limit); verify the boundary."""
+    dm = DepthMap()
+    dm.composition = [
+        {"pct": float(i % 100), "ring": [[59.0, 18.0], [59.001, 18.001], [59.001, 18.0]]}
+        for i in range(8)
+    ]
+    assert len(dm.composition_in(limit=8)) == 8    # at limit → truncated
+    assert len(dm.composition_in(limit=9)) == 8    # below limit → not truncated

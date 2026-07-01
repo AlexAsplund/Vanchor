@@ -34,6 +34,38 @@ STATIC_DIR = Path(__file__).parent / "static"
 # to keep the response lightweight (depth_points is ~28 KB per frame).
 _BULK_KEYS: frozenset[str] = frozenset({"depth_points"})
 
+# Default limits for viewport-windowed vector overlays (must match depth.py defaults).
+_CONTOURS_DEFAULT_LIMIT: int = 5000
+_COMPOSITION_DEFAULT_LIMIT: int = 4000
+
+
+def shape_frame(snapshot: dict, full: bool) -> dict:
+    """Shape a telemetry snapshot for WebSocket broadcast.
+
+    Full frames (every 5th) are returned as-is.  Non-full frames strip the
+    bulky array payloads that change infrequently:
+
+    * ``depth_points`` -- omitted entirely (client retains the last copy).
+    * ``waypoints`` -- omitted entirely (absent, not null/empty; a concurrent
+      client guard mirrors this contract: waypoints is only applied when the
+      key is present in the frame).
+    * ``track`` -- present but with only its scalar keys (``recording``,
+      ``count``, etc.); the ``points`` array is dropped so the UI updates the
+      breadcrumb count readout every frame but redraws the trail only on full
+      frames.
+    """
+    if full:
+        return snapshot
+    out: dict = {}
+    for k, v in snapshot.items():
+        if k in ("depth_points", "waypoints"):
+            continue
+        if k == "track" and isinstance(v, dict):
+            out[k] = {sk: sv for sk, sv in v.items() if sk != "points"}
+        else:
+            out[k] = v
+    return out
+
 
 def _extract_hostname(host: str) -> str:
     """Return just the hostname from a ``Host`` header value (strips port, brackets)."""
@@ -101,13 +133,11 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                     )
                 if clients:
                     frame_n += 1
-                    # depth_points (~28 KB) is the bulk of a frame; over the high-rate
-                    # WS send it only ~1 Hz (every 5th frame), not every frame.
-                    # depth_count is always present and the client retains the last
-                    # points when the array is omitted. (/api/state still returns full.)
-                    out = snapshot
-                    if frame_n % 5 != 1 and "depth_points" in snapshot:
-                        out = {k: v for k, v in snapshot.items() if k != "depth_points"}
+                    # Full frames (every 5th, ~1 Hz) carry depth_points, waypoints and
+                    # track.points.  Non-full frames strip those bulky arrays so the
+                    # high-rate 5 Hz WS stream stays lean.  /api/state always returns
+                    # the complete snapshot; shape_frame only applies to the broadcaster.
+                    out = shape_frame(snapshot, full=(frame_n % 5 == 1))
                     message = json.dumps(out)
 
                     # Send to all clients concurrently so one stalled client
@@ -497,18 +527,27 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         south: float | None = None,
         east: float | None = None,
         north: float | None = None,
+        limit: int | None = None,
     ) -> dict:
         """Imported depth-contour polylines (isobaths) for the contour
         overlay, windowed to the viewport. With ``west``/``south``/``east``/
         ``north`` only contours intersecting that window are returned (a large
-        chart has 80k+ lines). Returns ``{ok, count, contours}`` where each is
-        ``{d: depth_m, pts: [[lat, lon], ...]}``.
+        chart has 80k+ lines). ``limit`` caps the returned count (clamped to
+        [100, 8000]; defaults to 5000). Returns ``{ok, count, truncated,
+        contours}`` where each is ``{d: depth_m, pts: [[lat, lon], ...]}``; a
+        ``truncated: true`` flag means the chart has more results -- zoom in
+        for full detail.
         """
         bbox = None
         if None not in (west, south, east, north):
             bbox = (west, south, east, north)
+        clamp_limit = max(100, min(8000, limit if limit is not None else _CONTOURS_DEFAULT_LIMIT))
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: runtime.depth_contours(bbox=bbox))
+        result = await loop.run_in_executor(
+            None, lambda: runtime.depth_contours(bbox=bbox, limit=clamp_limit)
+        )
+        result["truncated"] = result["count"] == clamp_limit
+        return result
 
     @app.get("/api/depth/composition")
     async def depth_composition(
@@ -516,15 +555,25 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         south: float | None = None,
         east: float | None = None,
         north: float | None = None,
+        limit: int | None = None,
     ) -> dict:
-        """Imported bottom-composition POLYGONS, windowed to the
-        viewport. Returns ``{ok, count, polygons}`` where each polygon is
-        ``{pct: 0..100, ring: [[lat, lon], ...]}`` -- rendered filled, YlOrBr."""
+        """Imported bottom-composition POLYGONS, windowed to the viewport.
+        ``limit`` caps the returned count (clamped to [100, 8000]; defaults to
+        4000). Returns ``{ok, count, truncated, polygons}`` where each polygon
+        is ``{pct: 0..100, ring: [[lat, lon], ...]}`` -- rendered filled,
+        YlOrBr. ``truncated: true`` means more polygons exist outside the cap;
+        zoom in for full detail.
+        """
         bbox = None
         if None not in (west, south, east, north):
             bbox = (west, south, east, north)
+        clamp_limit = max(100, min(8000, limit if limit is not None else _COMPOSITION_DEFAULT_LIMIT))
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, lambda: runtime.depth_composition(bbox=bbox))
+        result = await loop.run_in_executor(
+            None, lambda: runtime.depth_composition(bbox=bbox, limit=clamp_limit)
+        )
+        result["truncated"] = result["count"] == clamp_limit
+        return result
 
     @app.get("/api/depth/water")
     async def depth_water(

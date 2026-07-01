@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vanchor.app import Runtime
-from vanchor.ui.server import create_app
+from vanchor.ui.server import create_app, shape_frame
 
 
 @pytest.fixture()
@@ -277,3 +277,145 @@ def test_ws_ping_not_forwarded_to_controller(runtime_client, caplog):
                     break
     assert rt.state.mode.value == "manual"
     assert not any("unknown command" in r.message for r in caplog.records)
+
+
+# ---- Fix 3: shape_frame decimation ----------------------------------------
+
+
+def test_shape_frame_full_returns_complete_snapshot():
+    """Full frames carry depth_points, waypoints and track.points."""
+    snap = {
+        "mode": "manual",
+        "depth_points": [[59.0, 18.0, 5.0]],
+        "waypoints": [{"lat": 59.0, "lon": 18.0, "name": "wp1", "heading": 0.0}],
+        "track": {"recording": False, "count": 3, "points": [[59.0, 18.0], [59.001, 18.0]]},
+        "depth_count": 1,
+    }
+    out = shape_frame(snap, full=True)
+    assert out is snap or out == snap
+    assert "waypoints" in out
+    assert "depth_points" in out
+    assert "points" in out["track"]
+    assert out["track"]["count"] == 3
+
+
+def test_shape_frame_non_full_strips_bulky_arrays():
+    """Non-full frames: depth_points absent, waypoints absent, track.points absent."""
+    snap = {
+        "mode": "anchor_hold",
+        "depth_points": [[59.0, 18.0, 5.0]],
+        "waypoints": [{"lat": 59.0, "lon": 18.0, "name": "wp1", "heading": 0.0}],
+        "track": {"recording": True, "count": 7, "points": [[59.0, 18.0]]},
+        "depth_count": 42,
+    }
+    out = shape_frame(snap, full=False)
+    assert "depth_points" not in out         # omitted
+    assert "waypoints" not in out            # absent (not null/empty)
+    assert "track" in out
+    assert "points" not in out["track"]      # array stripped
+    assert out["track"]["recording"] is True
+    assert out["track"]["count"] == 7
+    assert out["mode"] == "anchor_hold"
+    assert out["depth_count"] == 42
+
+
+def test_shape_frame_non_full_tolerates_missing_track():
+    """Non-full frames: if snapshot has no track key it stays absent (no KeyError)."""
+    snap = {"mode": "manual", "depth_count": 0}
+    out = shape_frame(snap, full=False)
+    assert "track" not in out
+    assert out["mode"] == "manual"
+
+
+def test_shape_frame_non_full_tolerates_missing_waypoints():
+    """Non-full frames: if snapshot has no waypoints key it stays absent (no KeyError)."""
+    snap = {"mode": "manual", "depth_count": 0,
+            "track": {"recording": False, "count": 0}}
+    out = shape_frame(snap, full=False)
+    assert "waypoints" not in out
+    assert "track" in out and "points" not in out["track"]
+
+
+# ---- Fix 1: depth overlay endpoints: limit param + truncated flag ----------
+
+
+def test_depth_contours_truncated_when_limit_hit(runtime_client):
+    """contours endpoint: truncated=True when result hits the requested limit."""
+    c, rt = runtime_client
+    rt.depth_map.contours = [
+        {"d": float(i), "pts": [[59.0 + i * 0.001, 18.0], [59.001 + i * 0.001, 18.001]]}
+        for i in range(200)
+    ]
+    # Explicit limit=100 → 100 items, truncated=True
+    r = c.get("/api/depth/contours?limit=100")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 100
+    assert data["truncated"] is True
+
+    # No limit → default 5000 >> 200 → all returned, truncated=False
+    r = c.get("/api/depth/contours")
+    data = r.json()
+    assert data["count"] == 200
+    assert data["truncated"] is False
+
+
+def test_depth_contours_limit_clamped(runtime_client):
+    """contours endpoint: limit is clamped to [100, 8000] server-side."""
+    c, rt = runtime_client
+    rt.depth_map.contours = [
+        {"d": float(i), "pts": [[59.0, 18.0 + i * 0.001]]}
+        for i in range(500)
+    ]
+    # limit=5 below minimum (100) → clamped to 100
+    r = c.get("/api/depth/contours?limit=5")
+    data = r.json()
+    assert data["count"] == 100
+    assert data["truncated"] is True
+
+    # limit=99999 above maximum (8000) → clamped to 8000; 500 < 8000 → all returned
+    r = c.get("/api/depth/contours?limit=99999")
+    data = r.json()
+    assert data["count"] == 500
+    assert data["truncated"] is False
+
+
+def test_depth_composition_truncated_when_limit_hit(runtime_client):
+    """composition endpoint: truncated=True when result hits the requested limit."""
+    c, rt = runtime_client
+    rt.depth_map.composition = [
+        {"pct": float(i % 100), "ring": [[59.0, 18.0], [59.001, 18.001], [59.001, 18.0]]}
+        for i in range(200)
+    ]
+    # Explicit limit=100 → 100 items, truncated=True
+    r = c.get("/api/depth/composition?limit=100")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 100
+    assert data["truncated"] is True
+
+    # No limit → default 4000 >> 200 → all returned, truncated=False
+    r = c.get("/api/depth/composition")
+    data = r.json()
+    assert data["count"] == 200
+    assert data["truncated"] is False
+
+
+def test_depth_composition_limit_clamped(runtime_client):
+    """composition endpoint: limit is clamped to [100, 8000] server-side."""
+    c, rt = runtime_client
+    rt.depth_map.composition = [
+        {"pct": float(i % 100), "ring": [[59.0, 18.0], [59.001, 18.001], [59.001, 18.0]]}
+        for i in range(500)
+    ]
+    # limit=5 below minimum (100) → clamped to 100
+    r = c.get("/api/depth/composition?limit=5")
+    data = r.json()
+    assert data["count"] == 100
+    assert data["truncated"] is True
+
+    # limit=99999 above maximum (8000) → clamped to 8000; 500 < 8000 → all returned
+    r = c.get("/api/depth/composition?limit=99999")
+    data = r.json()
+    assert data["count"] == 500
+    assert data["truncated"] is False

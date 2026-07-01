@@ -136,7 +136,7 @@ class DepthMap:
     def contours_in(
         self,
         bbox: tuple[float, float, float, float] | None = None,
-        limit: int = 20000,
+        limit: int = 5000,
     ) -> list[dict]:
         """Imported depth contours, windowed to a (west, south, east, north)
         bbox -- a contour polyline is kept if any vertex falls inside. Capped at
@@ -159,7 +159,7 @@ class DepthMap:
     def composition_in(
         self,
         bbox: tuple[float, float, float, float] | None = None,
-        limit: int = 30000,
+        limit: int = 4000,
     ) -> list[dict]:
         """Imported composition polygons, windowed to a (west, south, east,
         north) bbox -- a polygon is kept if any ring vertex falls inside."""

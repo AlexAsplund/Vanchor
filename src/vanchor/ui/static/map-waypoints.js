@@ -75,10 +75,15 @@
         wireCommittedMarker(m, i);
       });
     }
-    // Route line (cheap) tracks pending + committed every call.
-    const pts = wps.map((w) => [w.lat, w.lon]).concat(pendingWaypoints.map((w) => [w.lat, w.lon]));
-    if (!routeLine) routeLine = L.polyline(pts, { color: "#1be4ff", weight: 2, dashArray: "5,6", opacity: 0.7 }).addTo(map);
-    else routeLine.setLatLngs(pts);
+    // Route line: only rebuild when the waypoint set actually changed (direct
+    // calls after a local edit set changed=true, covering pending edits). During
+    // an active drag the drag handler updates routeLine live (see wire below), so
+    // a 5 Hz telemetry frame with an unchanged set no longer re-sets the polyline.
+    if (changed || !routeLine) {
+      const pts = wps.map((w) => [w.lat, w.lon]).concat(pendingWaypoints.map((w) => [w.lat, w.lon]));
+      if (!routeLine) routeLine = L.polyline(pts, { color: "#1be4ff", weight: 2, dashArray: "5,6", opacity: 0.7 }).addTo(map);
+      else routeLine.setLatLngs(pts);
+    }
   }
 
   function committedIcon(label, active) {
@@ -219,6 +224,9 @@
   let onWpChange = null;
 
   VA.onTelemetry(function renderWaypoints(t) {
+    // Decimated frames OMIT `waypoints` entirely — treat absent as "no change"
+    // and skip the redraw so the committed route + drag/menu state are retained.
+    if (t.waypoints === undefined) return;
     drawWaypoints(t.waypoints, t.active_waypoint);
   });
 
