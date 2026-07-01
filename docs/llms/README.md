@@ -57,7 +57,7 @@ clock**. Its sensor/control timing is load-bearing — see
 | `src/vanchor/core/` | `config.py`, `state.py`, `models.py`, `geo.py`, `pid.py`, `boat_profiles.py`, events, debug recorder | [backend.md](backend.md) |
 | `src/vanchor/nav/` | `navigator.py`, `routing.py`, `water.py`, `depth.py`, `survey.py`, `track.py`, `trip.py`, `nmea*.py`, `guard.py` | [backend.md](backend.md) |
 | `src/vanchor/sim/` | `simulator.py`, `fossen.py` (3-DOF physics), `boat.py` (simple model), `devices.py` (sensors+noise), `bathymetry.py`, `battery.py`, `weather.py`, `gust.py` | [simulation.md](simulation.md) |
-| `src/vanchor/hardware/` | real serial/NMEA device + motor interfaces (mirror the sim devices) | [backend.md](backend.md) |
+| `src/vanchor/hardware/` | real serial/NMEA devices + motor; `registry.py` + `drivers/` = pluggable device drivers | [device-drivers.md](device-drivers.md) |
 | `src/vanchor/ui/server.py` | FastAPI app: REST endpoints + the `/ws` telemetry socket | [api.md](api.md) |
 | `src/vanchor/ui/static/*.js` | the web UI (one module per feature; `map.js` + `app.js` are the hubs) | [frontend.md](frontend.md) |
 | `src/vanchor/analysis/` | offline scenario runner + auto-tuner (text/CSV/plot reports) | [backend.md](backend.md) |

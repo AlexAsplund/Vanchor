@@ -269,6 +269,13 @@ real serial GPS/compass + an Arduino motor with optional steering feedback. They
 mirror `sim/devices.py` so nothing above the device layer changes between sim and
 hardware.
 
+**Adding a new hardware driver** (e.g. an AHRS compass like the HWT901B) does NOT
+touch `app.py`: `registry.py` + the `drivers/` package are a self-registering
+plugin system — drop a module that calls `register_driver(kind, source, build)`
+and it becomes a selectable `*_source`. The runtime builds/validates/lists from
+the registry, and a driver may expose a `device_menu()` (settings + actions the
+UI renders). Full how-to: **[device-drivers.md](device-drivers.md)**.
+
 **Simulation is one source *per device*, not a global mode.** `Runtime.__init__`
 asks `HardwareConfig.source(device)` for each of `gps`/`compass`/`depth`/`motor`
 and builds them independently, so any **mix** works:
