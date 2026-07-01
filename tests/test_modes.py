@@ -3,6 +3,7 @@ import pytest
 from vanchor.controller.controller import Helm
 from vanchor.controller.modes import (
     AnchorHoldMode,
+    DriftMode,
     HeadingHoldMode,
     ManualMode,
     WaypointMode,
@@ -140,3 +141,56 @@ def test_helm_manual_passthrough_clamped():
     helm = Helm()
     cmd = helm.compute(ManualSetpoint(thrust=2.0, steering=-5.0), _state_at(HERE), 0.2)
     assert cmd.thrust == 1.0 and cmd.steering == -1.0
+
+
+def test_drift_regulates_signed_along_heading_speed_not_magnitude():
+    # Held heading north; the boat is drifting purely EAST (transverse) at 1.0 kn.
+    # The along-heading component is ~0, so the controller must ADD thrust to make
+    # way along the held heading -- NOT brake as it would if it PIDed the unsigned
+    # SOG (which would see 1.0 kn > the 0.5 kn target and command reverse).
+    mode = DriftMode()
+    state = _state_at(HERE, heading=0.0)
+    state.target_heading = 0.0
+    state.drift_target_knots = 0.5
+    state.fix = GpsFix(point=HERE, sog_knots=1.0, cog_deg=90.0)  # drifting east
+    state.sog_knots = 1.0
+    sp = mode.update(state, 0.2)
+    assert isinstance(sp, GuidedSetpoint)
+    assert sp.thrust > 0.0
+
+
+def test_drift_brakes_when_too_fast_along_heading():
+    # Moving ALONG the held heading faster than the target -> brake (reverse).
+    mode = DriftMode()
+    state = _state_at(HERE, heading=0.0)
+    state.target_heading = 0.0
+    state.drift_target_knots = 0.5
+    state.fix = GpsFix(point=HERE, sog_knots=1.0, cog_deg=0.0)  # moving north, fast
+    state.sog_knots = 1.0
+    sp = mode.update(state, 0.2)
+    assert sp.thrust < 0.0
+
+
+def test_anchor_drift_ema_is_frame_rate_independent():
+    # The drift-estimate EMA time constant must be fixed in SECONDS, not per tick:
+    # stepping the same total time in one big dt vs. many small dt should land on
+    # nearly the same estimate. (A fixed per-tick weight would diverge.)
+    anchor = HERE
+    boat = destination_point(anchor, 10.0, 0.0)
+
+    def run(dt: float, steps: int) -> float:
+        state = _state_at(boat, heading=0.0)
+        state.anchor = anchor
+        state.anchor_radius_m = 5.0
+        # A steady eastward set/drift the estimator should learn.
+        state.fix = GpsFix(point=boat, sog_knots=1.0, cog_deg=90.0)
+        state.sog_knots = 1.0
+        mode = AnchorHoldMode()  # default config (drift_tau_s = 10 s)
+        mode.activate(state)
+        for _ in range(steps):
+            mode.update(state, dt)
+        return state.est_drift_mps
+
+    coarse = run(dt=0.5, steps=20)   # 10 s total
+    fine = run(dt=0.05, steps=200)   # 10 s total
+    assert coarse == pytest.approx(fine, abs=0.05)

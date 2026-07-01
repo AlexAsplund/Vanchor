@@ -24,7 +24,7 @@ from collections import deque
 
 import numpy as np
 
-from ..core.geo import angle_difference, knots_to_mps
+from ..core.geo import angle_difference, haversine_m, initial_bearing, knots_to_mps
 from ..core.models import ControlModeName, ManualSetpoint
 from ..core.state import NavigationState
 
@@ -137,6 +137,15 @@ class AnchorMLMode:
         ])
 
     def update(self, state: NavigationState, dt: float) -> ManualSetpoint:
+        # Keep the HUD range/bearing fresh AND feed the safety governor's drag
+        # alarm (which reads state.distance_to_anchor_m), exactly like
+        # AnchorHoldMode -- otherwise the learned spot-lock would show stale
+        # distance and never trip a drag alarm.
+        anchor, pos = state.anchor, state.position
+        if anchor is not None and pos is not None:
+            state.distance_to_anchor_m = haversine_m(pos, anchor)
+            state.bearing_to_dest = initial_bearing(pos, anchor)
+
         frame = self._frame(state, dt)
         if self._hist is None:
             self._hist = deque([frame] * self.history, maxlen=self.history)

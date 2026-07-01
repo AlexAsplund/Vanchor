@@ -49,3 +49,22 @@ def test_handle_sentence_returns_events():
     out = nav.handle_sentence(nmea.encode_rmc(GeoPoint(59, 18), sog_knots=1, cog_deg=0))
     topics = [t for t, _ in out]
     assert "nav.fix" in topics
+
+
+def test_gga_after_rmc_carries_forward_cog():
+    """RMC sets cog=90; a subsequent GGA-only fix must keep cog=90.
+
+    GGA sentences carry no course/speed field.  Without the fix, the cog would
+    reset to the dataclass default (0.0), causing anchor-mode closing-speed
+    damping to compute the wrong brake force for GGA-only receivers.
+    """
+    state = NavigationState()
+    nav = Navigator(state, bus=None)
+    nav.handle_sentence(nmea.encode_rmc(GeoPoint(59.0, 18.0), sog_knots=2.5, cog_deg=90.0))
+    assert state.fix is not None
+    assert state.fix.cog_deg == pytest.approx(90.0)
+    # GGA-only update: position moves slightly, but course field is absent.
+    nav.handle_sentence(nmea.encode_gga(GeoPoint(59.001, 18.0)))
+    assert state.fix.cog_deg == pytest.approx(90.0), (
+        "GGA-only fix should carry forward the last known cog, not reset to 0"
+    )

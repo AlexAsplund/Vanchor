@@ -116,7 +116,7 @@ from real hardware.
 - **Battery** — discharge model driven by motor load.
 - **Deterministic harness** — the whole loop (physics, sensors, navigator,
   controller) steps in lockstep with seeded noise for fast, non-flaky tests
-  (~370 tests).
+  (~556 tests).
 
 **Default sim location:** Lake Vänern / Visten area near Karlstad, Sweden
 (59.66275 N, 13.32247 E). Water/routing data from **OpenStreetMap** (Overpass).

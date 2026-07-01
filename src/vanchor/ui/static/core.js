@@ -29,6 +29,15 @@ VA.num = function (v, d) {
 VA.fin = function (v) { return Number.isFinite(v) ? v : null; };
 VA.setText = function (id, v) { const el = document.getElementById(id); if (el) el.textContent = v; };
 
+// HTML-escape for safe interpolation into innerHTML (text OR attribute context).
+// Escapes the five characters that matter so values that arrive from an
+// unauthenticated POST (e.g. a debug session `name`) can't inject markup.
+VA.escapeHtml = function (s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+};
+
 // ---- continuous unwrapped angle (short-way rotation) ---------------------
 // Accumulates the shortest signed delta each frame, keyed per element, so a
 // 359°→0° wrap animates the short way instead of spinning all the way around.
@@ -70,6 +79,64 @@ function logTelemetry(t) {
   }
 }
 
+// ---- full-width safety banners (critical-send + staleness) ---------------
+// Minimal, self-contained banners styled inline so they render even if the
+// cached CSS is stale. STOP-not-confirmed pins to the top (red); DATA STALE
+// pins to the bottom (amber) so the two never overlap.
+const STOP_BANNER_ID = "critical-stop-banner";
+const STALE_BANNER_ID = "stale-data-banner";
+function _banner(id, opts) {
+  let el = document.getElementById(id);
+  if (!opts.show) { if (el) el.style.display = "none"; return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = id;
+    el.setAttribute("role", "alert");
+    el.setAttribute("aria-live", "assertive");
+    el.style.cssText =
+      "position:fixed;left:0;right:0;z-index:100000;padding:12px 16px;" +
+      "font:700 15px/1.3 system-ui,-apple-system,sans-serif;text-align:center;" +
+      "color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.45);letter-spacing:.02em;";
+    (document.body || document.documentElement).appendChild(el);
+  }
+  if (opts.bottom) { el.style.bottom = "0"; el.style.top = ""; }
+  else { el.style.top = "0"; el.style.bottom = ""; }
+  el.style.background = opts.bg;
+  el.style.display = "block";
+  el.textContent = opts.text;
+}
+
+// ---- staleness watchdog --------------------------------------------------
+// Telemetry arrives ~5 Hz. After a silent WiFi drop the socket may not close,
+// so the UI would render the last frame forever. Track the last-frame time and
+// surface a "DATA STALE" banner once frames stop for >3 s; a fresh frame clears
+// it (in dispatch()).
+let _lastFrameMs = 0;
+const STALE_MS = 3000;
+setInterval(() => {
+  if (!_lastFrameMs) return;
+  const age = Date.now() - _lastFrameMs;
+  if (age > STALE_MS) {
+    _banner(STALE_BANNER_ID, {
+      show: true, bottom: true, bg: "#b45309",
+      text: "DATA STALE (" + Math.round(age / 1000) + "s old) — link may be down",
+    });
+  }
+}, 1000);
+
+// ---- critical-command confirmation (STOP) --------------------------------
+// A STOP that silently fails during a WiFi drop is a safety hazard. sendCritical
+// fires the command over BOTH channels and then watches telemetry: if the boat
+// doesn't reflect the stop within ~1.5 s, a red banner stays up until a frame
+// confirms it.
+let _criticalSeq = 0;
+let _critical = null;  // { id, confirm }
+function _stopConfirmed(t) {
+  if (!t) return false;
+  const thr = t.motor ? Number(t.motor.thrust) : NaN;
+  return t.mode === "manual" && Number.isFinite(thr) && Math.abs(thr) < 0.05;
+}
+
 // ---- render-subscriber registry ------------------------------------------
 const subscribers = [];
 VA.onTelemetry = function (fn) { subscribers.push(fn); };
@@ -77,6 +144,13 @@ VA.onTelemetry = function (fn) { subscribers.push(fn); };
 function dispatch(t) {
   VA.last = t;
   VA.simEnabled = !!t.sim_enabled;
+  // Fresh frame: clear any staleness banner and confirm pending critical cmds.
+  _lastFrameMs = Date.now();
+  _banner(STALE_BANNER_ID, { show: false });
+  if (_critical && _critical.confirm(t)) {
+    _critical = null;
+    _banner(STOP_BANNER_ID, { show: false });
+  }
   for (const fn of subscribers) {
     try { fn(t); } catch (err) { VA.logLine("render error: " + err); }
   }
@@ -112,6 +186,32 @@ VA.send = function (cmd) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cmd),
   }).catch((e) => VA.logLine("command POST failed: " + e));
+};
+
+// Send a SAFETY-CRITICAL command (STOP). Fires over the WS AND POSTs to
+// /api/command simultaneously (both best-effort, so a dead socket can't swallow
+// it), then watches telemetry: if the boat doesn't reflect the stop within
+// ~1.5 s, a prominent red banner stays up until a frame confirms it. `confirmFn`
+// defaults to "mode is manual and thrust ~0" (what a stop produces).
+VA.sendCritical = function (cmd, confirmFn) {
+  VA.logLine("»! " + JSON.stringify(cmd));
+  try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(cmd)); }
+  catch (e) { VA.logLine("critical WS send failed: " + e); }
+  fetch("/api/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cmd),
+  }).catch((e) => VA.logLine("critical command POST failed: " + e));
+  const id = ++_criticalSeq;
+  _critical = { id, confirm: confirmFn || _stopConfirmed };
+  setTimeout(() => {
+    if (_critical && _critical.id === id) {
+      _banner(STOP_BANNER_ID, {
+        show: true, bg: "#c81e1e",
+        text: "STOP NOT CONFIRMED — check link",
+      });
+    }
+  }, 1500);
 };
 
 // Convenience JSON REST helpers used by the wizard / tuner.

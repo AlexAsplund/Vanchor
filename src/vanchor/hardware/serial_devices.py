@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -93,6 +94,7 @@ class _SerialNmeaSensor(Sensor):
         await self.transport.close()
 
     async def _loop(self) -> None:
+        _last_garbage_warn: float = 0.0
         while True:
             try:
                 line = await self.transport.read_line()
@@ -101,6 +103,19 @@ class _SerialNmeaSensor(Sensor):
             except EOFError:
                 logger.warning("%s: serial stream closed", type(self).__name__)
                 return
+            except (ValueError, asyncio.LimitOverrunError) as exc:
+                # Oversized or unparseable line (e.g. wrong-baud binary garbage
+                # with no newline within the 64 KB StreamReader buffer).
+                # Discard and keep reading; log at most once every 5 s.
+                _now = _time.monotonic()
+                if _now - _last_garbage_warn >= 5.0:
+                    logger.warning(
+                        "%s: oversized/garbage line discarded – %s",
+                        type(self).__name__,
+                        exc,
+                    )
+                    _last_garbage_warn = _now
+                continue
             except Exception:  # pragma: no cover - defensive
                 logger.exception("%s: read error", type(self).__name__)
                 return
@@ -222,6 +237,7 @@ class SerialMotorController(MotorController):
         from it. The simulator's motor controller has no such attribute, so the
         sim path is unaffected. No extra app.py wiring beyond that one read.
         """
+        _last_garbage_warn: float = 0.0
         while True:
             try:
                 line = await self.transport.read_line()
@@ -230,6 +246,18 @@ class SerialMotorController(MotorController):
             except EOFError:
                 logger.warning("%s: serial stream closed", type(self).__name__)
                 return
+            except (ValueError, asyncio.LimitOverrunError) as exc:
+                # Oversized or unparseable line (e.g. wrong-baud binary garbage).
+                # Discard and keep reading; log at most once every 5 s.
+                _now = _time.monotonic()
+                if _now - _last_garbage_warn >= 5.0:
+                    logger.warning(
+                        "%s: oversized/garbage feedback line discarded – %s",
+                        type(self).__name__,
+                        exc,
+                    )
+                    _last_garbage_warn = _now
+                continue
             except Exception:  # pragma: no cover - defensive
                 logger.exception("%s: feedback read error", type(self).__name__)
                 return
@@ -273,9 +301,11 @@ class SerialMotorController(MotorController):
 
         if new_dir == 0:
             # Stopped (or near-stopped): start/continue the cooldown clock.
+            # Do NOT clear _last_dir here — we must remember which direction we
+            # were travelling so the opposite-direction check still fires after
+            # one or more zero-thrust ticks (the PID crossing-zero scenario).
             if self._zero_since is None:
                 self._zero_since = now
-            self._last_dir = 0
             return thrust
 
         opposes = self._last_dir != 0 and new_dir != self._last_dir

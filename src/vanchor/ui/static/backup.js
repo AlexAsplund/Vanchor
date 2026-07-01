@@ -154,6 +154,9 @@
       let n = 0;
       try {
         Object.keys(client).forEach((k) => {
+          // Enforce the app's namespace: only ever write keys the app owns, so a
+          // tampered/foreign backup can't set arbitrary localStorage entries.
+          if (!String(k).startsWith("vanchor-")) return;
           const v = client[k];
           localStorage.setItem(k, v == null ? "" : String(v));
           n++;

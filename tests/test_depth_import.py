@@ -128,3 +128,20 @@ def test_import_keeps_and_windows_composition(tmp_path):
     assert r["ok"] and r["composition"] == 1
     assert rt.depth_composition()["count"] == 1
     assert rt.depth_composition(bbox=(0, 0, 1, 1))["polygons"] == []  # far window -> none
+
+
+def test_parse_malformed_geojson_returns_full_shape():
+    """Malformed JSON must return the same four-key dict shape as a successful parse.
+
+    Without the fix, the error path only returned ``soundings`` and ``hardness``,
+    so callers that access ``contours`` or ``composition`` would get a KeyError
+    instead of an empty list (currently safe only because the one caller uses
+    ``.get``, but the contract should be explicit and consistent).
+    """
+    result = parse_depth_features("c.geojson", b"this is not json {{{")
+    assert set(result.keys()) == {"soundings", "hardness", "contours", "composition"}, (
+        "error path must return the same shape as the success path"
+    )
+    assert result["soundings"] == []
+    assert result["contours"] == []
+    assert result["composition"] == []

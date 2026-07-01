@@ -50,12 +50,16 @@
   }
 
   // bindSlider clone (app.js's is module-private): update output + optional fn.
+  // Bind time refreshes the DISPLAY only — never invoke `fn` (a load-time send
+  // would engage the motor before any user interaction). Mirrors appcore.js.
   function bindSlider(id, outId, fn) {
     const el = $(id), out = $(outId);
     if (!el) return;
-    const update = () => { if (out) out.textContent = el.value; if (fn) fn(parseFloat(el.value)); };
-    el.addEventListener("input", update);
-    update();
+    if (out) out.textContent = el.value;
+    el.addEventListener("input", () => {
+      if (out) out.textContent = el.value;
+      if (fn) fn(parseFloat(el.value));
+    });
   }
   const fnum = (id) => parseFloat(($(id) || { value: "0" }).value);
 
@@ -80,15 +84,14 @@
     setMore(false);
   });
 
-  // Flyout items: activate the mode's panel (intent) and send its start command.
+  // Flyout items: activate the mode's PANEL only (user intent to configure the
+  // mode). They must NOT engage the motor — a one-tap flyout item that started
+  // trolling/contour immediately is unsafe. The explicit Go control in each
+  // panel (contour-go / troll-go / orbit-go) sends the start command.
   if (moreMenu) moreMenu.querySelectorAll(".more-item[data-mode]").forEach((b) =>
     b.addEventListener("click", () => {
-      const m = b.dataset.mode;
-      showPanel(m);
+      showPanel(b.dataset.mode);
       setMore(false);
-      if (m === "contour_follow") startContour();
-      else if (m === "orbit") { /* needs a centre first — panel only */ }
-      else if (m === "trolling") startTroll();
     }));
 
   // ===== #57 contour-follow ===============================================

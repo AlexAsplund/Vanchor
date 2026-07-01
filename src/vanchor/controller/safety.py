@@ -31,9 +31,11 @@ Behaviours, all applied within a single :meth:`SafetyGovernor.govern` call:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from math import copysign
 
+from shapely.affinity import scale
 from shapely.geometry import Point, Polygon
 from shapely.prepared import prep
 
@@ -115,6 +117,12 @@ class SafetyGovernor:
         # Last thrust/steering we actually allowed through (slew-limit anchors).
         self._last_thrust: float = 0.0
         self._last_steering: float = 0.0
+        # The last NON-ZERO applied thrust DIRECTION (+1 ahead / -1 astern / 0
+        # never driven). It is "sticky": it persists through a tick (or many) at
+        # ~zero thrust, so a PID that crosses zero for a single tick
+        # (+0.8 -> 0 -> -0.5) is still recognised as a reversal and gated. Mirrors
+        # the firmware's applied-direction interlock (engine.ino).
+        self._last_applied_dir: float = 0.0
         # Last *desired* (pre-slew) steering -- the closed-loop steering target,
         # exposed for the steering gauge (target vs feedback).
         self.desired_steering: float = 0.0
@@ -146,10 +154,17 @@ class SafetyGovernor:
     def nogo_zone_count(self) -> int:
         return len(self._nogo)
 
-    def reset(self) -> None:
-        """Forget all internal state (e.g. on mode change or restart)."""
-        self._last_thrust = 0.0
-        self._last_steering = 0.0
+    def reset(self, thrust: float = 0.0, steering: float = 0.0) -> None:
+        """Forget the transient timers (e.g. on mode change or restart), but seed
+        the slew anchors from the given last-applied command so thrust/steering
+        ramp from where the boat actually IS rather than snapping back through
+        zero (which would surge the prop and bypass the reverse interlock)."""
+        self._last_thrust = thrust
+        self._last_steering = steering
+        # Preserve the applied direction across the reset so a reset mid-drive
+        # can't be used to sneak through an un-gated reversal.
+        if abs(thrust) > _THRUST_EPSILON:
+            self._last_applied_dir = copysign(1.0, thrust)
         self._rest_timer_s = 0.0
         self._time_since_fix_s = 0.0
 
@@ -160,13 +175,24 @@ class SafetyGovernor:
         if pos is None or pos.is_null():
             return False
         pt = Point(pos.lon, pos.lat)
-        # Convert the metric lookahead to degrees of latitude (~111.32 km/deg);
-        # a small over-estimate near the poles is harmless for a safety margin.
-        look_deg = max(0.0, self.config.nogo_lookahead_m) / 111320.0
+        # Convert the metric lookahead to a distance we can compare in shapely's
+        # planar (lon, lat) space. Latitude is ~111.32 km/deg everywhere, but a
+        # degree of LONGITUDE shrinks by cos(lat) toward the poles, so using the
+        # latitude scale for BOTH axes would UNDER-cover E-W (~50% at 60°N) -- the
+        # opposite of a safe margin. To keep both axes on the same metric scale we
+        # squash longitude by cos(lat) (so 1 scaled-degree = 111.32 km on either
+        # axis), then compare distances against the latitude-degree radius.
+        look_m = max(0.0, self.config.nogo_lookahead_m)
+        look_deg = look_m / 111320.0
+        coslat = max(0.05, math.cos(math.radians(pos.lat)))  # floored near poles
+        pt_s = Point(pos.lon * coslat, pos.lat)
         for poly, prepared in zip(self._nogo, self._nogo_prepared):
             if prepared.covers(pt):
                 return True
-            if look_deg > 0.0 and poly.distance(pt) <= look_deg:
+            if look_deg <= 0.0:
+                continue
+            poly_s = scale(poly, xfact=coslat, yfact=1.0, origin=(0.0, 0.0))
+            if poly_s.distance(pt_s) <= look_deg:
                 return True
         return False
 
@@ -227,12 +253,16 @@ class SafetyGovernor:
         else:
             self._rest_timer_s = 0.0
 
-        # A sign flip across zero counts as a reversal. Treat near-zero as
-        # unsigned so we never block coming *to* a stop.
+        # A sign flip relative to the last APPLIED direction counts as a
+        # reversal. We compare against the sticky ``_last_applied_dir`` (not the
+        # instantaneous ``_last_thrust``) so a command that passes through zero
+        # for one or more ticks -- exactly what a PID crossing zero produces,
+        # e.g. +0.8 -> 0 -> -0.5 -- is still gated. Near-zero requests are
+        # treated as unsigned so we never block coming *to* a stop.
         flipping = (
             abs(desired) > _THRUST_EPSILON
-            and abs(self._last_thrust) > _THRUST_EPSILON
-            and copysign(1.0, desired) != copysign(1.0, self._last_thrust)
+            and self._last_applied_dir != 0.0
+            and copysign(1.0, desired) != self._last_applied_dir
         )
         if flipping and self._rest_timer_s < cfg.reverse_delay_s:
             status.reverse_blocked = True
@@ -256,6 +286,10 @@ class SafetyGovernor:
             applied_thrust = desired
 
         self._last_thrust = applied_thrust
+        # Remember the last direction we actually drove (sticky through zero) so
+        # the reverse interlock survives a through-zero PID crossing.
+        if abs(applied_thrust) > _THRUST_EPSILON:
+            self._last_applied_dir = copysign(1.0, applied_thrust)
 
         # --- Steering slew limiting ----------------------------------- #
         # The steering head can only rotate so fast; cap the change per tick so
@@ -271,7 +305,14 @@ class SafetyGovernor:
         self._last_steering = applied_steering
 
         # --- Anchor drag alarm ---------------------------------------- #
-        if state.mode is ControlModeName.ANCHOR_HOLD:
+        # Any station-keeping mode that holds via an anchor must be watched,
+        # including the learned spot-lock (ANCHOR_ML). WORK_AREA is deliberately
+        # excluded: it also sets state.anchor, but leaves it stale while TRAVELLING
+        # between spots, which would false-trip the alarm on the way to a spot.
+        if state.anchor is not None and state.mode in (
+            ControlModeName.ANCHOR_HOLD,
+            ControlModeName.ANCHOR_ML,
+        ):
             threshold = cfg.drag_alarm_factor * state.anchor_radius_m
             if state.distance_to_anchor_m > threshold:
                 status.drag_alarm = True

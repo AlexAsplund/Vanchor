@@ -599,7 +599,7 @@ def _parse_geojson_features(text: str) -> dict:
     try:
         obj = _json_loads(text)
     except ValueError:
-        return {"soundings": [], "hardness": []}
+        return {"soundings": [], "hardness": [], "contours": [], "composition": []}
     if isinstance(obj, dict) and obj.get("type") == "FeatureCollection":
         feats = obj.get("features") or []
     else:

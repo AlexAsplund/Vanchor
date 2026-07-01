@@ -6,6 +6,7 @@
 * cancellable route planning.
 """
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,14 @@ from fastapi.testclient import TestClient
 
 from vanchor.app import Runtime
 from vanchor.controller.controller import Controller
-from vanchor.core.models import ControlModeName, GeoPoint, GpsFix
+from vanchor.core.models import (
+    ControlModeName,
+    GeoPoint,
+    GpsFix,
+    GuidedSetpoint,
+    ManualSetpoint,
+    MotorCommand,
+)
 from vanchor.core.state import NavigationState
 from vanchor.nav import nmea, routing, water
 from vanchor.nav.navigator import Navigator
@@ -305,3 +313,102 @@ def test_runtime_cancel_flag_makes_plan_cancel():
 def test_route_plan_cancel_endpoint(client):
     r = client.post("/api/route/plan/cancel")
     assert r.json() == {"cancelled": True}
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes: supervised control loop, cruise sign, no-reset-on-resend
+# --------------------------------------------------------------------------- #
+class _BoomMode:
+    """A mode whose update() raises until told to heal."""
+
+    name = ControlModeName.MANUAL
+
+    def __init__(self) -> None:
+        self.raising = True
+
+    def activate(self, state) -> None:
+        pass
+
+    def update(self, state, dt):
+        if self.raising:
+            raise RuntimeError("boom")
+        return ManualSetpoint(0.0, 0.0)
+
+
+async def test_control_loop_survives_faulting_tick_and_zeroes_motor():
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    boom = _BoomMode()
+    ctrl.modes[ControlModeName.MANUAL] = boom
+    ctrl.state.mode = ControlModeName.MANUAL
+    # Pretend the boat was driving hard when the fault hits.
+    running = MotorCommand(thrust=0.7, steering=0.2)
+    ctrl.state.motor_command = running
+    ctrl.motor.apply(running)
+
+    await ctrl._tick_once(0.2)  # faulting tick
+    assert ctrl.state.controller_fault is not None
+    # The motor was zeroed (STOP always works) rather than left running.
+    assert ctrl.motor.command.thrust == 0.0
+    assert ctrl.motor.command.steering == 0.0
+    assert ctrl.state.motor_command.thrust == 0.0
+
+    # A subsequent healthy tick clears the fault and the loop keeps running.
+    boom.raising = False
+    await ctrl._tick_once(0.2)
+    assert ctrl.state.controller_fault is None
+
+
+async def test_control_loop_survives_faulting_motor():
+    # Even if the motor itself throws on apply(), the tick must not propagate.
+    class _BadMotor:
+        def apply(self, command):
+            raise RuntimeError("motor down")
+
+        async def flush(self):
+            raise RuntimeError("flush down")
+
+    state = NavigationState()
+    state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
+    ctrl = Controller(state, _BadMotor(), bus=None)
+    await ctrl._tick_once(0.2)  # must not raise
+    assert ctrl.state.controller_fault is not None
+
+
+async def test_run_loop_updates_heartbeat_and_stops_cleanly():
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    ctrl.tick_hz = 200.0
+    task = asyncio.create_task(ctrl.run())
+    try:
+        await asyncio.sleep(0.05)
+        assert ctrl.state.controller_last_tick_monotonic > 0.0
+    finally:
+        ctrl.stop()
+        await asyncio.wait_for(task, timeout=1.0)
+
+
+def test_cruise_preserves_reverse_setpoint_sign():
+    # Cruise's SOG PID is unsigned (forward-only). A reverse setpoint (e.g. a
+    # WaypointMode backing toward a mark that's close behind) must stay negative,
+    # not be flipped forward and drive the boat away from the mark.
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    ctrl.state.mode = ControlModeName.WAYPOINT
+    ctrl.cruise_knots = 1.0
+    ctrl.cruise_pid.setpoint = 1.0
+    ctrl.state.sog_knots = 0.0  # far below target -> PID wants full forward drive
+    reverse_sp = GuidedSetpoint(target_heading=200.0, thrust=-0.6)
+    out = ctrl._apply_cruise(reverse_sp, dt=0.2)
+    assert out.thrust < 0.0
+
+
+def test_resend_same_mode_does_not_reset_governor_slew():
+    # Re-sending {"type":"manual"} (a remote-helm button re-press) must NOT reset
+    # the governor: a reset would zero the slew anchor and re-ramp the prop from 0.
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    ctrl.handle_command({"type": "manual", "thrust": 0.8, "steering": 0.0})
+    cmd = _settle(ctrl)  # let thrust slew up to ~0.8
+    assert cmd.thrust == pytest.approx(0.8, abs=0.02)
+    # Re-send the SAME manual command; thrust must stay put, not dip toward 0.
+    ctrl.handle_command({"type": "manual", "thrust": 0.8, "steering": 0.0})
+    ctrl.state.fix_seq += 1
+    cmd = ctrl.control_tick(0.2)
+    assert cmd.thrust == pytest.approx(0.8, abs=0.02)

@@ -43,9 +43,9 @@
  *
  *   NOTE: a single CMD line carries BOTH thrust and steering. The engine board
  *   uses pwm+dir and ignores steer; the steering board uses steer and ignores
- *   pwm+dir. If both boards sit on one USB hub they each see and filter the same
- *   line. (You may also run two CMD streams on two ports -- the Pi opens a
- *   separate transport per device.)
+ *   pwm+dir. Each board has its own USB-serial port (USB CDC is point-to-point,
+ *   not broadcast; a USB hub does not fan the data out to all connected devices).
+ *   The Pi opens one port per device and sends the same CMD line to both.
  *
  * --------------------------------------------------- FEEDBACK (Arduino -> Pi)
  * The Pi's telemetry (app.py ~line 1095) publishes a closed-loop steering block:

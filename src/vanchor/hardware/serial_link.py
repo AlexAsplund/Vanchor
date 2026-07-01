@@ -64,10 +64,16 @@ class FakeSerialTransport(SerialTransport):
     Tests push inbound lines with :meth:`feed` (which a reader picks up via
     :meth:`read_line`) and inspect everything a driver wrote via the
     :attr:`written` list.
+
+    To simulate read errors (e.g. an oversized / garbage line raising
+    ``ValueError`` or ``asyncio.LimitOverrunError`` on real hardware), push an
+    exception instance with :meth:`feed_exception`.
     """
 
     def __init__(self) -> None:
-        self._inbound: asyncio.Queue[str | None] = asyncio.Queue()
+        # Queue items: str (normal line), None (EOF sentinel), or a
+        # BaseException instance to be raised on the next read_line call.
+        self._inbound: asyncio.Queue[object] = asyncio.Queue()
         self.written: list[str] = []
         self.opened: bool = False
         self.closed: bool = False
@@ -81,6 +87,16 @@ class FakeSerialTransport(SerialTransport):
         """Signal end-of-stream; a pending/next :meth:`read_line` raises EOF."""
         self._inbound.put_nowait(None)
 
+    def feed_exception(self, exc: BaseException) -> None:
+        """Inject ``exc`` to be raised by the next :meth:`read_line` call.
+
+        Use this to simulate oversized/garbage lines that the real
+        ``asyncio.StreamReader`` would surface as ``ValueError`` or
+        ``asyncio.LimitOverrunError`` when a newline does not appear within the
+        64 KB buffer limit.
+        """
+        self._inbound.put_nowait(exc)
+
     # -- SerialTransport -------------------------------------------------- #
     async def open(self) -> None:
         self.opened = True
@@ -90,10 +106,12 @@ class FakeSerialTransport(SerialTransport):
         self.closed = True
 
     async def read_line(self) -> str:
-        line = await self._inbound.get()
-        if line is None:
+        item = await self._inbound.get()
+        if item is None:
             raise EOFError("fake serial transport closed")
-        return line
+        if isinstance(item, BaseException):
+            raise item
+        return item  # type: ignore[return-value]
 
     async def write_line(self, line: str) -> None:
         self.written.append(line)

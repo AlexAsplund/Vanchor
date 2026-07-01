@@ -44,6 +44,14 @@ class NavigationState:
     heading_rejected: int = 0
     position_rejected: int = 0
 
+    # --- Control-loop supervision ---------------------------------------- #
+    # Set to a short description when a control tick raises (the loop caught it,
+    # zeroed the motor, and kept running); cleared after the next clean tick.
+    controller_fault: str | None = None
+    # ``time.monotonic()`` stamp of the last control-loop iteration, so a future
+    # supervisor can compute the loop's heartbeat age. 0.0 until the loop runs.
+    controller_last_tick_monotonic: float = 0.0
+
     # Active behaviour and its parameters.
     mode: ControlModeName = ControlModeName.MANUAL
     anchor: GeoPoint | None = None

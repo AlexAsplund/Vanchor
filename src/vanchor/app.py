@@ -70,8 +70,44 @@ _UNDERWAY_MODES = frozenset(
         ControlModeName.CONTOUR_FOLLOW,
         ControlModeName.ORBIT,
         ControlModeName.TROLLING,
+        ControlModeName.WORK_AREA,
     }
 )
+
+# In MANUAL, |commanded thrust| above this counts as "driving" (making way) for
+# the lost-connection failsafe (#64) -- below it the boat is effectively idle.
+_MANUAL_UNDERWAY_THRUST_EPS = 0.02
+
+
+async def _start_motor(motor) -> None:
+    """Open a motor controller's lifecycle if it has one.
+
+    The real ``SerialMotorController`` opens its transport (and starts the
+    feedback reader) in ``start()``; without this its first ``flush()`` raises
+    on a never-opened port. The sim motor (and a bare ``_TeeMotor``) has no
+    ``start`` and is a no-op. Raises on failure so callers can roll back."""
+    start = getattr(motor, "start", None)
+    if start is None:
+        return
+    res = start()
+    if hasattr(res, "__await__"):
+        await res
+
+
+async def _stop_motor(motor) -> None:
+    """Best-effort stop of a motor controller (sends the shutdown CMD 0 and
+    closes the port on the serial controller). Swallows errors -- a shutdown /
+    device-swap must never be blocked by a motor that won't close cleanly. A
+    motor with no ``stop`` (sim motor) is a no-op."""
+    stop = getattr(motor, "stop", None)
+    if stop is None:
+        return
+    try:
+        res = stop()
+        if hasattr(res, "__await__"):
+            await res
+    except Exception:  # noqa: BLE001 - shutdown/swap must not be blocked
+        logger.debug("motor stop failed (best-effort)")
 
 
 def _overlay_menu_values(schema: dict, saved: dict) -> dict:
@@ -182,17 +218,40 @@ class _TeeMotor:
             if hasattr(res, "__await__"):
                 await res
 
+    async def start(self) -> None:
+        # Open every inner motor that has a lifecycle (e.g. the real serial
+        # controller opens its port + feedback task here). The sim motor has no
+        # start() and is skipped.
+        for m in self._motors:
+            await _start_motor(m)
+
+    async def stop(self) -> None:
+        # Best-effort stop of every inner motor (sends CMD 0 + closes the port on
+        # the serial controller). Never let one failure block the others.
+        for m in self._motors:
+            await _stop_motor(m)
+
 
 class Runtime:
     """Owns every component and the background tasks that drive them."""
 
-    def __init__(self, config: AppConfig | None = None, *, now_fn=time.time) -> None:
+    def __init__(
+        self,
+        config: AppConfig | None = None,
+        *,
+        now_fn=time.time,
+        mono_fn=time.monotonic,
+    ) -> None:
         self.config = config or AppConfig()
         cfg = self.config
 
-        # Injectable monotonic-ish clock so the link-loss failsafe (#64) can be
-        # driven deterministically in tests instead of by wall-clock.
+        # Two injectable clock seams so both can be driven deterministically in
+        # tests. ``_now_fn`` is WALL-CLOCK -- used only for timestamps that are
+        # displayed or persisted (trip start times, created_at). ``_mono_fn`` is
+        # MONOTONIC -- used for DURATION timers (the lost-connection failsafe,
+        # #64) so an NTP/GPS clock step on an RTC-less Pi can't shift them.
         self._now_fn = now_fn
+        self._mono_fn = mono_fn
 
         observability.setup_logging(getattr(cfg, "log_level", "INFO"))
         self.bus = EventBus()
@@ -353,6 +412,9 @@ class Runtime:
         # Route-planning cancellation flag (#54): set by cancel_route_plan(),
         # reset at the start of every plan_route() call.
         self._route_plan_cancelled = False
+        # True while an auto-RTL plan is in flight, so the periodic evaluator
+        # doesn't launch duplicate concurrent RTL plans (#61).
+        self._rtl_in_flight = False
 
     # ------------------------------------------------------------------ #
     # Boat profile (Init-boat wizard)
@@ -849,6 +911,10 @@ class Runtime:
                 if d is not None:
                     await d.start()
                     started.append(d)
+            # Open the NEW motor before swapping it in: otherwise the first
+            # flush() on a serial motor raises on the unopened port. If it fails
+            # we roll back below without ever touching the running motor.
+            await _start_motor(new["motor"])
             new_sim_task = (asyncio.ensure_future(new["simulator"].run())
                             if new["simulator"] is not None else None)
         except Exception as exc:
@@ -856,6 +922,7 @@ class Runtime:
             for d in started:
                 with contextlib.suppress(Exception):
                     await d.stop()
+            await _stop_motor(new["motor"])
             return {"applied": False, "error": str(exc)}
         # New set is live — now retire the old one and swap references.
         for d in (self.gps, self.compass, self.depth_sounder):
@@ -868,7 +935,12 @@ class Runtime:
             self._sim_task.cancel()
         self.gps, self.compass, self.depth_sounder = new["gps"], new["compass"], new["depth_sounder"]
         self.simulator, self._sim_task = new["simulator"], new_sim_task
+        # Swap the motor in, then stop the OLD one (closes its port + kills the
+        # feedback task -> no port/task leak). Best-effort so a stubborn old
+        # motor can't strand the reload.
+        old_motor = self.controller.motor
         self.controller.motor = new["motor"]
+        await _stop_motor(old_motor)
         # Re-prime the navigator with a fresh fix/heading so the fix-lost failsafe
         # doesn't latch (and stop the motor) over the brief gap during the swap.
         for dev in (self.gps, self.compass):
@@ -1050,31 +1122,41 @@ class Runtime:
     def client_connected(self) -> None:
         """A UI client connected; clear any link failsafe."""
         self._ui_clients += 1
-        self._last_client_seen = self._now_fn()
+        self._last_client_seen = self._mono_fn()
         if self._link_failsafe_engaged:
             logger.info("UI client reconnected; link failsafe cleared")
         self._link_failsafe_engaged = False
 
     def client_activity(self) -> None:
         """Mark the link alive (any inbound client traffic)."""
-        self._last_client_seen = self._now_fn()
+        self._last_client_seen = self._mono_fn()
 
     def client_disconnected(self) -> None:
         """A UI client disconnected."""
         self._ui_clients = max(0, self._ui_clients - 1)
-        self._last_client_seen = self._now_fn()
+        self._last_client_seen = self._mono_fn()
 
     def _underway(self) -> bool:
-        """True when the boat is in a guided/cruising mode actively making way --
-        i.e. not already idle-manual or holding station on anchor."""
-        return self.state.mode in _UNDERWAY_MODES
+        """True when the boat is actively making way and a lost link must be
+        caught -- i.e. NOT idle. Every guided/cruising mode counts, plus MANUAL
+        while the operator is actually commanding thrust (driving by hand): a
+        client loss there must not leave the boat motoring on forever (#64).
+        Station-keeping anchor-hold is excluded (it is already holding)."""
+        if self.state.mode in _UNDERWAY_MODES:
+            return True
+        if self.state.mode == ControlModeName.MANUAL:
+            return abs(self.state.motor_command.thrust) > _MANUAL_UNDERWAY_THRUST_EPS
+        return False
 
     def evaluate_link_failsafe(self, now: float | None = None) -> bool:
-        """Engage hold-position if no UI client has been seen for the timeout
-        while underway. Returns True if it engaged on this call. Idempotent and
-        clock-injectable (pass ``now`` in tests)."""
+        """Engage the lost-link failsafe if no UI client has been seen for the
+        timeout while underway. In a guided mode this holds position
+        (anchor-hold); driving MANUALLY it STOPS (zero thrust) -- there is no
+        target to hold to, so the safe action is to cut the motor. Returns True
+        if it engaged on this call. Idempotent and clock-injectable (pass the
+        MONOTONIC ``now`` in tests)."""
         if now is None:
-            now = self._now_fn()
+            now = self._mono_fn()
         timeout = self.config.safety.link_loss_timeout_s
         connected = self._ui_clients > 0
         if connected or self._last_client_seen is None or self._link_failsafe_engaged:
@@ -1083,9 +1165,14 @@ class Runtime:
             return False
         if now - self._last_client_seen < timeout:
             return False
-        # Lost the link while underway -> hold position (anchor-hold here).
-        logger.warning("link lost %.0fs while underway; engaging hold-position", timeout)
-        self.controller.handle_command({"type": "anchor_hold"})
+        if self.state.mode == ControlModeName.MANUAL:
+            # Driving by hand with the link gone -> cut the motor (STOP).
+            logger.warning("link lost %.0fs while driving manually; STOP (zero thrust)", timeout)
+            self.controller.handle_command({"type": "stop"})
+        else:
+            # Guided mode -> hold position (anchor-hold here).
+            logger.warning("link lost %.0fs while underway; engaging hold-position", timeout)
+            self.controller.handle_command({"type": "anchor_hold"})
         self._link_failsafe_engaged = True
         return True
 
@@ -1110,8 +1197,44 @@ class Runtime:
         self.state.rtl_recommended = recommend
         if recommend and self.config.safety.auto_rtl and self.state.mode != ControlModeName.WAYPOINT:
             logger.warning("auto_rtl: battery range near distance-home; engaging RTL")
-            self.return_to_launch()
+            self._schedule_auto_rtl()
         return recommend
+
+    def _schedule_auto_rtl(self) -> None:
+        """Engage auto-RTL WITHOUT blocking the event loop.
+
+        ``return_to_launch`` -> ``plan_route`` is synchronous and CPU/IO-heavy
+        (Overpass fetch, up to two 60 s timeouts) and documented as executor-only.
+        Calling it inline from the periodic telemetry tick would stall every
+        async loop, so run it in the default executor. A single in-flight guard
+        stops the evaluator (called every telemetry tick) from launching a pile
+        of duplicate concurrent RTL plans."""
+        if self._rtl_in_flight:
+            return
+        self._rtl_in_flight = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (e.g. a unit test off the live path) -> preserve
+            # the old inline behaviour rather than silently doing nothing.
+            try:
+                self.return_to_launch()
+            finally:
+                self._rtl_in_flight = False
+            return
+        asyncio.ensure_future(self._run_auto_rtl(loop))
+
+    async def _run_auto_rtl(self, loop) -> None:
+        """Run the heavy RTL plan+engage in an executor; always clear the
+        in-flight flag so a failure can't wedge future auto-RTL attempts."""
+        try:
+            result = await loop.run_in_executor(None, self.return_to_launch)
+            if isinstance(result, dict) and not result.get("ok", True):
+                logger.warning("auto_rtl planning failed: %s", result.get("message"))
+        except Exception:
+            logger.exception("auto_rtl planning failed")
+        finally:
+            self._rtl_in_flight = False
 
     def _load_route(self, command: dict) -> None:
         from .nav.routes import parse_gpx
@@ -1664,7 +1787,7 @@ class Runtime:
         payload["link"] = {
             "client_connected": self._ui_clients > 0,
             "since_s": (
-                round(self._now_fn() - self._last_client_seen, 1)
+                round(self._mono_fn() - self._last_client_seen, 1)
                 if self._last_client_seen is not None
                 else None
             ),
@@ -1837,6 +1960,14 @@ class Runtime:
         await _try_start("gps", self.gps)
         await _try_start("compass", self.compass)
         await _try_start("depth", self.depth_sounder)
+        # Open the motor transport too: a serial motor is never usable
+        # otherwise -- its first flush() raises on the unopened port. Same
+        # boot-resilience as the sensors: a motor that won't open is logged, not
+        # fatal, so the UI stays reachable to fix the port.
+        try:
+            await _start_motor(self.controller.motor)
+        except Exception:
+            logger.exception("motor failed to start; continuing without it")
         if self.simulator is not None:
             self._sim_task = asyncio.ensure_future(self.simulator.run())
             self._tasks.append(self._sim_task)
@@ -1849,6 +1980,9 @@ class Runtime:
         if self.simulator is not None:
             self.simulator.stop()
         self.controller.stop()
+        # Best-effort motor shutdown: the serial controller sends CMD 0 and
+        # closes its port here (STOP-on-shutdown). No-op for the sim motor.
+        await _stop_motor(self.controller.motor)
         if self.gps is not None:
             await self.gps.stop()
         if self.compass is not None:

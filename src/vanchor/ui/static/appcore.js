@@ -20,9 +20,16 @@
   function bindSlider(id, outId, fn) {
     const el = $(id), out = $(outId);
     if (!el) return;
-    const update = () => { if (out) out.textContent = el.value; if (fn) fn(parseFloat(el.value)); };
-    el.addEventListener("input", update);
-    update();
+    // Bind time: refresh the DISPLAY only — never invoke `fn`. Calling the
+    // callback here would fire a real command (e.g. a manual thrust/steer send)
+    // on page load / service-worker reload before any user interaction, which
+    // the backend treats as intent and would cancel anchor-hold/route. Only a
+    // genuine user `input` event may invoke the callback.
+    if (out) out.textContent = el.value;
+    el.addEventListener("input", () => {
+      if (out) out.textContent = el.value;
+      if (fn) fn(parseFloat(el.value));
+    });
   }
 
   // ---- mode rail + contextual panels --------------------------------------

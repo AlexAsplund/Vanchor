@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vanchor.controller.safety import SafetyConfig, SafetyGovernor, SafetyStatus
-from vanchor.core.models import ControlModeName, MotorCommand
+from vanchor.core.models import ControlModeName, GeoPoint, GpsFix, MotorCommand
 from vanchor.core.state import NavigationState
 
 
@@ -11,11 +13,15 @@ def _gov(**kw) -> SafetyGovernor:
     return SafetyGovernor(SafetyConfig(**kw))
 
 
-def _state(mode=ControlModeName.MANUAL, dist=0.0, radius=5.0) -> NavigationState:
+def _state(mode=ControlModeName.MANUAL, dist=0.0, radius=5.0, anchor=True) -> NavigationState:
     s = NavigationState()
     s.mode = mode
     s.distance_to_anchor_m = dist
     s.anchor_radius_m = radius
+    # The drag alarm only makes sense when an anchor is actually set; give the
+    # station-keeping states one so those tests exercise the gate.
+    if anchor:
+        s.anchor = GeoPoint(59.0, 18.0)
     return s
 
 
@@ -158,10 +164,76 @@ def test_reset_clears_internal_state():
     gov = _gov(max_thrust_slew_per_s=1.0)
     gov.govern(MotorCommand(thrust=1.0), _state(), dt=0.2, fix_is_fresh=True)
     gov.reset()
-    # After reset the slew anchor is back at zero.
+    # A bare reset() (no seed) still ramps the slew anchor from zero.
     cmd, status = gov.govern(MotorCommand(thrust=1.0), _state(), dt=0.2, fix_is_fresh=True)
     assert abs(cmd.thrust - 0.2) < 1e-9
     assert status.thrust_limited
+
+
+def test_reset_can_seed_slew_anchor_from_last_command():
+    # A seeded reset (on a genuine mode change) must NOT snap the slew anchor back
+    # to zero -- it starts from the last applied command so the prop doesn't surge
+    # from 0 again. Here the boat is already at 0.6 thrust; re-commanding 0.6 must
+    # pass straight through, not ramp up from zero.
+    gov = _gov(max_thrust_slew_per_s=1.0)
+    gov.govern(MotorCommand(thrust=0.6, steering=0.3), _state(), dt=0.2, fix_is_fresh=True)
+    gov.reset(thrust=0.6, steering=0.3)
+    cmd, status = gov.govern(MotorCommand(thrust=0.6, steering=0.3), _state(),
+                             dt=0.2, fix_is_fresh=True)
+    assert cmd.thrust == pytest.approx(0.6)
+    assert not status.thrust_limited
+
+
+def test_reverse_through_single_zero_tick_is_still_blocked():
+    # A PID crossing zero (+0.8 -> 0 for ONE tick -> -0.5) must still be caught by
+    # the reverse interlock; the last APPLIED direction is sticky through zero.
+    gov = _gov(max_thrust_slew_per_s=100.0, reverse_delay_s=1.0)
+    cmd, _ = gov.govern(MotorCommand(thrust=0.8), _state(), dt=0.2, fix_is_fresh=True)
+    assert cmd.thrust > 0
+    # One tick at exactly zero -- not enough rest to permit a reversal.
+    gov.govern(MotorCommand(thrust=0.0), _state(), dt=0.2, fix_is_fresh=True)
+    cmd, status = gov.govern(MotorCommand(thrust=-0.5), _state(), dt=0.2, fix_is_fresh=True)
+    assert status.reverse_blocked
+    assert cmd.thrust == 0.0
+
+
+def test_drag_alarm_trips_in_anchor_ml_mode():
+    # The learned spot-lock (ANCHOR_ML) holds via an anchor, so it must be inside
+    # the drag-alarm net too.
+    gov = _gov(drag_alarm_factor=2.0)
+    st = _state(mode=ControlModeName.ANCHOR_ML, dist=11.0, radius=5.0)
+    _, status = gov.govern(MotorCommand(thrust=0.1), st, dt=0.2, fix_is_fresh=True)
+    assert status.drag_alarm
+
+
+def test_drag_alarm_needs_an_anchor():
+    # Even in an anchor-hold mode, a stale distance with no anchor set must not
+    # raise the alarm.
+    gov = _gov(drag_alarm_factor=2.0)
+    st = _state(mode=ControlModeName.ANCHOR_HOLD, dist=100.0, radius=5.0, anchor=False)
+    _, status = gov.govern(MotorCommand(thrust=0.1), st, dt=0.2, fix_is_fresh=True)
+    assert not status.drag_alarm
+
+
+def test_nogo_lookahead_covers_east_west_at_high_latitude():
+    # A point ~4 m due EAST of a no-go polygon at 60°N must be caught by a 5 m
+    # lookahead. With the old single-axis (latitude) conversion the E-W reach
+    # shrank by cos(60°)=0.5, so a ~4 m eastward gap slipped through.
+    lat = 60.0
+    # A small square polygon; the boat sits just to its east.
+    zone = [(lat, 18.0000), (lat + 0.001, 18.0000),
+            (lat + 0.001, 18.0005), (lat, 18.0005)]
+    # 4 m east of the polygon's east edge (18.0005). 1 deg lon at 60N ~= 55.66 km.
+    dlon = 4.0 / (111320.0 * 0.5)
+    boat_lon = 18.0005 + dlon
+    gov = _gov(nogo_lookahead_m=5.0)
+    gov.set_nogo_zones([zone])
+    st = _state()
+    st.fix = GpsFix(point=GeoPoint(lat + 0.0005, boat_lon))
+    assert gov._in_or_near_nogo(st) is True
+    # And a point well beyond the lookahead (30 m east) is NOT caught.
+    st.fix = GpsFix(point=GeoPoint(lat + 0.0005, 18.0005 + 30.0 / (111320.0 * 0.5)))
+    assert gov._in_or_near_nogo(st) is False
 
 
 def test_status_to_dict_shape():

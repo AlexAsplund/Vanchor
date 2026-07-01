@@ -102,6 +102,57 @@ def test_click_outside_water_body_is_rejected():
     assert not res.ok
 
 
+def test_island_loop_no_off_water_waypoints_when_ring_clips():
+    """20 m offset ring clips ~1.4% at the north basin wall — all waypoints must stay on water.
+
+    Geometry (metric, built via UTM projection so distances are exact):
+      - Basin: 500 m half-square.
+      - Island: circle, radius 200 m, centred 280.22 m north of the lake centre.
+      - 20 m offset ring radius 220 m → north edge at basin_north + 0.22 m (~1.4% outside).
+      - 15 m offset (factor 0.75) ring radius 215 m → north edge at basin_north − 4.78 m (100% inside).
+
+    With the OLD threshold (0.98), factor=1.0 was accepted and the UNCLIPPED ring
+    (with its north vertex 0.22 m outside the basin) was passed downstream.
+    With the FIX (threshold 0.9999), factor=1.0 is rejected and factor=0.75 is
+    used — every returned waypoint (and leg midpoint) must lie inside navigable water.
+    """
+    proj = water.Projection.for_point(LON0, LAT0)
+    x0, y0 = proj.point_to_metric(LON0, LAT0)
+
+    bh = 500.0  # basin half-side (metres)
+    basin_m = Polygon([
+        (x0 - bh, y0 - bh), (x0 + bh, y0 - bh),
+        (x0 + bh, y0 + bh), (x0 - bh, y0 + bh),
+    ])
+    # Circle of radius 200 m; 20 m ring → north edge = y0 + 280.22 + 220 = y0 + 500.22
+    island_cy = y0 + 280.22
+    island_m = Point(x0, island_cy).buffer(200.0, quad_segs=64)
+
+    def _to_ll(poly):
+        return [proj.point_to_lonlat(px, py) for (px, py) in poly.exterior.coords]
+
+    water_ll = MultiPolygon([Polygon(_to_ll(basin_m), [_to_ll(island_m)])])
+    click_lon, click_lat = proj.point_to_lonlat(x0, island_cy)
+    boat_lon, boat_lat = proj.point_to_lonlat(x0, y0 - 200.0)
+
+    res = routing.plan_island_loop(
+        click_lat, click_lon, water_ll,
+        boat_lat=boat_lat, boat_lon=boat_lon, offset_m=20.0,
+    )
+    assert res.ok, res.message
+    assert res.loop is True
+
+    # Every waypoint and every leg midpoint must be inside navigable water.
+    nav = proj.to_metric(water_ll).buffer(1.0)
+    pts = [proj.point_to_metric(w["lon"], w["lat"]) for w in res.waypoints]
+    assert all(nav.covers(Point(p)) for p in pts), (
+        "Some waypoints are outside navigable water — the unclipped ring was returned"
+    )
+    for a, b in zip(pts, pts[1:]):
+        mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        assert nav.covers(Point(mid)), "A leg segment crosses non-water area"
+
+
 def test_offset_shrinks_when_island_is_tight():
     # Island nearly fills a small basin: a 20 m offset won't fit, so the planner
     # shrinks it and says so (or rejects if even that won't fit).

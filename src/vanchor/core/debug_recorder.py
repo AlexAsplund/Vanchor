@@ -88,8 +88,16 @@ class DebugRecorder:
         with self._lock:
             if self.active:
                 return self.status()
-            self.name = name
-            self.path = os.path.join(self.dir, name)  # a directory of parts
+            # Sanitize the caller-supplied name to prevent path traversal: a
+            # payload like "../../evil" must not escape the recorder's base dir.
+            # os.path.basename strips any directory component, and stripping
+            # leading "./\\" removes residual single-component traversal tokens
+            # like "." or "..".  Fall back to "session" when nothing is left.
+            safe_name = os.path.basename(str(name).strip()).strip("./\\ ")
+            if not safe_name:
+                safe_name = "session"
+            self.name = safe_name
+            self.path = os.path.join(self.dir, safe_name)  # a directory of parts
             os.makedirs(self.path, exist_ok=True)
             self.counts = {}
             self._part = 0

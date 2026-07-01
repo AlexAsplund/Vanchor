@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 
 from ..core import events
 from ..core.events import EventBus
@@ -245,6 +246,9 @@ class Controller:
         self.safety_status = SafetyStatus()
         self._last_fix_seq = state.fix_seq
         self._running = False
+        # Consecutive failed control ticks (reset on any clean tick). Drives a
+        # small backoff so a persistently-throwing tick doesn't spin the CPU.
+        self._consecutive_faults = 0
 
         if bus is not None:
             bus.subscribe("command", self._on_command)
@@ -297,6 +301,14 @@ class Controller:
         ):
             return setpoint
         thrust = self.cruise_pid.update(self.state.sog_knots, dt)
+        # The cruise PID's output is unsigned (output_min=0.0): it only knows a
+        # *speed* target, not a direction. Preserve the mode's intended thrust
+        # SIGN so a reverse manoeuvre (e.g. WaypointMode backing toward a mark
+        # that's close behind) still drives astern instead of being flipped to a
+        # forward push that drives the boat away from the mark. A zero setpoint
+        # stays forward-neutral (copysign of 0.0 is +).
+        if setpoint.thrust < 0.0:
+            thrust = math.copysign(thrust, setpoint.thrust)
         return GuidedSetpoint(target_heading=setpoint.target_heading, thrust=thrust)
 
     def _apply_throttle_override(self, setpoint: Setpoint, dt: float = 0.0) -> Setpoint:
@@ -323,11 +335,22 @@ class Controller:
         return GuidedSetpoint(target_heading=setpoint.target_heading, thrust=thrust)
 
     def set_mode(self, mode: ControlModeName) -> None:
-        if mode != self.state.mode:
+        changed = mode != self.state.mode
+        if changed:
             logger.info("mode: %s -> %s", self.state.mode.value, mode.value)
         self.state.mode = mode
-        self.helm.reset()
-        self.safety.reset()
+        # Only tear down the inner loops on a REAL mode change. Re-issuing the
+        # current mode (e.g. a remote-helm button re-sending {"type":"manual"}
+        # every press) must NOT reset the helm/governor: a governor reset zeroes
+        # the slew anchors, so a re-sent command would ramp the prop from 0 again
+        # (surge) and bypass the reverse interlock. On a genuine change we DO
+        # reset, but seed the governor's slew anchors from the last applied motor
+        # command so thrust/steering ramp from where the boat actually is rather
+        # than snapping through zero.
+        if changed:
+            self.helm.reset()
+            last = self.state.motor_command
+            self.safety.reset(thrust=last.thrust, steering=last.steering)
         self.modes[mode].activate(self.state)
 
     # ------------------------------------------------------------------ #
@@ -691,16 +714,66 @@ class Controller:
     # ------------------------------------------------------------------ #
     # Async runtime
     # ------------------------------------------------------------------ #
+    async def _tick_once(self, dt: float) -> None:
+        """Run a single supervised control iteration.
+
+        The body is wrapped so that ANY exception (in a mode, the helm, the
+        governor, or the motor) cannot silently kill the loop task -- which would
+        leave the motor stuck on its last command (in sim, the boat runs away).
+        On a fault we log with a traceback, best-effort zero the motor, record a
+        fault indicator on the state, and return so the caller can keep looping.
+        A clean tick clears the fault flag.
+        """
+        try:
+            command = self.control_tick(dt)
+            await self.motor.flush()
+            if self.bus is not None:
+                await self.bus.publish(events.MOTOR_COMMAND, command)
+            self.state.controller_fault = None
+            self._consecutive_faults = 0
+        except Exception as exc:  # noqa: BLE001 - the loop must survive anything
+            self._consecutive_faults += 1
+            logger.exception(
+                "control tick failed (%d consecutive); zeroing motor",
+                self._consecutive_faults,
+            )
+            self.state.controller_fault = f"{type(exc).__name__}: {exc}"
+            # Best-effort STOP: never let a fault leave the prop running. Guard
+            # this in its own try so a motor that is itself faulting can't escape.
+            try:
+                neutral = MotorCommand(thrust=0.0, steering=0.0)
+                self.motor.apply(neutral)
+                await self.motor.flush()
+                self.state.motor_command = neutral
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to zero motor after control fault")
+
     async def run(self) -> None:
         self._running = True
         period = 1.0 / self.tick_hz
         logger.info("controller loop started at %.1f Hz", self.tick_hz)
+        last = time.monotonic()
         while self._running:
-            command = self.control_tick(period)
-            await self.motor.flush()
-            if self.bus is not None:
-                await self.bus.publish(events.MOTOR_COMMAND, command)
-            await asyncio.sleep(period)
+            now = time.monotonic()
+            # Measure the REAL elapsed time and clamp it to a sane band so a
+            # scheduling hiccup (a long GC pause, a debugger breakpoint) can't
+            # feed the PIDs a pathological dt. Below 0.5x period there's nothing
+            # to gain; above 3x we cap the integral/derivative kick.
+            dt = min(max(now - last, 0.5 * period), 3.0 * period)
+            last = now
+            self.state.controller_last_tick_monotonic = now
+
+            await self._tick_once(dt)
+
+            # Sleep out the remainder of the period after subtracting the work we
+            # just did, so the loop holds ~tick_hz instead of drifting slower.
+            elapsed = time.monotonic() - now
+            sleep_s = max(0.0, period - elapsed)
+            # After repeated consecutive failures, add a small capped backoff so
+            # a hard-faulting tick doesn't hot-spin -- but NEVER exit the loop.
+            if self._consecutive_faults >= 3:
+                sleep_s = max(sleep_s, min(self._consecutive_faults * period, 2.0))
+            await asyncio.sleep(sleep_s)
 
     def stop(self) -> None:
         self._running = False

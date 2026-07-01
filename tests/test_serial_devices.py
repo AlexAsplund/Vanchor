@@ -227,3 +227,104 @@ async def test_no_delay_for_same_direction_changes() -> None:
     motor.apply(MotorCommand(thrust=1.0, steering=0.0))
     await motor.flush()  # same direction, no time advance -> allowed
     assert transport.written == ["CMD 128 F 0", "CMD 255 F 0"]
+
+
+async def test_reverse_delay_not_bypassed_through_zero() -> None:
+    """A zero-thrust tick between opposing thrusts must NOT bypass the delay.
+
+    The sequence +1 → 0 (one ~200 ms PID tick) → -1 used to bypass the
+    interlock because the zero-thrust branch cleared _last_dir.  The delay
+    must count from the first zero tick, and the opposite sign must remain
+    blocked until the full delay has elapsed.
+    """
+    clock = {"t": 0.0}
+    transport = FakeSerialTransport()
+    motor = SerialMotorController(
+        transport, reverse_delay_s=0.9, time_fn=lambda: clock["t"]
+    )
+
+    # Drive forward.
+    motor.apply(MotorCommand(thrust=1.0, steering=0.0))
+    await motor.flush()
+    assert transport.written[-1] == "CMD 255 F 0"
+
+    # One zero tick at t=0.2 (simulates PID crossing zero).
+    clock["t"] = 0.2
+    motor.apply(MotorCommand(thrust=0.0, steering=0.0))
+    await motor.flush()
+    assert transport.written[-1] == "CMD 0 F 0"
+
+    # Immediately request reverse after a single zero tick — must still be blocked.
+    clock["t"] = 0.4
+    motor.apply(MotorCommand(thrust=-1.0, steering=0.0))
+    await motor.flush()
+    assert transport.written[-1] == "CMD 0 F 0", (
+        "reverse delay was bypassed by a single zero-thrust tick"
+    )
+
+    # Still within the cooldown (0.4 - 0.2 = 0.2 s elapsed of 0.9 s required).
+    clock["t"] = 0.8
+    await motor.flush()
+    assert transport.written[-1] == "CMD 0 F 0"
+
+    # Delay elapsed from the first zero tick (0.2 + 0.9 = 1.1 s) → reverse allowed.
+    clock["t"] = 1.2
+    await motor.flush()
+    assert transport.written[-1] == "CMD 255 R 0"
+
+
+# --------------------------------------------------------------------------- #
+# Garbage / oversized line survival
+# --------------------------------------------------------------------------- #
+async def test_sensor_read_loop_survives_garbage_line() -> None:
+    """A ValueError/LimitOverrunError from a garbage line must not kill the loop.
+
+    Real hardware: wrong-baud binary data with no newline overflows the asyncio
+    StreamReader's 64 KB limit → LimitOverrunError or ValueError.  The loop
+    must discard the bad line, log a warning, and continue processing valid
+    lines.
+    """
+    bus = EventBus()
+    received: list[str] = []
+    bus.subscribe(events.NMEA_IN, received.append)
+
+    transport = FakeSerialTransport()
+    # Inject a simulated garbage-line exception (mirrors LimitOverrunError on
+    # real hardware), then a normal NMEA sentence.
+    transport.feed_exception(ValueError("line too long / no newline in 64 KB"))
+    transport.feed("$GPGGA,valid,line")
+
+    gps = SerialGps(transport, bus)
+    await gps.start()
+    for _ in range(30):
+        await asyncio.sleep(0)
+        if received:
+            break
+    await gps.stop()
+
+    assert received == ["$GPGGA,valid,line"], (
+        "sensor read loop died on garbage; subsequent valid lines were lost"
+    )
+
+
+async def test_sensor_read_loop_survives_multiple_garbage_then_eof() -> None:
+    """Multiple garbage injections followed by EOF must exit cleanly."""
+    bus = EventBus()
+    received: list[str] = []
+    bus.subscribe(events.NMEA_IN, received.append)
+
+    transport = FakeSerialTransport()
+    transport.feed_exception(ValueError("overrun 1"))
+    transport.feed_exception(ValueError("overrun 2"))
+    transport.feed("$GPHDT,270.0,T*hh")
+    transport.feed_eof()
+
+    gps = SerialGps(transport, bus)
+    await gps.start()
+    for _ in range(30):
+        await asyncio.sleep(0)
+        if len(received) >= 1:
+            break
+    await gps.stop()
+
+    assert received == ["$GPHDT,270.0,T*hh"]

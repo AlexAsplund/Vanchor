@@ -133,9 +133,17 @@ class Navigator:
         elif isinstance(parsed, nmea.GGA):
             point = self._apply_offset(parsed.point)
             if parsed.fix_quality > 0 and self.guard.check_position(point):
-                # GGA has no speed; preserve last known sog.
+                # GGA has no course/speed fields.  Carry forward the previous
+                # fix's cog so downstream consumers (e.g. anchor-mode closing-
+                # speed damping) always have a meaningful course value.  If there
+                # is no prior fix, cog defaults to 0.0 (unknown).
+                prev = self.state.fix
+                cog = prev.cog_deg if prev is not None else 0.0
                 fix = GpsFix(
-                    point=point, sog_knots=self.state.sog_knots, valid=True
+                    point=point,
+                    sog_knots=self.state.sog_knots,
+                    cog_deg=cog,
+                    valid=True,
                 )
                 self.state.fix = fix
                 self.state.fix_seq += 1
