@@ -691,6 +691,30 @@ class Runtime:
                     logger.warning("device_menu failed: %s", exc)
         return out
 
+    def _device_by_kind(self, kind: str):
+        return {"gps": self.gps, "compass": self.compass,
+                "depth": self.depth_sounder}.get(kind)
+
+    def apply_device_setting(self, kind: str, key: str, value) -> dict:
+        """Apply a device-menu setting to the active device of ``kind``."""
+        fn = getattr(self._device_by_kind(kind), "apply_setting", None)
+        if not callable(fn):
+            return {"ok": False, "message": f"no settings for device {kind!r}"}
+        try:
+            return fn(key, value)
+        except Exception as exc:  # noqa: BLE001 - surface as a failed result, not a 500
+            return {"ok": False, "message": str(exc)}
+
+    def run_device_action(self, kind: str, name: str, params: dict | None = None) -> dict:
+        """Run a device-menu action on the active device of ``kind``."""
+        fn = getattr(self._device_by_kind(kind), "run_action", None)
+        if not callable(fn):
+            return {"ok": False, "message": f"no actions for device {kind!r}"}
+        try:
+            return fn(name, params or {})
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "message": str(exc)}
+
     def _build_serial_compass(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialCompass
         from .hardware.serial_link import PySerialTransport

@@ -116,6 +116,28 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         return {"ok": True, "level": level.upper(),
                 "records": log_ring().dump(minno, n, contains)}
 
+    @app.post("/api/device/setting")
+    async def device_setting(payload: dict) -> dict:
+        """Apply a device-menu setting (from a driver's device_menu) to the
+        active device. Body: ``{device, key, value}``."""
+        return runtime.apply_device_setting(
+            str(payload.get("device", "")), str(payload.get("key", "")),
+            payload.get("value"),
+        )
+
+    @app.post("/api/device/action")
+    async def device_action(payload: dict) -> dict:
+        """Run a device-menu action (e.g. sensor profile / calibrate) on the
+        active device. Body: ``{device, action, params?}``. Runs in an executor
+        since an action may talk to the hardware."""
+        device = str(payload.get("device", ""))
+        action = str(payload.get("action", ""))
+        params = payload.get("params") or {}
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: runtime.run_device_action(device, action, params)
+        )
+
     @app.get("/api/tune/jobs")
     async def tune_jobs() -> dict:
         from ..analysis.tuning import TUNING_JOBS

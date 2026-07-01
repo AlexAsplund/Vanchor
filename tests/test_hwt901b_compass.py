@@ -85,3 +85,24 @@ def test_hwt901b_registers_as_a_compass_source():
     load_drivers()
     assert registry.has("compass", "hwt901b")
     assert "hwt901b" in registry.sources("compass")
+
+
+# ---- runtime dispatch: device_menu collection + setting/action endpoints -- #
+def test_runtime_dispatches_device_menu_settings_and_actions(tmp_path):
+    from vanchor.app import Runtime
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)      # isolate from the repo's vanchor_data/
+    rt = Runtime(cfg)
+    rt.compass = HWT901BCompass(_FakeSensor(90.0))   # a device that exposes a menu
+
+    menus = rt._device_menus()
+    assert any(m.get("device") == "compass" for m in menus)
+
+    assert rt.apply_device_setting("compass", "declination_mode", "manual")["ok"]
+    assert rt.compass.declination_mode == "manual"
+    assert rt.run_device_action("compass", "profile")["ok"] is True
+    # a device with no menu (the sim GPS) degrades gracefully, not a crash:
+    assert rt.apply_device_setting("gps", "whatever", 1)["ok"] is False
+    assert rt.run_device_action("depth", "nope")["ok"] is False

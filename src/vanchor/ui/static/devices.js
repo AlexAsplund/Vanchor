@@ -36,6 +36,7 @@
     sim: "Simulated",
     serial: "Serial (wired)",
     nmea: "NMEA (from phone/plotter)",
+    hwt901b: "HWT901B AHRS",
   };
   const MOTOR_LABELS = {
     sim: "Simulated",
@@ -47,12 +48,13 @@
   // Fallbacks if the backend omits `options`.
   const DEFAULT_OPTS = {
     sensor: ["sim", "serial", "nmea"],
+    compass: ["sim", "serial", "nmea", "hwt901b"],
     motor: ["sim", "serial", "both"],
   };
 
   const SRC_FIELDS = [
     { id: "dev-src-gps", key: "gps_source", kind: "sensor" },
-    { id: "dev-src-compass", key: "compass_source", kind: "sensor" },
+    { id: "dev-src-compass", key: "compass_source", kind: "compass" },
     { id: "dev-src-depth", key: "depth_source", kind: "sensor" },
     { id: "dev-src-motor", key: "motor_source", kind: "motor" },
   ];
@@ -186,6 +188,110 @@
     syncSerial();
     syncNmea();
     setBadge(hw.enabled ? "● hardware" : "sim");
+    renderMenus(cfg.menus);
+  }
+
+  // ---- device-specific menus (driver device_menu(): settings + actions) --
+  // Rendered generically from the schema each active device advertises; a
+  // setting change POSTs /api/device/setting, an action POSTs /api/device/action.
+  function renderMenus(menus) {
+    const host = $("dev-menus");
+    if (!host) return;
+    host.innerHTML = "";
+    (menus || []).forEach((menu) => {
+      const box = document.createElement("div");
+      box.className = "dev-menu";
+      const h = document.createElement("div");
+      h.className = "drawer-section";
+      h.textContent = menu.title || (menu.device + " settings");
+      box.appendChild(h);
+      (menu.settings || []).forEach((s) => box.appendChild(renderSetting(menu.device, s, box)));
+      if ((menu.actions || []).length) {
+        const row = document.createElement("div");
+        row.className = "btn-row";
+        menu.actions.forEach((a) => {
+          const btn = document.createElement("button");
+          btn.type = "button"; btn.className = "btn-ghost";
+          btn.textContent = a.label || a.name;
+          if (a.help) btn.title = a.help;
+          btn.addEventListener("click", () => runAction(menu.device, a.name, box));
+          row.appendChild(btn);
+        });
+        box.appendChild(row);
+      }
+      const out = document.createElement("div");
+      out.className = "hint dev-menu-out";
+      box.appendChild(out);
+      host.appendChild(box);
+      applyShownWhen(box);
+    });
+  }
+
+  function renderSetting(device, s, box) {
+    const wrap = document.createElement("label");
+    wrap.className = "slider-row dev-set";
+    wrap.dataset.key = s.key;
+    if (s.shown_when) wrap.dataset.shownWhen = JSON.stringify(s.shown_when);
+    if (s.help) wrap.title = s.help;
+    const lab = document.createElement("span");
+    lab.textContent = s.label + (s.unit ? " (" + s.unit + ")" : "");
+    let input;
+    if (s.type === "select") {
+      input = document.createElement("select");
+      (s.options || []).forEach((o) => {
+        const op = document.createElement("option");
+        op.value = o; op.textContent = o;
+        if (o === s.value) op.selected = true;
+        input.appendChild(op);
+      });
+    } else if (s.type === "toggle") {
+      input = document.createElement("input");
+      input.type = "checkbox"; input.checked = !!s.value;
+    } else {
+      input = document.createElement("input");
+      input.type = "number";
+      if (s.min != null) input.min = s.min;
+      if (s.max != null) input.max = s.max;
+      if (s.step != null) input.step = s.step;
+      input.value = s.value;
+    }
+    input.dataset.ctrl = s.key;
+    input.addEventListener("change", () => {
+      const value = s.type === "toggle" ? input.checked
+        : s.type === "number" ? parseFloat(input.value) : input.value;
+      VA.postJSON("/api/device/setting", { device, key: s.key, value })
+        .then(() => applyShownWhen(box))   // e.g. reveal manual declination
+        .catch(() => {});
+    });
+    wrap.append(lab, input);
+    return wrap;
+  }
+
+  function applyShownWhen(box) {
+    box.querySelectorAll(".dev-set[data-shown-when]").forEach((el) => {
+      let cond;
+      try { cond = JSON.parse(el.dataset.shownWhen); } catch (e) { return; }
+      const show = Object.keys(cond).every((k) => {
+        const ctrl = box.querySelector('[data-ctrl="' + k + '"]');
+        const v = ctrl ? (ctrl.type === "checkbox" ? ctrl.checked : ctrl.value) : undefined;
+        return String(v) === String(cond[k]);
+      });
+      el.classList.toggle("hidden", !show);
+    });
+  }
+
+  function runAction(device, name, box) {
+    const out = box.querySelector(".dev-menu-out");
+    if (out) out.textContent = "…";
+    VA.postJSON("/api/device/action", { device, action: name })
+      .then((r) => {
+        if (!out) return;
+        let msg = (r && r.message) || (r && r.ok ? "Done." : "Action failed.");
+        if (r && r.status) msg += "  " + Object.entries(r.status)
+          .map(([k, v]) => k + "=" + v).join(", ");
+        out.textContent = msg;
+      })
+      .catch(() => { if (out) out.textContent = "Action failed."; });
   }
 
   // Assemble the POST body. Empty source select -> null (Auto). Empty text

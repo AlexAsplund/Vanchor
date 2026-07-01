@@ -1093,6 +1093,10 @@
             <button id="dev-restart" class="btn-ghost" type="button" title="Restart the server now (applies saved device/config changes)">⟳ Restart server</button>
           </div>
           <div id="dev-status" class="hint"></div>
+
+          <!-- Device-specific settings/actions rendered from each active device's
+               device_menu() (e.g. the HWT901B compass: declination, calibration). -->
+          <div id="dev-menus"></div>
         </div>
       </details>
 

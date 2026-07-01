@@ -1942,3 +1942,8 @@ body.mobile.dock-collapsed .dock { padding-bottom: 0; }
 .log-error .log-lvl, .log-error .log-msg,
 .log-critical .log-lvl, .log-critical .log-msg { color: var(--danger, #ff5a5a); }
 .log-debug { opacity: 0.6; }
+
+/* Device-specific menus (driver device_menu(): settings + actions). */
+.dev-menu { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.dev-menu .btn-row { margin-top: 6px; }
+.dev-menu-out { margin-top: 6px; min-height: 1em; white-space: pre-wrap; }
