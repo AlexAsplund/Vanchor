@@ -71,6 +71,11 @@ clock**. Its sensor/control timing is load-bearing — see
 4. **[frontend.md](frontend.md)** — the web UI: the `VA.*` global contract, `map.js` patterns (overlays, click consumers, waypoints), adding a feature, the PWA service worker.
 5. **[api.md](api.md)** — the REST + WebSocket contract: endpoints, command types, telemetry shape.
 6. **[testing-and-workflow.md](testing-and-workflow.md)** — running, testing (harness timing!), headless browser verification, and the operational gotchas that bite every time.
+7. **[device-drivers.md](device-drivers.md)** — adding a hardware driver (the plugin registry, the `Sensor`/NMEA seam, `device_menu`). Friendlier intro: [../adding-a-device.md](../adding-a-device.md).
+
+**API reference:** `make docs` generates a full browsable API reference from the
+package docstrings into `docs/api/` (needs `pip install -e '.[docs]'`); `make
+docs-serve` serves it live with auto-reload.
 
 There are also older, narrower design docs in `docs/` (`architecture.md`,
 `nav-control-api.md`, `ui-contract.md`, `routing-weather-api.md`,

@@ -27,3 +27,6 @@ analysis_output/
 
 # Training experiment checkpoints (regenerated, can be large)
 experiments/*/checkpoints/
+
+# Auto-generated API reference (make docs)
+docs/api/

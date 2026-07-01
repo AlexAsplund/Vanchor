@@ -23,7 +23,7 @@ Drivers are **self-registering plugins**. You drop a module in
 `src/vanchor/hardware/drivers/`; at import it calls `register_driver(...)`; and
 that's the entire wiring:
 
-- `hardware/registry.py` holds the registry. `register_driver(kind, source, build, *, label)`.
+- `hardware/registry.py` holds the registry. `register_driver(kind, source, build, *, label, menu=None)`.
 - `hardware/drivers/__init__.py`'s `load_drivers()` imports every module in the
   package (auto-discovery), so your module runs and registers itself.
 - `app.py` calls `load_drivers()` once at import, then **builds, validates, and
@@ -83,23 +83,32 @@ Rules that bite:
 ```python
 def _build(runtime, cfg):
     hw = cfg.hardware
+    saved = (getattr(hw, "device_settings", None) or {}).get("compass", {})  # persisted menu choices
     return open_my_compass(hw.compass_port, hw.baudrate, runtime.bus,
-                           hz=cfg.sensors.compass_hz)
+                           hz=float(saved.get("hz", cfg.sensors.compass_hz)))
 ```
 
 `build(runtime, cfg)` may read `runtime.bus`, `runtime.state` (e.g. GPS
-course/speed), and `cfg`. Do heavy/optional imports **inside** the factory (see
-"Optional dependencies").
+course/speed), and `cfg`. Read persisted menu choices from
+`cfg.hardware.device_settings[<kind>]` and apply them (see "Device menu"). Do
+heavy/optional imports **inside** the factory (see "Optional dependencies").
 
-**3. Register it** at module top level:
+Building is **crash-safe**: if `_build` raises (missing lib, no serial port), the
+runtime logs it and runs without that device — startup never dies. Don't swallow
+the error yourself; let it propagate.
+
+**3. Register it** at module top level, with an optional `menu` schema:
 
 ```python
 from ..registry import register_driver
-register_driver("compass", "hwt901b", _build, label="WitMotion HWT901B AHRS")
+register_driver("compass", "hwt901b", _build,
+                label="WitMotion HWT901B AHRS", menu=default_menu())
 ```
 
-Done — `compass_source="hwt901b"` now builds, validates, and appears in the
-device options. No other file changes.
+Done — `compass_source="hwt901b"` now builds, validates, appears in the device
+options, and (via `menu=`) shows its settings **the moment it's selected**. No
+other file changes. Wired drivers automatically get the serial-port field in the
+UI (any source that isn't sim/nmea/auto is treated as wired).
 
 ## Optional dependencies (don't break the core install)
 
@@ -122,18 +131,19 @@ A driver for exotic hardware must not force its dependency on everyone:
 ## Device-specific settings menu (`device_menu`)
 
 A driver can expose its own settings + actions that the UI renders generically —
-no bespoke UI per device. Implement three methods:
+no bespoke UI per device. Define the schema **once** so it works both as the
+registered default (shown on selection) and live on the instance:
 
 ```python
-def device_menu(self) -> dict:
+def _menu_schema(declination_mode, hz):
     return {
         "device": "compass",
         "title": "Compass — My AHRS",
         "settings": [
             {"key": "declination_mode", "label": "Declination", "type": "select",
-             "options": ["auto", "manual", "off"], "value": self.declination_mode},
+             "options": ["auto", "manual", "off"], "value": declination_mode},
             {"key": "hz", "label": "Update rate", "type": "number",
-             "min": 1, "max": 50, "step": 1, "unit": "Hz", "value": self.hz},
+             "min": 1, "max": 50, "step": 1, "unit": "Hz", "value": hz},
         ],
         "actions": [
             {"name": "profile", "label": "Sensor status", "help": "…"},
@@ -141,15 +151,33 @@ def device_menu(self) -> dict:
         ],
     }
 
-def apply_setting(self, key, value) -> dict:  # {"ok": bool, "message"?: str}
-def run_action(self, name, params=None) -> dict:
+def default_menu():                 # factory defaults, passed to register_driver(menu=)
+    return _menu_schema("auto", 5.0)
+
+class MyCompass(Sensor):
+    def device_menu(self):          # live values from the running instance
+        return _menu_schema(self.declination_mode, self.hz)
+    def apply_setting(self, key, value) -> dict:   # {"ok": bool, "message"?: str}
+    def run_action(self, name, params=None) -> dict:
 ```
 
-The runtime collects `device_menu()` from the active devices into
-`GET /api/config/devices` under `"menus"`, and the UI renders the fields + action
-buttons from that schema. Field `type`s: `select` (with `options`), `number`
-(min/max/step/unit), `toggle`. `shown_when: {key: value}` conditionally shows a
-field. Keep menus declarative — the UI is a generic renderer.
+**Where the schema surfaces** in `GET /api/config/devices`:
+- `driver_menus` — `{source: schema}` from every registered driver's `menu=`,
+  with **saved values overlaid**. The UI renders this the moment you *select* the
+  source, before any instance exists.
+- `menus` — the live menu of each *running* device (live values, e.g. a learned
+  offset).
+
+**Settings persist.** `apply_setting` on the instance changes live behaviour, but
+the runtime also writes the value to `HardwareConfig.device_settings[<kind>]`
+(persisted in `devices.json`). Your `_build` reads those back (above), so a choice
+survives a restart and applies even when the device wasn't running when it was
+set. The UI shows "Saved — restart to apply" when there's no live device.
+
+Field `type`s: `select` (with `options`), `number` (min/max/step/unit), `toggle`.
+`shown_when: {key: value}` conditionally shows a field. Actions that talk to
+hardware (profile/calibrate) only work while the device is running. Keep menus
+declarative — the UI is a generic renderer.
 
 ## Testing (stay sim-first — no serial port, no vendor lib)
 
@@ -176,8 +204,10 @@ See `tests/test_hwt901b_compass.py`.
 - [ ] Module in `hardware/drivers/`, imports cleanly (vendor import is lazy).
 - [ ] Device class implements `Sensor` (`start`/`stop`), publishes NMEA to the bus.
 - [ ] Blocking I/O runs in an executor; the read loop survives errors.
-- [ ] `register_driver(kind, source, build, label=...)` at module top level.
+- [ ] `register_driver(kind, source, build, label=..., menu=...)` at module top level.
 - [ ] Optional dep declared as an extra in `pyproject.toml`.
-- [ ] (Optional) `device_menu()` / `apply_setting()` / `run_action()`.
+- [ ] (Optional) `device_menu()` / `apply_setting()` / `run_action()`, with a
+      `menu=` schema for show-on-selection, and `_build` reading persisted
+      `device_settings`.
 - [ ] Tests with a fake device + a self-registration assertion.
 - [ ] This guide + [backend.md](backend.md) updated if you changed the contract.
