@@ -125,12 +125,14 @@ def client(tmp_path):
 
 def test_get_returns_config_and_options(client):
     data = client.get("/api/config/devices").json()
-    assert set(data) == {"hardware", "nmea_tcp", "options", "restart_required"}
+    assert set(data) == {"hardware", "nmea_tcp", "options", "menus", "restart_required"}
     assert data["restart_required"] is False
     assert data["options"] == {
         "sensor": ["sim", "serial", "nmea"],
+        "compass": ["sim", "serial", "nmea", "hwt901b"],  # + registered drivers
         "motor": ["sim", "serial", "both"],
     }
+    assert isinstance(data["menus"], list)  # device-specific menus (sim => empty)
     # Mirrors the live (default) config.
     assert data["hardware"]["enabled"] is False
     assert data["nmea_tcp"]["enabled"] is False

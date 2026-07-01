@@ -47,11 +47,17 @@ from .nav.depth import DepthMap
 from .nav.guard import SensorGuardConfig
 from .nav.navigator import Navigator
 from .nav.trip import TripLog
+from .hardware import registry
+from .hardware.drivers import load_drivers
 from .sim.bathymetry import Bathymetry
 from .sim.devices import SimCompass, SimDepthSounder, SimGps
 from .sim.simulator import Simulator
 
 logger = logging.getLogger("vanchor.app")
+
+# Populate the pluggable device-driver registry (self-registering modules under
+# hardware/drivers/). A new driver adds itself here just by existing.
+load_drivers()
 
 # Modes that count as "underway / making way" for the lost-connection failsafe
 # (#64): every guided behaviour except idle manual and station-keeping anchor.
@@ -584,6 +590,13 @@ class Runtime:
     _SENSOR_SOURCES = ("sim", "serial", "nmea")
     _MOTOR_SOURCES = ("sim", "serial", "both")
 
+    def _compass_sources(self) -> tuple:
+        """Built-in compass sources + any registered driver sources (e.g.
+        ``hwt901b``). Registered drivers are discovered from the plugin registry,
+        so a new compass driver adds itself here without editing this file."""
+        from .hardware import registry
+        return self._SENSOR_SOURCES + tuple(registry.sources("compass"))
+
     def device_config(self) -> dict:
         """Current device/hardware config + the selectable options.
 
@@ -596,8 +609,10 @@ class Runtime:
             "nmea_tcp": asdict(self.config.nmea_tcp),
             "options": {
                 "sensor": list(self._SENSOR_SOURCES),
+                "compass": list(self._compass_sources()),
                 "motor": list(self._MOTOR_SOURCES),
             },
+            "menus": self._device_menus(),
             "restart_required": False,
         }
 
@@ -623,9 +638,10 @@ class Runtime:
         hw = HardwareConfig(**asdict(self.config.hardware))
         for dev in ("gps", "compass", "depth"):
             key = f"{dev}_source"
-            if hw_in.get(key) is not None and hw_in[key] not in self._SENSOR_SOURCES:
+            allowed = self._compass_sources() if dev == "compass" else self._SENSOR_SOURCES
+            if hw_in.get(key) is not None and hw_in[key] not in allowed:
                 raise ValueError(
-                    f"{key} must be one of {self._SENSOR_SOURCES} (got {hw_in[key]!r})"
+                    f"{key} must be one of {allowed} (got {hw_in[key]!r})"
                 )
         if hw_in.get("motor_source") is not None and hw_in["motor_source"] not in self._MOTOR_SOURCES:
             raise ValueError(
@@ -660,6 +676,20 @@ class Runtime:
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
         return SerialGps(PySerialTransport(hw.gps_port, baudrate=hw.baudrate), self.bus)
+
+    def _device_menus(self) -> list:
+        """Collect device-specific menus (settings/actions) from the active
+        devices that expose ``device_menu()`` -- surfaced to the UI so a driver
+        can offer its own controls (e.g. the HWT901B compass)."""
+        out: list = []
+        for dev in (self.gps, self.compass, self.depth_sounder):
+            fn = getattr(dev, "device_menu", None)
+            if callable(fn):
+                try:
+                    out.append(fn())
+                except Exception as exc:  # noqa: BLE001 - a bad menu can't break config
+                    logger.warning("device_menu failed: %s", exc)
+        return out
 
     def _build_serial_compass(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialCompass
@@ -718,6 +748,8 @@ class Runtime:
         elif src["compass"] == "sim":
             compass = SimCompass(simulator.truth, self.bus, update_hz=cfg.sensors.compass_hz,
                                  heading_noise_deg=cfg.sensors.compass_noise_deg)
+        elif registry.has("compass", src["compass"]):
+            compass = registry.build_device("compass", src["compass"], self, cfg)
         if src["depth"] == "sim":
             depth = SimDepthSounder(
                 simulator.truth,

@@ -26,6 +26,9 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27",
 analysis = ["matplotlib>=3.7"]
 # Real serial hardware support (not needed for simulation):
 serial = ["pyserial>=3.5", "pyserial-asyncio>=0.6"]
+# WitMotion HWT901B-TTL AHRS compass (compass_source="hwt901b"). Until the lib is
+# published, install the sibling checkout: pip install -e ../python-hwt901b-ttl[serial]
+hwt901b = ["hwt901b[serial]>=0.1"]
 
 [project.scripts]
 vanchor = "vanchor.app:main"
