@@ -1,0 +1,1778 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="pdoc 16.0.0"/>
+    <title>vanchor.core.models API documentation</title>
+
+    <style>/*! * Bootstrap Reboot v5.0.0 (https://getbootstrap.com/) * Copyright 2011-2021 The Bootstrap Authors * Copyright 2011-2021 Twitter, Inc. * Licensed under MIT (https://github.com/twbs/bootstrap/blob/main/LICENSE) * Forked from Normalize.css, licensed MIT (https://github.com/necolas/normalize.css/blob/master/LICENSE.md) */*,::after,::before{box-sizing:border-box}@media (prefers-reduced-motion:no-preference){:root{scroll-behavior:smooth}}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";font-size:1rem;font-weight:400;line-height:1.5;color:#212529;background-color:#fff;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}hr{margin:1rem 0;color:inherit;background-color:currentColor;border:0;opacity:.25}hr:not([size]){height:1px}h1,h2,h3,h4,h5,h6{margin-top:0;margin-bottom:.5rem;font-weight:500;line-height:1.2}h1{font-size:calc(1.375rem + 1.5vw)}@media (min-width:1200px){h1{font-size:2.5rem}}h2{font-size:calc(1.325rem + .9vw)}@media (min-width:1200px){h2{font-size:2rem}}h3{font-size:calc(1.3rem + .6vw)}@media (min-width:1200px){h3{font-size:1.75rem}}h4{font-size:calc(1.275rem + .3vw)}@media (min-width:1200px){h4{font-size:1.5rem}}h5{font-size:1.25rem}h6{font-size:1rem}p{margin-top:0;margin-bottom:1rem}abbr[data-bs-original-title],abbr[title]{-webkit-text-decoration:underline dotted;text-decoration:underline dotted;cursor:help;-webkit-text-decoration-skip-ink:none;text-decoration-skip-ink:none}address{margin-bottom:1rem;font-style:normal;line-height:inherit}ol,ul{padding-left:2rem}dl,ol,ul{margin-top:0;margin-bottom:1rem}ol ol,ol ul,ul ol,ul ul{margin-bottom:0}dt{font-weight:700}dd{margin-bottom:.5rem;margin-left:0}blockquote{margin:0 0 1rem}b,strong{font-weight:bolder}small{font-size:.875em}mark{padding:.2em;background-color:#fcf8e3}sub,sup{position:relative;font-size:.75em;line-height:0;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}a{color:#0d6efd;text-decoration:underline}a:hover{color:#0a58ca}a:not([href]):not([class]),a:not([href]):not([class]):hover{color:inherit;text-decoration:none}code,kbd,pre,samp{font-family:SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:1em;direction:ltr;unicode-bidi:bidi-override}pre{display:block;margin-top:0;margin-bottom:1rem;overflow:auto;font-size:.875em}pre code{font-size:inherit;color:inherit;word-break:normal}code{font-size:.875em;color:#d63384;word-wrap:break-word}a>code{color:inherit}kbd{padding:.2rem .4rem;font-size:.875em;color:#fff;background-color:#212529;border-radius:.2rem}kbd kbd{padding:0;font-size:1em;font-weight:700}figure{margin:0 0 1rem}img,svg{vertical-align:middle}table{caption-side:bottom;border-collapse:collapse}caption{padding-top:.5rem;padding-bottom:.5rem;color:#6c757d;text-align:left}th{text-align:inherit;text-align:-webkit-match-parent}tbody,td,tfoot,th,thead,tr{border-color:inherit;border-style:solid;border-width:0}label{display:inline-block}button{border-radius:0}button:focus:not(:focus-visible){outline:0}button,input,optgroup,select,textarea{margin:0;font-family:inherit;font-size:inherit;line-height:inherit}button,select{text-transform:none}[role=button]{cursor:pointer}select{word-wrap:normal}select:disabled{opacity:1}[list]::-webkit-calendar-picker-indicator{display:none}[type=button],[type=reset],[type=submit],button{-webkit-appearance:button}[type=button]:not(:disabled),[type=reset]:not(:disabled),[type=submit]:not(:disabled),button:not(:disabled){cursor:pointer}::-moz-focus-inner{padding:0;border-style:none}textarea{resize:vertical}fieldset{min-width:0;padding:0;margin:0;border:0}legend{float:left;width:100%;padding:0;margin-bottom:.5rem;font-size:calc(1.275rem + .3vw);line-height:inherit}@media (min-width:1200px){legend{font-size:1.5rem}}legend+*{clear:left}::-webkit-datetime-edit-day-field,::-webkit-datetime-edit-fields-wrapper,::-webkit-datetime-edit-hour-field,::-webkit-datetime-edit-minute,::-webkit-datetime-edit-month-field,::-webkit-datetime-edit-text,::-webkit-datetime-edit-year-field{padding:0}::-webkit-inner-spin-button{height:auto}[type=search]{outline-offset:-2px;-webkit-appearance:textfield}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-color-swatch-wrapper{padding:0}::file-selector-button{font:inherit}::-webkit-file-upload-button{font:inherit;-webkit-appearance:button}output{display:inline-block}iframe{border:0}summary{display:list-item;cursor:pointer}progress{vertical-align:baseline}[hidden]{display:none!important}</style>
+    <style>/*! syntax-highlighting.css */pre{line-height:125%;}span.linenos{color:inherit; background-color:transparent; padding-left:5px; padding-right:20px;}.pdoc-code .hll{background-color:#ffffcc}.pdoc-code{background:#f8f8f8;}.pdoc-code .c{color:#3D7B7B; font-style:italic}.pdoc-code .err{border:1px solid #FF0000}.pdoc-code .k{color:#008000; font-weight:bold}.pdoc-code .o{color:#666666}.pdoc-code .ch{color:#3D7B7B; font-style:italic}.pdoc-code .cm{color:#3D7B7B; font-style:italic}.pdoc-code .cp{color:#9C6500}.pdoc-code .cpf{color:#3D7B7B; font-style:italic}.pdoc-code .c1{color:#3D7B7B; font-style:italic}.pdoc-code .cs{color:#3D7B7B; font-style:italic}.pdoc-code .gd{color:#A00000}.pdoc-code .ge{font-style:italic}.pdoc-code .gr{color:#E40000}.pdoc-code .gh{color:#000080; font-weight:bold}.pdoc-code .gi{color:#008400}.pdoc-code .go{color:#717171}.pdoc-code .gp{color:#000080; font-weight:bold}.pdoc-code .gs{font-weight:bold}.pdoc-code .gu{color:#800080; font-weight:bold}.pdoc-code .gt{color:#0044DD}.pdoc-code .kc{color:#008000; font-weight:bold}.pdoc-code .kd{color:#008000; font-weight:bold}.pdoc-code .kn{color:#008000; font-weight:bold}.pdoc-code .kp{color:#008000}.pdoc-code .kr{color:#008000; font-weight:bold}.pdoc-code .kt{color:#B00040}.pdoc-code .m{color:#666666}.pdoc-code .s{color:#BA2121}.pdoc-code .na{color:#687822}.pdoc-code .nb{color:#008000}.pdoc-code .nc{color:#0000FF; font-weight:bold}.pdoc-code .no{color:#880000}.pdoc-code .nd{color:#AA22FF}.pdoc-code .ni{color:#717171; font-weight:bold}.pdoc-code .ne{color:#CB3F38; font-weight:bold}.pdoc-code .nf{color:#0000FF}.pdoc-code .nl{color:#767600}.pdoc-code .nn{color:#0000FF; font-weight:bold}.pdoc-code .nt{color:#008000; font-weight:bold}.pdoc-code .nv{color:#19177C}.pdoc-code .ow{color:#AA22FF; font-weight:bold}.pdoc-code .w{color:#bbbbbb}.pdoc-code .mb{color:#666666}.pdoc-code .mf{color:#666666}.pdoc-code .mh{color:#666666}.pdoc-code .mi{color:#666666}.pdoc-code .mo{color:#666666}.pdoc-code .sa{color:#BA2121}.pdoc-code .sb{color:#BA2121}.pdoc-code .sc{color:#BA2121}.pdoc-code .dl{color:#BA2121}.pdoc-code .sd{color:#BA2121; font-style:italic}.pdoc-code .s2{color:#BA2121}.pdoc-code .se{color:#AA5D1F; font-weight:bold}.pdoc-code .sh{color:#BA2121}.pdoc-code .si{color:#A45A77; font-weight:bold}.pdoc-code .sx{color:#008000}.pdoc-code .sr{color:#A45A77}.pdoc-code .s1{color:#BA2121}.pdoc-code .ss{color:#19177C}.pdoc-code .bp{color:#008000}.pdoc-code .fm{color:#0000FF}.pdoc-code .vc{color:#19177C}.pdoc-code .vg{color:#19177C}.pdoc-code .vi{color:#19177C}.pdoc-code .vm{color:#19177C}.pdoc-code .il{color:#666666}</style>
+    <style>/*! theme.css */:root{--pdoc-background:#fff;}.pdoc{--text:#212529;--muted:#6c757d;--link:#3660a5;--link-hover:#1659c5;--code:#f8f8f8;--active:#fff598;--accent:#eee;--accent2:#c1c1c1;--nav-hover:rgba(255, 255, 255, 0.5);--name:#0066BB;--def:#008800;--annotation:#007020;}</style>
+    <style>/*! layout.css */html, body{width:100%;height:100%;}html, main{scroll-behavior:smooth;}body{background-color:var(--pdoc-background);}@media (max-width:769px){#navtoggle{cursor:pointer;position:absolute;width:50px;height:40px;top:1rem;right:1rem;border-color:var(--text);color:var(--text);display:flex;opacity:0.8;z-index:999;}#navtoggle:hover{opacity:1;}#togglestate + div{display:none;}#togglestate:checked + div{display:inherit;}main, header{padding:2rem 3vw;}header + main{margin-top:-3rem;}.git-button{display:none !important;}nav input[type="search"]{max-width:77%;}nav input[type="search"]:first-child{margin-top:-6px;}nav input[type="search"]:valid ~ *{display:none !important;}}@media (min-width:770px){:root{--sidebar-width:clamp(12.5rem, 28vw, 22rem);}nav{position:fixed;overflow:auto;height:100vh;width:var(--sidebar-width);}main, header{padding:3rem 2rem 3rem calc(var(--sidebar-width) + 3rem);width:calc(54rem + var(--sidebar-width));max-width:100%;}header + main{margin-top:-4rem;}#navtoggle{display:none;}}#togglestate{position:absolute;height:0;opacity:0;}nav.pdoc{--pad:clamp(0.5rem, 2vw, 1.75rem);--indent:1.5rem;background-color:var(--accent);border-right:1px solid var(--accent2);box-shadow:0 0 20px rgba(50, 50, 50, .2) inset;padding:0 0 0 var(--pad);overflow-wrap:anywhere;scrollbar-width:thin; scrollbar-color:var(--accent2) transparent; z-index:1}nav.pdoc::-webkit-scrollbar{width:.4rem; }nav.pdoc::-webkit-scrollbar-thumb{background-color:var(--accent2); }nav.pdoc > div{padding:var(--pad) 0;}nav.pdoc .module-list-button{display:inline-flex;align-items:center;color:var(--text);border-color:var(--muted);margin-bottom:1rem;}nav.pdoc .module-list-button:hover{border-color:var(--text);}nav.pdoc input[type=search]{display:block;outline-offset:0;width:calc(100% - var(--pad));}nav.pdoc .logo{max-width:calc(100% - var(--pad));max-height:35vh;display:block;margin:0 auto 1rem;transform:translate(calc(-.5 * var(--pad)), 0);}nav.pdoc ul{list-style:none;padding-left:0;}nav.pdoc > div > ul{margin-left:calc(0px - var(--pad));}nav.pdoc li a{padding:.2rem 0 .2rem calc(var(--pad) + var(--indent));}nav.pdoc > div > ul > li > a{padding-left:var(--pad);}nav.pdoc li{transition:all 100ms;}nav.pdoc li:hover{background-color:var(--nav-hover);}nav.pdoc a, nav.pdoc a:hover{color:var(--text);}nav.pdoc a{display:block;}nav.pdoc > h2:first-of-type{margin-top:1.5rem;}nav.pdoc .class:before{content:"class ";color:var(--muted);}nav.pdoc .function:after{content:"()";color:var(--muted);}nav.pdoc footer:before{content:"";display:block;width:calc(100% - var(--pad));border-top:solid var(--accent2) 1px;margin-top:1.5rem;padding-top:.5rem;}nav.pdoc footer{font-size:small;}</style>
+    <style>/*! content.css */.pdoc{color:var(--text);box-sizing:border-box;line-height:1.5;background:none;}.pdoc .pdoc-button{cursor:pointer;display:inline-block;border:solid black 1px;border-radius:2px;font-size:.75rem;padding:calc(0.5em - 1px) 1em;transition:100ms all;}.pdoc .alert{padding:1rem 1rem 1rem calc(1.5rem + 24px);border:1px solid transparent;border-radius:.25rem;background-repeat:no-repeat;background-position:.75rem center;margin-bottom:1rem;}.pdoc .alert > em{display:none;}.pdoc .alert > *:last-child{margin-bottom:0;}.pdoc .alert.note{color:#084298;background-color:#cfe2ff;border-color:#b6d4fe;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%23084298%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M8%2016A8%208%200%201%200%208%200a8%208%200%200%200%200%2016zm.93-9.412-1%204.705c-.07.34.029.533.304.533.194%200%20.487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703%200-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381%202.29-.287zM8%205.5a1%201%200%201%201%200-2%201%201%200%200%201%200%202z%22/%3E%3C/svg%3E");}.pdoc .alert.tip{color:#0a3622;background-color:#d1e7dd;border-color:#a3cfbb;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%230a3622%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%206a6%206%200%201%201%2010.174%204.31c-.203.196-.359.4-.453.619l-.762%201.769A.5.5%200%200%201%2010.5%2013a.5.5%200%200%201%200%201%20.5.5%200%200%201%200%201l-.224.447a1%201%200%200%201-.894.553H6.618a1%201%200%200%201-.894-.553L5.5%2015a.5.5%200%200%201%200-1%20.5.5%200%200%201%200-1%20.5.5%200%200%201-.46-.302l-.761-1.77a2%202%200%200%200-.453-.618A5.98%205.98%200%200%201%202%206m6-5a5%205%200%200%200-3.479%208.592c.263.254.514.564.676.941L5.83%2012h4.342l.632-1.467c.162-.377.413-.687.676-.941A5%205%200%200%200%208%201%22/%3E%3C/svg%3E");}.pdoc .alert.important{color:#055160;background-color:#cff4fc;border-color:#9eeaf9;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%23055160%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M2%200a2%202%200%200%200-2%202v12a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2V2a2%202%200%200%200-2-2zm6%204c.535%200%20.954.462.9.995l-.35%203.507a.552.552%200%200%201-1.1%200L7.1%204.995A.905.905%200%200%201%208%204m.002%206a1%201%200%201%201%200%202%201%201%200%200%201%200-2%22/%3E%3C/svg%3E");}.pdoc .alert.warning{color:#664d03;background-color:#fff3cd;border-color:#ffecb5;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%23664d03%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M8.982%201.566a1.13%201.13%200%200%200-1.96%200L.165%2013.233c-.457.778.091%201.767.98%201.767h13.713c.889%200%201.438-.99.98-1.767L8.982%201.566zM8%205c.535%200%20.954.462.9.995l-.35%203.507a.552.552%200%200%201-1.1%200L7.1%205.995A.905.905%200%200%201%208%205zm.002%206a1%201%200%201%201%200%202%201%201%200%200%201%200-2z%22/%3E%3C/svg%3E");}.pdoc .alert.caution{color:#842029;background-color:#f8d7da;border-color:#f5c2c7;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%23842029%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M11.46.146A.5.5%200%200%200%2011.107%200H4.893a.5.5%200%200%200-.353.146L.146%204.54A.5.5%200%200%200%200%204.893v6.214a.5.5%200%200%200%20.146.353l4.394%204.394a.5.5%200%200%200%20.353.146h6.214a.5.5%200%200%200%20.353-.146l4.394-4.394a.5.5%200%200%200%20.146-.353V4.893a.5.5%200%200%200-.146-.353zM8%204c.535%200%20.954.462.9.995l-.35%203.507a.552.552%200%200%201-1.1%200L7.1%204.995A.905.905%200%200%201%208%204m.002%206a1%201%200%201%201%200%202%201%201%200%200%201%200-2%22/%3E%3C/svg%3E");}.pdoc .alert.danger{color:#842029;background-color:#f8d7da;border-color:#f5c2c7;background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%23842029%22%20viewBox%3D%220%200%2016%2016%22%3E%3Cpath%20d%3D%22M5.52.359A.5.5%200%200%201%206%200h4a.5.5%200%200%201%20.474.658L8.694%206H12.5a.5.5%200%200%201%20.395.807l-7%209a.5.5%200%200%201-.873-.454L6.823%209.5H3.5a.5.5%200%200%201-.48-.641l2.5-8.5z%22/%3E%3C/svg%3E");}.pdoc .visually-hidden{position:absolute !important;width:1px !important;height:1px !important;padding:0 !important;margin:-1px !important;overflow:hidden !important;clip:rect(0, 0, 0, 0) !important;white-space:nowrap !important;border:0 !important;}.pdoc h1, .pdoc h2, .pdoc h3{font-weight:300;margin:.3em 0;padding:.2em 0;}.pdoc > section:not(.module-info) h1{font-size:1.5rem;font-weight:500;}.pdoc > section:not(.module-info) h2{font-size:1.4rem;font-weight:500;}.pdoc > section:not(.module-info) h3{font-size:1.3rem;font-weight:500;}.pdoc > section:not(.module-info) h4{font-size:1.2rem;}.pdoc > section:not(.module-info) h5{font-size:1.1rem;}.pdoc a{text-decoration:none;color:var(--link);}.pdoc a:hover{color:var(--link-hover);}.pdoc blockquote{margin-left:2rem;}.pdoc pre{border-top:1px solid var(--accent2);border-bottom:1px solid var(--accent2);margin-top:0;margin-bottom:1em;padding:.5rem 0 .5rem .5rem;overflow-x:auto;background-color:var(--code);}.pdoc code{color:var(--text);padding:.2em .4em;margin:0;font-size:85%;background-color:var(--accent);border-radius:6px;}.pdoc a > code{color:inherit;}.pdoc pre > code{display:inline-block;font-size:inherit;background:none;border:none;padding:0;}.pdoc > section:not(.module-info){margin-bottom:1.5rem;}.pdoc .modulename{margin-top:0;font-weight:bold;}.pdoc .modulename a{color:var(--link);transition:100ms all;}.pdoc .git-button{float:right;border:solid var(--link) 1px;}.pdoc .git-button:hover{background-color:var(--link);color:var(--pdoc-background);}.view-source-toggle-state,.view-source-toggle-state ~ .pdoc-code{display:none;}.view-source-toggle-state:checked ~ .pdoc-code{display:block;}.view-source-button{display:inline-block;float:right;font-size:.75rem;line-height:1.5rem;color:var(--muted);padding:0 .4rem 0 1.3rem;cursor:pointer;text-indent:-2px;}.view-source-button > span{visibility:hidden;}.module-info .view-source-button{float:none;display:flex;justify-content:flex-end;margin:-1.2rem .4rem -.2rem 0;}.view-source-button::before{position:absolute;content:"View Source";display:list-item;list-style-type:disclosure-closed;}.view-source-toggle-state:checked ~ .attr .view-source-button::before,.view-source-toggle-state:checked ~ .view-source-button::before{list-style-type:disclosure-open;}.pdoc .docstring{margin-bottom:1.5rem;}.pdoc section:not(.module-info) .docstring{margin-left:clamp(0rem, 5vw - 2rem, 1rem);}.pdoc .docstring .pdoc-code{margin-left:1em;margin-right:1em;}.pdoc h1:target,.pdoc h2:target,.pdoc h3:target,.pdoc h4:target,.pdoc h5:target,.pdoc h6:target,.pdoc .pdoc-code > pre > span:target{background-color:var(--active);box-shadow:-1rem 0 0 0 var(--active);}.pdoc .pdoc-code > pre > span:target{display:block;}.pdoc div:target > .attr,.pdoc section:target > .attr,.pdoc dd:target > a{background-color:var(--active);}.pdoc *{scroll-margin:2rem;}.pdoc .pdoc-code .linenos{user-select:none;}.pdoc .attr:hover{filter:contrast(0.95);}.pdoc section, .pdoc .classattr{position:relative;}.pdoc .headerlink{--width:clamp(1rem, 3vw, 2rem);position:absolute;top:0;left:calc(0rem - var(--width));transition:all 100ms ease-in-out;opacity:0;}.pdoc .headerlink::before{content:"#";display:block;text-align:center;width:var(--width);height:2.3rem;line-height:2.3rem;font-size:1.5rem;}.pdoc .attr:hover ~ .headerlink,.pdoc *:target > .headerlink,.pdoc .headerlink:hover{opacity:1;}.pdoc .attr{display:block;margin:.5rem 0 .5rem;padding:.4rem .4rem .4rem 1rem;background-color:var(--accent);overflow-x:auto;}.pdoc .classattr{margin-left:2rem;}.pdoc .decorator-deprecated{color:#842029;}.pdoc .decorator-deprecated ~ span{filter:grayscale(1) opacity(0.8);}.pdoc .name{color:var(--name);font-weight:bold;}.pdoc .def{color:var(--def);font-weight:bold;}.pdoc .signature{background-color:transparent;}.pdoc .param, .pdoc .return-annotation{white-space:pre;}.pdoc .signature.multiline .param{display:block;}.pdoc .signature.condensed .param{display:inline-block;}.pdoc .annotation{color:var(--annotation);}.pdoc .view-value-toggle-state,.pdoc .view-value-toggle-state ~ .default_value{display:none;}.pdoc .view-value-toggle-state:checked ~ .default_value{display:inherit;}.pdoc .view-value-button{font-size:.5rem;vertical-align:middle;border-style:dashed;margin-top:-0.1rem;}.pdoc .view-value-button:hover{background:white;}.pdoc .view-value-button::before{content:"show";text-align:center;width:2.2em;display:inline-block;}.pdoc .view-value-toggle-state:checked ~ .view-value-button::before{content:"hide";}.pdoc .inherited{margin-left:2rem;}.pdoc .inherited dt{font-weight:700;}.pdoc .inherited dt, .pdoc .inherited dd{display:inline;margin-left:0;margin-bottom:.5rem;}.pdoc .inherited dd:not(:last-child):after{content:", ";}.pdoc .inherited .class:before{content:"class ";}.pdoc .inherited .function a:after{content:"()";}.pdoc .search-result .docstring{overflow:auto;max-height:25vh;}.pdoc .search-result.focused > .attr{background-color:var(--active);}.pdoc .attribution{margin-top:2rem;display:block;opacity:0.5;transition:all 200ms;filter:grayscale(100%);}.pdoc .attribution:hover{opacity:1;filter:grayscale(0%);}.pdoc .attribution img{margin-left:5px;height:27px;vertical-align:bottom;width:50px;transition:all 200ms;}.pdoc table{display:block;width:max-content;max-width:100%;overflow:auto;margin-bottom:1rem;}.pdoc table th{font-weight:600;}.pdoc table th, .pdoc table td{padding:6px 13px;border:1px solid var(--accent2);}</style>
+    <style>/*! custom.css */</style></head>
+<body>
+    <nav class="pdoc">
+        <label id="navtoggle" for="togglestate" class="pdoc-button"><svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'><path stroke-linecap='round' stroke="currentColor" stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/></svg></label>
+        <input id="togglestate" type="checkbox" aria-hidden="true" tabindex="-1">
+        <div>            <a class="pdoc-button module-list-button" href="../core.html">
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-box-arrow-in-left" viewBox="0 0 16 16">
+  <path fill-rule="evenodd" d="M10 3.5a.5.5 0 0 0-.5-.5h-8a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5v-2a.5.5 0 0 1 1 0v2A1.5 1.5 0 0 1 9.5 14h-8A1.5 1.5 0 0 1 0 12.5v-9A1.5 1.5 0 0 1 1.5 2h8A1.5 1.5 0 0 1 11 3.5v2a.5.5 0 0 1-1 0v-2z"/>
+  <path fill-rule="evenodd" d="M4.146 8.354a.5.5 0 0 1 0-.708l3-3a.5.5 0 1 1 .708.708L5.707 7.5H14.5a.5.5 0 0 1 0 1H5.707l2.147 2.146a.5.5 0 0 1-.708.708l-3-3z"/>
+</svg>                &nbsp;vanchor.core</a>
+
+
+            <input type="search" placeholder="Search..." role="searchbox" aria-label="search"
+                   pattern=".+" required>
+
+
+
+            <h2>API Documentation</h2>
+                <ul class="memberlist">
+            <li>
+                    <a class="class" href="#ControlModeName">ControlModeName</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="variable" href="#ControlModeName.MANUAL">MANUAL</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.ANCHOR_HOLD">ANCHOR_HOLD</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.ANCHOR_ML">ANCHOR_ML</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.HEADING_HOLD">HEADING_HOLD</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.WAYPOINT">WAYPOINT</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.WORK_AREA">WORK_AREA</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.FOLLOW_APB">FOLLOW_APB</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.DRIFT">DRIFT</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.CONTOUR_FOLLOW">CONTOUR_FOLLOW</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.ORBIT">ORBIT</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ControlModeName.TROLLING">TROLLING</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#GeoPoint">GeoPoint</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#GeoPoint.__init__">GeoPoint</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GeoPoint.lat">lat</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GeoPoint.lon">lon</a>
+                        </li>
+                        <li>
+                                <a class="function" href="#GeoPoint.as_tuple">as_tuple</a>
+                        </li>
+                        <li>
+                                <a class="function" href="#GeoPoint.is_null">is_null</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#GpsFix">GpsFix</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#GpsFix.__init__">GpsFix</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GpsFix.point">point</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GpsFix.sog_knots">sog_knots</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GpsFix.cog_deg">cog_deg</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GpsFix.timestamp">timestamp</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GpsFix.valid">valid</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#HeadingReading">HeadingReading</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#HeadingReading.__init__">HeadingReading</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#HeadingReading.heading_deg">heading_deg</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#HeadingReading.timestamp">timestamp</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#Waypoint">Waypoint</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#Waypoint.__init__">Waypoint</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Waypoint.name">name</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Waypoint.point">point</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Waypoint.heading">heading</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#MotorCommand">MotorCommand</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#MotorCommand.__init__">MotorCommand</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#MotorCommand.thrust">thrust</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#MotorCommand.steering">steering</a>
+                        </li>
+                        <li>
+                                <a class="function" href="#MotorCommand.clamped">clamped</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#ManualSetpoint">ManualSetpoint</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#ManualSetpoint.__init__">ManualSetpoint</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ManualSetpoint.thrust">thrust</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#ManualSetpoint.steering">steering</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#GuidedSetpoint">GuidedSetpoint</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#GuidedSetpoint.__init__">GuidedSetpoint</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GuidedSetpoint.target_heading">target_heading</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#GuidedSetpoint.thrust">thrust</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="variable" href="#Setpoint">Setpoint</a>
+            </li>
+            <li>
+                    <a class="class" href="#CrossTrackError">CrossTrackError</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#CrossTrackError.__init__">CrossTrackError</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#CrossTrackError.distance_m">distance_m</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#CrossTrackError.steer_to">steer_to</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#Environment">Environment</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#Environment.__init__">Environment</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.current_speed">current_speed</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.current_dir">current_dir</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.wind_speed">wind_speed</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.wind_dir">wind_dir</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.wind_leeway">wind_leeway</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.gust_amplitude_mps">gust_amplitude_mps</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.gust_tau_s">gust_tau_s</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.wind_variability">wind_variability</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#Environment.current_variability">current_variability</a>
+                        </li>
+                        <li>
+                                <a class="function" href="#Environment.drift_vector">drift_vector</a>
+                        </li>
+                </ul>
+
+            </li>
+            <li>
+                    <a class="class" href="#BoatState">BoatState</a>
+                            <ul class="memberlist">
+                        <li>
+                                <a class="function" href="#BoatState.__init__">BoatState</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#BoatState.point">point</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#BoatState.heading_deg">heading_deg</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#BoatState.speed_mps">speed_mps</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#BoatState.timestamp">timestamp</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#BoatState.ground_ve">ground_ve</a>
+                        </li>
+                        <li>
+                                <a class="variable" href="#BoatState.ground_vn">ground_vn</a>
+                        </li>
+                </ul>
+
+            </li>
+    </ul>
+
+
+
+        <a class="attribution" title="pdoc: Python API documentation generator" href="https://pdoc.dev" target="_blank">
+            built with <span class="visually-hidden">pdoc</span><img
+                alt="pdoc logo"
+                src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20role%3D%22img%22%20aria-label%3D%22pdoc%20logo%22%20width%3D%22300%22%20height%3D%22160%22%20viewBox%3D%220%200%20150%2080%22%3E%3Ctitle%3Epdoc%3C/title%3E%3Cpath%20d%3D%22M132.316%2048.886c.276-4.679%202.342-6.698%204.409-7.982s4.27-1.165%206.751-1.055c1.586.07%203.044.156%204.222-.482%201.142-.619%202.026-1.932%202.162-3.739.268-3.576-1.929-5.368-5.006-5.551s-7.599.524-10.517%201.606c-4.455%201.652-8.588%206.606-9.552%208.992s-2.342%206.193-1.745%2010.873%202.664%209.221%205.878%2011.79%205.878%203.808%2010.103%204.312%203.444.229%206.062.229%205.006-2.202%204.914-4.909-2.296-5.001-4.501-4.863-3.077.505-5.281.229-7.715-2.064-7.899-9.451z%22%20fill%3D%22%23198754%22/%3E%3Ccircle%20cx%3D%22101.504%22%20cy%3D%2248.943%22%20r%3D%2214.208%22%20fill%3D%22none%22%20stroke%3D%22%23198754%22%20stroke-width%3D%229.354%22/%3E%3Cpath%20d%3D%22M87.81.002c-3.637.065-5.001.454-7.014%201.232s-3.443%201.363-6.3%204.282c-1.723%201.76-3.148%205.019-3.776%207.329-.413%201.521-.316%202.63-.316%202.63l-.195%2034.612c.065%205.774-6.755%208.305-9.612%208.37s-9.678-1.038-9.743-9.408%207.128-9.521%208.362-9.521c1.413-.13%202.526-.021%203.718-.016%202.071.009%204.157-.778%204.092-4.671s-4.157-4.736-4.157-4.736c-6.3-.843-11.43%202.206-11.43%202.206S40.917%2038.15%2041.372%2049.634%2051.568%2068.19%2061.311%2068.125s18.316-7.007%2018.445-17.193l.13-22.772c.046-2.291%202.683-3.644%204.476-4.203.745-.232%201.694-.274%201.694-.274l10.457-.13s4.871-.324%207.729-3.114%204.352-6.294%204.352-6.294.974-3.049.13-4.606-.195-1.233-2.792-3.309-8.573-4.477-8.573-4.477S91.447-.063%2087.81.002zM0%2047.169l.065%2028.417S0%2080.127%204.481%2079.997s5.072-3.866%205.049-4.152l-.113-28.482s1.624-7.656%209.937-7.721%2010.002%206.942%2010.002%208.499-.909%2010.51-9.093%2010.51c-.948%200-2.99-.567-4.145-.272-3.919%201-3.194%204.554-3.194%204.554s.065%205.061%207.404%204.996%2018.575-6.034%2018.575-19.074S26.953%2030.04%2019.549%2029.91%201.234%2035.296%200%2047.169z%22%20fill%3D%22%23198754%22/%3E%3Cg%20transform%3D%22matrix%28.325601%200%200%20.325256%20-10.32669%20-45.802786%29%22%3E%3Ccircle%20cx%3D%22297.554%22%20cy%3D%22172.286%22%20r%3D%2216.5%22%20fill%3D%22%23fff%22/%3E%3Cellipse%20cx%3D%22297.709%22%20cy%3D%22172.642%22%20rx%3D%2211.071%22%20ry%3D%2210.871%22%20fill%3D%22%23105a48%22/%3E%3Ccircle%20cx%3D%22304.104%22%20cy%3D%22167.667%22%20r%3D%224.5%22%20fill%3D%22%23fff%22/%3E%3C/g%3E%3Cpath%20d%3D%22M94.661%2017.032l.893-1.476s.99.714%201.916.925%201.575.114%202.955.114l14.565-.162c1.283-.032%203.085-.762%203.02-3.293s-.373-3.503-.373-3.503l1.283-.487s.52.503.877%201.573.309%201.995.292%202.66-.227%201.541-.227%201.541%201.564-.308%202.359-1.038.823-.779%201.489-1.508.812-.86.812-.86.552-.13.877.26.341.957.065%201.46-1.672%202.206-3.247%203.066-2.76%201.427-3.929%201.768-3.848.73-7.063.714l-10.944-.114s-2.143-.081-3.02-.373-2.241-.973-2.598-1.265z%22%20fill%3D%22%23d36d49%22/%3E%3Cg%20fill%3D%22%23105a48%22%3E%3Cellipse%20cx%3D%2293.052%22%20cy%3D%2243.567%22%20rx%3D%22.869%22%20ry%3D%221.014%22%20transform%3D%22rotate%28341.022%29%22/%3E%3Cellipse%20cx%3D%22104.3%22%20cy%3D%22-16.184%22%20rx%3D%22.865%22%20ry%3D%221.009%22%20transform%3D%22rotate%2814.786%29%22/%3E%3C/g%3E%3C/svg%3E"/>
+        </a>
+</div>
+    </nav>
+    <main class="pdoc">
+            <section class="module-info">
+                    <h1 class="modulename">
+<a href="./../../vanchor.html">vanchor</a><wbr>.<a href="./../core.html">core</a><wbr>.models    </h1>
+
+                        <div class="docstring"><p>Typed data models shared across the whole system.</p>
+
+<p>These are deliberately small, immutable-ish dataclasses. They are the common
+vocabulary spoken by sensors, the navigator, control modes, the helm and the
+motor controller, so that real and simulated devices are interchangeable.</p>
+</div>
+
+                        <input id="mod-models-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+
+                        <label class="view-source-button" for="mod-models-view-source"><span>View Source</span></label>
+
+                        <div class="pdoc-code codehilite"><pre><span></span><span id="L-1"><a href="#L-1"><span class="linenos">  1</span></a><span class="sd">&quot;&quot;&quot;Typed data models shared across the whole system.</span>
+</span><span id="L-2"><a href="#L-2"><span class="linenos">  2</span></a>
+</span><span id="L-3"><a href="#L-3"><span class="linenos">  3</span></a><span class="sd">These are deliberately small, immutable-ish dataclasses. They are the common</span>
+</span><span id="L-4"><a href="#L-4"><span class="linenos">  4</span></a><span class="sd">vocabulary spoken by sensors, the navigator, control modes, the helm and the</span>
+</span><span id="L-5"><a href="#L-5"><span class="linenos">  5</span></a><span class="sd">motor controller, so that real and simulated devices are interchangeable.</span>
+</span><span id="L-6"><a href="#L-6"><span class="linenos">  6</span></a><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="L-7"><a href="#L-7"><span class="linenos">  7</span></a>
+</span><span id="L-8"><a href="#L-8"><span class="linenos">  8</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+</span><span id="L-9"><a href="#L-9"><span class="linenos">  9</span></a>
+</span><span id="L-10"><a href="#L-10"><span class="linenos"> 10</span></a><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+</span><span id="L-11"><a href="#L-11"><span class="linenos"> 11</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+</span><span id="L-12"><a href="#L-12"><span class="linenos"> 12</span></a><span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">Enum</span>
+</span><span id="L-13"><a href="#L-13"><span class="linenos"> 13</span></a>
+</span><span id="L-14"><a href="#L-14"><span class="linenos"> 14</span></a>
+</span><span id="L-15"><a href="#L-15"><span class="linenos"> 15</span></a><span class="k">class</span><span class="w"> </span><span class="nc">ControlModeName</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+</span><span id="L-16"><a href="#L-16"><span class="linenos"> 16</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;The high level steering behaviours the controller can be in.&quot;&quot;&quot;</span>
+</span><span id="L-17"><a href="#L-17"><span class="linenos"> 17</span></a>
+</span><span id="L-18"><a href="#L-18"><span class="linenos"> 18</span></a>    <span class="n">MANUAL</span> <span class="o">=</span> <span class="s2">&quot;manual&quot;</span>
+</span><span id="L-19"><a href="#L-19"><span class="linenos"> 19</span></a>    <span class="n">ANCHOR_HOLD</span> <span class="o">=</span> <span class="s2">&quot;anchor_hold&quot;</span>
+</span><span id="L-20"><a href="#L-20"><span class="linenos"> 20</span></a>    <span class="n">ANCHOR_ML</span> <span class="o">=</span> <span class="s2">&quot;anchor_ml&quot;</span>  <span class="c1"># learned (tiny-NN) station-keeper</span>
+</span><span id="L-21"><a href="#L-21"><span class="linenos"> 21</span></a>    <span class="n">HEADING_HOLD</span> <span class="o">=</span> <span class="s2">&quot;heading_hold&quot;</span>
+</span><span id="L-22"><a href="#L-22"><span class="linenos"> 22</span></a>    <span class="n">WAYPOINT</span> <span class="o">=</span> <span class="s2">&quot;waypoint&quot;</span>
+</span><span id="L-23"><a href="#L-23"><span class="linenos"> 23</span></a>    <span class="n">WORK_AREA</span> <span class="o">=</span> <span class="s2">&quot;work_area&quot;</span>  <span class="c1"># visit spots, hold at each, advance (timed/manual)</span>
+</span><span id="L-24"><a href="#L-24"><span class="linenos"> 24</span></a>    <span class="n">FOLLOW_APB</span> <span class="o">=</span> <span class="s2">&quot;follow_apb&quot;</span>
+</span><span id="L-25"><a href="#L-25"><span class="linenos"> 25</span></a>    <span class="n">DRIFT</span> <span class="o">=</span> <span class="s2">&quot;drift&quot;</span>
+</span><span id="L-26"><a href="#L-26"><span class="linenos"> 26</span></a>    <span class="n">CONTOUR_FOLLOW</span> <span class="o">=</span> <span class="s2">&quot;contour_follow&quot;</span>
+</span><span id="L-27"><a href="#L-27"><span class="linenos"> 27</span></a>    <span class="n">ORBIT</span> <span class="o">=</span> <span class="s2">&quot;orbit&quot;</span>
+</span><span id="L-28"><a href="#L-28"><span class="linenos"> 28</span></a>    <span class="n">TROLLING</span> <span class="o">=</span> <span class="s2">&quot;trolling&quot;</span>
+</span><span id="L-29"><a href="#L-29"><span class="linenos"> 29</span></a>
+</span><span id="L-30"><a href="#L-30"><span class="linenos"> 30</span></a>
+</span><span id="L-31"><a href="#L-31"><span class="linenos"> 31</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-32"><a href="#L-32"><span class="linenos"> 32</span></a><span class="k">class</span><span class="w"> </span><span class="nc">GeoPoint</span><span class="p">:</span>
+</span><span id="L-33"><a href="#L-33"><span class="linenos"> 33</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;A WGS84 latitude/longitude in decimal degrees.&quot;&quot;&quot;</span>
+</span><span id="L-34"><a href="#L-34"><span class="linenos"> 34</span></a>
+</span><span id="L-35"><a href="#L-35"><span class="linenos"> 35</span></a>    <span class="n">lat</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="L-36"><a href="#L-36"><span class="linenos"> 36</span></a>    <span class="n">lon</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="L-37"><a href="#L-37"><span class="linenos"> 37</span></a>
+</span><span id="L-38"><a href="#L-38"><span class="linenos"> 38</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">as_tuple</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+</span><span id="L-39"><a href="#L-39"><span class="linenos"> 39</span></a>        <span class="k">return</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lat</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lon</span><span class="p">)</span>
+</span><span id="L-40"><a href="#L-40"><span class="linenos"> 40</span></a>
+</span><span id="L-41"><a href="#L-41"><span class="linenos"> 41</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">is_null</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+</span><span id="L-42"><a href="#L-42"><span class="linenos"> 42</span></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;True for the conventional ``(0, 0)`` &quot;no fix&quot; sentinel.&quot;&quot;&quot;</span>
+</span><span id="L-43"><a href="#L-43"><span class="linenos"> 43</span></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">lat</span> <span class="o">==</span> <span class="mf">0.0</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">lon</span> <span class="o">==</span> <span class="mf">0.0</span>
+</span><span id="L-44"><a href="#L-44"><span class="linenos"> 44</span></a>
+</span><span id="L-45"><a href="#L-45"><span class="linenos"> 45</span></a>
+</span><span id="L-46"><a href="#L-46"><span class="linenos"> 46</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-47"><a href="#L-47"><span class="linenos"> 47</span></a><span class="k">class</span><span class="w"> </span><span class="nc">GpsFix</span><span class="p">:</span>
+</span><span id="L-48"><a href="#L-48"><span class="linenos"> 48</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;A parsed position fix (from an RMC/GGA sentence or a simulated GPS).&quot;&quot;&quot;</span>
+</span><span id="L-49"><a href="#L-49"><span class="linenos"> 49</span></a>
+</span><span id="L-50"><a href="#L-50"><span class="linenos"> 50</span></a>    <span class="n">point</span><span class="p">:</span> <span class="n">GeoPoint</span>
+</span><span id="L-51"><a href="#L-51"><span class="linenos"> 51</span></a>    <span class="n">sog_knots</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># speed over ground</span>
+</span><span id="L-52"><a href="#L-52"><span class="linenos"> 52</span></a>    <span class="n">cog_deg</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># course over ground</span>
+</span><span id="L-53"><a href="#L-53"><span class="linenos"> 53</span></a>    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-54"><a href="#L-54"><span class="linenos"> 54</span></a>    <span class="n">valid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+</span><span id="L-55"><a href="#L-55"><span class="linenos"> 55</span></a>
+</span><span id="L-56"><a href="#L-56"><span class="linenos"> 56</span></a>
+</span><span id="L-57"><a href="#L-57"><span class="linenos"> 57</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-58"><a href="#L-58"><span class="linenos"> 58</span></a><span class="k">class</span><span class="w"> </span><span class="nc">HeadingReading</span><span class="p">:</span>
+</span><span id="L-59"><a href="#L-59"><span class="linenos"> 59</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;A compass heading sample in degrees (0..360, magnetic or true).&quot;&quot;&quot;</span>
+</span><span id="L-60"><a href="#L-60"><span class="linenos"> 60</span></a>
+</span><span id="L-61"><a href="#L-61"><span class="linenos"> 61</span></a>    <span class="n">heading_deg</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="L-62"><a href="#L-62"><span class="linenos"> 62</span></a>    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-63"><a href="#L-63"><span class="linenos"> 63</span></a>
+</span><span id="L-64"><a href="#L-64"><span class="linenos"> 64</span></a>
+</span><span id="L-65"><a href="#L-65"><span class="linenos"> 65</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-66"><a href="#L-66"><span class="linenos"> 66</span></a><span class="k">class</span><span class="w"> </span><span class="nc">Waypoint</span><span class="p">:</span>
+</span><span id="L-67"><a href="#L-67"><span class="linenos"> 67</span></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="L-68"><a href="#L-68"><span class="linenos"> 68</span></a>    <span class="n">point</span><span class="p">:</span> <span class="n">GeoPoint</span>
+</span><span id="L-69"><a href="#L-69"><span class="linenos"> 69</span></a>    <span class="c1"># Optional desired boat heading (deg) to hold while spot-locked here in Work</span>
+</span><span id="L-70"><a href="#L-70"><span class="linenos"> 70</span></a>    <span class="c1"># Area mode. None = don&#39;t force a heading (the boat weathervanes naturally).</span>
+</span><span id="L-71"><a href="#L-71"><span class="linenos"> 71</span></a>    <span class="n">heading</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="L-72"><a href="#L-72"><span class="linenos"> 72</span></a>
+</span><span id="L-73"><a href="#L-73"><span class="linenos"> 73</span></a>
+</span><span id="L-74"><a href="#L-74"><span class="linenos"> 74</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-75"><a href="#L-75"><span class="linenos"> 75</span></a><span class="k">class</span><span class="w"> </span><span class="nc">MotorCommand</span><span class="p">:</span>
+</span><span id="L-76"><a href="#L-76"><span class="linenos"> 76</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;The actuator-level command sent to the motor controller.</span>
+</span><span id="L-77"><a href="#L-77"><span class="linenos"> 77</span></a>
+</span><span id="L-78"><a href="#L-78"><span class="linenos"> 78</span></a><span class="sd">    ``thrust`` is the normalized forward drive (-1 reverse .. 1 full ahead).</span>
+</span><span id="L-79"><a href="#L-79"><span class="linenos"> 79</span></a><span class="sd">    ``steering`` is the normalized turn command (-1 hard port .. 1 hard</span>
+</span><span id="L-80"><a href="#L-80"><span class="linenos"> 80</span></a><span class="sd">    starboard). A trolling motor realizes ``steering`` by physically rotating;</span>
+</span><span id="L-81"><a href="#L-81"><span class="linenos"> 81</span></a><span class="sd">    a rudder boat would realize it with a rudder. The abstraction is the same.</span>
+</span><span id="L-82"><a href="#L-82"><span class="linenos"> 82</span></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="L-83"><a href="#L-83"><span class="linenos"> 83</span></a>
+</span><span id="L-84"><a href="#L-84"><span class="linenos"> 84</span></a>    <span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-85"><a href="#L-85"><span class="linenos"> 85</span></a>    <span class="n">steering</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-86"><a href="#L-86"><span class="linenos"> 86</span></a>
+</span><span id="L-87"><a href="#L-87"><span class="linenos"> 87</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">clamped</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;MotorCommand&quot;</span><span class="p">:</span>
+</span><span id="L-88"><a href="#L-88"><span class="linenos"> 88</span></a>        <span class="k">return</span> <span class="n">MotorCommand</span><span class="p">(</span>
+</span><span id="L-89"><a href="#L-89"><span class="linenos"> 89</span></a>            <span class="n">thrust</span><span class="o">=</span><span class="n">_clamp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">thrust</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+</span><span id="L-90"><a href="#L-90"><span class="linenos"> 90</span></a>            <span class="n">steering</span><span class="o">=</span><span class="n">_clamp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">steering</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+</span><span id="L-91"><a href="#L-91"><span class="linenos"> 91</span></a>        <span class="p">)</span>
+</span><span id="L-92"><a href="#L-92"><span class="linenos"> 92</span></a>
+</span><span id="L-93"><a href="#L-93"><span class="linenos"> 93</span></a>
+</span><span id="L-94"><a href="#L-94"><span class="linenos"> 94</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-95"><a href="#L-95"><span class="linenos"> 95</span></a><span class="k">class</span><span class="w"> </span><span class="nc">ManualSetpoint</span><span class="p">:</span>
+</span><span id="L-96"><a href="#L-96"><span class="linenos"> 96</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Mode output: drive the motor directly.&quot;&quot;&quot;</span>
+</span><span id="L-97"><a href="#L-97"><span class="linenos"> 97</span></a>
+</span><span id="L-98"><a href="#L-98"><span class="linenos"> 98</span></a>    <span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-99"><a href="#L-99"><span class="linenos"> 99</span></a>    <span class="n">steering</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-100"><a href="#L-100"><span class="linenos">100</span></a>
+</span><span id="L-101"><a href="#L-101"><span class="linenos">101</span></a>
+</span><span id="L-102"><a href="#L-102"><span class="linenos">102</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-103"><a href="#L-103"><span class="linenos">103</span></a><span class="k">class</span><span class="w"> </span><span class="nc">GuidedSetpoint</span><span class="p">:</span>
+</span><span id="L-104"><a href="#L-104"><span class="linenos">104</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Mode output: hold a target heading; the helm derives the steering.&quot;&quot;&quot;</span>
+</span><span id="L-105"><a href="#L-105"><span class="linenos">105</span></a>
+</span><span id="L-106"><a href="#L-106"><span class="linenos">106</span></a>    <span class="n">target_heading</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-107"><a href="#L-107"><span class="linenos">107</span></a>    <span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-108"><a href="#L-108"><span class="linenos">108</span></a>
+</span><span id="L-109"><a href="#L-109"><span class="linenos">109</span></a>
+</span><span id="L-110"><a href="#L-110"><span class="linenos">110</span></a><span class="c1"># A control mode produces one of these each tick.</span>
+</span><span id="L-111"><a href="#L-111"><span class="linenos">111</span></a><span class="n">Setpoint</span> <span class="o">=</span> <span class="n">ManualSetpoint</span> <span class="o">|</span> <span class="n">GuidedSetpoint</span>
+</span><span id="L-112"><a href="#L-112"><span class="linenos">112</span></a>
+</span><span id="L-113"><a href="#L-113"><span class="linenos">113</span></a>
+</span><span id="L-114"><a href="#L-114"><span class="linenos">114</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="L-115"><a href="#L-115"><span class="linenos">115</span></a><span class="k">class</span><span class="w"> </span><span class="nc">CrossTrackError</span><span class="p">:</span>
+</span><span id="L-116"><a href="#L-116"><span class="linenos">116</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Cross-track error relative to a leg. ``distance_m`` is signed: positive</span>
+</span><span id="L-117"><a href="#L-117"><span class="linenos">117</span></a><span class="sd">    means the boat is to starboard (right) of the intended track.&quot;&quot;&quot;</span>
+</span><span id="L-118"><a href="#L-118"><span class="linenos">118</span></a>
+</span><span id="L-119"><a href="#L-119"><span class="linenos">119</span></a>    <span class="n">distance_m</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="L-120"><a href="#L-120"><span class="linenos">120</span></a>    <span class="n">steer_to</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># &quot;L&quot; or &quot;R&quot; -- the direction to steer to get back on track</span>
+</span><span id="L-121"><a href="#L-121"><span class="linenos">121</span></a>
+</span><span id="L-122"><a href="#L-122"><span class="linenos">122</span></a>
+</span><span id="L-123"><a href="#L-123"><span class="linenos">123</span></a><span class="nd">@dataclass</span>
+</span><span id="L-124"><a href="#L-124"><span class="linenos">124</span></a><span class="k">class</span><span class="w"> </span><span class="nc">Environment</span><span class="p">:</span>
+</span><span id="L-125"><a href="#L-125"><span class="linenos">125</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Wind and current acting on the boat. Directions are *toward* which the</span>
+</span><span id="L-126"><a href="#L-126"><span class="linenos">126</span></a><span class="sd">    flow pushes, in degrees. Speeds are in m/s.&quot;&quot;&quot;</span>
+</span><span id="L-127"><a href="#L-127"><span class="linenos">127</span></a>
+</span><span id="L-128"><a href="#L-128"><span class="linenos">128</span></a>    <span class="n">current_speed</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-129"><a href="#L-129"><span class="linenos">129</span></a>    <span class="n">current_dir</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-130"><a href="#L-130"><span class="linenos">130</span></a>    <span class="n">wind_speed</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-131"><a href="#L-131"><span class="linenos">131</span></a>    <span class="n">wind_dir</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-132"><a href="#L-132"><span class="linenos">132</span></a>    <span class="c1"># Fraction of wind speed that translates into hull drift (leeway).</span>
+</span><span id="L-133"><a href="#L-133"><span class="linenos">133</span></a>    <span class="n">wind_leeway</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.03</span>
+</span><span id="L-134"><a href="#L-134"><span class="linenos">134</span></a>    <span class="c1"># Gustiness: std (m/s) and correlation time (s) of the time-varying gust the</span>
+</span><span id="L-135"><a href="#L-135"><span class="linenos">135</span></a>    <span class="c1"># simulator layers on top of the base wind. 0 amplitude = steady wind.</span>
+</span><span id="L-136"><a href="#L-136"><span class="linenos">136</span></a>    <span class="n">gust_amplitude_mps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-137"><a href="#L-137"><span class="linenos">137</span></a>    <span class="n">gust_tau_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="L-138"><a href="#L-138"><span class="linenos">138</span></a>    <span class="c1"># Slow weather wander (much slower than gusts), in [0, 1]. 0 = steady.</span>
+</span><span id="L-139"><a href="#L-139"><span class="linenos">139</span></a>    <span class="c1"># The simulator evolves wind speed/direction (and current) by this much and</span>
+</span><span id="L-140"><a href="#L-140"><span class="linenos">140</span></a>    <span class="c1"># writes the evolving values back into wind_speed/wind_dir/current_speed.</span>
+</span><span id="L-141"><a href="#L-141"><span class="linenos">141</span></a>    <span class="n">wind_variability</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-142"><a href="#L-142"><span class="linenos">142</span></a>    <span class="n">current_variability</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-143"><a href="#L-143"><span class="linenos">143</span></a>
+</span><span id="L-144"><a href="#L-144"><span class="linenos">144</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drift_vector</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+</span><span id="L-145"><a href="#L-145"><span class="linenos">145</span></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Net environmental drift as an (east, north) velocity in m/s.&quot;&quot;&quot;</span>
+</span><span id="L-146"><a href="#L-146"><span class="linenos">146</span></a>        <span class="n">ce</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_speed</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">current_dir</span><span class="p">))</span>
+</span><span id="L-147"><a href="#L-147"><span class="linenos">147</span></a>        <span class="n">cn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_speed</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">current_dir</span><span class="p">))</span>
+</span><span id="L-148"><a href="#L-148"><span class="linenos">148</span></a>        <span class="n">we</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_speed</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_leeway</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wind_dir</span><span class="p">))</span>
+</span><span id="L-149"><a href="#L-149"><span class="linenos">149</span></a>        <span class="n">wn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_speed</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_leeway</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wind_dir</span><span class="p">))</span>
+</span><span id="L-150"><a href="#L-150"><span class="linenos">150</span></a>        <span class="k">return</span> <span class="p">(</span><span class="n">ce</span> <span class="o">+</span> <span class="n">we</span><span class="p">,</span> <span class="n">cn</span> <span class="o">+</span> <span class="n">wn</span><span class="p">)</span>
+</span><span id="L-151"><a href="#L-151"><span class="linenos">151</span></a>
+</span><span id="L-152"><a href="#L-152"><span class="linenos">152</span></a>
+</span><span id="L-153"><a href="#L-153"><span class="linenos">153</span></a><span class="nd">@dataclass</span>
+</span><span id="L-154"><a href="#L-154"><span class="linenos">154</span></a><span class="k">class</span><span class="w"> </span><span class="nc">BoatState</span><span class="p">:</span>
+</span><span id="L-155"><a href="#L-155"><span class="linenos">155</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Ground-truth physical state of the (simulated) boat.&quot;&quot;&quot;</span>
+</span><span id="L-156"><a href="#L-156"><span class="linenos">156</span></a>
+</span><span id="L-157"><a href="#L-157"><span class="linenos">157</span></a>    <span class="n">point</span><span class="p">:</span> <span class="n">GeoPoint</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">GeoPoint</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
+</span><span id="L-158"><a href="#L-158"><span class="linenos">158</span></a>    <span class="n">heading_deg</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># the way the bow points</span>
+</span><span id="L-159"><a href="#L-159"><span class="linenos">159</span></a>    <span class="n">speed_mps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># forward speed through the water</span>
+</span><span id="L-160"><a href="#L-160"><span class="linenos">160</span></a>    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="L-161"><a href="#L-161"><span class="linenos">161</span></a>    <span class="c1"># Velocity over ground (world frame, m/s) -- hull motion plus environmental</span>
+</span><span id="L-162"><a href="#L-162"><span class="linenos">162</span></a>    <span class="c1"># drift. This is what a real GPS reports as course/speed over ground.</span>
+</span><span id="L-163"><a href="#L-163"><span class="linenos">163</span></a>    <span class="n">ground_ve</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># east</span>
+</span><span id="L-164"><a href="#L-164"><span class="linenos">164</span></a>    <span class="n">ground_vn</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># north</span>
+</span><span id="L-165"><a href="#L-165"><span class="linenos">165</span></a>
+</span><span id="L-166"><a href="#L-166"><span class="linenos">166</span></a>
+</span><span id="L-167"><a href="#L-167"><span class="linenos">167</span></a><span class="k">def</span><span class="w"> </span><span class="nf">_clamp</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">low</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">high</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="L-168"><a href="#L-168"><span class="linenos">168</span></a>    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="n">low</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">high</span><span class="p">,</span> <span class="n">value</span><span class="p">))</span>
+</span></pre></div>
+
+
+            </section>
+                <section id="ControlModeName">
+                            <input id="ControlModeName-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+            
+    <span class="def">class</span>
+    <span class="name">ControlModeName</span><wbr>(<span class="base">builtins.str</span>, <span class="base">enum.Enum</span>):
+
+                <label class="view-source-button" for="ControlModeName-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#ControlModeName"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="ControlModeName-16"><a href="#ControlModeName-16"><span class="linenos">16</span></a><span class="k">class</span><span class="w"> </span><span class="nc">ControlModeName</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+</span><span id="ControlModeName-17"><a href="#ControlModeName-17"><span class="linenos">17</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;The high level steering behaviours the controller can be in.&quot;&quot;&quot;</span>
+</span><span id="ControlModeName-18"><a href="#ControlModeName-18"><span class="linenos">18</span></a>
+</span><span id="ControlModeName-19"><a href="#ControlModeName-19"><span class="linenos">19</span></a>    <span class="n">MANUAL</span> <span class="o">=</span> <span class="s2">&quot;manual&quot;</span>
+</span><span id="ControlModeName-20"><a href="#ControlModeName-20"><span class="linenos">20</span></a>    <span class="n">ANCHOR_HOLD</span> <span class="o">=</span> <span class="s2">&quot;anchor_hold&quot;</span>
+</span><span id="ControlModeName-21"><a href="#ControlModeName-21"><span class="linenos">21</span></a>    <span class="n">ANCHOR_ML</span> <span class="o">=</span> <span class="s2">&quot;anchor_ml&quot;</span>  <span class="c1"># learned (tiny-NN) station-keeper</span>
+</span><span id="ControlModeName-22"><a href="#ControlModeName-22"><span class="linenos">22</span></a>    <span class="n">HEADING_HOLD</span> <span class="o">=</span> <span class="s2">&quot;heading_hold&quot;</span>
+</span><span id="ControlModeName-23"><a href="#ControlModeName-23"><span class="linenos">23</span></a>    <span class="n">WAYPOINT</span> <span class="o">=</span> <span class="s2">&quot;waypoint&quot;</span>
+</span><span id="ControlModeName-24"><a href="#ControlModeName-24"><span class="linenos">24</span></a>    <span class="n">WORK_AREA</span> <span class="o">=</span> <span class="s2">&quot;work_area&quot;</span>  <span class="c1"># visit spots, hold at each, advance (timed/manual)</span>
+</span><span id="ControlModeName-25"><a href="#ControlModeName-25"><span class="linenos">25</span></a>    <span class="n">FOLLOW_APB</span> <span class="o">=</span> <span class="s2">&quot;follow_apb&quot;</span>
+</span><span id="ControlModeName-26"><a href="#ControlModeName-26"><span class="linenos">26</span></a>    <span class="n">DRIFT</span> <span class="o">=</span> <span class="s2">&quot;drift&quot;</span>
+</span><span id="ControlModeName-27"><a href="#ControlModeName-27"><span class="linenos">27</span></a>    <span class="n">CONTOUR_FOLLOW</span> <span class="o">=</span> <span class="s2">&quot;contour_follow&quot;</span>
+</span><span id="ControlModeName-28"><a href="#ControlModeName-28"><span class="linenos">28</span></a>    <span class="n">ORBIT</span> <span class="o">=</span> <span class="s2">&quot;orbit&quot;</span>
+</span><span id="ControlModeName-29"><a href="#ControlModeName-29"><span class="linenos">29</span></a>    <span class="n">TROLLING</span> <span class="o">=</span> <span class="s2">&quot;trolling&quot;</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>The high level steering behaviours the controller can be in.</p>
+</div>
+
+
+                            <div id="ControlModeName.MANUAL" class="classattr">
+                                <div class="attr variable">
+            <span class="name">MANUAL</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.MANUAL">ControlModeName.MANUAL</a>: &#39;manual&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.MANUAL"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.ANCHOR_HOLD" class="classattr">
+                                <div class="attr variable">
+            <span class="name">ANCHOR_HOLD</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.ANCHOR_HOLD">ControlModeName.ANCHOR_HOLD</a>: &#39;anchor_hold&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.ANCHOR_HOLD"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.ANCHOR_ML" class="classattr">
+                                <div class="attr variable">
+            <span class="name">ANCHOR_ML</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.ANCHOR_ML">ControlModeName.ANCHOR_ML</a>: &#39;anchor_ml&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.ANCHOR_ML"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.HEADING_HOLD" class="classattr">
+                                <div class="attr variable">
+            <span class="name">HEADING_HOLD</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.HEADING_HOLD">ControlModeName.HEADING_HOLD</a>: &#39;heading_hold&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.HEADING_HOLD"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.WAYPOINT" class="classattr">
+                                <div class="attr variable">
+            <span class="name">WAYPOINT</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.WAYPOINT">ControlModeName.WAYPOINT</a>: &#39;waypoint&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.WAYPOINT"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.WORK_AREA" class="classattr">
+                                <div class="attr variable">
+            <span class="name">WORK_AREA</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.WORK_AREA">ControlModeName.WORK_AREA</a>: &#39;work_area&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.WORK_AREA"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.FOLLOW_APB" class="classattr">
+                                <div class="attr variable">
+            <span class="name">FOLLOW_APB</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.FOLLOW_APB">ControlModeName.FOLLOW_APB</a>: &#39;follow_apb&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.FOLLOW_APB"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.DRIFT" class="classattr">
+                                <div class="attr variable">
+            <span class="name">DRIFT</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.DRIFT">ControlModeName.DRIFT</a>: &#39;drift&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.DRIFT"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.CONTOUR_FOLLOW" class="classattr">
+                                <div class="attr variable">
+            <span class="name">CONTOUR_FOLLOW</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.CONTOUR_FOLLOW">ControlModeName.CONTOUR_FOLLOW</a>: &#39;contour_follow&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.CONTOUR_FOLLOW"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.ORBIT" class="classattr">
+                                <div class="attr variable">
+            <span class="name">ORBIT</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.ORBIT">ControlModeName.ORBIT</a>: &#39;orbit&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.ORBIT"></a>
+    
+    
+
+                            </div>
+                            <div id="ControlModeName.TROLLING" class="classattr">
+                                <div class="attr variable">
+            <span class="name">TROLLING</span>        =
+<span class="default_value">&lt;<a href="#ControlModeName.TROLLING">ControlModeName.TROLLING</a>: &#39;trolling&#39;&gt;</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ControlModeName.TROLLING"></a>
+    
+    
+
+                            </div>
+                </section>
+                <section id="GeoPoint">
+                            <input id="GeoPoint-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">GeoPoint</span>:
+
+                <label class="view-source-button" for="GeoPoint-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#GeoPoint"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="GeoPoint-32"><a href="#GeoPoint-32"><span class="linenos">32</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="GeoPoint-33"><a href="#GeoPoint-33"><span class="linenos">33</span></a><span class="k">class</span><span class="w"> </span><span class="nc">GeoPoint</span><span class="p">:</span>
+</span><span id="GeoPoint-34"><a href="#GeoPoint-34"><span class="linenos">34</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;A WGS84 latitude/longitude in decimal degrees.&quot;&quot;&quot;</span>
+</span><span id="GeoPoint-35"><a href="#GeoPoint-35"><span class="linenos">35</span></a>
+</span><span id="GeoPoint-36"><a href="#GeoPoint-36"><span class="linenos">36</span></a>    <span class="n">lat</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="GeoPoint-37"><a href="#GeoPoint-37"><span class="linenos">37</span></a>    <span class="n">lon</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="GeoPoint-38"><a href="#GeoPoint-38"><span class="linenos">38</span></a>
+</span><span id="GeoPoint-39"><a href="#GeoPoint-39"><span class="linenos">39</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">as_tuple</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+</span><span id="GeoPoint-40"><a href="#GeoPoint-40"><span class="linenos">40</span></a>        <span class="k">return</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lat</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lon</span><span class="p">)</span>
+</span><span id="GeoPoint-41"><a href="#GeoPoint-41"><span class="linenos">41</span></a>
+</span><span id="GeoPoint-42"><a href="#GeoPoint-42"><span class="linenos">42</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">is_null</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+</span><span id="GeoPoint-43"><a href="#GeoPoint-43"><span class="linenos">43</span></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;True for the conventional ``(0, 0)`` &quot;no fix&quot; sentinel.&quot;&quot;&quot;</span>
+</span><span id="GeoPoint-44"><a href="#GeoPoint-44"><span class="linenos">44</span></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">lat</span> <span class="o">==</span> <span class="mf">0.0</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">lon</span> <span class="o">==</span> <span class="mf">0.0</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>A WGS84 latitude/longitude in decimal degrees.</p>
+</div>
+
+
+                            <div id="GeoPoint.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">GeoPoint</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">lat</span><span class="p">:</span> <span class="nb">float</span>, </span><span class="param"><span class="n">lon</span><span class="p">:</span> <span class="nb">float</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GeoPoint.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="GeoPoint.lat" class="classattr">
+                                <div class="attr variable">
+            <span class="name">lat</span><span class="annotation">: float</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GeoPoint.lat"></a>
+    
+    
+
+                            </div>
+                            <div id="GeoPoint.lon" class="classattr">
+                                <div class="attr variable">
+            <span class="name">lon</span><span class="annotation">: float</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GeoPoint.lon"></a>
+    
+    
+
+                            </div>
+                            <div id="GeoPoint.as_tuple" class="classattr">
+                                        <input id="GeoPoint.as_tuple-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr function">
+            
+        <span class="def">def</span>
+        <span class="name">as_tuple</span><span class="signature pdoc-code condensed">(<span class="param"><span class="bp">self</span></span><span class="return-annotation">) -> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span>:</span></span>
+
+                <label class="view-source-button" for="GeoPoint.as_tuple-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#GeoPoint.as_tuple"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="GeoPoint.as_tuple-39"><a href="#GeoPoint.as_tuple-39"><span class="linenos">39</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">as_tuple</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+</span><span id="GeoPoint.as_tuple-40"><a href="#GeoPoint.as_tuple-40"><span class="linenos">40</span></a>        <span class="k">return</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lat</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">lon</span><span class="p">)</span>
+</span></pre></div>
+
+
+    
+
+                            </div>
+                            <div id="GeoPoint.is_null" class="classattr">
+                                        <input id="GeoPoint.is_null-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr function">
+            
+        <span class="def">def</span>
+        <span class="name">is_null</span><span class="signature pdoc-code condensed">(<span class="param"><span class="bp">self</span></span><span class="return-annotation">) -> <span class="nb">bool</span>:</span></span>
+
+                <label class="view-source-button" for="GeoPoint.is_null-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#GeoPoint.is_null"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="GeoPoint.is_null-42"><a href="#GeoPoint.is_null-42"><span class="linenos">42</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">is_null</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+</span><span id="GeoPoint.is_null-43"><a href="#GeoPoint.is_null-43"><span class="linenos">43</span></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;True for the conventional ``(0, 0)`` &quot;no fix&quot; sentinel.&quot;&quot;&quot;</span>
+</span><span id="GeoPoint.is_null-44"><a href="#GeoPoint.is_null-44"><span class="linenos">44</span></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">lat</span> <span class="o">==</span> <span class="mf">0.0</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">lon</span> <span class="o">==</span> <span class="mf">0.0</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>True for the conventional <code>(0, 0)</code> "no fix" sentinel.</p>
+</div>
+
+
+                            </div>
+                </section>
+                <section id="GpsFix">
+                            <input id="GpsFix-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">GpsFix</span>:
+
+                <label class="view-source-button" for="GpsFix-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#GpsFix"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="GpsFix-47"><a href="#GpsFix-47"><span class="linenos">47</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="GpsFix-48"><a href="#GpsFix-48"><span class="linenos">48</span></a><span class="k">class</span><span class="w"> </span><span class="nc">GpsFix</span><span class="p">:</span>
+</span><span id="GpsFix-49"><a href="#GpsFix-49"><span class="linenos">49</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;A parsed position fix (from an RMC/GGA sentence or a simulated GPS).&quot;&quot;&quot;</span>
+</span><span id="GpsFix-50"><a href="#GpsFix-50"><span class="linenos">50</span></a>
+</span><span id="GpsFix-51"><a href="#GpsFix-51"><span class="linenos">51</span></a>    <span class="n">point</span><span class="p">:</span> <span class="n">GeoPoint</span>
+</span><span id="GpsFix-52"><a href="#GpsFix-52"><span class="linenos">52</span></a>    <span class="n">sog_knots</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># speed over ground</span>
+</span><span id="GpsFix-53"><a href="#GpsFix-53"><span class="linenos">53</span></a>    <span class="n">cog_deg</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># course over ground</span>
+</span><span id="GpsFix-54"><a href="#GpsFix-54"><span class="linenos">54</span></a>    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="GpsFix-55"><a href="#GpsFix-55"><span class="linenos">55</span></a>    <span class="n">valid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>A parsed position fix (from an RMC/GGA sentence or a simulated GPS).</p>
+</div>
+
+
+                            <div id="GpsFix.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">GpsFix</span><span class="signature pdoc-code multiline">(<span class="param">	<span class="n">point</span><span class="p">:</span> <span class="n"><a href="#GeoPoint">GeoPoint</a></span>,</span><span class="param">	<span class="n">sog_knots</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">cog_deg</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">valid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GpsFix.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="GpsFix.point" class="classattr">
+                                <div class="attr variable">
+            <span class="name">point</span><span class="annotation">: <a href="#GeoPoint">GeoPoint</a></span>
+
+        
+    </div>
+    <a class="headerlink" href="#GpsFix.point"></a>
+    
+    
+
+                            </div>
+                            <div id="GpsFix.sog_knots" class="classattr">
+                                <div class="attr variable">
+            <span class="name">sog_knots</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GpsFix.sog_knots"></a>
+    
+    
+
+                            </div>
+                            <div id="GpsFix.cog_deg" class="classattr">
+                                <div class="attr variable">
+            <span class="name">cog_deg</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GpsFix.cog_deg"></a>
+    
+    
+
+                            </div>
+                            <div id="GpsFix.timestamp" class="classattr">
+                                <div class="attr variable">
+            <span class="name">timestamp</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GpsFix.timestamp"></a>
+    
+    
+
+                            </div>
+                            <div id="GpsFix.valid" class="classattr">
+                                <div class="attr variable">
+            <span class="name">valid</span><span class="annotation">: bool</span>        =
+<span class="default_value">True</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GpsFix.valid"></a>
+    
+    
+
+                            </div>
+                </section>
+                <section id="HeadingReading">
+                            <input id="HeadingReading-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">HeadingReading</span>:
+
+                <label class="view-source-button" for="HeadingReading-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#HeadingReading"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="HeadingReading-58"><a href="#HeadingReading-58"><span class="linenos">58</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="HeadingReading-59"><a href="#HeadingReading-59"><span class="linenos">59</span></a><span class="k">class</span><span class="w"> </span><span class="nc">HeadingReading</span><span class="p">:</span>
+</span><span id="HeadingReading-60"><a href="#HeadingReading-60"><span class="linenos">60</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;A compass heading sample in degrees (0..360, magnetic or true).&quot;&quot;&quot;</span>
+</span><span id="HeadingReading-61"><a href="#HeadingReading-61"><span class="linenos">61</span></a>
+</span><span id="HeadingReading-62"><a href="#HeadingReading-62"><span class="linenos">62</span></a>    <span class="n">heading_deg</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="HeadingReading-63"><a href="#HeadingReading-63"><span class="linenos">63</span></a>    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>A compass heading sample in degrees (0..360, magnetic or true).</p>
+</div>
+
+
+                            <div id="HeadingReading.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">HeadingReading</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">heading_deg</span><span class="p">:</span> <span class="nb">float</span>, </span><span class="param"><span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#HeadingReading.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="HeadingReading.heading_deg" class="classattr">
+                                <div class="attr variable">
+            <span class="name">heading_deg</span><span class="annotation">: float</span>
+
+        
+    </div>
+    <a class="headerlink" href="#HeadingReading.heading_deg"></a>
+    
+    
+
+                            </div>
+                            <div id="HeadingReading.timestamp" class="classattr">
+                                <div class="attr variable">
+            <span class="name">timestamp</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#HeadingReading.timestamp"></a>
+    
+    
+
+                            </div>
+                </section>
+                <section id="Waypoint">
+                            <input id="Waypoint-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">Waypoint</span>:
+
+                <label class="view-source-button" for="Waypoint-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#Waypoint"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="Waypoint-66"><a href="#Waypoint-66"><span class="linenos">66</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="Waypoint-67"><a href="#Waypoint-67"><span class="linenos">67</span></a><span class="k">class</span><span class="w"> </span><span class="nc">Waypoint</span><span class="p">:</span>
+</span><span id="Waypoint-68"><a href="#Waypoint-68"><span class="linenos">68</span></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="Waypoint-69"><a href="#Waypoint-69"><span class="linenos">69</span></a>    <span class="n">point</span><span class="p">:</span> <span class="n">GeoPoint</span>
+</span><span id="Waypoint-70"><a href="#Waypoint-70"><span class="linenos">70</span></a>    <span class="c1"># Optional desired boat heading (deg) to hold while spot-locked here in Work</span>
+</span><span id="Waypoint-71"><a href="#Waypoint-71"><span class="linenos">71</span></a>    <span class="c1"># Area mode. None = don&#39;t force a heading (the boat weathervanes naturally).</span>
+</span><span id="Waypoint-72"><a href="#Waypoint-72"><span class="linenos">72</span></a>    <span class="n">heading</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span></pre></div>
+
+
+    
+
+                            <div id="Waypoint.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">Waypoint</span><span class="signature pdoc-code multiline">(<span class="param">	<span class="n">name</span><span class="p">:</span> <span class="nb">str</span>,</span><span class="param">	<span class="n">point</span><span class="p">:</span> <span class="n"><a href="#GeoPoint">GeoPoint</a></span>,</span><span class="param">	<span class="n">heading</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Waypoint.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="Waypoint.name" class="classattr">
+                                <div class="attr variable">
+            <span class="name">name</span><span class="annotation">: str</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Waypoint.name"></a>
+    
+    
+
+                            </div>
+                            <div id="Waypoint.point" class="classattr">
+                                <div class="attr variable">
+            <span class="name">point</span><span class="annotation">: <a href="#GeoPoint">GeoPoint</a></span>
+
+        
+    </div>
+    <a class="headerlink" href="#Waypoint.point"></a>
+    
+    
+
+                            </div>
+                            <div id="Waypoint.heading" class="classattr">
+                                <div class="attr variable">
+            <span class="name">heading</span><span class="annotation">: float | None</span>        =
+<span class="default_value">None</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Waypoint.heading"></a>
+    
+    
+
+                            </div>
+                </section>
+                <section id="MotorCommand">
+                            <input id="MotorCommand-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">MotorCommand</span>:
+
+                <label class="view-source-button" for="MotorCommand-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#MotorCommand"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="MotorCommand-75"><a href="#MotorCommand-75"><span class="linenos">75</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="MotorCommand-76"><a href="#MotorCommand-76"><span class="linenos">76</span></a><span class="k">class</span><span class="w"> </span><span class="nc">MotorCommand</span><span class="p">:</span>
+</span><span id="MotorCommand-77"><a href="#MotorCommand-77"><span class="linenos">77</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;The actuator-level command sent to the motor controller.</span>
+</span><span id="MotorCommand-78"><a href="#MotorCommand-78"><span class="linenos">78</span></a>
+</span><span id="MotorCommand-79"><a href="#MotorCommand-79"><span class="linenos">79</span></a><span class="sd">    ``thrust`` is the normalized forward drive (-1 reverse .. 1 full ahead).</span>
+</span><span id="MotorCommand-80"><a href="#MotorCommand-80"><span class="linenos">80</span></a><span class="sd">    ``steering`` is the normalized turn command (-1 hard port .. 1 hard</span>
+</span><span id="MotorCommand-81"><a href="#MotorCommand-81"><span class="linenos">81</span></a><span class="sd">    starboard). A trolling motor realizes ``steering`` by physically rotating;</span>
+</span><span id="MotorCommand-82"><a href="#MotorCommand-82"><span class="linenos">82</span></a><span class="sd">    a rudder boat would realize it with a rudder. The abstraction is the same.</span>
+</span><span id="MotorCommand-83"><a href="#MotorCommand-83"><span class="linenos">83</span></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="MotorCommand-84"><a href="#MotorCommand-84"><span class="linenos">84</span></a>
+</span><span id="MotorCommand-85"><a href="#MotorCommand-85"><span class="linenos">85</span></a>    <span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="MotorCommand-86"><a href="#MotorCommand-86"><span class="linenos">86</span></a>    <span class="n">steering</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="MotorCommand-87"><a href="#MotorCommand-87"><span class="linenos">87</span></a>
+</span><span id="MotorCommand-88"><a href="#MotorCommand-88"><span class="linenos">88</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">clamped</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;MotorCommand&quot;</span><span class="p">:</span>
+</span><span id="MotorCommand-89"><a href="#MotorCommand-89"><span class="linenos">89</span></a>        <span class="k">return</span> <span class="n">MotorCommand</span><span class="p">(</span>
+</span><span id="MotorCommand-90"><a href="#MotorCommand-90"><span class="linenos">90</span></a>            <span class="n">thrust</span><span class="o">=</span><span class="n">_clamp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">thrust</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+</span><span id="MotorCommand-91"><a href="#MotorCommand-91"><span class="linenos">91</span></a>            <span class="n">steering</span><span class="o">=</span><span class="n">_clamp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">steering</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+</span><span id="MotorCommand-92"><a href="#MotorCommand-92"><span class="linenos">92</span></a>        <span class="p">)</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>The actuator-level command sent to the motor controller.</p>
+
+<p><code><a href="#MotorCommand.thrust">thrust</a></code> is the normalized forward drive (-1 reverse .. 1 full ahead).
+<code><a href="#MotorCommand.steering">steering</a></code> is the normalized turn command (-1 hard port .. 1 hard
+starboard). A trolling motor realizes <code><a href="#MotorCommand.steering">steering</a></code> by physically rotating;
+a rudder boat would realize it with a rudder. The abstraction is the same.</p>
+</div>
+
+
+                            <div id="MotorCommand.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">MotorCommand</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>, </span><span class="param"><span class="n">steering</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#MotorCommand.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="MotorCommand.thrust" class="classattr">
+                                <div class="attr variable">
+            <span class="name">thrust</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#MotorCommand.thrust"></a>
+    
+    
+
+                            </div>
+                            <div id="MotorCommand.steering" class="classattr">
+                                <div class="attr variable">
+            <span class="name">steering</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#MotorCommand.steering"></a>
+    
+    
+
+                            </div>
+                            <div id="MotorCommand.clamped" class="classattr">
+                                        <input id="MotorCommand.clamped-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr function">
+            
+        <span class="def">def</span>
+        <span class="name">clamped</span><span class="signature pdoc-code condensed">(<span class="param"><span class="bp">self</span></span><span class="return-annotation">) -> <span class="n"><a href="#MotorCommand">MotorCommand</a></span>:</span></span>
+
+                <label class="view-source-button" for="MotorCommand.clamped-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#MotorCommand.clamped"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="MotorCommand.clamped-88"><a href="#MotorCommand.clamped-88"><span class="linenos">88</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">clamped</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;MotorCommand&quot;</span><span class="p">:</span>
+</span><span id="MotorCommand.clamped-89"><a href="#MotorCommand.clamped-89"><span class="linenos">89</span></a>        <span class="k">return</span> <span class="n">MotorCommand</span><span class="p">(</span>
+</span><span id="MotorCommand.clamped-90"><a href="#MotorCommand.clamped-90"><span class="linenos">90</span></a>            <span class="n">thrust</span><span class="o">=</span><span class="n">_clamp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">thrust</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+</span><span id="MotorCommand.clamped-91"><a href="#MotorCommand.clamped-91"><span class="linenos">91</span></a>            <span class="n">steering</span><span class="o">=</span><span class="n">_clamp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">steering</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
+</span><span id="MotorCommand.clamped-92"><a href="#MotorCommand.clamped-92"><span class="linenos">92</span></a>        <span class="p">)</span>
+</span></pre></div>
+
+
+    
+
+                            </div>
+                </section>
+                <section id="ManualSetpoint">
+                            <input id="ManualSetpoint-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">ManualSetpoint</span>:
+
+                <label class="view-source-button" for="ManualSetpoint-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#ManualSetpoint"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="ManualSetpoint-95"><a href="#ManualSetpoint-95"><span class="linenos"> 95</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="ManualSetpoint-96"><a href="#ManualSetpoint-96"><span class="linenos"> 96</span></a><span class="k">class</span><span class="w"> </span><span class="nc">ManualSetpoint</span><span class="p">:</span>
+</span><span id="ManualSetpoint-97"><a href="#ManualSetpoint-97"><span class="linenos"> 97</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Mode output: drive the motor directly.&quot;&quot;&quot;</span>
+</span><span id="ManualSetpoint-98"><a href="#ManualSetpoint-98"><span class="linenos"> 98</span></a>
+</span><span id="ManualSetpoint-99"><a href="#ManualSetpoint-99"><span class="linenos"> 99</span></a>    <span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="ManualSetpoint-100"><a href="#ManualSetpoint-100"><span class="linenos">100</span></a>    <span class="n">steering</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>Mode output: drive the motor directly.</p>
+</div>
+
+
+                            <div id="ManualSetpoint.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">ManualSetpoint</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>, </span><span class="param"><span class="n">steering</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ManualSetpoint.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="ManualSetpoint.thrust" class="classattr">
+                                <div class="attr variable">
+            <span class="name">thrust</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ManualSetpoint.thrust"></a>
+    
+    
+
+                            </div>
+                            <div id="ManualSetpoint.steering" class="classattr">
+                                <div class="attr variable">
+            <span class="name">steering</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#ManualSetpoint.steering"></a>
+    
+    
+
+                            </div>
+                </section>
+                <section id="GuidedSetpoint">
+                            <input id="GuidedSetpoint-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">GuidedSetpoint</span>:
+
+                <label class="view-source-button" for="GuidedSetpoint-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#GuidedSetpoint"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="GuidedSetpoint-103"><a href="#GuidedSetpoint-103"><span class="linenos">103</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="GuidedSetpoint-104"><a href="#GuidedSetpoint-104"><span class="linenos">104</span></a><span class="k">class</span><span class="w"> </span><span class="nc">GuidedSetpoint</span><span class="p">:</span>
+</span><span id="GuidedSetpoint-105"><a href="#GuidedSetpoint-105"><span class="linenos">105</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Mode output: hold a target heading; the helm derives the steering.&quot;&quot;&quot;</span>
+</span><span id="GuidedSetpoint-106"><a href="#GuidedSetpoint-106"><span class="linenos">106</span></a>
+</span><span id="GuidedSetpoint-107"><a href="#GuidedSetpoint-107"><span class="linenos">107</span></a>    <span class="n">target_heading</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="GuidedSetpoint-108"><a href="#GuidedSetpoint-108"><span class="linenos">108</span></a>    <span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>Mode output: hold a target heading; the helm derives the steering.</p>
+</div>
+
+
+                            <div id="GuidedSetpoint.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">GuidedSetpoint</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">target_heading</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>, </span><span class="param"><span class="n">thrust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GuidedSetpoint.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="GuidedSetpoint.target_heading" class="classattr">
+                                <div class="attr variable">
+            <span class="name">target_heading</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GuidedSetpoint.target_heading"></a>
+    
+    
+
+                            </div>
+                            <div id="GuidedSetpoint.thrust" class="classattr">
+                                <div class="attr variable">
+            <span class="name">thrust</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#GuidedSetpoint.thrust"></a>
+    
+    
+
+                            </div>
+                </section>
+                <section id="Setpoint">
+                    <div class="attr variable">
+            <span class="name">Setpoint</span>        =
+<span class="default_value"><a href="#ManualSetpoint">ManualSetpoint</a> | <a href="#GuidedSetpoint">GuidedSetpoint</a></span>
+
+        
+    </div>
+    <a class="headerlink" href="#Setpoint"></a>
+    
+    
+
+                </section>
+                <section id="CrossTrackError">
+                            <input id="CrossTrackError-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass(frozen=True)</div>
+
+    <span class="def">class</span>
+    <span class="name">CrossTrackError</span>:
+
+                <label class="view-source-button" for="CrossTrackError-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#CrossTrackError"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="CrossTrackError-115"><a href="#CrossTrackError-115"><span class="linenos">115</span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="CrossTrackError-116"><a href="#CrossTrackError-116"><span class="linenos">116</span></a><span class="k">class</span><span class="w"> </span><span class="nc">CrossTrackError</span><span class="p">:</span>
+</span><span id="CrossTrackError-117"><a href="#CrossTrackError-117"><span class="linenos">117</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Cross-track error relative to a leg. ``distance_m`` is signed: positive</span>
+</span><span id="CrossTrackError-118"><a href="#CrossTrackError-118"><span class="linenos">118</span></a><span class="sd">    means the boat is to starboard (right) of the intended track.&quot;&quot;&quot;</span>
+</span><span id="CrossTrackError-119"><a href="#CrossTrackError-119"><span class="linenos">119</span></a>
+</span><span id="CrossTrackError-120"><a href="#CrossTrackError-120"><span class="linenos">120</span></a>    <span class="n">distance_m</span><span class="p">:</span> <span class="nb">float</span>
+</span><span id="CrossTrackError-121"><a href="#CrossTrackError-121"><span class="linenos">121</span></a>    <span class="n">steer_to</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># &quot;L&quot; or &quot;R&quot; -- the direction to steer to get back on track</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>Cross-track error relative to a leg. <code><a href="#CrossTrackError.distance_m">distance_m</a></code> is signed: positive
+means the boat is to starboard (right) of the intended track.</p>
+</div>
+
+
+                            <div id="CrossTrackError.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">CrossTrackError</span><span class="signature pdoc-code condensed">(<span class="param"><span class="n">distance_m</span><span class="p">:</span> <span class="nb">float</span>, </span><span class="param"><span class="n">steer_to</span><span class="p">:</span> <span class="nb">str</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#CrossTrackError.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="CrossTrackError.distance_m" class="classattr">
+                                <div class="attr variable">
+            <span class="name">distance_m</span><span class="annotation">: float</span>
+
+        
+    </div>
+    <a class="headerlink" href="#CrossTrackError.distance_m"></a>
+    
+    
+
+                            </div>
+                            <div id="CrossTrackError.steer_to" class="classattr">
+                                <div class="attr variable">
+            <span class="name">steer_to</span><span class="annotation">: str</span>
+
+        
+    </div>
+    <a class="headerlink" href="#CrossTrackError.steer_to"></a>
+    
+    
+
+                            </div>
+                </section>
+                <section id="Environment">
+                            <input id="Environment-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass</div>
+
+    <span class="def">class</span>
+    <span class="name">Environment</span>:
+
+                <label class="view-source-button" for="Environment-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#Environment"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="Environment-124"><a href="#Environment-124"><span class="linenos">124</span></a><span class="nd">@dataclass</span>
+</span><span id="Environment-125"><a href="#Environment-125"><span class="linenos">125</span></a><span class="k">class</span><span class="w"> </span><span class="nc">Environment</span><span class="p">:</span>
+</span><span id="Environment-126"><a href="#Environment-126"><span class="linenos">126</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Wind and current acting on the boat. Directions are *toward* which the</span>
+</span><span id="Environment-127"><a href="#Environment-127"><span class="linenos">127</span></a><span class="sd">    flow pushes, in degrees. Speeds are in m/s.&quot;&quot;&quot;</span>
+</span><span id="Environment-128"><a href="#Environment-128"><span class="linenos">128</span></a>
+</span><span id="Environment-129"><a href="#Environment-129"><span class="linenos">129</span></a>    <span class="n">current_speed</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="Environment-130"><a href="#Environment-130"><span class="linenos">130</span></a>    <span class="n">current_dir</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="Environment-131"><a href="#Environment-131"><span class="linenos">131</span></a>    <span class="n">wind_speed</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="Environment-132"><a href="#Environment-132"><span class="linenos">132</span></a>    <span class="n">wind_dir</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="Environment-133"><a href="#Environment-133"><span class="linenos">133</span></a>    <span class="c1"># Fraction of wind speed that translates into hull drift (leeway).</span>
+</span><span id="Environment-134"><a href="#Environment-134"><span class="linenos">134</span></a>    <span class="n">wind_leeway</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.03</span>
+</span><span id="Environment-135"><a href="#Environment-135"><span class="linenos">135</span></a>    <span class="c1"># Gustiness: std (m/s) and correlation time (s) of the time-varying gust the</span>
+</span><span id="Environment-136"><a href="#Environment-136"><span class="linenos">136</span></a>    <span class="c1"># simulator layers on top of the base wind. 0 amplitude = steady wind.</span>
+</span><span id="Environment-137"><a href="#Environment-137"><span class="linenos">137</span></a>    <span class="n">gust_amplitude_mps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="Environment-138"><a href="#Environment-138"><span class="linenos">138</span></a>    <span class="n">gust_tau_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="Environment-139"><a href="#Environment-139"><span class="linenos">139</span></a>    <span class="c1"># Slow weather wander (much slower than gusts), in [0, 1]. 0 = steady.</span>
+</span><span id="Environment-140"><a href="#Environment-140"><span class="linenos">140</span></a>    <span class="c1"># The simulator evolves wind speed/direction (and current) by this much and</span>
+</span><span id="Environment-141"><a href="#Environment-141"><span class="linenos">141</span></a>    <span class="c1"># writes the evolving values back into wind_speed/wind_dir/current_speed.</span>
+</span><span id="Environment-142"><a href="#Environment-142"><span class="linenos">142</span></a>    <span class="n">wind_variability</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="Environment-143"><a href="#Environment-143"><span class="linenos">143</span></a>    <span class="n">current_variability</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="Environment-144"><a href="#Environment-144"><span class="linenos">144</span></a>
+</span><span id="Environment-145"><a href="#Environment-145"><span class="linenos">145</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drift_vector</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+</span><span id="Environment-146"><a href="#Environment-146"><span class="linenos">146</span></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Net environmental drift as an (east, north) velocity in m/s.&quot;&quot;&quot;</span>
+</span><span id="Environment-147"><a href="#Environment-147"><span class="linenos">147</span></a>        <span class="n">ce</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_speed</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">current_dir</span><span class="p">))</span>
+</span><span id="Environment-148"><a href="#Environment-148"><span class="linenos">148</span></a>        <span class="n">cn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_speed</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">current_dir</span><span class="p">))</span>
+</span><span id="Environment-149"><a href="#Environment-149"><span class="linenos">149</span></a>        <span class="n">we</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_speed</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_leeway</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wind_dir</span><span class="p">))</span>
+</span><span id="Environment-150"><a href="#Environment-150"><span class="linenos">150</span></a>        <span class="n">wn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_speed</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_leeway</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wind_dir</span><span class="p">))</span>
+</span><span id="Environment-151"><a href="#Environment-151"><span class="linenos">151</span></a>        <span class="k">return</span> <span class="p">(</span><span class="n">ce</span> <span class="o">+</span> <span class="n">we</span><span class="p">,</span> <span class="n">cn</span> <span class="o">+</span> <span class="n">wn</span><span class="p">)</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>Wind and current acting on the boat. Directions are <em>toward</em> which the
+flow pushes, in degrees. Speeds are in m/s.</p>
+</div>
+
+
+                            <div id="Environment.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">Environment</span><span class="signature pdoc-code multiline">(<span class="param">	<span class="n">current_speed</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">current_dir</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">wind_speed</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">wind_dir</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">wind_leeway</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.03</span>,</span><span class="param">	<span class="n">gust_amplitude_mps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">gust_tau_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>,</span><span class="param">	<span class="n">wind_variability</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">current_variability</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.current_speed" class="classattr">
+                                <div class="attr variable">
+            <span class="name">current_speed</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.current_speed"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.current_dir" class="classattr">
+                                <div class="attr variable">
+            <span class="name">current_dir</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.current_dir"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.wind_speed" class="classattr">
+                                <div class="attr variable">
+            <span class="name">wind_speed</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.wind_speed"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.wind_dir" class="classattr">
+                                <div class="attr variable">
+            <span class="name">wind_dir</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.wind_dir"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.wind_leeway" class="classattr">
+                                <div class="attr variable">
+            <span class="name">wind_leeway</span><span class="annotation">: float</span>        =
+<span class="default_value">0.03</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.wind_leeway"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.gust_amplitude_mps" class="classattr">
+                                <div class="attr variable">
+            <span class="name">gust_amplitude_mps</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.gust_amplitude_mps"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.gust_tau_s" class="classattr">
+                                <div class="attr variable">
+            <span class="name">gust_tau_s</span><span class="annotation">: float</span>        =
+<span class="default_value">5.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.gust_tau_s"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.wind_variability" class="classattr">
+                                <div class="attr variable">
+            <span class="name">wind_variability</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.wind_variability"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.current_variability" class="classattr">
+                                <div class="attr variable">
+            <span class="name">current_variability</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#Environment.current_variability"></a>
+    
+    
+
+                            </div>
+                            <div id="Environment.drift_vector" class="classattr">
+                                        <input id="Environment.drift_vector-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr function">
+            
+        <span class="def">def</span>
+        <span class="name">drift_vector</span><span class="signature pdoc-code condensed">(<span class="param"><span class="bp">self</span></span><span class="return-annotation">) -> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span>:</span></span>
+
+                <label class="view-source-button" for="Environment.drift_vector-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#Environment.drift_vector"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="Environment.drift_vector-145"><a href="#Environment.drift_vector-145"><span class="linenos">145</span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">drift_vector</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+</span><span id="Environment.drift_vector-146"><a href="#Environment.drift_vector-146"><span class="linenos">146</span></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Net environmental drift as an (east, north) velocity in m/s.&quot;&quot;&quot;</span>
+</span><span id="Environment.drift_vector-147"><a href="#Environment.drift_vector-147"><span class="linenos">147</span></a>        <span class="n">ce</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_speed</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">current_dir</span><span class="p">))</span>
+</span><span id="Environment.drift_vector-148"><a href="#Environment.drift_vector-148"><span class="linenos">148</span></a>        <span class="n">cn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_speed</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">current_dir</span><span class="p">))</span>
+</span><span id="Environment.drift_vector-149"><a href="#Environment.drift_vector-149"><span class="linenos">149</span></a>        <span class="n">we</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_speed</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_leeway</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wind_dir</span><span class="p">))</span>
+</span><span id="Environment.drift_vector-150"><a href="#Environment.drift_vector-150"><span class="linenos">150</span></a>        <span class="n">wn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_speed</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">wind_leeway</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wind_dir</span><span class="p">))</span>
+</span><span id="Environment.drift_vector-151"><a href="#Environment.drift_vector-151"><span class="linenos">151</span></a>        <span class="k">return</span> <span class="p">(</span><span class="n">ce</span> <span class="o">+</span> <span class="n">we</span><span class="p">,</span> <span class="n">cn</span> <span class="o">+</span> <span class="n">wn</span><span class="p">)</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>Net environmental drift as an (east, north) velocity in m/s.</p>
+</div>
+
+
+                            </div>
+                </section>
+                <section id="BoatState">
+                            <input id="BoatState-view-source" class="view-source-toggle-state" type="checkbox" aria-hidden="true" tabindex="-1">
+<div class="attr class">
+                    <div class="decorator decorator-dataclass">@dataclass</div>
+
+    <span class="def">class</span>
+    <span class="name">BoatState</span>:
+
+                <label class="view-source-button" for="BoatState-view-source"><span>View Source</span></label>
+
+    </div>
+    <a class="headerlink" href="#BoatState"></a>
+            <div class="pdoc-code codehilite"><pre><span></span><span id="BoatState-154"><a href="#BoatState-154"><span class="linenos">154</span></a><span class="nd">@dataclass</span>
+</span><span id="BoatState-155"><a href="#BoatState-155"><span class="linenos">155</span></a><span class="k">class</span><span class="w"> </span><span class="nc">BoatState</span><span class="p">:</span>
+</span><span id="BoatState-156"><a href="#BoatState-156"><span class="linenos">156</span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Ground-truth physical state of the (simulated) boat.&quot;&quot;&quot;</span>
+</span><span id="BoatState-157"><a href="#BoatState-157"><span class="linenos">157</span></a>
+</span><span id="BoatState-158"><a href="#BoatState-158"><span class="linenos">158</span></a>    <span class="n">point</span><span class="p">:</span> <span class="n">GeoPoint</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">GeoPoint</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
+</span><span id="BoatState-159"><a href="#BoatState-159"><span class="linenos">159</span></a>    <span class="n">heading_deg</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># the way the bow points</span>
+</span><span id="BoatState-160"><a href="#BoatState-160"><span class="linenos">160</span></a>    <span class="n">speed_mps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># forward speed through the water</span>
+</span><span id="BoatState-161"><a href="#BoatState-161"><span class="linenos">161</span></a>    <span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+</span><span id="BoatState-162"><a href="#BoatState-162"><span class="linenos">162</span></a>    <span class="c1"># Velocity over ground (world frame, m/s) -- hull motion plus environmental</span>
+</span><span id="BoatState-163"><a href="#BoatState-163"><span class="linenos">163</span></a>    <span class="c1"># drift. This is what a real GPS reports as course/speed over ground.</span>
+</span><span id="BoatState-164"><a href="#BoatState-164"><span class="linenos">164</span></a>    <span class="n">ground_ve</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># east</span>
+</span><span id="BoatState-165"><a href="#BoatState-165"><span class="linenos">165</span></a>    <span class="n">ground_vn</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>  <span class="c1"># north</span>
+</span></pre></div>
+
+
+            <div class="docstring"><p>Ground-truth physical state of the (simulated) boat.</p>
+</div>
+
+
+                            <div id="BoatState.__init__" class="classattr">
+                                <div class="attr function">
+            
+        <span class="name">BoatState</span><span class="signature pdoc-code multiline">(<span class="param">	<span class="n">point</span><span class="p">:</span> <span class="n"><a href="#GeoPoint">GeoPoint</a></span> <span class="o">=</span> <span class="o">&lt;</span><span class="n">factory</span><span class="o">&gt;</span>,</span><span class="param">	<span class="n">heading_deg</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">speed_mps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">timestamp</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">ground_ve</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>,</span><span class="param">	<span class="n">ground_vn</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></span>)</span>
+
+        
+    </div>
+    <a class="headerlink" href="#BoatState.__init__"></a>
+    
+    
+
+                            </div>
+                            <div id="BoatState.point" class="classattr">
+                                <div class="attr variable">
+            <span class="name">point</span><span class="annotation">: <a href="#GeoPoint">GeoPoint</a></span>
+
+        
+    </div>
+    <a class="headerlink" href="#BoatState.point"></a>
+    
+    
+
+                            </div>
+                            <div id="BoatState.heading_deg" class="classattr">
+                                <div class="attr variable">
+            <span class="name">heading_deg</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#BoatState.heading_deg"></a>
+    
+    
+
+                            </div>
+                            <div id="BoatState.speed_mps" class="classattr">
+                                <div class="attr variable">
+            <span class="name">speed_mps</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#BoatState.speed_mps"></a>
+    
+    
+
+                            </div>
+                            <div id="BoatState.timestamp" class="classattr">
+                                <div class="attr variable">
+            <span class="name">timestamp</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#BoatState.timestamp"></a>
+    
+    
+
+                            </div>
+                            <div id="BoatState.ground_ve" class="classattr">
+                                <div class="attr variable">
+            <span class="name">ground_ve</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#BoatState.ground_ve"></a>
+    
+    
+
+                            </div>
+                            <div id="BoatState.ground_vn" class="classattr">
+                                <div class="attr variable">
+            <span class="name">ground_vn</span><span class="annotation">: float</span>        =
+<span class="default_value">0.0</span>
+
+        
+    </div>
+    <a class="headerlink" href="#BoatState.ground_vn"></a>
+    
+    
+
+                            </div>
+                </section>
+    </main>
+<script>
+    function escapeHTML(html) {
+        return document.createElement('div').appendChild(document.createTextNode(html)).parentNode.innerHTML;
+    }
+
+    const originalContent = document.querySelector("main.pdoc");
+    let currentContent = originalContent;
+
+    function setContent(innerHTML) {
+        let elem;
+        if (innerHTML) {
+            elem = document.createElement("main");
+            elem.classList.add("pdoc");
+            elem.innerHTML = innerHTML;
+        } else {
+            elem = originalContent;
+        }
+        if (currentContent !== elem) {
+            currentContent.replaceWith(elem);
+            currentContent = elem;
+        }
+    }
+
+    function getSearchTerm() {
+        return (new URL(window.location)).searchParams.get("search");
+    }
+
+    const searchBox = document.querySelector(".pdoc input[type=search]");
+    searchBox.addEventListener("input", function () {
+        let url = new URL(window.location);
+        if (searchBox.value.trim()) {
+            url.hash = "";
+            url.searchParams.set("search", searchBox.value);
+        } else {
+            url.searchParams.delete("search");
+        }
+        history.replaceState("", "", url.toString());
+        onInput();
+    });
+    window.addEventListener("popstate", onInput);
+
+
+    let search, searchErr;
+
+    async function initialize() {
+        try {
+            search = await new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.type = "text/javascript";
+                script.async = true;
+                script.onload = () => resolve(window.pdocSearch);
+                script.onerror = (e) => reject(e);
+                script.src = "../../search.js";
+                document.getElementsByTagName("head")[0].appendChild(script);
+            });
+        } catch (e) {
+            console.error("Cannot fetch pdoc search index");
+            searchErr = "Cannot fetch search index.";
+        }
+        onInput();
+
+        document.querySelector("nav.pdoc").addEventListener("click", e => {
+            if (e.target.hash) {
+                searchBox.value = "";
+                searchBox.dispatchEvent(new Event("input"));
+            }
+        });
+    }
+
+    function onInput() {
+        setContent((() => {
+            const term = getSearchTerm();
+            if (!term) {
+                return null
+            }
+            if (searchErr) {
+                return `<h3>Error: ${searchErr}</h3>`
+            }
+            if (!search) {
+                return "<h3>Searching...</h3>"
+            }
+
+            window.scrollTo({top: 0, left: 0, behavior: 'auto'});
+
+            const results = search(term);
+
+            let html;
+            if (results.length === 0) {
+                html = `No search results for '${escapeHTML(term)}'.`
+            } else {
+                html = `<h4>${results.length} search result${results.length > 1 ? "s" : ""} for '${escapeHTML(term)}'.</h4>`;
+            }
+            for (let result of results.slice(0, 10)) {
+                let doc = result.doc;
+                let url = `../../${doc.modulename.replaceAll(".", "/")}.html`;
+                if (doc.qualname) {
+                    url += `#${doc.qualname}`;
+                }
+
+                let heading;
+                switch (result.doc.kind) {
+                    case "function":
+                        if (doc.fullname.endsWith(".__init__")) {
+                            heading = `<span class="name">${doc.fullname.replace(/\.__init__$/, "")}</span>${doc.signature}`;
+                        } else {
+                            heading = `<span class="def">${doc.funcdef}</span> <span class="name">${doc.fullname}</span>${doc.signature}`;
+                        }
+                        break;
+                    case "class":
+                        heading = `<span class="def">class</span> <span class="name">${doc.fullname}</span>`;
+                        if (doc.bases)
+                            heading += `<wbr>(<span class="base">${doc.bases}</span>)`;
+                        heading += `:`;
+                        break;
+                    case "variable":
+                        heading = `<span class="name">${doc.fullname}</span>`;
+                        if (doc.annotation)
+                            heading += `<span class="annotation">${doc.annotation}</span>`;
+                        if (doc.default_value)
+                            heading += `<span class="default_value"> = ${doc.default_value}</span>`;
+                        break;
+                    default:
+                        heading = `<span class="name">${doc.fullname}</span>`;
+                        break;
+                }
+                html += `
+                        <section class="search-result">
+                        <a href="${url}" class="attr ${doc.kind}">${heading}</a>
+                        <div class="docstring">${doc.doc}</div>
+                        </section>
+                    `;
+
+            }
+            return html;
+        })());
+    }
+
+    if (getSearchTerm()) {
+        initialize();
+        searchBox.value = getSearchTerm();
+        onInput();
+    } else {
+        searchBox.addEventListener("focus", initialize, {once: true});
+    }
+
+    searchBox.addEventListener("keydown", e => {
+        if (["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) {
+            let focused = currentContent.querySelector(".search-result.focused");
+            if (!focused) {
+                currentContent.querySelector(".search-result").classList.add("focused");
+            } else if (
+                e.key === "ArrowDown"
+                && focused.nextElementSibling
+                && focused.nextElementSibling.classList.contains("search-result")
+            ) {
+                focused.classList.remove("focused");
+                focused.nextElementSibling.classList.add("focused");
+                focused.nextElementSibling.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest",
+                    inline: "nearest"
+                });
+            } else if (
+                e.key === "ArrowUp"
+                && focused.previousElementSibling
+                && focused.previousElementSibling.classList.contains("search-result")
+            ) {
+                focused.classList.remove("focused");
+                focused.previousElementSibling.classList.add("focused");
+                focused.previousElementSibling.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest",
+                    inline: "nearest"
+                });
+            } else if (
+                e.key === "Enter"
+            ) {
+                focused.querySelector("a").click();
+            }
+        }
+    });
+</script></body>
+</html>
