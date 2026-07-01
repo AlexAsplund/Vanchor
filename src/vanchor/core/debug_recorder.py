@@ -30,7 +30,7 @@ import threading
 logger = logging.getLogger("vanchor.debug")
 
 CHUNK_SECONDS = 300.0             # rotate a part after 5 minutes ...
-CHUNK_BYTES = 25 * 1024 * 1024    # ... or 25 MB (compressed), whichever comes first
+CHUNK_BYTES = 1 * 1024 * 1024     # ... or 1 MB (compressed), whichever comes first
 FLUSH_INTERVAL = 2.0             # flush the open part to disk at least this often
 _SUFFIX = ".ndjson.gz"
 
