@@ -27,18 +27,118 @@ logger = logging.getLogger("vanchor.sim.devices")
 TruthFn = Callable[[], BoatState]
 
 
-class SimMotorController(MotorController):
-    """Records the most recent command; the boat physics reads ``command``."""
+def _sign(x: float) -> int:
+    """Return -1, 0, or 1 for the sign of *x*."""
+    if x > 0:
+        return 1
+    if x < 0:
+        return -1
+    return 0
 
-    def __init__(self) -> None:
-        self._command = MotorCommand()
+
+class SimMotorController(MotorController):
+    """Records the most recent command; the boat physics reads ``command``.
+
+    Optional actuation shaping (all parameters default to zero = OFF) mirrors
+    the delays present in the real firmware so sim-trained gains can be stress-
+    tested against the actuation holes that cause real-water limit cycles.
+
+    All three shaping stages are **opt-in** and composed in order:
+
+    1. **reverse_delay_s** — when the commanded thrust direction flips (e.g.
+       forward → reverse) the output is held at zero for this many seconds.
+       Mirrors the applied-direction gate in firmware/engine.ino that prevents
+       the prop from reversing before it has shed momentum (~0.9 s on hardware).
+
+    2. **thrust_slew_per_s** — the applied thrust may not change faster than
+       this normalized rate per second (0 = unlimited).  Models the soft-start
+       ramp the ESC uses to limit inrush current.
+
+    3. **thrust_lag_tau_s** — first-order (exponential) lag toward the slew-
+       limited target, with time-constant tau (0 = instant).  Models prop spin-
+       up inertia: the prop cannot instantly change speed even after the ESC
+       has fully commanded it.
+
+    **dt source**: the shaping state is advanced by calling ``step(dt)`` with
+    the simulator's physics dt.  The live ``Simulator`` does not call it (so
+    defaults leave existing behaviour completely unchanged); deterministic tests
+    call it directly to control sim-time precisely.  Enabling shaping in the
+    live ``Simulator`` requires the caller to also drive ``motor.step(dt)``
+    (e.g. subclass / patch ``Simulator.step``), which is intentionally left as
+    an explicit opt-in to avoid breaking existing tuned gains.
+    """
+
+    def __init__(
+        self,
+        *,
+        reverse_delay_s: float = 0.0,
+        thrust_slew_per_s: float = 0.0,
+        thrust_lag_tau_s: float = 0.0,
+    ) -> None:
+        self._reverse_delay_s = reverse_delay_s
+        self._thrust_slew_per_s = thrust_slew_per_s
+        self._thrust_lag_tau_s = thrust_lag_tau_s
+        self._requested = MotorCommand()
+        self._applied_thrust: float = 0.0
+        self._reverse_hold_remaining: float = 0.0
+
+    def _shaping_enabled(self) -> bool:
+        return (
+            self._reverse_delay_s != 0.0
+            or self._thrust_slew_per_s != 0.0
+            or self._thrust_lag_tau_s != 0.0
+        )
 
     def apply(self, command: MotorCommand) -> None:
-        self._command = command
+        """Record *command*; also arms the reverse-delay gate when the thrust
+        direction flips (positive → negative or negative → positive)."""
+        if self._reverse_delay_s > 0.0:
+            prev_sign = _sign(self._requested.thrust)
+            new_sign = _sign(command.thrust)
+            if prev_sign != 0 and new_sign != 0 and prev_sign != new_sign:
+                self._reverse_hold_remaining = self._reverse_delay_s
+        self._requested = command
+
+    def step(self, dt: float) -> None:
+        """Advance actuation shaping by *dt* seconds of simulator time.
+
+        No-op when all shaping parameters are zero (the default).  Tests that
+        exercise the opt-in shaping should call this after each ``apply`` to
+        move sim time forward before reading ``command``.
+        """
+        if dt <= 0.0 or not self._shaping_enabled():
+            return
+
+        # Stage 1 — reverse-delay gate: hold output at zero while the timer runs.
+        if self._reverse_hold_remaining > 0.0:
+            self._reverse_hold_remaining = max(0.0, self._reverse_hold_remaining - dt)
+            target = 0.0
+        else:
+            target = self._requested.thrust
+
+        # Stage 2 — slew-rate limit.
+        if self._thrust_slew_per_s > 0.0:
+            max_delta = self._thrust_slew_per_s * dt
+            target = self._applied_thrust + max(
+                -max_delta, min(max_delta, target - self._applied_thrust)
+            )
+
+        # Stage 3 — first-order lag (exponential approach).
+        if self._thrust_lag_tau_s > 0.0:
+            alpha = min(1.0, dt / self._thrust_lag_tau_s)
+            self._applied_thrust += alpha * (target - self._applied_thrust)
+        else:
+            self._applied_thrust = target
 
     @property
     def command(self) -> MotorCommand:
-        return self._command
+        if not self._shaping_enabled():
+            # Default path: pass through instantly with no state mutation.
+            return self._requested
+        return MotorCommand(
+            thrust=self._applied_thrust,
+            steering=self._requested.steering,
+        )
 
 
 class SimServo(Actuator):
@@ -102,14 +202,27 @@ class SimGps(Sensor):
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
 
     async def _loop(self) -> None:
         period = 1.0 / self.update_hz
+        loop = asyncio.get_running_loop()
+        next_deadline = loop.time() + period
         while True:
-            sentence = self.sample()
-            if self.bus is not None:
-                await self.bus.publish(events.NMEA_IN, sentence)
-            await asyncio.sleep(period)
+            try:
+                sentence = self.sample()
+                if self.bus is not None:
+                    await self.bus.publish(events.NMEA_IN, sentence)
+            except Exception:
+                logger.exception("SimGps publish error; continuing")
+            delay = next_deadline - loop.time()
+            next_deadline += period
+            if delay > 0:
+                await asyncio.sleep(delay)
 
 
 class SimDepthSounder(Sensor):
@@ -145,13 +258,26 @@ class SimDepthSounder(Sensor):
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
 
     async def _loop(self) -> None:
         period = 1.0 / self.update_hz
+        loop = asyncio.get_running_loop()
+        next_deadline = loop.time() + period
         while True:
-            if self.bus is not None:
-                await self.bus.publish(events.NMEA_IN, self.sample())
-            await asyncio.sleep(period)
+            try:
+                if self.bus is not None:
+                    await self.bus.publish(events.NMEA_IN, self.sample())
+            except Exception:
+                logger.exception("SimDepthSounder publish error; continuing")
+            delay = next_deadline - loop.time()
+            next_deadline += period
+            if delay > 0:
+                await asyncio.sleep(delay)
 
 
 class SimCompass(Sensor):
@@ -198,12 +324,25 @@ class SimCompass(Sensor):
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
 
     async def _loop(self) -> None:
         period = 1.0 / self.update_hz
+        loop = asyncio.get_running_loop()
+        next_deadline = loop.time() + period
         while True:
-            truth = self.get_truth()
-            if self.bus is not None:
-                await self.bus.publish(events.NMEA_IN, self.sample(truth))
-                await self.bus.publish(events.IMU_IN, self.imu_sample(truth, period))
-            await asyncio.sleep(period)
+            try:
+                truth = self.get_truth()
+                if self.bus is not None:
+                    await self.bus.publish(events.NMEA_IN, self.sample(truth))
+                    await self.bus.publish(events.IMU_IN, self.imu_sample(truth, period))
+            except Exception:
+                logger.exception("SimCompass publish error; continuing")
+            delay = next_deadline - loop.time()
+            next_deadline += period
+            if delay > 0:
+                await asyncio.sleep(delay)

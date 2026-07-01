@@ -105,7 +105,22 @@ class DriftMode(ControlMode):
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
         self.pid.setpoint = state.drift_target_knots
-        thrust = self.pid.update(state.sog_knots, dt)
+        # Regulate the SIGNED speed ALONG the held drift heading, not the
+        # unsigned speed-over-ground. With the held heading transverse to the
+        # actual drift, |SOG| never reaches the target from below, so the PID
+        # would ratchet its integral against a magnitude it can't null. Projecting
+        # the GPS velocity onto the held heading (negative when the boat is
+        # actually moving the OTHER way) gives the controller a signed error it
+        # can drive to zero -- adding thrust when too slow, braking in reverse
+        # when too fast.
+        fix = state.fix
+        if fix is not None:
+            along_knots = fix.sog_knots * math.cos(
+                math.radians(angle_difference(fix.cog_deg, state.target_heading))
+            )
+        else:
+            along_knots = state.sog_knots
+        thrust = self.pid.update(along_knots, dt)
         return GuidedSetpoint(target_heading=state.target_heading, thrust=thrust)
 
 
@@ -146,7 +161,11 @@ class AnchorConfig:
     feedforward: bool = False
     feedforward_gain: float = 0.7  # fraction of the estimated drift to counter
     boat_max_speed_mps: float = 1.6  # to estimate our thrust's contribution to v
-    drift_alpha: float = 0.02  # EMA gain/tick for the drift estimate (~10 s @ 5 Hz)
+    # Time constant (s) of the drift-estimate low-pass. It is converted to a
+    # per-tick EMA weight as ``alpha = dt / (drift_tau_s + dt)`` so the smoothing
+    # is FRAME-RATE INDEPENDENT (a fixed per-tick weight would smooth twice as
+    # hard at 10 Hz as at 5 Hz). ~10 s matches the original intent.
+    drift_tau_s: float = 10.0
     drift_min_mps: float = 0.05  # below this, no significant drift to point into
 
 
@@ -184,7 +203,7 @@ class AnchorHoldMode(ControlMode):
         self._drift_e = 0.0
         self._drift_n = 0.0
 
-    def _update_drift(self, state: NavigationState) -> None:
+    def _update_drift(self, state: NavigationState, state_dt: float) -> None:
         """Estimate the environmental drift velocity (world frame) by subtracting
         our own propulsion from the observed GPS velocity, low-passed."""
         fix = state.fix
@@ -198,7 +217,10 @@ class AnchorHoldMode(ControlMode):
         thr = state.motor_command.thrust
         int_e = thr * self.config.boat_max_speed_mps * math.sin(h)
         int_n = thr * self.config.boat_max_speed_mps * math.cos(h)
-        a = self.config.drift_alpha
+        # dt-scaled EMA weight so the smoothing time constant is fixed at
+        # drift_tau_s regardless of the control rate.
+        dt = max(1e-3, state_dt)
+        a = dt / (self.config.drift_tau_s + dt)
         self._drift_e += a * ((v_e - int_e) - self._drift_e)
         self._drift_n += a * ((v_n - int_n) - self._drift_n)
         state.est_drift_mps = math.hypot(self._drift_e, self._drift_n)
@@ -236,7 +258,7 @@ class AnchorHoldMode(ControlMode):
         cfg = self.config
         radius = state.anchor_radius_m
 
-        self._update_drift(state)
+        self._update_drift(state, dt)
 
         # Recover (actively re-point at the mark) only when pushed clearly out of
         # the radius; resume station-keeping once back well inside. The
@@ -409,10 +431,37 @@ class WaypointMode(ControlMode):
         distance = haversine_m(pos, target)
         state.distance_to_waypoint_m = distance
 
-        if distance <= self.config.arrival_radius_m:
-            # Arrived: advance to the next leg (in the current direction).
+        # Arrival: within the radius, OR passed the leg's perpendicular (the
+        # boat sailed past the waypoint abeam without entering the circle).
+        arrived = distance <= self.config.arrival_radius_m
+        if not arrived:
+            leg_len = haversine_m(self._leg_start, target)
+            if leg_len > 0.0:
+                brg_leg = initial_bearing(self._leg_start, target)
+                brg_pos = initial_bearing(self._leg_start, pos)
+                d_from_start = haversine_m(self._leg_start, pos)
+                along = d_from_start * math.cos(
+                    math.radians(angle_difference(brg_leg, brg_pos))
+                )
+                xte_m = abs(cross_track(self._leg_start, target, pos).distance_m)
+                if along >= leg_len and xte_m <= 3.0 * self.config.arrival_radius_m:
+                    arrived = True
+
+        if arrived:
+            # Advance to the next leg (in the current traversal direction).
             state.active_waypoint += self._step
             self._leg_start = target
+            # Multi-advance: consume stacked waypoints already within the arrival
+            # radius in one tick, so dense replay tracks don't stall one point per tick.
+            for _ in range(len(state.waypoints)):
+                if not 0 <= state.active_waypoint < len(state.waypoints):
+                    break
+                nxt = state.waypoints[state.active_waypoint].point
+                if haversine_m(pos, nxt) <= self.config.arrival_radius_m:
+                    state.active_waypoint += self._step
+                    self._leg_start = nxt
+                else:
+                    break
             if not 0 <= state.active_waypoint < len(state.waypoints):
                 if self._wrap_or_bounce(state, pos):
                     return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)

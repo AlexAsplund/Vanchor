@@ -46,3 +46,14 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+timeout = 120
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# Correctness-focused baseline: syntax errors (E9) + pyflakes (F).
+# F401 (unused imports) and F841 (unused variables) are excluded because the
+# codebase has 19 + 1 existing instances that will be cleaned up separately.
+select = ["E9", "F"]
+ignore = ["F401", "F841"]

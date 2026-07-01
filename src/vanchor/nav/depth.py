@@ -540,7 +540,11 @@ def parse_depth_features(filename: str, data: bytes) -> dict:
     """
     text = data.decode("utf-8", errors="replace")
     name = (filename or "").lower()
-    if name.endswith((".geojson", ".json")) or text.lstrip()[:1] in "{[":
+    # ``.geojsonl``/``.ndjson``/``.jsonl`` are newline-delimited GeoJSON (one
+    # Feature per line) -- the format cmapper's chart export writes. Detection by
+    # a leading ``{``/``[`` also catches an unlabelled JSONL stream.
+    if name.endswith((".geojson", ".json", ".geojsonl", ".ndjson", ".jsonl")) \
+            or text.lstrip()[:1] in "{[":
         return _parse_geojson_features(text)
     return {"soundings": _parse_csv_xyz_depth(text, xyz=name.endswith(".xyz")),
             "hardness": [], "contours": [], "composition": []}
@@ -592,18 +596,53 @@ def _parse_csv_xyz_depth(text: str, xyz: bool = False) -> list[tuple[float, floa
     return pts
 
 
-def _parse_geojson_features(text: str) -> dict:
-    """Walk a GeoJSON (FeatureCollection or single feature) ONCE, routing by
-    feature: Point/MultiPoint depths -> soundings, a ``hardness`` property ->
-    the hardness layer, LineString/MultiLineString -> contour polylines."""
+def _iter_geojson_features(text: str):
+    """Yield GeoJSON feature dicts from any of the shapes we accept:
+
+    * a ``FeatureCollection`` object (yields its ``features``),
+    * a single ``Feature`` / bare geometry object,
+    * **newline-delimited GeoJSON (JSONL/NDJSON)** -- one Feature per line, as
+      cmapper's chart export writes (hundreds of thousands of lines).
+
+    JSONL is detected by the whole-document parse failing (a JSONL stream is not
+    a single JSON value) and is then parsed **line by line**, so a huge export is
+    processed with only one line held in memory at a time rather than decoding a
+    giant JSON tree. Blank lines and unparseable lines are skipped."""
+    if not text.strip():
+        return
     try:
         obj = _json_loads(text)
     except ValueError:
-        return {"soundings": [], "hardness": []}
-    if isinstance(obj, dict) and obj.get("type") == "FeatureCollection":
-        feats = obj.get("features") or []
-    else:
-        feats = [obj]
+        obj = None
+    if obj is not None:
+        if isinstance(obj, dict) and obj.get("type") == "FeatureCollection":
+            yield from (obj.get("features") or [])
+        elif isinstance(obj, list):
+            yield from obj
+        else:
+            yield obj
+        return
+    # JSONL fallback: one JSON value per line (streaming, bounded memory).
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line[0] not in "{[":
+            continue
+        try:
+            feat = _json_loads(line)
+        except ValueError:
+            continue
+        if isinstance(feat, dict) and feat.get("type") == "FeatureCollection":
+            yield from (feat.get("features") or [])
+        else:
+            yield feat
+
+
+def _parse_geojson_features(text: str) -> dict:
+    """Walk a GeoJSON (FeatureCollection, single feature, or JSONL) ONCE, routing
+    by feature: Point/MultiPoint depths -> soundings, a ``hardness`` property ->
+    the hardness layer, LineString/MultiLineString -> contour polylines, and
+    Polygon/MultiPolygon with ``composition_pct`` -> filled composition polygons."""
+    feats = _iter_geojson_features(text)
     soundings: list[tuple[float, float, float]] = []
     hardness: list[tuple[float, float, float]] = []
     contours: list[dict] = []

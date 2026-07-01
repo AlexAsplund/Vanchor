@@ -473,6 +473,13 @@ body.hud-fade-text .catch-fab::after {
 }
 .depth-legend-labels { display: flex; justify-content: space-between; margin-top: 4px; font-weight: 700; }
 .depth-legend-cap { color: var(--muted); text-align: center; margin-top: 1px; }
+/* Bottom-composition legend: YlOrBr ramp, stacked just above the depth legend so
+   both can show together. Deliberately a DIFFERENT ramp from depth + hardness. */
+.comp-legend { bottom: 84px; }
+.comp-legend-bar {
+  height: 10px; border-radius: 5px;
+  background: linear-gradient(to right, #ffffe5, #fee391, #fe9929, #d95f0e, #993404);
+}
 
 /* ============================ SAFETY BANNER ============================ */
 #banner {
@@ -1033,6 +1040,7 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
   .steering-gauge .sg-stat b { font-size: 13px; }
   .steering-gauge .sg-title { font-size: 10px; }
   .depth-legend { right: 8px; bottom: calc(54vh + 8px); }
+  .comp-legend { right: 8px; bottom: calc(54vh + 76px); }
   #banner { top: 132px; }
   .topbar { gap: 7px; padding: 6px 9px; }
   .brand-name { display: none; }
@@ -1461,6 +1469,21 @@ body.mobile[data-sheet="full"] .wa-next { display: none; }
 @keyframes sbanner-in {
   from { opacity: 0; transform: translateY(-8px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---- Health sensor-age chips (Settings > Data & diagnostics > Live data) ---- */
+.health-ages {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 3px 0;
+}
+.health-age-chip {
+  display: inline-flex; align-items: baseline; gap: 4px; font-size: 11px;
+}
+.health-age-chip .hac-lbl {
+  color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.health-age-chip .hac-val {
+  font-family: var(--font-num); color: var(--text); min-width: 32px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- Alert history (#97): top-bar bell + badge ---- */

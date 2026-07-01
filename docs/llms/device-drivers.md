@@ -15,7 +15,48 @@ hardware, produce the right NMEA sentence(s), publish them. That's it — the
 controller, modes, and UI are unchanged. (Motors are the mirror: they accept a
 `MotorCommand`; see `MotorController`.)
 
-So "supporting a new compass" = "produce `HDM` from your device and publish it".
+So "supporting a new compass" = "produce `HDM` or `HDT` from your device and
+publish it". If your hardware applies its own declination and emits **true**
+heading, emit `HDT` so the navigator does not double-correct. If it emits
+**magnetic** heading, emit `HDM`; the navigator applies `magnetic_declination_deg`
+from the boat config. The HWT901B driver emits `HDT` because it applies
+declination internally.
+
+## Serial auto-reconnect (`hardware/serial_link.py`)
+
+Production serial devices should survive cable-pulls and port resets. The shared
+**read supervisor** in `serial_link.py` handles this:
+
+- On an EOF or read error the supervisor closes the port and waits with
+  **exponential backoff** before re-opening.
+- Two pollable attributes are available on any driver using the supervisor:
+  - `healthy: bool` — `True` while data is flowing; `False` after the first
+    missed deadline or while reconnecting.
+  - `last_data_monotonic: float | None` — `time.monotonic()` stamp of the most
+    recent good read, or `None` before the first.
+- The runtime's `_device_health()` reads these to populate the `"devices"` sub-
+  block in the telemetry `"health"` field (sim devices don't expose them, so the
+  block is absent in pure-sim mode).
+- `motor.flush()` no longer raises when the link is down — it returns silently so
+  a partially-connected state never kills the control loop.
+
+**Through-zero reverse interlock.** Both the safety governor
+(`controller/safety.py`) and the serial motor driver carry a **sticky
+applied-direction memory**. When the commanded thrust crosses zero, the driver
+holds at zero for `reverse_delay_s` before applying the opposite direction.  The
+fix prevents the interlock from being bypassed by a sequence of commands that
+each cross zero independently.
+
+## NMEA checksum strictness
+
+`nav/nmea.py` `parse()` rejects:
+- A sentence that has `*XX` but the checksum is **empty, non-hex, or wrong** —
+  always rejected, regardless of `require_checksum`.
+- A sentence with **no** `*XX` at all — rejected when `require_checksum=True`
+  (used for inbound TCP lines to prevent spoof/garbage injection).
+
+Do not weaken these — the old lenient behaviour allowed garbage-in from network
+sources to corrupt navigator state.
 
 ## How drivers are registered (no `app.py` edits)
 
@@ -39,7 +80,20 @@ returns the device.
 
 ## Anatomy of a driver (worked example: `hwt901b.py`)
 
-The HWT901B compass driver is the reference — copy its shape.
+The HWT901B AHRS driver is the reference — copy its shape. Key behaviours
+specific to that device (don't regress them):
+
+- **Emits `HDT` (true heading)**, not `HDM`. The driver applies declination
+  internally (auto, manual, or off) before publishing, so the navigator never
+  double-corrects.
+- **Auto-declination estimator** needs ≥ 10 consistent `cog − magnetic_heading`
+  samples over ≥ 30 s with a low residual spread before it settles; it rejects
+  motion with low SOG or high yaw rate to avoid noise contamination.
+- **`hz` setting applies live** — `apply_setting("hz", value)` changes the
+  sample loop period on a running device without a restart.
+- **`device_menu()`** exposes `declination_mode` (auto / manual / off),
+  `manual_declination_deg` (shown only when mode = manual), and `hz`, plus
+  actions for sensor profiling and magnetometer calibration.
 
 **1. The device class** implements the `Sensor` ABC (`start`/`stop`) and runs a
 background loop that publishes NMEA:

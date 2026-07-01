@@ -9,6 +9,7 @@ asynchronously (subscribed to the ``nmea.in`` topic at runtime).
 from __future__ import annotations
 
 import logging
+import time
 
 from ..core import events
 from ..core.events import EventBus
@@ -26,9 +27,22 @@ class Navigator:
         state: NavigationState,
         bus: EventBus | None = None,
         guard_config: SensorGuardConfig | None = None,
+        *,
+        declination_deg: float = 0.0,
+        mono_fn=time.monotonic,
     ) -> None:
         self.state = state
         self.bus = bus
+        # Local magnetic declination (degrees East-positive). Applied to MAGNETIC
+        # headings (HDM/HDG with reference="M") to yield true before the control
+        # stack uses state.heading_deg. True headings (HDT/HDG fully corrected,
+        # reference="T") pass through unchanged. Set to 0 if the compass source
+        # already emits true heading to avoid double-correction.
+        self.declination_deg = declination_deg
+        # MONOTONIC clock used to stamp each sensor's receive time on the state
+        # (the freshness watchdog). Injectable so the runtime can drive it and
+        # tests can advance it deterministically; matches the Runtime's mono_fn.
+        self._mono_fn = mono_fn
         self.guard = SensorGuard(guard_config)
         # GPS offset calibration (#45): a constant (Δlat, Δlon) added to every
         # incoming fix so a known-wrong receiver can be corrected against a
@@ -46,6 +60,7 @@ class Navigator:
         does not steer on it. Heading still comes via NMEA (HDM), so the nav path
         is unchanged whether or not an IMU is present."""
         self.state.imu = sample
+        self.state.imu_received_mono = self._mono_fn()
 
     # ------------------------------------------------------------------ #
     # GPS offset calibration (#45)
@@ -128,24 +143,44 @@ class Navigator:
                 )
                 self.state.fix = fix
                 self.state.fix_seq += 1
+                self.state.fix_received_mono = self._mono_fn()
                 self.state.sog_knots = parsed.sog_knots
                 events_out.append((events.NAV_FIX, fix))
         elif isinstance(parsed, nmea.GGA):
             point = self._apply_offset(parsed.point)
             if parsed.fix_quality > 0 and self.guard.check_position(point):
-                # GGA has no speed; preserve last known sog.
+                # GGA has no course/speed fields.  Carry forward the previous
+                # fix's cog so downstream consumers (e.g. anchor-mode closing-
+                # speed damping) always have a meaningful course value.  If there
+                # is no prior fix, cog defaults to 0.0 (unknown).
+                prev = self.state.fix
+                cog = prev.cog_deg if prev is not None else 0.0
                 fix = GpsFix(
-                    point=point, sog_knots=self.state.sog_knots, valid=True
+                    point=point,
+                    sog_knots=self.state.sog_knots,
+                    cog_deg=cog,
+                    valid=True,
                 )
                 self.state.fix = fix
                 self.state.fix_seq += 1
+                self.state.fix_received_mono = self._mono_fn()
                 events_out.append((events.NAV_FIX, fix))
         elif isinstance(parsed, nmea.Heading):
-            if self.guard.check_heading(parsed.heading_deg):
-                self.state.heading_deg = parsed.heading_deg
-                events_out.append((events.NAV_HEADING, parsed.heading_deg))
+            # Normalise to TRUE heading before storing.
+            # Sign convention: True = Magnetic + declination (East-positive).
+            # HDT (reference="T") and fully-corrected HDG already carry a true
+            # heading — pass through unchanged to avoid double-correction.
+            if parsed.reference == "M":
+                true_deg = (parsed.heading_deg + self.declination_deg) % 360
+            else:  # "T"
+                true_deg = parsed.heading_deg
+            if self.guard.check_heading(true_deg):
+                self.state.heading_deg = true_deg
+                self.state.heading_received_mono = self._mono_fn()
+                events_out.append((events.NAV_HEADING, true_deg))
         elif isinstance(parsed, nmea.Depth):
             self.state.depth_m = parsed.depth_m
+            self.state.depth_received_mono = self._mono_fn()
         elif isinstance(parsed, nmea.APB):
             self.state.last_apb = sentence.strip()
             self.state.has_apb = True

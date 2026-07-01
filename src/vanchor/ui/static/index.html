@@ -216,6 +216,15 @@
     <div class="depth-legend-cap" id="depth-legend-cap">depth (m)</div>
   </div>
 
+  <!-- Bottom-composition legend — shown only when the composition overlay is on.
+       An UNCALIBRATED 0–100% index (no substrate names, polarity unknown), on a
+       YlOrBr ramp kept distinct from the depth and hardness scales. -->
+  <div id="composition-legend" class="depth-legend comp-legend glass hidden">
+    <div class="comp-legend-bar"></div>
+    <div class="depth-legend-labels"><span>0</span><span>100</span></div>
+    <div class="depth-legend-cap">composition (0–100%, uncalibrated)</div>
+  </div>
+
   <!-- Drop-marker FAB: arms marker placement; tap the map to drop (or long-press
        the map). Icon is chosen in Settings → Map markers. -->
   <button id="marker-fab" class="map-fab" title="Drop a marker (tap map to place)" aria-label="Drop a marker">
@@ -1118,6 +1127,13 @@
         <div class="row"><span>Steer</span><b id="r-steer">—</b></div>
         <div class="row"><span>Cruise</span><b id="r-cruise">off</b></div>
         <div class="hint" id="sensors-rejected">rejected: hdg —, pos —</div>
+        <div class="ctx-sub">Sensor ages</div>
+        <div class="health-ages">
+          <span class="health-age-chip"><span class="hac-lbl">FIX</span><span class="hac-val" id="health-age-fix">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">HDG</span><span class="hac-val" id="health-age-hdg">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">DEPTH</span><span class="hac-val" id="health-age-depth">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">IMU</span><span class="hac-val" id="health-age-imu">—</span></span>
+        </div>
       </details>
 
       <details class="card" id="debug-card">
@@ -1545,6 +1561,7 @@
   <script src="/static/alerts.js"></script>
   <script src="/static/logs.js"></script>
   <script src="/static/safety.js"></script>
+  <script src="/static/health.js"></script>
   <script src="/static/measure.js"></script>
   <script src="/static/mobile.js"></script>
 </body>

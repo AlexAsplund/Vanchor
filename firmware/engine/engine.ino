@@ -124,19 +124,31 @@ int     g_potTap = -1;            // 0..99 current X9C tap (-1 = unknown -> forc
 #if HIJACK_MODE == HIJACK_DIGIPOT
 // The X9C is stepped, not addressed: pulse INC with U/D set, count taps. We home
 // to minimum at boot (step down 100+ times) so g_potTap is known absolutely.
+//
+// X9C103 NVM store rule (datasheet FN8222):
+//   CS rising edge while INC is HIGH  → wiper position stored to NVM (EEPROM)
+//   CS rising edge while INC is LOW   → no NVM store (wiper position unchanged in NVM)
+// NVM endurance is ~100k cycles; every throttle adjustment would burn one cycle
+// if we store on every CS deassertion. To avoid stores, INC must be LOW when CS
+// rises. digipotPulse() therefore ends with INC LOW, not HIGH.
 static void digipotPulse(bool up) {
   digitalWrite(PIN_DIGIPOT_UD, up ? HIGH : LOW);
   delayMicroseconds(3);
-  digitalWrite(PIN_DIGIPOT_INC, LOW);   // wiper moves on the falling edge
-  delayMicroseconds(3);
+  // Bring INC HIGH first (idle level). If it was already HIGH this is a no-op
+  // write; no wiper move on a LOW→HIGH edge. If it was LOW (e.g. from a prior
+  // call), this restores it cleanly before the active falling edge.
   digitalWrite(PIN_DIGIPOT_INC, HIGH);
   delayMicroseconds(3);
+  digitalWrite(PIN_DIGIPOT_INC, LOW);   // wiper moves on this HIGH→LOW falling edge
+  delayMicroseconds(3);
+  // Leave INC LOW so that the caller can raise CS without triggering an NVM store.
 }
 
 static void digipotHome() {
   digitalWrite(PIN_DIGIPOT_CS, LOW);
   for (int i = 0; i < 110; i++) digipotPulse(false);  // slam to minimum
-  digitalWrite(PIN_DIGIPOT_CS, HIGH);                 // latch (no NVM write needed)
+  // After the last digipotPulse(), INC is LOW. CS rising with INC LOW → no NVM store.
+  digitalWrite(PIN_DIGIPOT_CS, HIGH);
   g_potTap = 0;
 }
 
@@ -149,6 +161,7 @@ static void digipotSet(int tap) {
   digitalWrite(PIN_DIGIPOT_CS, LOW);
   while (g_potTap < tap) { digipotPulse(true);  g_potTap++; }
   while (g_potTap > tap) { digipotPulse(false); g_potTap--; }
+  // After the last digipotPulse(), INC is LOW. CS rising with INC LOW → no NVM store.
   digitalWrite(PIN_DIGIPOT_CS, HIGH);
 }
 #endif
@@ -191,8 +204,10 @@ void setup() {
   pinMode(PIN_DIGIPOT_INC, OUTPUT);
   pinMode(PIN_DIGIPOT_UD, OUTPUT);
   pinMode(PIN_DIGIPOT_CS, OUTPUT);
-  digitalWrite(PIN_DIGIPOT_INC, HIGH);
-  digitalWrite(PIN_DIGIPOT_CS, HIGH);
+  // After pinMode(), Arduino output pins default LOW. Bring INC LOW before raising
+  // CS so the initial CS LOW→HIGH transition doesn't trigger an NVM store.
+  digitalWrite(PIN_DIGIPOT_INC, LOW);
+  digitalWrite(PIN_DIGIPOT_CS, HIGH);   // deselect; INC is LOW → no NVM store
   digipotHome();                        // known throttle = 0 at boot
 #else
   pinMode(PIN_THROTTLE_PWM, OUTPUT);

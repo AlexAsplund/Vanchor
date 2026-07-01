@@ -166,6 +166,16 @@ class SensorConfig:
     # error and weaving down a leg in otherwise calm water.
     gps_noise_m: float = 0.35
     compass_noise_deg: float = 1.0
+    # Local magnetic declination applied by the navigator to convert MAGNETIC
+    # headings (HDM/HDG) to true before the control stack uses them.
+    # Degrees East-positive (e.g. Sweden +3°, Minnesota +1°, Pacific NW +15°).
+    # Leave 0.0 if your compass source already emits true heading (HDT) or if
+    # the HWT901B driver is in auto/manual mode — it corrects internally and
+    # emits HDT, so setting this would double-correct.
+    # Note: the simulator emits HDM with implicit zero declination (the sim world
+    # uses true headings throughout); a nonzero value here will shift the sim
+    # compass reading, which is acceptable since sim declination is zero by definition.
+    magnetic_declination_deg: float = 0.0
     # Sensor-anomaly protection (spike rejection).
     position_jump_max_m: float = 15.0
     heading_jump_max_deg: float = 30.0
@@ -220,11 +230,17 @@ class SafetyConfig:
     max_thrust_slew_per_s: float = 2.0
     reverse_delay_s: float = 0.5
     fix_timeout_s: float = 5.0
-    # Loss-of-fix failsafe. OFF by default (a switch in Settings -> Safety): when
-    # off, losing the GPS fix does NOT cut thrust. On = force a stop after the
-    # timeout. (Was previously always-on, which surfaced as a "deadman" cutting
-    # thrust whenever fixes lapsed.)
-    fix_failsafe_enabled: bool = False
+    # Loss-of-fix failsafe. ON by default (a switch in Settings -> Safety): once
+    # no fresh fix has arrived for fix_timeout_s thrust is forced to zero so the
+    # boat coasts rather than steaming blind -- the conservative default the
+    # review and roadmap call for on a trolling motor. Set False to keep holding
+    # the last command through a fix dropout.
+    fix_failsafe_enabled: bool = True
+    # Sensor-staleness watchdogs (seconds). A stale compass heading forces a
+    # coast while a guided mode steers; a stale depth is treated as unknown by
+    # the shallow-water stop instead of trusting a frozen sounding.
+    heading_stale_s: float = 3.0
+    depth_stale_s: float = 10.0
     drag_alarm_factor: float = 2.0
     # Shallow-water / geofence auto-stop (#62).
     min_depth_m: float = 0.0  # cut thrust below this sounded depth (0 = disabled)
@@ -274,7 +290,17 @@ class HardwareConfig:
     gps_port: str = "/dev/ttyUSB0"
     compass_port: str = "/dev/ttyUSB1"
     motor_port: str = "/dev/ttyUSB2"
+    # Shared baud fallback (NMEA 0183 standard). Kept for backward compat — if
+    # per-device keys are absent this value is used for compass and motor.
     baudrate: int = 4800
+    # Per-device baud rates. ``gps_baud`` defaults to 38400 because 5 Hz GPS
+    # (RMC + GGA) needs ~8200 bit/s — already 170 % of a 4800-baud link, so the
+    # OS RX buffer fills and fixes arrive stale within seconds. 38400 gives 4.5×
+    # headroom. Set compass_baud / motor_baud only if your device needs it;
+    # otherwise the shared ``baudrate`` (4800) is the right NMEA 0183 default.
+    gps_baud: int = 38400
+    compass_baud: int = 4800
+    motor_baud: int = 4800
     # Sensors also accept "nmea": build NO internal device and let the navigator
     # be fed by external NMEA over the TCP bridge (--nmea-tcp) or inject_nmea —
     # e.g. a phone or chart-plotter GPS. So "GPS from NMEA" is never blocked.
@@ -543,6 +569,9 @@ def apply_env_overrides(config: AppConfig) -> AppConfig:
     _apply("VANCHOR_COMPASS_PORT", config.hardware, "compass_port", str)
     _apply("VANCHOR_MOTOR_PORT", config.hardware, "motor_port", str)
     _apply("VANCHOR_BAUDRATE", config.hardware, "baudrate", int)
+    _apply("VANCHOR_GPS_BAUD", config.hardware, "gps_baud", int)
+    _apply("VANCHOR_COMPASS_BAUD", config.hardware, "compass_baud", int)
+    _apply("VANCHOR_MOTOR_BAUD", config.hardware, "motor_baud", int)
     _apply("VANCHOR_GPS_SOURCE", config.hardware, "gps_source", str)
     _apply("VANCHOR_COMPASS_SOURCE", config.hardware, "compass_source", str)
     _apply("VANCHOR_DEPTH_SOURCE", config.hardware, "depth_source", str)
@@ -642,6 +671,11 @@ sensors:
   depth_hz: 2.0
   gps_noise_m: 0.35   # denoised plotter output (steady), not raw-receiver scatter
   compass_noise_deg: 1.0
+  # Local magnetic declination, degrees East-positive; applied to MAGNETIC headings
+  # (HDM/HDG) to produce true. Leave 0 if your compass source already emits true
+  # heading (HDT) — e.g. HWT901B in auto/manual mode corrects internally and emits
+  # HDT, so setting this nonzero alongside it would double-correct.
+  magnetic_declination_deg: 0.0
   position_jump_max_m: 15.0    # reject GPS jumps bigger than this (unless confirmed)
   heading_jump_max_deg: 30.0   # reject heading spikes bigger than this per sample
 
@@ -670,7 +704,9 @@ safety:
   max_thrust_slew_per_s: 2.0
   reverse_delay_s: 0.5
   fix_timeout_s: 5.0
-  fix_failsafe_enabled: false  # loss-of-fix failsafe; OFF by default (Settings -> Safety)
+  fix_failsafe_enabled: true   # loss-of-fix failsafe; ON by default: coast after the timeout (Settings -> Safety)
+  heading_stale_s: 3.0         # stale compass -> coast while a guided mode steers
+  depth_stale_s: 10.0          # stale depth -> shallow-water stop treats depth as unknown
   drag_alarm_factor: 2.0
   min_depth_m: 0.0           # cut thrust below this sounded depth (0 = disabled) (#62)
   nogo_lookahead_m: 5.0      # also stop within this distance of a no-go zone (#62)
@@ -692,7 +728,13 @@ hardware:
   gps_port: /dev/ttyUSB0
   compass_port: /dev/ttyUSB1
   motor_port: /dev/ttyUSB2
-  baudrate: 4800
+  baudrate: 4800            # shared fallback; prefer per-device keys below
+  # Per-device baud rates. gps_baud is 38400 by default: a 5 Hz GPS sending
+  # RMC+GGA (~8200 bit/s) saturates a 4800-baud link and causes ever-growing
+  # fix lag. compass_baud / motor_baud default to 4800 (NMEA 0183 standard).
+  gps_baud: 38400
+  compass_baud: 4800
+  motor_baud: 4800
   # Per-device source overrides (null = follow `enabled`). Mix sim + real freely:
   #   gps_source: nmea       # GPS from external NMEA (phone/plotter via nmea_tcp)
   #   motor_source: both     # drive the sim boat AND a real servo (bench testing)

@@ -11,7 +11,11 @@ from vanchor.ui.server import create_app
 
 
 @pytest.fixture()
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    # Allow the TestClient's default Host ("testserver") via the env var so
+    # the host-check middleware doesn't reject test requests.  Production
+    # deployments do NOT include "testserver", keeping the protection strict.
+    monkeypatch.setenv("VANCHOR_ALLOWED_HOSTS", "testserver")
     from vanchor.core.config import load
 
     cfg = load(None)
@@ -134,3 +138,142 @@ def test_websocket_streams_and_accepts_commands(client):
             if msg["mode"] == "anchor_hold":
                 break
         assert msg["mode"] == "anchor_hold"
+
+
+# ---- Fix 2: DNS-rebinding / host validation -------------------------------- #
+
+def test_host_check_rejects_dns_rebinding_domain(client):
+    """A request with an attacker-controlled domain in Host must be rejected."""
+    r = client.get("/api/state", headers={"Host": "attacker.com"})
+    assert r.status_code == 400
+
+
+def test_host_check_allows_ip_literal(client):
+    r = client.get("/api/state", headers={"Host": "192.168.1.100"})
+    assert r.status_code == 200
+
+
+def test_host_check_allows_localhost(client):
+    r = client.get("/api/state", headers={"Host": "localhost"})
+    assert r.status_code == 200
+
+
+def test_host_check_allows_mdns(client):
+    r = client.get("/api/state", headers={"Host": "boat.local"})
+    assert r.status_code == 200
+
+
+def test_host_check_allows_ip_with_port(client):
+    r = client.get("/api/state", headers={"Host": "10.0.0.1:8080"})
+    assert r.status_code == 200
+
+
+def test_host_check_allows_env_var_name(tmp_path, monkeypatch):
+    """A hostname explicitly listed in VANCHOR_ALLOWED_HOSTS must be accepted."""
+    monkeypatch.setenv("VANCHOR_ALLOWED_HOSTS", "testserver,mypilot.home")
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    app = create_app(Runtime(cfg))
+    with TestClient(app) as c:
+        r = c.get("/api/state", headers={"Host": "mypilot.home"})
+        assert r.status_code == 200
+
+
+# ---- Fix 3: broadcaster resilience ---------------------------------------- #
+
+def test_broadcaster_continues_after_client_disconnect(client):
+    """When one WS client drops, the broadcaster must not die and must keep
+    sending frames to remaining clients."""
+    with client.websocket_connect("/ws") as ws_good:
+        ws_good.receive_json()  # consume initial snapshot
+
+        # Open a second client and immediately close it — simulates an abrupt
+        # disconnect that will cause the broadcaster to error on the next send.
+        with client.websocket_connect("/ws") as ws_bad:
+            ws_bad.receive_json()
+
+        # ws_bad is now closed.  The broadcaster should discard it and keep
+        # sending to ws_good.
+        for _ in range(10):
+            msg = ws_good.receive_json()
+            assert "mode" in msg
+
+
+# ---- Fix 4: /api/log strips bulk fields by default ------------------------- #
+
+def test_log_strips_depth_points_by_default(client):
+    """/api/log must not include depth_points in default (non-full) output."""
+    # Drive some telemetry frames into the ring first.
+    client.get("/api/state")
+    r = client.get("/api/log?n=10")
+    assert r.status_code == 200
+    frames = r.json()["telemetry"]
+    for frame in frames:
+        assert "depth_points" not in frame
+
+
+def test_log_full_includes_depth_points(client):
+    """With ?full=1, /api/log must return all fields including depth_points."""
+    client.get("/api/state")
+    r = client.get("/api/log?n=10&full=1")
+    assert r.status_code == 200
+    frames = r.json()["telemetry"]
+    # depth_points should be present in at least one frame (recorder auto-fills
+    # on each telemetry() call).
+    assert any("depth_points" in f for f in frames)
+
+
+# ---- WS application-level heartbeat (ping/pong) ---------------------------- #
+
+
+@pytest.fixture()
+def runtime_client(tmp_path, monkeypatch):
+    """Like ``client`` but also yields the Runtime for direct state inspection."""
+    monkeypatch.setenv("VANCHOR_ALLOWED_HOSTS", "testserver")
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    app = create_app(rt)
+    with TestClient(app) as c:
+        yield c, rt
+
+
+def test_ws_ping_updates_liveness(runtime_client):
+    """A ping message over WS must advance runtime._last_client_seen."""
+    import time
+
+    c, rt = runtime_client
+    with c.websocket_connect("/ws") as ws:
+        ws.receive_json()  # initial snapshot
+        before = rt._last_client_seen
+        time.sleep(0.02)  # ensure the monotonic clock advances before pinging
+        ws.send_json({"type": "ping"})
+        # Drain messages until we receive the pong (telemetry frames may arrive first).
+        for _ in range(20):
+            msg = ws.receive_json()
+            if msg.get("type") == "pong":
+                break
+    assert rt._last_client_seen is not None
+    assert rt._last_client_seen > before
+
+
+def test_ws_ping_not_forwarded_to_controller(runtime_client, caplog):
+    """A ping must not reach the controller: no mode change, no unknown-command warning."""
+    import logging
+
+    c, rt = runtime_client
+    with caplog.at_level(logging.WARNING, logger="vanchor.controller"):
+        with c.websocket_connect("/ws") as ws:
+            ws.receive_json()  # initial snapshot
+            ws.send_json({"type": "ping"})
+            # Wait for the pong; telemetry frames may arrive first.
+            for _ in range(20):
+                msg = ws.receive_json()
+                if msg.get("type") == "pong":
+                    break
+    assert rt.state.mode.value == "manual"
+    assert not any("unknown command" in r.message for r in caplog.records)

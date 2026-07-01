@@ -1,8 +1,8 @@
 """Pluggable compass driver for the WitMotion HWT901B-TTL 9-axis AHRS.
 
 Wraps the external ``hwt901b`` library and adapts it to vanchor's device seam: a
-:class:`~vanchor.hardware.interfaces.Sensor` that emits ``HDM`` NMEA onto the bus
-(``nmea.in``), exactly like ``SimCompass``/``SerialCompass`` -- so the navigator,
+:class:`~vanchor.hardware.interfaces.Sensor` that emits ``HDT`` NMEA onto the bus
+(``nmea.in``) -- so the navigator,
 controller and every mode are unchanged. Registers itself as the compass source
 ``"hwt901b"`` (see :mod:`vanchor.hardware.registry`), so it needs no edit to
 ``app.py``'s build seam.
@@ -96,6 +96,21 @@ def default_menu() -> dict:
     return _menu_schema("auto", 0.0, 5.0)
 
 
+# --- HeadingOffsetEstimator settling thresholds (named so they're easy to tune) ---
+# Require this many straight-run samples before calling the offset "settled"; a
+# single coincidental reading should never trigger settled.
+_MIN_SETTLE_SAMPLES: int = 10
+# Also require this much accumulated straight-run time (seconds); prevents settling
+# on a burst of fast readings that happen to agree.
+_MIN_SETTLE_TIME_S: float = 30.0
+# EMA time constant for the residual-spread tracker (seconds); slower than the
+# offset TC so it captures medium-term inconsistency, not just instantaneous noise.
+_SPREAD_TC_S: float = 20.0
+# If the EMA of |residual| exceeds this, the samples are too inconsistent to trust
+# (e.g. reciprocal-course crab shows up as alternating offsets).
+_MAX_SPREAD_DEG: float = 5.0
+
+
 class HeadingOffsetEstimator:
     """Learn the fixed offset (declination + compass mount error) between the
     magnetic heading and true north, from GPS course-over-ground.
@@ -103,7 +118,21 @@ class HeadingOffsetEstimator:
     While the boat runs roughly straight above ``min_sog_mps``,
     ``course_over_ground - magnetic_heading`` is that offset (plus noise). We
     low-pass it with a long time constant so turns and GPS jitter average out and
-    only sustained straight-line agreement moves the estimate."""
+    only sustained straight-line agreement moves the estimate.
+
+    **Settling criteria** — ``settled`` becomes ``True`` only when all of:
+    * at least ``_MIN_SETTLE_SAMPLES`` straight-run samples have been accepted,
+    * at least ``_MIN_SETTLE_TIME_S`` of straight-run time has accumulated, and
+    * the EMA of |residual| (``_spread_ema``) is below ``_MAX_SPREAD_DEG``.
+
+    The spread gate defends against inconsistent offset estimates. If the boat
+    repeatedly changes course and the cog−heading differences alternate (e.g. ±5°),
+    the spread stays large and the estimator does not settle.
+
+    **Known limitation** — a *constant* crab angle (beam current/wind, always on
+    the same tack through every learning run) is indistinguishable from declination
+    and will still bias the offset estimate. Varying conditions (different headings,
+    different crab directions) are needed to expose it via spread."""
 
     def __init__(
         self, *, min_sog_mps: float = 0.8, time_constant_s: float = 25.0,
@@ -115,23 +144,46 @@ class HeadingOffsetEstimator:
         self.offset_deg: float = 0.0
         self.settled: bool = False
         self._prev_cog: float | None = None
+        self._n_samples: int = 0
+        self._run_time_s: float = 0.0
+        self._spread_ema: float = 0.0
 
     def update(self, magnetic_heading_deg: float, cog_deg: float | None,
-               sog_mps: float | None, dt: float) -> float:
+               sog_mps: float | None, dt: float,
+               yaw_rate_dps: float | None = None) -> float:
+        """Update the offset estimate and return the current offset.
+
+        ``yaw_rate_dps`` — if supplied (from the IMU gyro z-axis), it is used as
+        the turn-rate gate instead of the COG-difference fallback, giving a more
+        immediate and accurate straight-line check."""
         if cog_deg is None or sog_mps is None or sog_mps < self.min_sog_mps or dt <= 0:
             self._prev_cog = cog_deg
             return self.offset_deg
-        if self._prev_cog is not None:
+        # Turn-rate gate: prefer gyro when available (more immediate), fall back to
+        # COG difference which lags by one frame.
+        if yaw_rate_dps is not None:
+            if abs(yaw_rate_dps) > self.max_turn_dps:
+                self._prev_cog = cog_deg
+                return self.offset_deg
+        elif self._prev_cog is not None:
             if abs(angle_difference(self._prev_cog, cog_deg)) / dt > self.max_turn_dps:
                 self._prev_cog = cog_deg  # mid-turn -> skip (COG != heading here)
                 return self.offset_deg
         self._prev_cog = cog_deg
         target = angle_difference(magnetic_heading_deg, cog_deg)  # signed cog - mag
         a = min(1.0, dt / self.time_constant_s)
-        self.offset_deg = normalize_deg(
-            self.offset_deg + a * angle_difference(self.offset_deg, target)
+        residual = angle_difference(self.offset_deg, target)
+        self.offset_deg = normalize_deg(self.offset_deg + a * residual)
+        # Track spread as EMA of |residual|; large spread → inconsistent samples.
+        sa = min(1.0, dt / _SPREAD_TC_S)
+        self._spread_ema += sa * (abs(residual) - self._spread_ema)
+        self._n_samples += 1
+        self._run_time_s += dt
+        self.settled = (
+            self._n_samples >= _MIN_SETTLE_SAMPLES
+            and self._run_time_s >= _MIN_SETTLE_TIME_S
+            and self._spread_ema <= _MAX_SPREAD_DEG
         )
-        self.settled = True
         return self.offset_deg
 
 
@@ -172,7 +224,8 @@ class HWT901BCompass(Sensor):
         if close is not None:
             await asyncio.get_event_loop().run_in_executor(None, close)
 
-    def _current_declination(self, magnetic_heading: float, dt: float) -> float:
+    def _current_declination(self, magnetic_heading: float, dt: float,
+                              yaw_rate_dps: float | None = None) -> float:
         if self.declination_mode == "manual":
             return self.manual_declination_deg
         if self.declination_mode == "off":
@@ -182,10 +235,10 @@ class HWT901BCompass(Sensor):
             mv = self.motion_provider()
             if mv is not None:
                 cog, sog = mv
-        return self.estimator.update(magnetic_heading, cog, sog, dt)
+        return self.estimator.update(magnetic_heading, cog, sog, dt, yaw_rate_dps)
 
     async def sample_once(self, dt: float) -> str | None:
-        """Read one full AHRS state and return the HDM heading sentence (or None
+        """Read one full AHRS state and return the HDT heading sentence (or None
         on timeout). Also publishes the raw IMU sample (accel+gyro) on
         :data:`events.IMU_IN` for logging/analysis. One ``read_state`` gets both;
         the blocking serial read runs in a thread so it never stalls the loop."""
@@ -203,17 +256,21 @@ class HWT901BCompass(Sensor):
         # Module yaw is CCW-positive [-180,180]; a compass bearing is CW-positive
         # [0,360) -> negate (matches hwt901b.calibration.yaw_to_heading at decl 0).
         magnetic = normalize_deg(-angle.yaw)
-        heading = normalize_deg(magnetic + self._current_declination(magnetic, dt))
+        # Pass gyro z (yaw rate, deg/s) to the estimator when available; it gives a
+        # more immediate straight-line gate than the COG-difference fallback.
+        g = getattr(state, "angular_velocity", None)
+        yaw_rate = g.z if g is not None else None
+        heading = normalize_deg(magnetic + self._current_declination(magnetic, dt, yaw_rate))
         self.last_heading_deg = heading
         if self.bus is not None:
             imu = _imu_from_state(state)
             if imu is not None:
                 await self.bus.publish(events.IMU_IN, imu)
-        return nmea.encode_hdm(heading)
+        return nmea.encode_hdt(heading)
 
     async def _loop(self) -> None:
-        period = 1.0 / self.hz
         while True:
+            period = 1.0 / self.hz  # recompute each iteration so hz changes apply live
             try:
                 sentence = await self.sample_once(period)
                 if sentence and self.bus is not None:

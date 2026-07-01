@@ -70,8 +70,44 @@ _UNDERWAY_MODES = frozenset(
         ControlModeName.CONTOUR_FOLLOW,
         ControlModeName.ORBIT,
         ControlModeName.TROLLING,
+        ControlModeName.WORK_AREA,
     }
 )
+
+# In MANUAL, |commanded thrust| above this counts as "driving" (making way) for
+# the lost-connection failsafe (#64) -- below it the boat is effectively idle.
+_MANUAL_UNDERWAY_THRUST_EPS = 0.02
+
+
+async def _start_motor(motor) -> None:
+    """Open a motor controller's lifecycle if it has one.
+
+    The real ``SerialMotorController`` opens its transport (and starts the
+    feedback reader) in ``start()``; without this its first ``flush()`` raises
+    on a never-opened port. The sim motor (and a bare ``_TeeMotor``) has no
+    ``start`` and is a no-op. Raises on failure so callers can roll back."""
+    start = getattr(motor, "start", None)
+    if start is None:
+        return
+    res = start()
+    if hasattr(res, "__await__"):
+        await res
+
+
+async def _stop_motor(motor) -> None:
+    """Best-effort stop of a motor controller (sends the shutdown CMD 0 and
+    closes the port on the serial controller). Swallows errors -- a shutdown /
+    device-swap must never be blocked by a motor that won't close cleanly. A
+    motor with no ``stop`` (sim motor) is a no-op."""
+    stop = getattr(motor, "stop", None)
+    if stop is None:
+        return
+    try:
+        res = stop()
+        if hasattr(res, "__await__"):
+            await res
+    except Exception:  # noqa: BLE001 - shutdown/swap must not be blocked
+        logger.debug("motor stop failed (best-effort)")
 
 
 def _overlay_menu_values(schema: dict, saved: dict) -> dict:
@@ -140,26 +176,6 @@ def _build_battery_config(cfg: AppConfig):
     )
 
 
-class _DebugLogHandler(logging.Handler):
-    """Funnels log records into the debug recorder while it's active."""
-
-    def __init__(self, recorder) -> None:
-        super().__init__()
-        self._recorder = recorder
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if not self._recorder.active:
-            return
-        try:
-            self._recorder.write(
-                "log",
-                {"level": record.levelname, "name": record.name, "msg": record.getMessage()},
-                time.time(),
-            )
-        except Exception:  # pragma: no cover - never let logging crash
-            pass
-
-
 class _TeeMotor:
     """Fan one ``MotorCommand`` out to several motor controllers at once — e.g.
     drive the simulated boat AND a real steering servo for bench testing.
@@ -182,17 +198,40 @@ class _TeeMotor:
             if hasattr(res, "__await__"):
                 await res
 
+    async def start(self) -> None:
+        # Open every inner motor that has a lifecycle (e.g. the real serial
+        # controller opens its port + feedback task here). The sim motor has no
+        # start() and is skipped.
+        for m in self._motors:
+            await _start_motor(m)
+
+    async def stop(self) -> None:
+        # Best-effort stop of every inner motor (sends CMD 0 + closes the port on
+        # the serial controller). Never let one failure block the others.
+        for m in self._motors:
+            await _stop_motor(m)
+
 
 class Runtime:
     """Owns every component and the background tasks that drive them."""
 
-    def __init__(self, config: AppConfig | None = None, *, now_fn=time.time) -> None:
+    def __init__(
+        self,
+        config: AppConfig | None = None,
+        *,
+        now_fn=time.time,
+        mono_fn=time.monotonic,
+    ) -> None:
         self.config = config or AppConfig()
         cfg = self.config
 
-        # Injectable monotonic-ish clock so the link-loss failsafe (#64) can be
-        # driven deterministically in tests instead of by wall-clock.
+        # Two injectable clock seams so both can be driven deterministically in
+        # tests. ``_now_fn`` is WALL-CLOCK -- used only for timestamps that are
+        # displayed or persisted (trip start times, created_at). ``_mono_fn`` is
+        # MONOTONIC -- used for DURATION timers (the lost-connection failsafe,
+        # #64) so an NTP/GPS clock step on an RTC-less Pi can't shift them.
         self._now_fn = now_fn
+        self._mono_fn = mono_fn
 
         observability.setup_logging(getattr(cfg, "log_level", "INFO"))
         self.bus = EventBus()
@@ -206,7 +245,11 @@ class Runtime:
         self.debug = DebugRecorder(cfg.data_dir)
         self.replay = ReplayPlayer()
         self.bus.subscribe(events.NMEA_IN, self._record_nmea)
-        logging.getLogger("vanchor").addHandler(_DebugLogHandler(self.debug))
+        # NOTE: the debug recorder attaches its OWN log handler to the ROOT
+        # logger for the duration of a recording (see DebugRecorder.start), which
+        # already captures every ``vanchor.*`` line. We deliberately do NOT add a
+        # second handler on the ``vanchor`` logger here -- doing so recorded each
+        # line twice in a debug session (review finding L3).
 
         self.state = NavigationState()
         self.state.anchor_radius_m = cfg.control.anchor_radius_m
@@ -252,6 +295,8 @@ class Runtime:
                 position_jump_max_m=cfg.sensors.position_jump_max_m,
                 heading_jump_max_deg=cfg.sensors.heading_jump_max_deg,
             ),
+            mono_fn=self._mono_fn,
+            declination_deg=cfg.sensors.magnetic_declination_deg,
         )
         self.controller = Controller(
             self.state,
@@ -297,6 +342,8 @@ class Runtime:
                 reverse_delay_s=cfg.safety.reverse_delay_s,
                 fix_timeout_s=cfg.safety.fix_timeout_s,
                 fix_failsafe_enabled=cfg.safety.fix_failsafe_enabled,
+                heading_stale_s=cfg.safety.heading_stale_s,
+                depth_stale_s=cfg.safety.depth_stale_s,
                 drag_alarm_factor=cfg.safety.drag_alarm_factor,
                 min_depth_m=cfg.safety.min_depth_m,
                 nogo_lookahead_m=cfg.safety.nogo_lookahead_m,
@@ -310,6 +357,7 @@ class Runtime:
             ),
             jog_increment_m=cfg.control.jog_increment_m,
             track_min_distance_m=cfg.control.track_min_distance_m,
+            mono_fn=self._mono_fn,
         )
 
         if cfg.nmea_tcp.enabled:
@@ -353,6 +401,13 @@ class Runtime:
         # Route-planning cancellation flag (#54): set by cancel_route_plan(),
         # reset at the start of every plan_route() call.
         self._route_plan_cancelled = False
+        # True while an auto-RTL plan is in flight, so the periodic evaluator
+        # doesn't launch duplicate concurrent RTL plans (#61).
+        self._rtl_in_flight = False
+        # True while a depth-map save is running in a worker thread, so the
+        # supervisor never launches an overlapping save (finding M3): the save
+        # is offloaded off the event loop and must not stack up.
+        self._depth_save_in_flight = False
 
     # ------------------------------------------------------------------ #
     # Boat profile (Init-boat wizard)
@@ -685,11 +740,37 @@ class Runtime:
         # Persisted + reflected in-memory; devices are rebuilt on the next start.
         return {"ok": True, "restart_required": True}
 
+    # --- GPS baud capacity constants (used for the link-saturation warning) ---
+    # Assume RMC + GGA per fix; each sentence is ≤ 82 bytes; 10 bits per byte
+    # (UART: 8 data + 1 start + 1 stop, no parity at these rates).
+    _GPS_BYTES_PER_SENTENCE: int = 82
+    _GPS_SENTENCES_PER_FIX: int = 2
+    _BAUD_WARN_FRACTION: float = 0.70   # warn when estimated load exceeds 70 %
+
     def _build_serial_gps(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialGps
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialGps(PySerialTransport(hw.gps_port, baudrate=hw.baudrate), self.bus)
+        baud = hw.gps_baud
+        gps_hz = cfg.sensors.gps_hz
+        required_bps = (
+            gps_hz
+            * self._GPS_SENTENCES_PER_FIX
+            * self._GPS_BYTES_PER_SENTENCE
+            * 10  # bits per byte (UART framing)
+        )
+        capacity_bps = baud * self._BAUD_WARN_FRACTION
+        if required_bps > capacity_bps:
+            logger.warning(
+                "gps_baud too low for %.0f Hz — expect growing fix lag; raise "
+                "gps_baud (need ~%d bit/s, %.0f%% of %d baud). Set gps_baud: "
+                "38400 (or higher) in your hardware config.",
+                gps_hz,
+                int(required_bps),
+                100.0 * required_bps / baud,
+                baud,
+            )
+        return SerialGps(PySerialTransport(hw.gps_port, baudrate=baud), self.bus)
 
     def _device_menus(self) -> list:
         """Collect device-specific menus (settings/actions) from the active
@@ -758,13 +839,13 @@ class Runtime:
         from .hardware.serial_devices import SerialCompass
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialCompass(PySerialTransport(hw.compass_port, baudrate=hw.baudrate), self.bus)
+        return SerialCompass(PySerialTransport(hw.compass_port, baudrate=hw.compass_baud), self.bus)
 
     def _build_serial_motor(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialMotorController
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialMotorController(PySerialTransport(hw.motor_port, baudrate=hw.baudrate))
+        return SerialMotorController(PySerialTransport(hw.motor_port, baudrate=hw.motor_baud))
 
     def _construct_devices(self, cfg: AppConfig) -> dict:
         """Build the device set (simulator + sensors + motor) for ``cfg.hardware``.
@@ -849,6 +930,10 @@ class Runtime:
                 if d is not None:
                     await d.start()
                     started.append(d)
+            # Open the NEW motor before swapping it in: otherwise the first
+            # flush() on a serial motor raises on the unopened port. If it fails
+            # we roll back below without ever touching the running motor.
+            await _start_motor(new["motor"])
             new_sim_task = (asyncio.ensure_future(new["simulator"].run())
                             if new["simulator"] is not None else None)
         except Exception as exc:
@@ -856,6 +941,7 @@ class Runtime:
             for d in started:
                 with contextlib.suppress(Exception):
                     await d.stop()
+            await _stop_motor(new["motor"])
             return {"applied": False, "error": str(exc)}
         # New set is live — now retire the old one and swap references.
         for d in (self.gps, self.compass, self.depth_sounder):
@@ -868,7 +954,12 @@ class Runtime:
             self._sim_task.cancel()
         self.gps, self.compass, self.depth_sounder = new["gps"], new["compass"], new["depth_sounder"]
         self.simulator, self._sim_task = new["simulator"], new_sim_task
+        # Swap the motor in, then stop the OLD one (closes its port + kills the
+        # feedback task -> no port/task leak). Best-effort so a stubborn old
+        # motor can't strand the reload.
+        old_motor = self.controller.motor
         self.controller.motor = new["motor"]
+        await _stop_motor(old_motor)
         # Re-prime the navigator with a fresh fix/heading so the fix-lost failsafe
         # doesn't latch (and stop the motor) over the brief gap during the swap.
         for dev in (self.gps, self.compass):
@@ -1050,31 +1141,41 @@ class Runtime:
     def client_connected(self) -> None:
         """A UI client connected; clear any link failsafe."""
         self._ui_clients += 1
-        self._last_client_seen = self._now_fn()
+        self._last_client_seen = self._mono_fn()
         if self._link_failsafe_engaged:
             logger.info("UI client reconnected; link failsafe cleared")
         self._link_failsafe_engaged = False
 
     def client_activity(self) -> None:
         """Mark the link alive (any inbound client traffic)."""
-        self._last_client_seen = self._now_fn()
+        self._last_client_seen = self._mono_fn()
 
     def client_disconnected(self) -> None:
         """A UI client disconnected."""
         self._ui_clients = max(0, self._ui_clients - 1)
-        self._last_client_seen = self._now_fn()
+        self._last_client_seen = self._mono_fn()
 
     def _underway(self) -> bool:
-        """True when the boat is in a guided/cruising mode actively making way --
-        i.e. not already idle-manual or holding station on anchor."""
-        return self.state.mode in _UNDERWAY_MODES
+        """True when the boat is actively making way and a lost link must be
+        caught -- i.e. NOT idle. Every guided/cruising mode counts, plus MANUAL
+        while the operator is actually commanding thrust (driving by hand): a
+        client loss there must not leave the boat motoring on forever (#64).
+        Station-keeping anchor-hold is excluded (it is already holding)."""
+        if self.state.mode in _UNDERWAY_MODES:
+            return True
+        if self.state.mode == ControlModeName.MANUAL:
+            return abs(self.state.motor_command.thrust) > _MANUAL_UNDERWAY_THRUST_EPS
+        return False
 
     def evaluate_link_failsafe(self, now: float | None = None) -> bool:
-        """Engage hold-position if no UI client has been seen for the timeout
-        while underway. Returns True if it engaged on this call. Idempotent and
-        clock-injectable (pass ``now`` in tests)."""
+        """Engage the lost-link failsafe if no UI client has been seen for the
+        timeout while underway. In a guided mode this holds position
+        (anchor-hold); driving MANUALLY it STOPS (zero thrust) -- there is no
+        target to hold to, so the safe action is to cut the motor. Returns True
+        if it engaged on this call. Idempotent and clock-injectable (pass the
+        MONOTONIC ``now`` in tests)."""
         if now is None:
-            now = self._now_fn()
+            now = self._mono_fn()
         timeout = self.config.safety.link_loss_timeout_s
         connected = self._ui_clients > 0
         if connected or self._last_client_seen is None or self._link_failsafe_engaged:
@@ -1083,9 +1184,14 @@ class Runtime:
             return False
         if now - self._last_client_seen < timeout:
             return False
-        # Lost the link while underway -> hold position (anchor-hold here).
-        logger.warning("link lost %.0fs while underway; engaging hold-position", timeout)
-        self.controller.handle_command({"type": "anchor_hold"})
+        if self.state.mode == ControlModeName.MANUAL:
+            # Driving by hand with the link gone -> cut the motor (STOP).
+            logger.warning("link lost %.0fs while driving manually; STOP (zero thrust)", timeout)
+            self.controller.handle_command({"type": "stop"})
+        else:
+            # Guided mode -> hold position (anchor-hold here).
+            logger.warning("link lost %.0fs while underway; engaging hold-position", timeout)
+            self.controller.handle_command({"type": "anchor_hold"})
         self._link_failsafe_engaged = True
         return True
 
@@ -1110,8 +1216,125 @@ class Runtime:
         self.state.rtl_recommended = recommend
         if recommend and self.config.safety.auto_rtl and self.state.mode != ControlModeName.WAYPOINT:
             logger.warning("auto_rtl: battery range near distance-home; engaging RTL")
-            self.return_to_launch()
+            self._schedule_auto_rtl()
         return recommend
+
+    def _schedule_auto_rtl(self) -> None:
+        """Engage auto-RTL WITHOUT blocking the event loop.
+
+        ``return_to_launch`` -> ``plan_route`` is synchronous and CPU/IO-heavy
+        (Overpass fetch, up to two 60 s timeouts) and documented as executor-only.
+        Calling it inline from the periodic telemetry tick would stall every
+        async loop, so run it in the default executor. A single in-flight guard
+        stops the evaluator (called every telemetry tick) from launching a pile
+        of duplicate concurrent RTL plans."""
+        if self._rtl_in_flight:
+            return
+        self._rtl_in_flight = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (e.g. a unit test off the live path) -> preserve
+            # the old inline behaviour rather than silently doing nothing.
+            try:
+                self.return_to_launch()
+            finally:
+                self._rtl_in_flight = False
+            return
+        asyncio.ensure_future(self._run_auto_rtl(loop))
+
+    async def _run_auto_rtl(self, loop) -> None:
+        """Run the heavy RTL plan+engage in an executor; always clear the
+        in-flight flag so a failure can't wedge future auto-RTL attempts."""
+        try:
+            result = await loop.run_in_executor(None, self.return_to_launch)
+            if isinstance(result, dict) and not result.get("ok", True):
+                logger.warning("auto_rtl planning failed: %s", result.get("message"))
+        except Exception:
+            logger.exception("auto_rtl planning failed")
+        finally:
+            self._rtl_in_flight = False
+
+    # ------------------------------------------------------------------ #
+    # Periodic safety supervisor (1 Hz) + depth accumulation
+    # ------------------------------------------------------------------ #
+    def _supervise_once(self) -> None:
+        """Run one periodic safety/bookkeeping pass -- the side effects that used
+        to live in ``telemetry()`` (findings M2/H4/#7).
+
+        Runs REGARDLESS of replay mode and connected-client count. Each step is
+        isolated so a single failing evaluator can't stop the others (and, at the
+        loop level, can't kill the supervisor)."""
+        steps = (
+            ("maybe_record_launch", self.controller.maybe_record_launch),
+            ("evaluate_rtl_recommend", self.evaluate_rtl_recommend),
+            ("evaluate_link_failsafe", self.evaluate_link_failsafe),
+            ("trip_update", lambda: self.trip.update(
+                self.state.position, self.state.sog_knots, self._now_fn())),
+        )
+        for name, step in steps:
+            try:
+                step()
+            except Exception:  # noqa: BLE001 - one bad evaluator must not stop safety
+                logger.exception("supervisor step %s failed; continuing", name)
+
+    async def _run_supervisor(self, period_s: float = 1.0) -> None:
+        """~1 Hz task driving the periodic safety evaluations + depth persistence.
+
+        Exception-proof: the whole body is guarded so a raise (from a step or a
+        save) only logs and continues -- the task NEVER exits on its own; it ends
+        only on cancellation at shutdown."""
+        while True:
+            try:
+                await asyncio.sleep(period_s)
+                self._supervise_once()
+                await self._maybe_persist_depth()
+            except asyncio.CancelledError:
+                raise  # shutdown -> let the cancellation propagate
+            except Exception:  # noqa: BLE001 - supervisor must never die
+                logger.exception("supervisor loop error -- will continue")
+
+    def record_depth_sounding(self) -> None:
+        """Accumulate one depth sounding at the boat's DRAWN position.
+
+        Called by the WS broadcaster at the telemetry rate (~5 Hz) so soundings
+        keep their original cadence now that ``telemetry()`` is a pure snapshot.
+        A no-op during replay (replayed depth must not pollute the live map).
+
+        Record each sounding at the SAME position the boat marker is drawn at, so
+        the depth dots sit under the boat. In the sim the marker uses ground truth
+        -- and the sounder samples the bottom at that true position too -- whereas
+        the GPS fix carries noise that would offset the dots beside the boat. On
+        real hardware there is no truth, so both use the GPS fix."""
+        if self.replay.active:
+            return
+        sounding_pos = (
+            self.simulator.truth().point
+            if self.simulator is not None
+            else self.state.position
+        )
+        self.depth_map.record(sounding_pos, self.state.depth_m)
+
+    async def _maybe_persist_depth(self) -> None:
+        """Checkpoint newly-accumulated soundings to disk OFF the event loop
+        (finding M3), at most one save in flight at a time.
+
+        ``depth_map.save`` does an atomic JSON write; on a large map that is a
+        real blocking cost, so it runs in a worker thread. The in-flight guard
+        stops the 1 Hz supervisor from stacking overlapping saves."""
+        if self._depth_save_in_flight:
+            return
+        n = len(self.depth_map.points)
+        if n - self._depth_saved_n < 25:
+            return
+        self._depth_save_in_flight = True
+        try:
+            await asyncio.to_thread(self.depth_map.save, self._depth_map_path)
+            self._depth_saved_n = n
+        except Exception:  # noqa: BLE001 - a failed checkpoint must not wedge saves
+            logger.exception("depth map checkpoint failed")
+        finally:
+            self._depth_save_in_flight = False
 
     def _load_route(self, command: dict) -> None:
         from .nav.routes import parse_gpx
@@ -1280,10 +1503,29 @@ class Runtime:
         Pure CPU work (shapely); the UI endpoint calls it in an executor. Does
         NOT start navigation -- it returns waypoints for the route editor.
         """
-        from .nav import survey
+        from .nav import survey, water as water_mod
+
+        # Fetch the cached water polygon covering the drawn area so the survey
+        # is clipped to water and connecting legs stay off land. No cached
+        # water for the area -> plan against the polygon alone (survey.py still
+        # repairs legs that exit the drawn polygon itself).
+        water_geom = None
+        try:
+            lats = [float(p[0]) for p in polygon_latlon]
+            lons = [float(p[1]) for p in polygon_latlon]
+            if lats and lons:
+                cache = water_mod.WaterCache(self.config.data_dir)
+                bbox = water_mod.bbox_around(min(lats), min(lons), max(lats), max(lons))
+                geom = cache.find_covering(bbox)
+                if geom is not None and not geom.is_empty:
+                    water_geom = geom
+        except Exception as exc:  # noqa: BLE001 - clipping is best-effort
+            logger.warning("survey water lookup failed (planning unclipped): %s", exc)
 
         try:
-            result = survey.plan_survey(polygon_latlon, float(spacing_m), angle_deg)
+            result = survey.plan_survey(
+                polygon_latlon, float(spacing_m), angle_deg, water=water_geom
+            )
         except (ValueError, TypeError) as exc:
             logger.warning("survey plan failed: %s", exc)
             return {"ok": False, "waypoints": [], "message": f"Bad survey request: {exc}"}
@@ -1644,27 +1886,100 @@ class Runtime:
         return {"ok": True, "imported": len(pts), "hardness": len(hard),
                 "contours": len(cont), "composition": len(comp), "total": len(dm.points)}
 
+    def _health_snapshot(self) -> dict:
+        """Cheap per-sensor freshness + controller-loop health for telemetry.
+
+        Ages are seconds since each input last arrived (``None`` when it has
+        never been received); ``controller_tick_age_s`` is the control loop's
+        heartbeat age (``None`` before the loop has run). Also surfaces the
+        wave-1 ``controller_fault`` and the governor's active staleness flags.
+        No I/O -- pure reads off the shared state and the last governor status."""
+        now = self._mono_fn()
+        st = self.state
+
+        def _age(stamp: float | None) -> float | None:
+            return round(now - stamp, 2) if stamp is not None else None
+
+        tick = st.controller_last_tick_monotonic
+        status = self.controller.safety_status
+        depth_age = _age(st.depth_received_mono)
+        depth_stale_s = self.controller.safety.config.depth_stale_s
+        health = {
+            "fix_age_s": _age(st.fix_received_mono),
+            "heading_age_s": _age(st.heading_received_mono),
+            "depth_age_s": depth_age,
+            "imu_age_s": _age(st.imu_received_mono),
+            "controller_fault": st.controller_fault,
+            "controller_tick_age_s": (round(now - tick, 2) if tick else None),
+            # Active staleness / freshness flags (last governor tick).
+            "heading_stale": status.heading_stale,
+            "fix_lost": status.fix_lost,
+            "depth_stale": depth_age is not None and depth_age > depth_stale_s,
+        }
+        # Per-device connection health, surfaced from serial devices that expose
+        # ``healthy`` / ``last_data_monotonic`` (the reconnect work). Sim devices
+        # lack the attributes, so the block is omitted entirely on a sim-only
+        # runtime -- keeping the base health shape unchanged when no real device
+        # reports health.
+        devices = self._device_health(now)
+        if devices:
+            health["devices"] = devices
+        return health
+
+    def _device_health(self, now: float | None = None) -> dict:
+        """``{gps: {healthy, data_age_s}, compass: ..., depth: ..., motor: ...}``
+        for any device exposing ``healthy`` / ``last_data_monotonic``.
+
+        Null-safe: a device without a ``healthy`` attribute (sim devices) is
+        omitted; a present-but-never-received ``last_data_monotonic`` yields a
+        ``data_age_s`` of ``None``."""
+        if now is None:
+            now = self._mono_fn()
+        out: dict = {}
+        for name, dev in (
+            ("gps", self.gps),
+            ("compass", self.compass),
+            ("depth", self.depth_sounder),
+            ("motor", self.controller.motor),
+        ):
+            healthy = getattr(dev, "healthy", None)
+            if healthy is None:
+                continue  # sim / attribute-less device -> no health to report
+            last = getattr(dev, "last_data_monotonic", None)
+            out[name] = {
+                "healthy": bool(healthy),
+                "data_age_s": round(now - last, 2) if last is not None else None,
+            }
+        return out
+
     def telemetry(self) -> dict:
-        # During replay, play recorded frames back instead of live state.
+        """Build a PURE telemetry snapshot -- no side effects.
+
+        This is called by BOTH the WS broadcaster and ``GET /api/state``, so it
+        must not mutate anything: the periodic safety evaluations (launch
+        capture, RTL recommend, link failsafe), trip accumulation and depth
+        persistence all live in the supervisor task (see ``_run_supervisor`` /
+        ``_supervise_once``); depth-sounding accumulation is driven by the
+        broadcaster via ``record_depth_sounding`` so polling ``/api/state`` can't
+        double-record soundings or perturb failsafe timing (findings M2/H4/#7).
+        """
+        # During replay, play recorded frames back instead of live state. Live
+        # safety evaluation keeps running regardless -- it lives in the
+        # supervisor now, not here -- so swapping the displayed frame can't
+        # disable it.
         if self.replay.active:
             frame = self.replay.current(time.time())
             if frame is not None:
                 return frame
-        # Auto-record the launch point on the first good fix (#61), then run the
-        # periodic safety evaluations (battery RTL recommend + link failsafe).
-        self.controller.maybe_record_launch()
-        self.evaluate_rtl_recommend()
-        self.evaluate_link_failsafe()
-        # Trip log (#66): accumulate the current outing + run auto start/stop.
-        self.trip.update(self.state.position, self.state.sog_knots, self._now_fn())
 
         payload = self.state.to_dict()
         payload["safety"] = self.controller.safety_status.to_dict()
+        payload["health"] = self._health_snapshot()
         payload["battery"] = self.battery_snapshot()
         payload["link"] = {
             "client_connected": self._ui_clients > 0,
             "since_s": (
-                round(self._now_fn() - self._last_client_seen, 1)
+                round(self._mono_fn() - self._last_client_seen, 1)
                 if self._last_client_seen is not None
                 else None
             ),
@@ -1682,22 +1997,10 @@ class Runtime:
             "points": [[p.lat, p.lon] for p in ctrl.track.points[-300:]],
         }
         payload["trip"] = self.trip.snapshot(self._now_fn())
-        # Accumulate and expose the depth map; checkpoint to disk periodically
-        # so soundings survive a crash/power loss on a real boat.
-        # Record each sounding at the SAME position the boat marker is drawn at,
-        # so the depth dots sit under the boat. In the sim the marker uses ground
-        # truth -- and the sounder samples the bottom at that true position too --
-        # whereas the GPS fix carries noise that would offset the dots beside the
-        # boat. On real hardware there is no truth, so both use the GPS fix.
-        sounding_pos = (
-            self.simulator.truth().point
-            if self.simulator is not None
-            else self.state.position
-        )
-        self.depth_map.record(sounding_pos, self.state.depth_m)
-        if len(self.depth_map.points) - self._depth_saved_n >= 25:
-            self.depth_map.save(self._depth_map_path)
-            self._depth_saved_n = len(self.depth_map.points)
+        # Expose (read-only) the accumulated depth map. Accumulation + periodic
+        # persistence are NOT done here (telemetry() is a pure snapshot): the
+        # broadcaster drives sounding accumulation via record_depth_sounding()
+        # and the supervisor checkpoints to disk off the event loop.
         # depth_count is a cheap scalar; depth_points (~28 KB) is the bulk of the
         # frame. telemetry() returns the COMPLETE snapshot (so /api/state is
         # deterministic + full); the high-rate WS broadcaster decimates
@@ -1808,8 +2111,9 @@ class Runtime:
             }
         payload["debug"] = self.debug.status()
         payload["replay"] = {"active": self.replay.active, "name": self.replay.name} if self.replay.active else {"active": False}
-        if self.debug.active:
-            self.debug.write("telemetry", payload, time.time())
+        # NB: recording this frame into the debug session is done by the
+        # broadcaster (off the event loop), not here -- telemetry() is pure so
+        # that GET /api/state polling can't inject phantom frames into a session.
         return payload
 
     # ------------------------------------------------------------------ #
@@ -1837,10 +2141,22 @@ class Runtime:
         await _try_start("gps", self.gps)
         await _try_start("compass", self.compass)
         await _try_start("depth", self.depth_sounder)
+        # Open the motor transport too: a serial motor is never usable
+        # otherwise -- its first flush() raises on the unopened port. Same
+        # boot-resilience as the sensors: a motor that won't open is logged, not
+        # fatal, so the UI stays reachable to fix the port.
+        try:
+            await _start_motor(self.controller.motor)
+        except Exception:
+            logger.exception("motor failed to start; continuing without it")
         if self.simulator is not None:
             self._sim_task = asyncio.ensure_future(self.simulator.run())
             self._tasks.append(self._sim_task)
         self._tasks.append(asyncio.ensure_future(self.controller.run()))
+        # Periodic safety supervisor (~1 Hz): launch capture, RTL recommend, link
+        # failsafe, trip accumulation + depth checkpointing. Runs regardless of
+        # replay mode and client count (findings M2/H4/#7).
+        self._tasks.append(asyncio.ensure_future(self._run_supervisor()))
         logger.info("runtime started (model=%s, hardware=%s)", self.config.sim.model, self.config.hardware.enabled)
 
     async def stop(self) -> None:
@@ -1849,6 +2165,9 @@ class Runtime:
         if self.simulator is not None:
             self.simulator.stop()
         self.controller.stop()
+        # Best-effort motor shutdown: the serial controller sends CMD 0 and
+        # closes its port here (STOP-on-shutdown). No-op for the sim motor.
+        await _stop_motor(self.controller.motor)
         if self.gps is not None:
             await self.gps.stop()
         if self.compass is not None:

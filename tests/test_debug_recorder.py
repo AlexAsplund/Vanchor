@@ -7,6 +7,7 @@ with a valid trailer (crash-safe); the open part is flushed periodically.
 import gzip
 import json
 import logging
+import os
 import time
 
 import vanchor.core.debug_recorder as dr
@@ -125,3 +126,44 @@ def test_captures_app_logs(tmp_path):
     assert any("hello-debug-capture" in r["data"]["msg"] for r in logs)
     # and it isn't left attached to the root logger after stop
     assert rec._log_handler is None
+
+
+# ---- Fix 1: path-traversal sanitization ------------------------------------ #
+
+def test_start_sanitizes_traversal_name(tmp_path):
+    """A traversal name like '../../evil' must NOT escape the recorder dir."""
+    rec = DebugRecorder(str(tmp_path))
+    rec.start("../../evil", now=1.0)
+    rec.stop()
+
+    # The session path must be inside (or equal to) the recorder's base dir.
+    assert rec.path is not None
+    assert os.path.commonpath([rec.path, rec.dir]) == rec.dir
+
+    # No path separator in the stored name.
+    assert os.sep not in rec.name
+    assert "/" not in rec.name
+
+    # The sanitised session must be listable via sessions().
+    assert any(s["name"] == rec.name for s in rec.sessions())
+
+
+def test_start_empty_after_sanitize_uses_default(tmp_path):
+    """Names that become empty after sanitization (e.g. '..') fall back to 'session'."""
+    rec = DebugRecorder(str(tmp_path))
+    rec.start("..", now=1.0)
+    rec.stop()
+    assert rec.name == "session"
+    # Path must still be inside the recorder dir.
+    assert os.path.commonpath([rec.path, rec.dir]) == rec.dir
+
+
+def test_start_traversal_name_stays_inside_dir(tmp_path):
+    """The write path for a traversal name must be inside the recorder directory."""
+    rec = DebugRecorder(str(tmp_path))
+    for evil in ["../../etc/passwd", "../outside", "/absolute/path"]:
+        rec2 = DebugRecorder(str(tmp_path))
+        rec2.start(evil, now=1.0)
+        rec2.stop()
+        assert rec2.path is not None
+        assert os.path.commonpath([rec2.path, rec2.dir]) == rec2.dir

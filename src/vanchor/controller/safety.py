@@ -31,9 +31,11 @@ Behaviours, all applied within a single :meth:`SafetyGovernor.govern` call:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from math import copysign
 
+from shapely.affinity import scale
 from shapely.geometry import Point, Polygon
 from shapely.prepared import prep
 
@@ -62,10 +64,21 @@ class SafetyConfig:
     reverse_delay_s: float = 1.0
     # Seconds without a fresh fix before thrust is forced to zero.
     fix_timeout_s: float = 3.0
-    # Loss-of-fix failsafe master switch. OFF by default: losing the GPS fix does
-    # NOT cut thrust (the boat holds its last command). Enable it to force a stop
-    # after fix_timeout_s without a fresh fix.
-    fix_failsafe_enabled: bool = False
+    # Loss-of-fix failsafe master switch. ON by default: the conservative coast
+    # is the right default for a trolling motor -- once no fresh fix has arrived
+    # for fix_timeout_s thrust is forced to zero rather than steaming blind. Set
+    # False to keep holding the last command through a fix dropout.
+    fix_failsafe_enabled: bool = True
+    # Seconds without a fresh COMPASS heading before it is judged stale. While a
+    # GUIDED (autopilot) mode is steering, a stale heading forces a safe coast
+    # (zero thrust, steering held) so a dead compass in heading-hold can't circle
+    # the boat at throttle forever. Manual driving is unaffected (a human steers).
+    heading_stale_s: float = 3.0
+    # Seconds without a fresh DEPTH sounding before it is judged stale. A stale
+    # depth is treated as UNKNOWN by the shallow-water stop (rather than trusting
+    # a frozen sounding), so a hung sounder neither false-stops nor silently
+    # passes the min-depth check.
+    depth_stale_s: float = 10.0
     # Anchor drag alarm trips beyond this multiple of the anchor radius.
     drag_alarm_factor: float = 2.0
     # --- Shallow-water / geofence auto-stop (#62) ----------------------- #
@@ -87,6 +100,8 @@ class SafetyStatus:
     reverse_blocked: bool = False
     fix_lost: bool = False
     drag_alarm: bool = False
+    # Stale compass heading forced a coast while a guided mode was steering.
+    heading_stale: bool = False
     # Shallow-water / geofence auto-stop (#62).
     shallow_stop: bool = False
     nogo_stop: bool = False
@@ -100,6 +115,7 @@ class SafetyStatus:
             "reverse_blocked": self.reverse_blocked,
             "fix_lost": self.fix_lost,
             "drag_alarm": self.drag_alarm,
+            "heading_stale": self.heading_stale,
             "shallow_stop": self.shallow_stop,
             "nogo_stop": self.nogo_stop,
             "min_depth_m": self.min_depth_m,
@@ -115,6 +131,12 @@ class SafetyGovernor:
         # Last thrust/steering we actually allowed through (slew-limit anchors).
         self._last_thrust: float = 0.0
         self._last_steering: float = 0.0
+        # The last NON-ZERO applied thrust DIRECTION (+1 ahead / -1 astern / 0
+        # never driven). It is "sticky": it persists through a tick (or many) at
+        # ~zero thrust, so a PID that crosses zero for a single tick
+        # (+0.8 -> 0 -> -0.5) is still recognised as a reversal and gated. Mirrors
+        # the firmware's applied-direction interlock (engine.ino).
+        self._last_applied_dir: float = 0.0
         # Last *desired* (pre-slew) steering -- the closed-loop steering target,
         # exposed for the steering gauge (target vs feedback).
         self.desired_steering: float = 0.0
@@ -146,10 +168,17 @@ class SafetyGovernor:
     def nogo_zone_count(self) -> int:
         return len(self._nogo)
 
-    def reset(self) -> None:
-        """Forget all internal state (e.g. on mode change or restart)."""
-        self._last_thrust = 0.0
-        self._last_steering = 0.0
+    def reset(self, thrust: float = 0.0, steering: float = 0.0) -> None:
+        """Forget the transient timers (e.g. on mode change or restart), but seed
+        the slew anchors from the given last-applied command so thrust/steering
+        ramp from where the boat actually IS rather than snapping back through
+        zero (which would surge the prop and bypass the reverse interlock)."""
+        self._last_thrust = thrust
+        self._last_steering = steering
+        # Preserve the applied direction across the reset so a reset mid-drive
+        # can't be used to sneak through an un-gated reversal.
+        if abs(thrust) > _THRUST_EPSILON:
+            self._last_applied_dir = copysign(1.0, thrust)
         self._rest_timer_s = 0.0
         self._time_since_fix_s = 0.0
 
@@ -160,13 +189,24 @@ class SafetyGovernor:
         if pos is None or pos.is_null():
             return False
         pt = Point(pos.lon, pos.lat)
-        # Convert the metric lookahead to degrees of latitude (~111.32 km/deg);
-        # a small over-estimate near the poles is harmless for a safety margin.
-        look_deg = max(0.0, self.config.nogo_lookahead_m) / 111320.0
+        # Convert the metric lookahead to a distance we can compare in shapely's
+        # planar (lon, lat) space. Latitude is ~111.32 km/deg everywhere, but a
+        # degree of LONGITUDE shrinks by cos(lat) toward the poles, so using the
+        # latitude scale for BOTH axes would UNDER-cover E-W (~50% at 60°N) -- the
+        # opposite of a safe margin. To keep both axes on the same metric scale we
+        # squash longitude by cos(lat) (so 1 scaled-degree = 111.32 km on either
+        # axis), then compare distances against the latitude-degree radius.
+        look_m = max(0.0, self.config.nogo_lookahead_m)
+        look_deg = look_m / 111320.0
+        coslat = max(0.05, math.cos(math.radians(pos.lat)))  # floored near poles
+        pt_s = Point(pos.lon * coslat, pos.lat)
         for poly, prepared in zip(self._nogo, self._nogo_prepared):
             if prepared.covers(pt):
                 return True
-            if look_deg > 0.0 and poly.distance(pt) <= look_deg:
+            if look_deg <= 0.0:
+                continue
+            poly_s = scale(poly, xfact=coslat, yfact=1.0, origin=(0.0, 0.0))
+            if poly_s.distance(pt_s) <= look_deg:
                 return True
         return False
 
@@ -176,12 +216,21 @@ class SafetyGovernor:
         state: NavigationState,
         dt: float,
         fix_is_fresh: bool,
+        *,
+        heading_age_s: float | None = None,
+        depth_age_s: float | None = None,
     ) -> tuple[MotorCommand, SafetyStatus]:
         """Filter ``command`` and report what was done.
 
         ``dt`` is the elapsed time since the previous call in seconds.
         ``fix_is_fresh`` is True when a new GPS fix arrived since the last tick;
         the governor accumulates the gap itself for the loss-of-fix failsafe.
+
+        ``heading_age_s`` / ``depth_age_s`` are the seconds since the compass /
+        depth sounder last reported (``None`` = never sampled / caller not
+        tracking staleness -> treated as fresh, so unit tests and the harness are
+        never false-tripped). A stale heading in a guided mode forces a coast; a
+        stale depth is treated as unknown by the shallow-water stop.
         """
         status = SafetyStatus()
         cfg = self.config
@@ -191,11 +240,37 @@ class SafetyGovernor:
         desired = command.clamped().thrust
         steering = command.clamped().steering
 
+        # --- Stale compass heading ------------------------------------- #
+        # A guided (autopilot) mode steers on the compass; if it goes silent the
+        # boat would keep circling at throttle on a frozen heading. Force a coast
+        # (zero thrust) and hold the steering head (zero delta) until it recovers.
+        # Manual mode is untouched -- a human is doing the steering there.
+        heading_stale = (
+            heading_age_s is not None
+            and heading_age_s > cfg.heading_stale_s
+            and state.mode != ControlModeName.MANUAL
+        )
+        if heading_stale:
+            status.heading_stale = True
+            status.messages.append(
+                f"compass heading stale {heading_age_s:.1f}s > "
+                f"{cfg.heading_stale_s:.1f}s in {state.mode.value}; coasting"
+            )
+            desired = 0.0
+            steering = self._last_steering  # hold the head: no slew on stale data
+
         # --- Shallow-water / geofence auto-stop (#62) ------------------ #
         # A valid, too-shallow sounding cuts thrust. Depth <= 0 means "unknown /
         # no return", which must NOT trip the alarm (don't false-stop in deep
-        # water where the sounder simply isn't reporting).
-        if cfg.min_depth_m > 0.0 and 0.0 < state.depth_m < cfg.min_depth_m:
+        # water where the sounder simply isn't reporting). A STALE sounding is
+        # likewise treated as unknown -- don't keep judging against a frozen
+        # value once the sounder has gone quiet.
+        depth_stale = depth_age_s is not None and depth_age_s > cfg.depth_stale_s
+        if (
+            cfg.min_depth_m > 0.0
+            and not depth_stale
+            and 0.0 < state.depth_m < cfg.min_depth_m
+        ):
             status.shallow_stop = True
             status.messages.append(
                 f"shallow water: depth {state.depth_m:.1f}m < {cfg.min_depth_m:.1f}m; stop"
@@ -227,12 +302,16 @@ class SafetyGovernor:
         else:
             self._rest_timer_s = 0.0
 
-        # A sign flip across zero counts as a reversal. Treat near-zero as
-        # unsigned so we never block coming *to* a stop.
+        # A sign flip relative to the last APPLIED direction counts as a
+        # reversal. We compare against the sticky ``_last_applied_dir`` (not the
+        # instantaneous ``_last_thrust``) so a command that passes through zero
+        # for one or more ticks -- exactly what a PID crossing zero produces,
+        # e.g. +0.8 -> 0 -> -0.5 -- is still gated. Near-zero requests are
+        # treated as unsigned so we never block coming *to* a stop.
         flipping = (
             abs(desired) > _THRUST_EPSILON
-            and abs(self._last_thrust) > _THRUST_EPSILON
-            and copysign(1.0, desired) != copysign(1.0, self._last_thrust)
+            and self._last_applied_dir != 0.0
+            and copysign(1.0, desired) != self._last_applied_dir
         )
         if flipping and self._rest_timer_s < cfg.reverse_delay_s:
             status.reverse_blocked = True
@@ -244,9 +323,11 @@ class SafetyGovernor:
             desired = 0.0
 
         # --- Thrust slew limiting ------------------------------------- #
+        # <= 0 means DISABLED (no slew limiting), matching the steering slew
+        # behaviour where max_steer_slew_per_s <= 0 likewise means unlimited.
         max_step = cfg.max_thrust_slew_per_s * dt
         delta = desired - self._last_thrust
-        if max_step >= 0.0 and abs(delta) > max_step:
+        if cfg.max_thrust_slew_per_s > 0.0 and abs(delta) > max_step:
             status.thrust_limited = True
             status.messages.append(
                 f"thrust slew-limited: |Δ|={abs(delta):.3f} > {max_step:.3f}"
@@ -256,6 +337,10 @@ class SafetyGovernor:
             applied_thrust = desired
 
         self._last_thrust = applied_thrust
+        # Remember the last direction we actually drove (sticky through zero) so
+        # the reverse interlock survives a through-zero PID crossing.
+        if abs(applied_thrust) > _THRUST_EPSILON:
+            self._last_applied_dir = copysign(1.0, applied_thrust)
 
         # --- Steering slew limiting ----------------------------------- #
         # The steering head can only rotate so fast; cap the change per tick so
@@ -271,7 +356,15 @@ class SafetyGovernor:
         self._last_steering = applied_steering
 
         # --- Anchor drag alarm ---------------------------------------- #
-        if state.mode is ControlModeName.ANCHOR_HOLD:
+        # Any station-keeping mode that holds via an anchor must be watched,
+        # including the learned spot-lock (ANCHOR_ML). WORK_AREA is gated on
+        # state.work_holding so the alarm only fires while actually spot-locked
+        # at a spot (not while travelling between spots, when state.anchor is
+        # stale and would otherwise false-trip the alarm).
+        if state.anchor is not None and (
+            state.mode in (ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML)
+            or (state.mode == ControlModeName.WORK_AREA and state.work_holding)
+        ):
             threshold = cfg.drag_alarm_factor * state.anchor_radius_m
             if state.distance_to_anchor_m > threshold:
                 status.drag_alarm = True

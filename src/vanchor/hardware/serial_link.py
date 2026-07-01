@@ -64,13 +64,27 @@ class FakeSerialTransport(SerialTransport):
     Tests push inbound lines with :meth:`feed` (which a reader picks up via
     :meth:`read_line`) and inspect everything a driver wrote via the
     :attr:`written` list.
+
+    To simulate read errors (e.g. an oversized / garbage line raising
+    ``ValueError`` or ``asyncio.LimitOverrunError`` on real hardware), push an
+    exception instance with :meth:`feed_exception`.
     """
 
     def __init__(self) -> None:
-        self._inbound: asyncio.Queue[str | None] = asyncio.Queue()
+        # Queue items: str (normal line), None (EOF sentinel), or a
+        # BaseException instance to be raised on the next read_line call.
+        self._inbound: asyncio.Queue[object] = asyncio.Queue()
         self.written: list[str] = []
         self.opened: bool = False
         self.closed: bool = False
+        # Reconnect-testing knobs. ``open_calls`` counts every :meth:`open`
+        # (initial + reconnect attempts). ``fail_opens`` arms the next N opens
+        # to raise (simulating a still-absent port so a reconnect loop backs
+        # off), and ``fail_writes`` makes :meth:`write_line` raise (simulating
+        # a transport that has gone down under the motor's write path).
+        self.open_calls: int = 0
+        self._open_failures: int = 0
+        self.fail_writes: bool = False
 
     # -- test helpers ----------------------------------------------------- #
     def feed(self, line: str) -> None:
@@ -81,8 +95,31 @@ class FakeSerialTransport(SerialTransport):
         """Signal end-of-stream; a pending/next :meth:`read_line` raises EOF."""
         self._inbound.put_nowait(None)
 
+    def fail_opens(self, n: int) -> None:
+        """Arm the next ``n`` :meth:`open` calls to raise.
+
+        Simulates a port that is still absent while a supervised reader retries
+        with exponential backoff — after ``n`` failures the following open
+        succeeds and the reader reconnects.
+        """
+        self._open_failures = n
+
+    def feed_exception(self, exc: BaseException) -> None:
+        """Inject ``exc`` to be raised by the next :meth:`read_line` call.
+
+        Use this to simulate oversized/garbage lines that the real
+        ``asyncio.StreamReader`` would surface as ``ValueError`` or
+        ``asyncio.LimitOverrunError`` when a newline does not appear within the
+        64 KB buffer limit.
+        """
+        self._inbound.put_nowait(exc)
+
     # -- SerialTransport -------------------------------------------------- #
     async def open(self) -> None:
+        self.open_calls += 1
+        if self._open_failures > 0:
+            self._open_failures -= 1
+            raise OSError("fake serial port unavailable")
         self.opened = True
         self.closed = False
 
@@ -90,12 +127,16 @@ class FakeSerialTransport(SerialTransport):
         self.closed = True
 
     async def read_line(self) -> str:
-        line = await self._inbound.get()
-        if line is None:
+        item = await self._inbound.get()
+        if item is None:
             raise EOFError("fake serial transport closed")
-        return line
+        if isinstance(item, BaseException):
+            raise item
+        return item  # type: ignore[return-value]
 
     async def write_line(self, line: str) -> None:
+        if self.fail_writes:
+            raise OSError("fake serial transport write failed (down)")
         self.written.append(line)
 
 

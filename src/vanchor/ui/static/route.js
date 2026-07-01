@@ -10,7 +10,7 @@
 "use strict";
 
 (function () {
-  const { $, send, modeCommands } = VA.ui;
+  const { $, send } = VA.ui;
 
   // ===== route editor + go-to ===============================================
   // Waypoints are only dropped while "Add waypoints" mode is armed, so an ordinary
@@ -109,8 +109,10 @@
     // loop, and the indicator stays lit while the loop route runs.
   }
 
-  // Route/Waypoint is a setup-style mode: clicking the rail builds the route.
-  modeCommands.waypoint = startRoute;
+  // Route/Waypoint is a setup-style mode: clicking the rail opens the editor
+  // PANEL only (handled by appcore.js). It must NOT auto-start a pending route —
+  // that would engage the motor at 0.6 throttle on a single tap. The explicit
+  // "Start route" button (#wp-go) is the engage control.
 
   // Let other modules (smart routing, saved routes, live route editing) refresh
   // the editor list after they inject pending waypoints via VA.map.setPending(...),
@@ -196,7 +198,7 @@
   // Keep the loop indicator lit while an active loop route is running on the boat
   // (telemetry reflects it). Falls back to the pending flag when not in waypoint.
   VA.onTelemetry((t) => {
-    const activeLoop = t && t.mode === "waypoint" && t.loop === true;
+    const activeLoop = t && t.mode === "waypoint" && t.route_loop === true;
     updateLoopIndicator(activeLoop);
     updatePatrolIndicator(t && t.mode === "waypoint" && t.route_patrol === true);
   });

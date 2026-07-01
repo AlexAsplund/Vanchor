@@ -95,7 +95,7 @@
   // ---- pause / resume / stop --------------------------------------------
   if (pauseBtn) pauseBtn.addEventListener("click", () => send({ type: "pause_nav" }));
   if (resumeBtn) resumeBtn.addEventListener("click", () => send({ type: "resume_nav" }));
-  if (stopBtn) stopBtn.addEventListener("click", () => send({ type: "stop" }));
+  if (stopBtn) stopBtn.addEventListener("click", () => VA.sendCritical({ type: "stop" }));
 
   // Remote-helm pause/resume mirror.
   const rmPause = $("rm-pause"), rmResume = $("rm-resume"), rmBanner = $("rm-paused-banner");

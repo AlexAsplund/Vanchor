@@ -15,12 +15,59 @@ starts uvicorn with the FastAPI app from `ui/server.py`. Key methods:
 
 - `handle_command(cmd)` — runtime/sim commands (teleport, environment, battery,
   routes, trips); delegates steering commands to the controller.
-- `telemetry()` — returns `state.to_dict()` (with replay support).
+- `telemetry()` — **pure snapshot**: returns `state.to_dict()` (with replay
+  support) with no side effects. Safety evaluation, depth-map checkpoints, and
+  debug-recorder writes all live in the safety supervisor, not here, so
+  `GET /api/state` is safe to call at any rate.
+- `_run_supervisor()` — the **~1 Hz safety supervisor task** (`asyncio` loop,
+  exception-proof). Runs link-failsafe evaluation, RTL recommend, launch
+  capture, trip update, and depth-map persistence. It cannot be disabled by
+  replay mode or a missing browser client.
+- Motor lifecycle is wired into `Runtime.start()` / `stop()` / `reload()` —
+  `motor.start()` / `motor.stop()` are called at the right moments so the
+  serial motor transport is opened before use and cleanly released on shutdown.
 - `depth_grid()`, `boat_profile()`, `_apply_boat_specs()`,
   `_build_boat_params()` — boat/depth surfaces called by endpoints.
 - `_apply_boat_specs(specs)` is where a `BoatConfig` change becomes live: it
   rebuilds the sim physics **and** re-derives helm tuning (steer_sign,
   thrust-yaw feed-forward, hull-character authority/smoothing).
+
+**Monotonic clock seam.** `Runtime` accepts a `mono_fn` constructor argument
+(default `time.monotonic`). All timers (link-failsafe, trip duration, sensor
+staleness, controller-tick age) use `self._mono_fn()` rather than calling
+`time.monotonic()` directly — this seam lets tests inject a fake clock for
+deterministic timer-based tests without real sleeps.
+
+**Health telemetry block.** `telemetry()` calls `_health_snapshot()` and
+includes its result as the `"health"` key in every telemetry frame. Shape:
+```jsonc
+"health": {
+  "fix_age_s": 1.2,            // seconds since last GPS fix (null = never)
+  "heading_age_s": 0.2,        // seconds since last compass sentence
+  "depth_age_s": 1.0,          // seconds since last depth sentence
+  "imu_age_s": null,           // null if no IMU
+  "heading_stale": false,       // true → coast mode active
+  "depth_stale": false,         // true → depth treated as unknown
+  "controller_fault": null,     // non-null string → mode name that faulted
+  "controller_tick_age_s": 0.2, // seconds since the last healthy control tick
+  "devices": {                  // only present when real serial devices expose health
+    "gps":     {"healthy": true, "data_age_s": 1.2},
+    "compass": {"healthy": true, "data_age_s": 0.2}
+  }
+}
+```
+Sim devices don't expose `healthy`/`last_data_monotonic`, so `"devices"` is
+absent in a pure-sim setup.
+
+**Sensor staleness.** Navigator stamps each received sentence with
+`time.monotonic()` (via the injectable clock). The safety supervisor reads these
+ages:
+- **Heading stale** (age > `heading_stale_s`) while in a guided mode → forces
+  motor to coast and sets `state.heading_stale`.
+- **Depth stale** (age > `depth_stale_s`) → depth treated as unknown by the
+  shallow-water stop.
+- **Fix failsafe** (`fix_failsafe_enabled`, default **ON**) → coast after the
+  GPS timeout. The conservative default means a brand-new deployment is safe.
 
 ## Control modes (`controller/modes.py`)
 
@@ -44,6 +91,15 @@ see weaving, suspect noisy input (see the GPS-noise lesson in
 [simulation.md](simulation.md)) before re-tuning the law. `AnchorMode` filters
 position (`_filtered_position`) + uses hysteresis to avoid GPS-noise
 overcorrection — a good pattern to copy if a mode hunts.
+
+**Waypoint arrival: passed-perpendicular + multi-advance.** `WaypointMode`
+declares arrival not only when the boat enters `arrival_radius_m` but also when
+it has *passed the leg's perpendicular* (bounded to 3× the arrival radius in
+cross-track, so an extreme overshoot doesn't trigger spuriously). On each
+control tick the mode also runs a **multi-advance loop**: if the newly active
+waypoint is already within the arrival radius, the index advances again
+immediately — this handles stacked/coincident waypoints and avoids stalling on a
+leg of length zero.
 
 **Route end-behaviour (loop vs patrol).** Reaching an end of the route is
 resolved by `WaypointMode._wrap_or_bounce`, driven by two `state` flags (both in
@@ -97,6 +153,18 @@ under negative thrust. `AnchorMode` has its own simpler angle-based reverse.
 
 ## The helm (`controller/controller.py`)
 
+**`handle_command` is hardened against malformed payloads.** A single
+`try/except (KeyError, ValueError, TypeError)` wraps the dispatch; a bad
+payload is logged at WARNING and discarded — no partial state mutation, no
+unhandled exception that could kill the loop. (Verified:
+`controller/controller.py` line ~579.)
+
+**Supervised controller loop.** Each control tick is wrapped in a try/except; a
+faulting tick zeroes the motor (best-effort `motor.apply(MotorCommand(0, 0))`),
+sets `state.controller_fault` to the exception text, and the loop continues
+rather than dying. The loop itself runs as a supervised asyncio task with a
+done-callback so an unexpected exit is logged.
+
 `Helm` converts a mode's heading-intent into a steering command. It owns the
 project's hardest-won invariants:
 
@@ -125,10 +193,22 @@ is what makes the forward/reverse decision use real data, not the 0.6 default.
 - `routing.py` + `water.py` — smart "take me here" routing over OSM water
   geometry (shapely/networkx); `water.py` caches water polygons in
   `vanchor_data/`. `routes.py` is the in-memory route model; `survey.py` builds
-  lawnmower routes; island loops + RTL also live here.
+  lawnmower routes (water-polygon clipped); island loops + RTL also live here.
 - `depth.py` — `DepthMap`: see the **depth chart** section below.
-- `track.py`, `trip.py` — breadcrumb track + trip log/GPX.
+- `track.py`, `trip.py` — breadcrumb track + trip log/GPX. Trip durations are
+  anchored to a monotonic clock so an NTP step-correction mid-trip doesn't
+  corrupt elapsed time; trip saves are atomic (`tmp + os.replace`).
 - `nmea.py`, `nmea_net.py` — NMEA parse + TCP/UDP NMEA bridge.
+
+**Heading semantics.** The navigator centralises magnetic→true conversion.
+`magnetic_declination_deg` from the boat config (or the HWT901B auto-estimator)
+is applied once in the Navigator; modes and the helm always work in **true**
+heading. `HDG` sentences have deviation and variation applied (East-positive,
+matching NMEA spec). `HDM` is magnetic; `HDT` is already true. The HWT901B
+driver emits `HDT` (the driver applies declination internally), so its output
+never gets double-corrected. `HDG` deviation + variation are applied in the
+parse layer. For non-HWT901B serial sensors that emit only `HDM`, the
+`magnetic_declination_deg` config applies the correction.
 
 ## Depth chart (`nav/depth.py`)
 

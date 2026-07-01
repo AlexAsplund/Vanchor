@@ -649,7 +649,11 @@ def plan_island_loop(
         if clipped.is_empty:
             continue
         length = clipped.length if hasattr(clipped, "length") else 0.0
-        if length >= ring.length * 0.98:
+        # Require essentially full water coverage (≥ 99.99%) so we never return
+        # the unclipped ring when any meaningful portion lies outside water.
+        # The 0.01% tolerance absorbs floating-point rounding in the intersection;
+        # anything more than that must be rejected and a smaller offset tried.
+        if length >= ring.length * 0.9999:
             used_off = off
             loop_ring = LineString(ring.coords)
             shrunk = factor < 1.0

@@ -17,11 +17,15 @@
       (d.sessions || []).forEach((s) => {
         const kb = (s.bytes / 1024).toFixed(0);
         const li = document.createElement("li");
+        // Session name/file arrive from an unauthenticated POST — escape both
+        // before interpolating into innerHTML (text and attribute contexts).
+        const nameE = VA.escapeHtml(s.name);
+        const fileE = VA.escapeHtml(s.file);
         li.innerHTML =
-          `<span class="ds-name" title="${s.name}">${s.name}</span>` +
+          `<span class="ds-name" title="${nameE}">${nameE}</span>` +
           `<span class="ds-size">${kb} KB</span>` +
           `<a class="ds-act" href="/api/debug/download?file=${encodeURIComponent(s.file)}" download>⬇</a>` +
-          `<button class="ds-act ds-play" data-file="${s.file}" title="Replay">▶</button>`;
+          `<button class="ds-act ds-play" data-file="${fileE}" title="Replay">▶</button>`;
         list.appendChild(li);
       });
       list.querySelectorAll(".ds-play").forEach((b) =>

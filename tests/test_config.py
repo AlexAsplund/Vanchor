@@ -11,6 +11,7 @@ from vanchor.core.config import (
     BoatConfig,
     ControlConfig,
     DEFAULT_CONFIG_YAML,
+    HardwareConfig,
     NmeaTcpConfig,
     SensorConfig,
     ServerConfig,
@@ -333,6 +334,63 @@ def test_load_dotenv_via_env_file_var(clean_env, tmp_path) -> None:
 
 def test_load_dotenv_missing_file_is_noop(clean_env, tmp_path) -> None:
     assert load_dotenv(tmp_path / "nope.env") == {}
+
+
+# --- Per-device baud rate config ------------------------------------------ #
+
+
+def test_per_device_baud_defaults() -> None:
+    """gps_baud defaults to 38400; compass and motor default to 4800 (NMEA standard)."""
+    hw = HardwareConfig()
+    assert hw.gps_baud == 38400
+    assert hw.compass_baud == 4800
+    assert hw.motor_baud == 4800
+    # The shared fallback stays at 4800 for backward compat.
+    assert hw.baudrate == 4800
+
+
+def test_per_device_baud_round_trips() -> None:
+    """Per-device baud keys survive from_dict / to_dict / from_dict round-trip."""
+    cfg = AppConfig.from_dict({
+        "hardware": {"gps_baud": 115200, "compass_baud": 9600, "motor_baud": 19200}
+    })
+    assert cfg.hardware.gps_baud == 115200
+    assert cfg.hardware.compass_baud == 9600
+    assert cfg.hardware.motor_baud == 19200
+    # Roundtrip.
+    assert AppConfig.from_dict(cfg.to_dict()).hardware.gps_baud == 115200
+
+
+def test_per_device_baud_independent_of_shared_baudrate() -> None:
+    """Setting the shared baudrate does not override per-device keys."""
+    cfg = AppConfig.from_dict({"hardware": {"baudrate": 9600}})
+    # Per-device keys keep their own defaults unchanged.
+    assert cfg.hardware.baudrate == 9600
+    assert cfg.hardware.gps_baud == 38400      # GPS default is not 9600
+    assert cfg.hardware.compass_baud == 4800   # unchanged
+    assert cfg.hardware.motor_baud == 4800     # unchanged
+
+
+def test_per_device_baud_env_overrides(clean_env) -> None:
+    clean_env.setenv("VANCHOR_GPS_BAUD", "57600")
+    clean_env.setenv("VANCHOR_COMPASS_BAUD", "9600")
+    clean_env.setenv("VANCHOR_MOTOR_BAUD", "19200")
+    cfg = apply_env_overrides(AppConfig())
+    assert cfg.hardware.gps_baud == 57600
+    assert cfg.hardware.compass_baud == 9600
+    assert cfg.hardware.motor_baud == 19200
+
+
+def test_default_config_yaml_has_per_device_baud() -> None:
+    """DEFAULT_CONFIG_YAML encodes the per-device baud defaults correctly."""
+    import io
+    import yaml  # type: ignore[import]
+    from vanchor.core.config import DEFAULT_CONFIG_YAML
+    parsed = yaml.safe_load(io.StringIO(DEFAULT_CONFIG_YAML))
+    hw = parsed.get("hardware", {})
+    assert hw.get("gps_baud") == 38400
+    assert hw.get("compass_baud") == 4800
+    assert hw.get("motor_baud") == 4800
 
 
 def test_water_env_overrides(clean_env) -> None:

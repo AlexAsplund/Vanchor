@@ -39,9 +39,10 @@ with sync_playwright() as p:
     step("cruise toggle", lambda:(setopen("#cruise-card"), jsclick("#cruise-on")), lambda:f'enabled={state()["cruise"]["enabled"]}')
     step("track record", lambda:(setopen("#track-card"), pg.click("#track-rec")), lambda:f'rec={state()["track"]["recording"]}')
     step("track stop", lambda: pg.click("#track-rec"), lambda:f'rec={state()["track"]["recording"]}')
-    # ROUTE: select Route mode, panel must stay so wp-sample is reachable
-    step("route mode -> wp-sample visible", lambda: mode("waypoint"), lambda:"wp-sample visible="+str(pg.is_visible("#wp-sample")))
-    step("route load-sample", lambda: pg.click("#wp-sample"), lambda:f'wps={len(state().get("waypoints",[]))}')
+    # ROUTE: selecting Route mode opens the editor panel (it must NOT auto-start
+    # a route — that would engage the motor). Exercise the real editor controls.
+    step("route mode -> editor visible", lambda: mode("waypoint"), lambda:"wp-arm visible="+str(pg.is_visible("#wp-arm")))
+    step("route arm add-waypoints", lambda: pg.click("#wp-arm"), lambda:"armed="+str(pg.eval_on_selector("#wp-arm","e=>e.classList.contains('active')")))
     step("settings open", lambda: pg.click("#settings-open"), lambda:"vis="+str(pg.is_visible("#settings-close")))
     step("settings theme switch", lambda: jsclick("#theme-toggle-box"), lambda:"light="+str(pg.eval_on_selector("body","e=>e.classList.contains('light')")))
     step("depth overlay toggle", lambda: jsclick("#depth-show") if pg.locator("#depth-show").count() else None)

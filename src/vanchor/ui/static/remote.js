@@ -29,7 +29,7 @@
   if (rmExit) rmExit.addEventListener("click", () => setRemote(false));
   const rmBind = (id, fn) => { const el = $(id); if (el) el.addEventListener("click", fn); };
   rmBind("rm-anchor-here", () => send({ type: "anchor_hold", radius_m: 5 }));
-  rmBind("rm-stop", () => { rmThrust = 0; rmSteer = 0; rmUpdateManualState(); send({ type: "stop" }); });
+  rmBind("rm-stop", () => { rmThrust = 0; rmSteer = 0; rmUpdateManualState(); VA.sendCritical({ type: "stop" }); });
   rmBind("rm-hold-hdg", () => send({ type: "heading_hold", throttle: 0.4 }));
   [["rm-jog-fwd", "forward"], ["rm-jog-back", "back"], ["rm-jog-left", "left"], ["rm-jog-right", "right"]]
     .forEach(([id, direction]) => rmBind(id, () => send({ type: "jog", direction })));

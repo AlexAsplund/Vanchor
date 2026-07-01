@@ -16,6 +16,12 @@
   // ===== manual ============================================================
   const thrust = $("thrust"), steer = $("steer");
   const manual = () => send({ type: "manual", thrust: parseFloat(thrust.value), steering: parseFloat(steer.value) });
+  // Force the motor-engaging sliders to a dead-stop 0 at load: a browser can
+  // restore a non-zero value from bfcache/form-restore across a reload (incl.
+  // the service-worker auto-reload), which — combined with any load-time send —
+  // would be a hands-free motor command. bindSlider only refreshes the display
+  // now, so neither of these sends anything; genuine slider input does.
+  [thrust, steer].forEach((el) => { if (el) el.value = "0"; });
   bindSlider("thrust", "thrust-val", manual);
   bindSlider("steer", "steer-val", manual);
   // Snap to dead-center 0 when released near zero (avoids tiny residual nudges).
@@ -25,18 +31,20 @@
       if (Math.abs(parseFloat(el.value)) < 0.12) { el.value = "0"; el.dispatchEvent(new Event("input")); }
     });
   });
-  modeCommands.manual = () => send({ type: "manual", thrust: parseFloat(thrust.value), steering: parseFloat(steer.value) });
+  // NOTE: no modeCommands.manual — tapping the Manual rail button selects the
+  // panel only (see appcore.js). The motor engages solely from slider input, so
+  // selecting Manual can't re-apply a stale throttle value.
 
   // ===== heading hold ======================================================
   bindSlider("hdg", "hdg-val");
+  // Explicit engage control only — the rail button just opens this panel, so
+  // selecting Heading-hold no longer one-taps the motor to 40% throttle.
   $("hdg-go").addEventListener("click", () =>
     send({ type: "heading_hold", heading: parseFloat($("hdg").value), throttle: 0.4 }));
-  modeCommands.heading_hold = () => send({ type: "heading_hold", throttle: 0.4 });
 
   // ===== follow APB ========================================================
   const apbGo = $("apb-go");
   if (apbGo) apbGo.addEventListener("click", () => send({ type: "follow_apb" }));
-  modeCommands.follow_apb = () => send({ type: "follow_apb" });
 
   // ===== drift =============================================================
   const driftKnots = $("drift-knots");
@@ -55,9 +63,9 @@
       el.addEventListener("pointercancel", () => set(false));
       el.addEventListener("blur", () => set(false));
     });
+  // Explicit engage control only — the rail button just opens this panel.
   $("drift-go").addEventListener("click", () =>
     send({ type: "drift", heading: parseFloat(driftHdg.value), knots: parseFloat(driftKnots.value) }));
-  modeCommands.drift = () => send({ type: "drift", knots: parseFloat(driftKnots.value) });
 
   function updateDrift(t) {
     if (t.mode !== "drift") return;
@@ -85,13 +93,15 @@
   arSlider.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   holdHdgBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   if (smartBox) smartBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
+  // Explicit engage control only — the rail button just opens this panel, so
+  // selecting Anchor no longer drops the anchor and engages station-keeping on
+  // a single tap; the user presses "Drop anchor" (#anchor-go) to engage.
   $("anchor-go").addEventListener("click", () => applyAnchor(true));
   [["jog-fwd", "forward"], ["jog-back", "back"], ["jog-left", "left"], ["jog-right", "right"]]
     .forEach(([id, direction]) => {
       const el = $(id);
       if (el) el.addEventListener("click", () => send({ type: "jog", direction }));
     });
-  modeCommands.anchor_hold = () => applyAnchor(true);
 
   // ===== cruise ============================================================
   const cruiseOn = $("cruise-on");
@@ -124,8 +134,10 @@
     if (badge) badge.textContent = rec ? "● rec " + count : (count ? count + " pts" : "");
   }
 
-  // stop mode is a bare command with no panel of its own.
-  modeCommands.stop = () => send({ type: "stop" });
+  // stop mode is a bare command with no panel of its own. STOP must never gain
+  // friction and must be verifiable, so it uses sendCritical (WS + POST, with a
+  // telemetry-confirmed banner if the boat doesn't actually stop).
+  modeCommands.stop = () => VA.sendCritical({ type: "stop" });
 
   // ---- telemetry reflection for these panels ----
   VA.onTelemetry(function renderControls(t) {

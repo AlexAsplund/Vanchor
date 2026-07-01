@@ -128,3 +128,64 @@ def test_import_keeps_and_windows_composition(tmp_path):
     assert r["ok"] and r["composition"] == 1
     assert rt.depth_composition()["count"] == 1
     assert rt.depth_composition(bbox=(0, 0, 1, 1))["polygons"] == []  # far window -> none
+
+
+# --- newline-delimited GeoJSON (JSONL/NDJSON) --------------------------------
+# cmapper's real chart export writes one Feature per line (hundreds of thousands
+# of lines), NOT a single FeatureCollection. A representative ~mixed subset:
+_JSONL_SUBSET = "\n".join([
+    '{"type": "Feature", "properties": {"depth_m": 35.0, "kind": "sounding", "hardness": 18}, "geometry": {"type": "Point", "coordinates": [12.317056, 59.729343]}}',
+    '{"type": "Feature", "properties": {"depth_m": 10.0, "kind": "contour"}, "geometry": {"type": "LineString", "coordinates": [[12.308441, 59.72086], [12.308441, 59.720933], [12.308531, 59.721033]]}}',
+    '{"type": "Feature", "properties": {"composition_pct": 75.0, "kind": "composition"}, "geometry": {"type": "Polygon", "coordinates": [[[12.310318, 59.721141], [12.310318, 59.721146], [12.310327, 59.721141], [12.310318, 59.721141]]]}}',
+    "",                     # blank line (must be skipped, not fail the parse)
+    "not json at all",     # garbage line (skipped)
+    '{"type": "Feature", "properties": {"depth_m": 37.0, "kind": "sounding", "hardness": 13}, "geometry": {"type": "Point", "coordinates": [12.317083, 59.729343]}}',
+])
+
+
+def test_parse_jsonl_mixed_kinds():
+    """A JSONL/NDJSON stream (one Feature per line) must parse -- the real export
+    format. Previously the whole-document json.loads failed and imported NOTHING."""
+    parsed = parse_depth_features("all.new.geojsonl", _JSONL_SUBSET.encode())
+    assert len(parsed["soundings"]) == 2
+    assert len(parsed["hardness"]) == 2
+    assert len(parsed["contours"]) == 1
+    assert len(parsed["composition"]) == 1
+    assert parsed["soundings"][0] == (59.729343, 12.317056, 35.0)
+    assert parsed["hardness"][0] == (59.729343, 12.317056, 18.0)
+    assert parsed["composition"][0]["pct"] == 75.0
+    assert parsed["composition"][0]["ring"][0] == [59.721141, 12.310318]  # [lat, lon]
+
+
+def test_parse_jsonl_detected_without_extension():
+    """JSONL detected from the leading ``{`` even when the filename is generic."""
+    parsed = parse_depth_features("upload.txt", _JSONL_SUBSET.encode())
+    assert len(parsed["soundings"]) == 2 and len(parsed["composition"]) == 1
+
+
+def test_import_jsonl_end_to_end(tmp_path):
+    rt = _rt(tmp_path)
+    r = rt.import_depth_map("all.new.geojsonl", _JSONL_SUBSET.encode())
+    assert r["ok"]
+    assert r["imported"] == 2          # soundings
+    assert r["hardness"] == 2
+    assert r["contours"] == 1
+    assert r["composition"] == 1
+    assert rt.depth_composition()["count"] == 1
+
+
+def test_parse_malformed_geojson_returns_full_shape():
+    """Malformed JSON must return the same four-key dict shape as a successful parse.
+
+    Without the fix, the error path only returned ``soundings`` and ``hardness``,
+    so callers that access ``contours`` or ``composition`` would get a KeyError
+    instead of an empty list (currently safe only because the one caller uses
+    ``.get``, but the contract should be explicit and consistent).
+    """
+    result = parse_depth_features("c.geojson", b"this is not json {{{")
+    assert set(result.keys()) == {"soundings", "hardness", "contours", "composition"}, (
+        "error path must return the same shape as the success path"
+    )
+    assert result["soundings"] == []
+    assert result["contours"] == []
+    assert result["composition"] == []

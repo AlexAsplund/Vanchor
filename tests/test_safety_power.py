@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -372,7 +374,9 @@ def test_auto_rtl_engages(_runtime, monkeypatch):
 # #64 Lost-connection failsafe (clock-injected)
 # --------------------------------------------------------------------------- #
 def _underway_runtime(now_box):
-    rt = Runtime(now_fn=lambda: now_box[0])
+    # The lost-link failsafe measures DURATION on the injectable MONOTONIC clock
+    # (mono_fn), so drive that seam in tests -- not the wall-clock now_fn.
+    rt = Runtime(mono_fn=lambda: now_box[0])
     rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
     rt.state.mode = ControlModeName.HEADING_HOLD  # making way
     return rt
@@ -406,9 +410,9 @@ def test_link_failsafe_not_engaged_while_connected():
 
 def test_link_failsafe_not_engaged_when_idle():
     now = [0.0]
-    rt = Runtime(now_fn=lambda: now[0])
+    rt = Runtime(mono_fn=lambda: now[0])
     rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
-    rt.state.mode = ControlModeName.MANUAL  # not underway
+    rt.state.mode = ControlModeName.MANUAL  # idle-manual: zero thrust -> not underway
     rt.client_connected()
     rt.client_disconnected()
     now[0] = 1000.0
@@ -427,6 +431,86 @@ def test_link_failsafe_clears_on_reconnect():
     # Reconnect clears the failsafe flag.
     rt.client_connected()
     assert not rt._link_failsafe_engaged
+
+
+def test_link_failsafe_stops_manual_driving():
+    """A client loss while DRIVING MANUALLY (thrust up) must STOP the motor --
+    not anchor-hold (there's no target to hold) and definitely not keep
+    motoring forever (#64)."""
+    now = [1000.0]
+    rt = Runtime(mono_fn=lambda: now[0])
+    rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
+    rt.state.mode = ControlModeName.MANUAL
+    # Actually driving by hand at 0.8 thrust.
+    rt.state.motor_command = MotorCommand(thrust=0.8, steering=0.3)
+    rt.controller.manual.set(0.8, 0.3)
+    rt.config.safety.link_loss_timeout_s = 10.0
+    rt.client_connected()
+    rt.client_disconnected()
+    now[0] = 1011.0  # past the timeout
+    assert rt.evaluate_link_failsafe() is True
+    # STOP, not anchor-hold: mode stays MANUAL and commanded thrust is zeroed.
+    assert rt.state.mode == ControlModeName.MANUAL
+    assert rt.controller.manual.thrust == 0.0
+    assert rt._link_failsafe_engaged
+
+
+def test_link_failsafe_not_engaged_manual_below_thrust_eps():
+    """MANUAL with only a whisper of thrust is still idle -> no failsafe."""
+    now = [1000.0]
+    rt = Runtime(mono_fn=lambda: now[0])
+    rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
+    rt.state.mode = ControlModeName.MANUAL
+    rt.state.motor_command = MotorCommand(thrust=0.005)  # below eps
+    rt.config.safety.link_loss_timeout_s = 10.0
+    rt.client_connected()
+    rt.client_disconnected()
+    now[0] = 1011.0
+    assert rt.evaluate_link_failsafe() is False
+
+
+def test_link_failsafe_engages_in_work_area():
+    """WORK_AREA counts as underway (a visiting/holding tour), so a link loss
+    there must engage the failsafe like any other guided mode."""
+    now = [1000.0]
+    rt = Runtime(mono_fn=lambda: now[0])
+    rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
+    rt.state.mode = ControlModeName.WORK_AREA
+    rt.config.safety.link_loss_timeout_s = 10.0
+    rt.client_connected()
+    rt.client_disconnected()
+    now[0] = 1011.0
+    assert rt.evaluate_link_failsafe() is True
+    assert rt.state.mode == ControlModeName.ANCHOR_HOLD  # guided -> hold position
+
+
+async def test_auto_rtl_schedules_off_the_loop():
+    """#61: auto-RTL must NOT call the heavy planner inline on the live path --
+    it schedules the plan on the executor and guards against duplicates."""
+    rt = Runtime()
+    rt.config.safety.auto_rtl = True
+    rt.config.safety.rtl_margin_m = 1e9  # always within margin
+    rt.state.launch = GeoPoint(59.0, 18.0)
+    rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.05))
+    rt.simulator.battery.to_dict = lambda: {"range_m": 10.0}
+    calls = {"n": 0}
+    rt.return_to_launch = lambda: (calls.__setitem__("n", calls["n"] + 1), {"ok": True})[1]
+
+    rt.evaluate_rtl_recommend()
+    # Scheduled, not called inline (the planner can hit a 60 s Overpass timeout).
+    assert calls["n"] == 0
+    assert rt._rtl_in_flight is True
+
+    # A second evaluation while in flight must NOT launch a duplicate plan.
+    rt.evaluate_rtl_recommend()
+
+    # Let the executor-backed task run to completion.
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if not rt._rtl_in_flight:
+            break
+    assert calls["n"] == 1              # exactly one plan ran, despite two evals
+    assert rt._rtl_in_flight is False   # flag cleared for the next attempt
 
 
 def test_link_telemetry_shape():

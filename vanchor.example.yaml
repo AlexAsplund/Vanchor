@@ -41,6 +41,11 @@ sensors:
   depth_hz: 2.0
   gps_noise_m: 1.5
   compass_noise_deg: 1.0
+  # Local magnetic declination, degrees East-positive; applied to MAGNETIC headings
+  # (HDM/HDG) to produce true. Leave 0 if your compass source already emits true
+  # heading (HDT) — e.g. HWT901B in auto/manual mode corrects internally and emits
+  # HDT, so setting this nonzero alongside it would double-correct.
+  magnetic_declination_deg: 0.0
   position_jump_max_m: 15.0    # reject GPS jumps bigger than this (unless confirmed)
   heading_jump_max_deg: 30.0   # reject heading spikes bigger than this per sample
 
@@ -69,6 +74,9 @@ safety:
   max_thrust_slew_per_s: 2.0
   reverse_delay_s: 0.5
   fix_timeout_s: 5.0
+  fix_failsafe_enabled: true   # loss-of-fix failsafe; ON by default: coast after fix_timeout_s
+  heading_stale_s: 3.0         # stale compass -> coast while a guided mode steers
+  depth_stale_s: 10.0          # stale depth -> shallow-water stop treats depth as unknown
   drag_alarm_factor: 2.0
 
 server:
@@ -80,7 +88,14 @@ hardware:
   gps_port: /dev/ttyUSB0
   compass_port: /dev/ttyUSB1
   motor_port: /dev/ttyUSB2
-  baudrate: 4800
+  baudrate: 4800            # shared fallback for devices without a per-device key
+  # Per-device baud rates. gps_baud MUST be ≥ 38400 for 5 Hz GPS: at 4800 baud
+  # two sentences per fix (RMC+GGA, ~82 bytes each) already consume 170 % of link
+  # capacity, causing the OS RX buffer to fill and fixes to arrive stale within
+  # seconds. compass_baud / motor_baud stay at 4800 (NMEA 0183 standard rate).
+  gps_baud: 38400
+  compass_baud: 4800
+  motor_baud: 4800
 
 nmea_tcp:
   enabled: false

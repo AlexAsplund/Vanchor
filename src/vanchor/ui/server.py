@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,7 +20,9 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.requests import Request as _Request
 
 if TYPE_CHECKING:
     from ..app import Runtime
@@ -26,32 +30,105 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vanchor.ui")
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Keys that are large array payloads; stripped from /api/log frames by default
+# to keep the response lightweight (depth_points is ~28 KB per frame).
+_BULK_KEYS: frozenset[str] = frozenset({"depth_points"})
+
+
+def _extract_hostname(host: str) -> str:
+    """Return just the hostname from a ``Host`` header value (strips port, brackets)."""
+    host = host.lower().strip()
+    if host.startswith("["):
+        # IPv6 bracketed notation: [::1] or [::1]:8080
+        end = host.find("]")
+        return host[1:end] if end > 0 else ""
+    # IPv4 or name, possibly with port
+    return host.rsplit(":", 1)[0] if ":" in host else host
+
+
+def _is_allowed_host(hostname: str, extra: frozenset[str]) -> bool:
+    """Return True when ``hostname`` is an acceptable value for the Host header.
+
+    Allowed classes:
+    * Any IP literal (v4 or v6) -- direct-IP access from the boat LAN.
+    * ``localhost`` -- loopback development / SSH-tunnel access.
+    * Any name ending in ``.local`` -- mDNS names on the boat LAN.
+    * Any name listed in the ``extra`` set (populated from ``VANCHOR_ALLOWED_HOSTS``).
+
+    Everything else (e.g. an attacker-controlled domain used for DNS rebinding)
+    is rejected.
+    """
+    if not hostname:
+        return False
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        pass
+    if hostname == "localhost" or hostname.endswith(".local"):
+        return True
+    return hostname in extra
+
 
 def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     clients: set[WebSocket] = set()
+
+    # Hosts accepted in the Host header beyond the built-in rules (IP literals,
+    # localhost, *.local).  Read at app-creation time so tests can override via
+    # monkeypatch.setenv before calling create_app.
+    _extra_allowed: frozenset[str] = frozenset(
+        h.strip().lower()
+        for h in os.environ.get("VANCHOR_ALLOWED_HOSTS", "").split(",")
+        if h.strip()
+    )
 
     async def broadcaster() -> None:
         period = 1.0 / telemetry_hz
         frame_n = 0
         while True:
-            snapshot = runtime.telemetry()
-            runtime.recorder.record(snapshot)   # recorder keeps the COMPLETE frame
-            if clients:
-                frame_n += 1
-                # depth_points (~28 KB) is the bulk of a frame; over the high-rate
-                # WS send it only ~1 Hz (every 5th frame), not every frame.
-                # depth_count is always present and the client retains the last
-                # points when the array is omitted. (/api/state still returns full.)
-                out = snapshot
-                if frame_n % 5 != 1 and "depth_points" in snapshot:
-                    out = {k: v for k, v in snapshot.items() if k != "depth_points"}
-                message = json.dumps(out)
-                for ws in list(clients):
-                    try:
-                        await ws.send_text(message)
-                    except Exception:
-                        clients.discard(ws)
-            await asyncio.sleep(period)
+            try:
+                snapshot = runtime.telemetry()
+                runtime.recorder.record(snapshot)   # recorder keeps the COMPLETE frame
+                # telemetry() is a pure snapshot now, so the broadcaster (the ~5 Hz
+                # heartbeat) drives depth-sounding accumulation -- keeping the
+                # original per-frame cadence -- and records the frame into the debug
+                # session. The debug write does gzip compression, so it runs off the
+                # event loop (write() is lock-guarded / thread-safe).
+                runtime.record_depth_sounding()
+                if runtime.debug.active:
+                    await asyncio.to_thread(
+                        runtime.debug.write, "telemetry", snapshot, time.time()
+                    )
+                if clients:
+                    frame_n += 1
+                    # depth_points (~28 KB) is the bulk of a frame; over the high-rate
+                    # WS send it only ~1 Hz (every 5th frame), not every frame.
+                    # depth_count is always present and the client retains the last
+                    # points when the array is omitted. (/api/state still returns full.)
+                    out = snapshot
+                    if frame_n % 5 != 1 and "depth_points" in snapshot:
+                        out = {k: v for k, v in snapshot.items() if k != "depth_points"}
+                    message = json.dumps(out)
+
+                    # Send to all clients concurrently so one stalled client
+                    # doesn't delay telemetry for others.  Per-client timeout
+                    # evicts connections that won't drain within 2 s.
+                    async def _send(ws: WebSocket, msg: str = message) -> None:
+                        try:
+                            await asyncio.wait_for(ws.send_text(msg), timeout=2.0)
+                        except Exception:
+                            clients.discard(ws)
+
+                    await asyncio.gather(
+                        *(_send(ws) for ws in list(clients)),
+                        return_exceptions=True,
+                    )
+                await asyncio.sleep(period)
+            except asyncio.CancelledError:
+                raise  # allow the lifespan shutdown to propagate
+            except Exception:
+                logger.exception("broadcaster loop error — will retry")
+                await asyncio.sleep(1.0)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -67,6 +144,25 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     app = FastAPI(title="Vanchor-NG", lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    # DNS-rebinding protection: reject requests whose Host header hostname is
+    # not an IP literal, localhost, a .local mDNS name, or an entry in
+    # VANCHOR_ALLOWED_HOSTS.  Added after GZipMiddleware so it is outermost
+    # (runs first) and bad requests are rejected before decompression.
+    # Note: BaseHTTPMiddleware does NOT run for WebSocket upgrades; see the
+    # /ws handler below for the equivalent WS-level check.
+    class _HostCheckMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: _Request, call_next):
+            host = request.headers.get("host", "")
+            if not _is_allowed_host(_extract_hostname(host), _extra_allowed):
+                return Response(
+                    content="Host not allowed",
+                    status_code=400,
+                    media_type="text/plain",
+                )
+            return await call_next(request)
+
+    app.add_middleware(_HostCheckMiddleware)
 
     @app.get("/")
     async def index() -> FileResponse:
@@ -96,8 +192,20 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         return runtime.telemetry()
 
     @app.get("/api/log")
-    async def log(n: int = 50) -> dict:
-        return {"telemetry": runtime.recorder.recent(n)}
+    async def log(n: int = 50, full: int = 0) -> dict:
+        """Recent telemetry frames from the in-memory ring.
+
+        By default, bulky array fields (``depth_points``, ~28 KB each) are
+        stripped so n=50 doesn't balloon to 1.4 MB.  Pass ``?full=1`` to get
+        every field untrimmed (e.g. for diagnostics / replay tooling).
+        """
+        frames = runtime.recorder.recent(n)
+        if not full:
+            frames = [
+                {k: v for k, v in f.items() if k not in _BULK_KEYS}
+                for f in frames
+            ]
+        return {"telemetry": frames}
 
     @app.get("/api/logs")
     async def app_logs(level: str = "INFO", n: int = 300,
@@ -657,6 +765,13 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:
         await websocket.accept()
+        # DNS-rebinding check for WebSocket: BaseHTTPMiddleware doesn't run for
+        # WS upgrades, so we replicate the host validation here.  Reject after
+        # accept (pre-accept close is unreliable across ASGI servers).
+        host = websocket.headers.get("host", "")
+        if not _is_allowed_host(_extract_hostname(host), _extra_allowed):
+            await websocket.close(code=1008)  # 1008 = Policy Violation
+            return
         clients.add(websocket)
         # Mark the link alive for the lost-connection failsafe (#64).
         runtime.client_connected()
@@ -667,7 +782,17 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 raw = await websocket.receive_text()
                 runtime.client_activity()
                 try:
-                    runtime.handle_command(json.loads(raw))
+                    msg = json.loads(raw)
+                except Exception:
+                    logger.exception("bad command over websocket: %s", raw)
+                    continue
+                if msg.get("type") == "ping":
+                    # Application-level heartbeat: liveness already updated above.
+                    # Do NOT forward to the controller (it would log "unknown command").
+                    await websocket.send_text('{"type":"pong"}')
+                    continue
+                try:
+                    runtime.handle_command(msg)
                 except Exception:
                     logger.exception("bad command over websocket: %s", raw)
         except WebSocketDisconnect:

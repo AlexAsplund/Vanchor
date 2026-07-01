@@ -1,6 +1,7 @@
 """Tests for the trip log (#66): accumulation, persistence, GPX, auto start/stop."""
 
 import json
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -166,6 +167,122 @@ def test_trip_to_gpx_escapes_name():
     gpx = trip_to_gpx({"id": "x", "name": "A & B", "points": [[1.0, 2.0]]})
     assert "A &amp; B" in gpx
     assert 'lat="1.0"' in gpx
+
+
+# ---------------------------------------------------------------------- #
+# Fix 1: live duration uses monotonic clock, not wall clock
+# ---------------------------------------------------------------------- #
+def test_wall_clock_step_does_not_corrupt_live_duration(tmp_path):
+    """An NTP-style wall-clock jump mid-trip must not inflate the live duration.
+
+    Scenario: boat is underway, NTP syncs and the wall clock leaps forward by
+    one hour.  The live duration (snapshot / avg_speed) must still reflect the
+    real elapsed time as measured by the monotonic clock, not the wall-clock
+    delta.
+    """
+    mono = {"t": 0.0}
+    wall = {"t": 1_600_000_000.0}  # arbitrary wall-clock epoch
+
+    log = TripLog(
+        str(tmp_path),
+        min_distance_m=5.0,
+        auto=False,
+        mono_fn=lambda: mono["t"],
+    )
+
+    log.start("ntp_test", now=wall["t"])
+
+    # Advance both clocks by 60 s (normal operation).
+    mono["t"] += 60.0
+    wall["t"] += 60.0
+    log.update(HERE, sog_kn=1.0, now=wall["t"])
+
+    snap = log.snapshot(now=wall["t"])
+    assert snap["duration_s"] == pytest.approx(60.0), (
+        "duration should be 60 s after 60 s of real elapsed time"
+    )
+
+    # NTP/GPS step: wall clock jumps forward 1 hour; monotonic is unaffected.
+    wall["t"] += 3600.0
+    # mono["t"] stays at 60.0 — monotonic never jumps.
+
+    snap = log.snapshot(now=wall["t"])
+    # Without the fix this would return ~3660 s (wall-clock delta).
+    # With the fix, monotonic governs: still 60 s.
+    assert snap["duration_s"] == pytest.approx(60.0), (
+        "duration must remain 60 s after a wall-clock NTP step"
+    )
+    # avg_speed must also be unaffected (it is derived from duration).
+    # distance is 0 (only one point) so avg_speed is 0 — just verify no crash.
+    assert snap["avg_speed_kn"] == pytest.approx(0.0, abs=0.01)
+
+
+def test_monotonic_duration_after_resume_from_file(tmp_path):
+    """A trip loaded from JSON has no monotonic anchor (_mono_start is None).
+
+    duration_s must fall back gracefully to wall-clock for the pre-restart
+    portion.  Once a caller sets the anchor (simulating what a resume would do),
+    the monotonic delta is added correctly.
+    """
+    from vanchor.nav.trip import Trip
+
+    # Simulate loading a trip that was started 5 minutes ago (wall-clock).
+    wall_start = 1_600_000_000.0
+    wall_now = wall_start + 300.0
+
+    trip = Trip(id="trip-test", name="resumed", started_at=wall_start)
+    # No _mono_start set — simulates the state right after loading from JSON.
+    assert trip._mono_start is None
+
+    # Should fall back to wall-clock: 300 s.
+    assert trip.duration_s(wall_now) == pytest.approx(300.0)
+
+    # Simulate a resume: set the monotonic anchor and wall-clock offset.
+    mono_at_resume = 5000.0
+    trip._wall_offset = wall_now - wall_start   # 300 s pre-restart portion
+    trip._mono_start = mono_at_resume
+
+    # After 30 more monotonic seconds: pre-restart (300) + post-restart (30) = 330.
+    assert trip.duration_s(
+        now=wall_now + 999.0,  # wall-clock irrelevant once anchor is set
+        mono_now=mono_at_resume + 30.0,
+    ) == pytest.approx(330.0)
+
+
+# ---------------------------------------------------------------------- #
+# Fix 2: atomic save uses os.replace
+# ---------------------------------------------------------------------- #
+def test_atomic_save_uses_os_replace(tmp_path, monkeypatch):
+    """_save must write to a .tmp file first and use os.replace to move it.
+
+    This guarantees that a crash mid-write leaves either the old complete file
+    or the new complete file, never a partial one.
+    """
+    replaced: list[tuple[str, str]] = []
+    real_replace = os.replace
+
+    def spy_replace(src: str, dst: str) -> None:
+        replaced.append((src, dst))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy_replace)
+
+    log = TripLog(str(tmp_path), auto=False)
+    log.start("atomic", now=0.0)
+    log.update(HERE, sog_kn=1.0, now=0.0)
+    log.stop(now=10.0)
+
+    assert len(replaced) == 1, "os.replace must be called exactly once per save"
+    src, dst = replaced[0]
+    assert src.endswith(".tmp"), "source must be the .tmp staging file"
+    assert not os.path.exists(src), "temp file must be gone after the replace"
+    assert os.path.isfile(dst), "final trip file must exist after the replace"
+
+    # Verify the final file is valid JSON (not corrupted / truncated).
+    with open(dst, encoding="utf-8") as fh:
+        data = json.load(fh)
+    assert data["name"] == "atomic"
+    assert data["duration_s"] == pytest.approx(10.0)
 
 
 # ---------------------------------------------------------------------- #

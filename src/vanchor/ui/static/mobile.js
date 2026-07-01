@@ -170,7 +170,7 @@
 
   // ---- peek STOP + recenter FAB --------------------------------------------
   const sheetStop = document.getElementById("sheet-stop");
-  if (sheetStop) sheetStop.addEventListener("click", () => { try { VA.send({ type: "stop" }); } catch (_) {} });
+  if (sheetStop) sheetStop.addEventListener("click", () => { try { VA.sendCritical({ type: "stop" }); } catch (_) {} });
 
   const followFab = document.getElementById("follow-fab");
   if (followFab) followFab.addEventListener("click", () => {

@@ -3,7 +3,9 @@ component, and any mix (incl. a real servo on a simulated boat, or GPS from
 external NMEA) is buildable. See app.Runtime device construction + HardwareConfig.
 """
 
-from unittest.mock import patch
+import logging
+
+from unittest.mock import MagicMock, patch
 
 from vanchor.app import Runtime, _TeeMotor
 from vanchor.core.config import HardwareConfig, load
@@ -66,6 +68,94 @@ async def test_start_survives_unopenable_serial_device():
     rt = Runtime(cfg)
     await rt.start()                     # must not raise despite the open failure
     await rt.stop()
+
+
+# --- Per-device GPS baud rate tests ---------------------------------------- #
+
+
+def test_serial_gps_uses_gps_baud_not_shared_baudrate():
+    """_build_serial_gps must open PySerialTransport with hw.gps_baud, not hw.baudrate."""
+    cfg = load(None)
+    cfg.hardware.gps_baud = 57600
+    cfg.hardware.baudrate = 4800   # explicitly different — proves the right key is used
+
+    rt = Runtime(load(None))      # default-sim runtime; we call the builder directly
+    mock_transport_cls = MagicMock()
+
+    with patch("vanchor.hardware.serial_link.PySerialTransport", mock_transport_cls):
+        with patch("vanchor.hardware.serial_devices.SerialGps", MagicMock()):
+            rt._build_serial_gps(cfg)
+
+    mock_transport_cls.assert_called_once_with(cfg.hardware.gps_port, baudrate=57600)
+
+
+def _make_runtime_for_baud_tests():
+    """Build a Runtime while suppressing setup_logging so caplog's handler is
+    not stripped from the root logger (setup_logging clears ALL root handlers)."""
+    with patch("vanchor.core.observability.setup_logging"):
+        return Runtime(load(None))
+
+
+def test_gps_baud_saturation_warning_fires_at_4800(caplog):
+    """4800 baud at 5 Hz GPS should trigger the link-saturation warning."""
+    cfg = load(None)
+    cfg.hardware.gps_baud = 4800
+    cfg.sensors.gps_hz = 5.0
+
+    rt = _make_runtime_for_baud_tests()
+
+    with caplog.at_level(logging.WARNING, logger="vanchor.app"):
+        with patch("vanchor.hardware.serial_link.PySerialTransport", MagicMock()):
+            with patch("vanchor.hardware.serial_devices.SerialGps", MagicMock()):
+                rt._build_serial_gps(cfg)
+
+    warning_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("gps_baud too low" in m for m in warning_msgs), (
+        f"Expected 'gps_baud too low' warning, got: {warning_msgs}"
+    )
+
+
+def test_gps_baud_no_saturation_warning_at_38400(caplog):
+    """38400 baud (the default) at 5 Hz GPS must NOT trigger the warning."""
+    cfg = load(None)
+    cfg.hardware.gps_baud = 38400
+    cfg.sensors.gps_hz = 5.0
+
+    rt = _make_runtime_for_baud_tests()
+
+    with caplog.at_level(logging.WARNING, logger="vanchor.app"):
+        with patch("vanchor.hardware.serial_link.PySerialTransport", MagicMock()):
+            with patch("vanchor.hardware.serial_devices.SerialGps", MagicMock()):
+                rt._build_serial_gps(cfg)
+
+    warning_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert not any("gps_baud too low" in m for m in warning_msgs), (
+        f"Unexpected 'gps_baud too low' warning at 38400 baud: {warning_msgs}"
+    )
+
+
+def test_gps_baud_warning_threshold_at_boundary(caplog):
+    """Verify warning fires just below and clears just above the 70 % threshold.
+
+    Required bits/s = 5 Hz * 2 sentences * 82 bytes * 10 = 8200 bit/s.
+    70 % threshold → need baud > 8200 / 0.70 ≈ 11715 baud.
+    So 9600 (< 11715) → warning; 19200 (> 11715) → no warning.
+    """
+    rt = _make_runtime_for_baud_tests()
+
+    def _run(baud, hz=5.0):
+        cfg = load(None)
+        cfg.hardware.gps_baud = baud
+        cfg.sensors.gps_hz = hz
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="vanchor.app"):
+            with patch("vanchor.hardware.serial_link.PySerialTransport", MagicMock()):
+                with patch("vanchor.hardware.serial_devices.SerialGps", MagicMock()):
+                    rt._build_serial_gps(cfg)
+        return [r.getMessage() for r in caplog.records if "gps_baud too low" in r.getMessage()]
+
+    assert _run(9600),  "9600 baud should warn at 5 Hz GPS"
+    assert not _run(19200), "19200 baud should not warn at 5 Hz GPS"
 
 
 def test_registry_driver_build_failure_does_not_crash_startup(tmp_path):

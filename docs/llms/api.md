@@ -18,13 +18,38 @@ truth for the UI. To add a field, add it in `to_dict()` and document it; the
 front end reads it from `VA.last` (see [frontend.md](frontend.md)). Commands may
 also be sent over the socket, but the canonical path is `POST /api/command`.
 
+**Application-level heartbeat.** The client sends `{type:"ping"}` (plain text
+JSON) every ~2 s. The server echoes `{type:"pong"}` and counts the message as
+client activity. This keeps the link-failsafe armed on half-open TCP sockets.
+Ping/pong messages are handled before the command dispatcher — they are not
+routed as commands.
+
 Telemetry includes (non-exhaustive — read `state.to_dict()` for the full set):
 position, heading_deg, fix (sog/cog), mode, waypoints + active_waypoint,
 cross_track_m, distance_to_waypoint_m, bearing_to_dest, depth_m, anchor +
 distance_to_anchor_m, battery, sim_enabled, route_loop, route_patrol,
 work_holding, work_dwell_remaining_s, work_spot_count (Work Area mode; each
 waypoint also carries an optional `heading`), alerts/banners (battery
-RTL, shallow, no-go, link-loss, MOB), and the boat profile.
+RTL, shallow, no-go, link-loss, MOB), the boat profile, and the **`health`
+block**:
+
+```jsonc
+"health": {
+  "fix_age_s": 1.2,             // seconds since last GPS fix (null = never received)
+  "heading_age_s": 0.2,         // seconds since last compass sentence
+  "depth_age_s": 1.0,           // null if never received
+  "imu_age_s": null,            // null if no IMU device
+  "heading_stale": false,        // true while stale-compass coast is active
+  "depth_stale": false,          // true while depth is treated as unknown
+  "controller_fault": null,      // non-null string = last tick-level fault description
+  "controller_tick_age_s": 0.2,  // seconds since the last healthy control tick
+  // "devices" present only when serial devices expose health:
+  "devices": {
+    "gps":     {"healthy": true,  "data_age_s": 1.2},
+    "compass": {"healthy": false, "data_age_s": 9.4}
+  }
+}
+```
 
 ## Commands: `POST /api/command  { "type": "...", ... }`
 
@@ -66,11 +91,19 @@ module via `VA.send({type:"..."})`.
 
 ## REST endpoints (grouped)
 
+**Host header validation.** All routes are protected by `_HostCheckMiddleware`
+(outermost middleware). It allows `localhost`, `127.*`, `10.*`, `192.168.*`,
+`172.16-31.*`, and any host listed in the `VANCHOR_ALLOWED_HOSTS` environment
+variable (comma-separated). Requests with a disallowed `Host:` header get 403.
+`tests/conftest.py` sets `VANCHOR_ALLOWED_HOSTS=testserver` so the pytest
+`TestClient` (which uses host `testserver`) passes. (Source:
+`ui/server.py:_HostCheckMiddleware`.)
+
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /` , `GET /sw.js` , `GET /manifest.webmanifest` | the PWA shell |
-| `GET /api/state` | one-shot telemetry snapshot (same shape as `/ws`) |
-| `GET /api/log?n=` | recent log lines (NMEA/console) |
+| `GET /api/state` | **pure** one-shot telemetry snapshot (same shape as `/ws`); safe to poll at any rate — no side effects |
+| `GET /api/log?n=&full=` | recent log lines (NMEA/console); by default strips bulky `depth_points` arrays (~28 KB each); pass `?full=1` to include them |
 | `POST /api/command` | apply a command (above) |
 | `POST /api/route/plan` , `/api/route/plan/cancel` | smart water routing ("take me here") |
 | `POST /api/route/island` | loop-around-island ring of waypoints |
