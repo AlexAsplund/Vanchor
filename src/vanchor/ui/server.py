@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -591,10 +591,31 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     @app.get("/api/debug/download")
     async def debug_download(file: str):
+        import os as _os
+
         path = runtime.debug.path_for(file)
         if path is None:
             return {"error": "not found"}
-        return FileResponse(path, media_type="application/gzip", filename=file)
+        if _os.path.isfile(path):
+            return FileResponse(path, media_type="application/gzip", filename=file)
+        # Chunked session: stream the parts concatenated (gzip members concatenate
+        # into one valid .gz), so a multi-part session downloads as a single file.
+        parts = [_os.path.join(path, p) for p in sorted(_os.listdir(path))
+                 if p.endswith(".ndjson.gz")]
+
+        def _stream():
+            for part in parts:
+                with open(part, "rb") as fh:
+                    while True:
+                        block = fh.read(65536)
+                        if not block:
+                            break
+                        yield block
+
+        return StreamingResponse(
+            _stream(), media_type="application/gzip",
+            headers={"Content-Disposition": f'attachment; filename="{file}.ndjson.gz"'},
+        )
 
     @app.post("/api/debug/replay")
     async def debug_replay(payload: dict) -> dict:

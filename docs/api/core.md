@@ -834,15 +834,43 @@ the environment always wins over the YAML/JSON and the built-in defaults.
 
 # vanchor.core.debug\_recorder
 
-Debug session recorder + replay.
+Debug session recording + replay.
 
 Records EVERYTHING that happens during a session -- telemetry snapshots, raw
-NMEA, commands, and log lines -- to a gzipped NDJSON file on the server, so a
-real-boat session can be downloaded and replayed to see exactly what happened.
+NMEA, commands, and **application log lines** -- to gzipped NDJSON on the server,
+so a run can be downloaded and replayed frame-for-frame later.
 
-Each NDJSON line is ``{"t": <unix seconds>, "kind": "telemetry|nmea|command|log",
-"data": ...}``. Replay feeds the recorded telemetry frames back through the live
-telemetry channel at their original cadence, so the existing UI just plays it.
+Crash safety: a session is written as a series of gzip **chunks** (parts) in a
+per-session directory (``debug/<name>/0001.ndjson.gz``, ``0002...``). A part is
+rotated after ``CHUNK_SECONDS`` or ``CHUNK_BYTES`` and closed with a valid gzip
+trailer (+ fsync), so every *completed* part survives a crash intact; the open
+part is flushed to the OS at least every ``FLUSH_INTERVAL`` seconds, so an
+application crash loses at most a couple of seconds of the current part (a
+power-loss may lose the un-fsynced tail of the open part only). Replay/download
+transparently concatenate the parts (gzip members concatenate into one stream).
+
+Each NDJSON line is ``{"t": <unix seconds>, "kind": "telemetry|nmea|command|log|
+meta", "data": ...}``. Log lines are captured by attaching a logging handler to
+the root logger for the duration of the recording. ``write`` is guarded by a lock
+because logs can arrive from worker threads (e.g. blocking serial reads).
+
+<a id="vanchor.core.debug_recorder.CHUNK_SECONDS"></a>
+
+#### CHUNK\_SECONDS
+
+rotate a part after 5 minutes ...
+
+<a id="vanchor.core.debug_recorder.CHUNK_BYTES"></a>
+
+#### CHUNK\_BYTES
+
+... or 25 MB (compressed), whichever comes first
+
+<a id="vanchor.core.debug_recorder.FLUSH_INTERVAL"></a>
+
+#### FLUSH\_INTERVAL
+
+flush the open part to disk at least this often
 
 <a id="vanchor.core.debug_recorder.DebugRecorder"></a>
 
@@ -860,7 +888,8 @@ class DebugRecorder()
 def path_for(file_name: str) -> str | None
 ```
 
-Resolve a download path, guarding against traversal.
+Resolve a session (dir) or legacy file for download/replay, guarding
+against path traversal.
 
 <a id="vanchor.core.debug_recorder.ReplayPlayer"></a>
 
