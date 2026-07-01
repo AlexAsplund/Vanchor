@@ -222,6 +222,8 @@ changes as 1.0 takes shape.
 
 ## License
 
+**MIT** — see [`LICENSE`](LICENSE).
+
 A clean-room rewrite; no original Vanchor source was copied. The 3-DOF
 hydrodynamics follow the marine-craft equations of **Prof. Thor I. Fossen**
 (*Handbook of Marine Craft Hydrodynamics and Motion Control*, Wiley); our
