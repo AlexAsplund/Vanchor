@@ -31,8 +31,10 @@ a small bounded correction on top of the same PID base — `command = clip(pid_b
 + 0.3·net)`. The robust PID base (dead-band idle, drive-to-mark, reverse-when-
 astern) guarantees the worst case is just normal anchor-hold, while the residual
 tightens the hold (eval: ~66% → ~80% within the watch circle). It registers only
-if its model file loads, and falls back to standard anchor-hold if not. The UI
-labels it **Anchor (Smart)** and it shares the same Anchor panel and controls.
+if its model file loads, and falls back to standard anchor-hold if not. Turn it
+on with the **"Smart station-keeping (learned)"** toggle in the Anchor panel,
+then drop anchor as usual — the boat shows as **Anchor (Smart)** and the toggle
+mirrors the live mode. It shares the same Anchor panel, radius and jog controls.
 
 **When to use it** — Holding over a fishing spot, structure, or drop-off; staying
 on a bait school; keeping position against wind/current without dropping a real

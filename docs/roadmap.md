@@ -34,7 +34,8 @@ All of the original roadmap items are now in the codebase:
 
 Researched against Minn Kota i-Pilot, Garmin Force, MotorGuide, Lowrance Ghost,
 Rhodan. Ranked by value-for-effort and fit with our event-driven
-`ControlMode`/`Helm`/PID architecture. **Not yet started — pending prioritisation.**
+`ControlMode`/`Helm`/PID architecture. **Tiers 1–2 and Tier 3 #6 are now done;
+plus bonus modes not originally listed (Work Area survey, learned ML anchor).**
 
 ### Tier 1 — DONE ✅
 1. **Spot-Lock Jog** — `{type:"jog",direction:...}` nudges `state.anchor` 1.5 m
@@ -58,10 +59,20 @@ Rhodan. Ranked by value-for-effort and fit with our event-driven
    the end and the controller fires the action once (auto-anchor or stop). UI:
    tap the map to go.
 
-### Tier 3 — higher effort / data dependencies
-6. **Follow shoreline / depth contour at an offset** — control is cheap (offset
-   polyline → `WaypointMode` cross-track tracking); the work is sourcing the
-   contour (GPX/GeoJSON shoreline first; defer live depth-contour building).
+### Tier 3 — DONE ✅
+6. **Follow shoreline / depth contour at an offset** — `CONTOUR_FOLLOW`
+   (Along-contour) mode: tap a contour line on the chart and it builds a track
+   along it (chaining same-depth pieces), with optional patrol
+   (`nav/contour_route.py`). Also shipped a **Work Area** survey mode
+   (`WORK_AREA`, `nav/survey.py`) — a drawn area covered spot-by-spot with
+   per-spot dwell + heading — which wasn't in the original list.
+
+### Bonus modes (not originally listed)
+- **Learned ML anchor** (`anchor_ml`, `controller/anchor_ml.py`) — a ~1.6k-param
+  numpy MLP station-keeper trained by ES on the Fossen physics
+  (`experiments/anchor_policy/`), shipped as `controller/anchor_policy.json`.
+  Selectable in the UI via the Anchor panel's "Smart station-keeping" toggle;
+  falls back to the PID `anchor_hold` if the model is unavailable.
 
 ## Engineering debt / smaller follow-ups
 - **Auto-assisted PID tuning — DONE** ✅ (`vanchor.analysis.tuning` +
@@ -78,7 +89,15 @@ Rhodan. Ranked by value-for-effort and fit with our event-driven
   exercised only indirectly via the API tests — no dedicated timing tests.
 - No hardware-in-the-loop tests (requires hardware); serial drivers are unit-
   tested against a fake transport only.
-- **COG/declination** is intentionally stubbed (COG = heading; magnetic = true) —
-  see `docs/assumptions.md`; revisit when integrating a real compass/GPS.
+- **COG/declination** — now handled for the **HWT901B AHRS** compass
+  (`hardware/drivers/hwt901b.py`): it learns declination + the compass mount
+  offset from GPS course-over-ground on straight runs, no magnetic model needed.
+  Still stubbed (magnetic == true) for the sim/other compass sources — see
+  `docs/assumptions.md`.
+- **Interactive magnetometer calibration** — the HWT901B `calibrate_mag` action
+  is stubbed ("coming next"); the rotate-through-360° hard/soft-iron fit routine
+  is not built yet.
+- **Persist the learned compass offset** — the GPS-learned declination/mount
+  offset lives in memory and re-learns after each restart; not yet persisted.
 - Optional realism upgrade: vectored/azimuth station-keeping that exploits the
   motor's full ~360° rotation (currently steering uses an effective ±35° band).

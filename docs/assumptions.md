@@ -10,10 +10,14 @@ deliberate simplification, not an oversight; revisit as the project matures.
   model; no threads.
 
 ## Navigation & sensors
-- **Magnetic heading == true heading.** We do not yet apply magnetic
-  declination/variation (the original used a WMM2020 model + geomag). Anchor
-  hold and waypoint steering are unaffected because they steer on *bearings*
-  derived from GPS positions; only absolute compass-vs-chart alignment is off.
+- **Magnetic heading == true heading** — *except* the HWT901B AHRS compass
+  (`compass_source="hwt901b"`), which learns declination **and** the compass
+  mount offset from GPS course-over-ground and applies it (see
+  `hardware/drivers/hwt901b.py`). For the simulator and other compass sources we
+  still don't apply magnetic declination/variation (the original used a WMM2020
+  model + geomag). Anchor hold and waypoint steering are unaffected either way
+  because they steer on *bearings* derived from GPS positions; only absolute
+  compass-vs-chart alignment is off.
 - **Spherical-Earth geodesy** (radius 6 371 km). Sub-metre accurate over the
   tens–hundreds of metres relevant to anchoring/close steering. Not for ocean
   passages.

@@ -70,8 +70,13 @@
   // ===== anchor + jog ======================================================
   const arSlider = $("ar");
   const holdHdgBox = $("hold-hdg");
+  const smartBox = $("anchor-smart");
   function applyAnchor(redrop) {
-    const cmd = { type: "anchor_hold", radius_m: parseFloat(arSlider.value), hold_heading: holdHdgBox.checked };
+    // "Smart" -> the learned NN station-keeper (anchor_ml); the backend falls
+    // back to the PID anchor_hold automatically if the model isn't loaded.
+    const smart = smartBox && smartBox.checked;
+    const cmd = { type: smart ? "anchor_ml" : "anchor_hold",
+                  radius_m: parseFloat(arSlider.value), hold_heading: holdHdgBox.checked };
     const last = VA.map.getLastAnchor();
     if (!redrop && last) cmd.anchor = { lat: last.lat, lon: last.lon };
     send(cmd);
@@ -79,6 +84,7 @@
   bindSlider("ar", "ar-val");
   arSlider.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   holdHdgBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
+  if (smartBox) smartBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   $("anchor-go").addEventListener("click", () => applyAnchor(true));
   [["jog-fwd", "forward"], ["jog-back", "back"], ["jog-left", "left"], ["jog-right", "right"]]
     .forEach(([id, direction]) => {
@@ -126,5 +132,9 @@
     updateCruise(t.cruise);
     updateTrack(t.track);
     updateDrift(t);
+    // Keep the "Smart" toggle honest: reflect the live anchor mode.
+    if (smartBox && (t.mode === "anchor_ml" || t.mode === "anchor_hold")) {
+      smartBox.checked = t.mode === "anchor_ml";
+    }
   });
 })();
