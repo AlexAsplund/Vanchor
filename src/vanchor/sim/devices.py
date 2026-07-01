@@ -17,8 +17,8 @@ from typing import Callable
 
 from ..core import events
 from ..core.events import EventBus
-from ..core.geo import mps_to_knots, offset_meters
-from ..core.models import BoatState, MotorCommand
+from ..core.geo import angle_difference, mps_to_knots, offset_meters
+from ..core.models import BoatState, ImuSample, MotorCommand
 from ..hardware.interfaces import Actuator, MotorController, Sensor
 from ..nav import nmea
 
@@ -170,11 +170,27 @@ class SimCompass(Sensor):
         self.heading_noise_deg = heading_noise_deg
         self._rng = random.Random(seed)
         self._task: asyncio.Task | None = None
+        self._prev_heading: float | None = None  # for the simulated yaw rate
 
     def sample(self, truth: BoatState | None = None) -> str:
         truth = truth or self.get_truth()
         heading = truth.heading_deg + self._rng.gauss(0.0, self.heading_noise_deg)
         return nmea.encode_hdm(heading)
+
+    def imu_sample(self, truth: BoatState, dt: float) -> ImuSample:
+        """A basic flat-water simulated IMU: yaw rate from the heading change,
+        ~1 g down, everything else ~0 plus light noise. Enough to exercise the
+        IMU pipeline / data-collection path; it does NOT model waves or tilt."""
+        yaw_rate = 0.0
+        if self._prev_heading is not None and dt > 0:
+            yaw_rate = angle_difference(self._prev_heading, truth.heading_deg) / dt
+        self._prev_heading = truth.heading_deg
+        n = lambda s: self._rng.gauss(0.0, s)  # noqa: E731
+        return ImuSample(
+            ax=n(0.05), ay=n(0.05), az=9.80665 + n(0.05),
+            gx=n(0.2), gy=n(0.2), gz=yaw_rate + n(0.3),
+            roll_deg=n(0.3), pitch_deg=n(0.3), source="sim",
+        )
 
     async def start(self) -> None:
         self._task = asyncio.ensure_future(self._loop())
@@ -186,7 +202,8 @@ class SimCompass(Sensor):
     async def _loop(self) -> None:
         period = 1.0 / self.update_hz
         while True:
-            sentence = self.sample()
+            truth = self.get_truth()
             if self.bus is not None:
-                await self.bus.publish(events.NMEA_IN, sentence)
+                await self.bus.publish(events.NMEA_IN, self.sample(truth))
+                await self.bus.publish(events.IMU_IN, self.imu_sample(truth, period))
             await asyncio.sleep(period)

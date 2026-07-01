@@ -116,8 +116,10 @@ and ``close()`` -- the real :class:`hwt901b.HWT901B` or a fake in tests.
 async def sample_once(dt: float) -> str | None
 ```
 
-Read one heading and return the HDM sentence (or None on timeout). The
-blocking serial read runs in a thread so it never stalls the loop.
+Read one full AHRS state and return the HDM heading sentence (or None
+on timeout). Also publishes the raw IMU sample (accel+gyro) on
+:data:`events.IMU_IN` for logging/analysis. One ``read_state`` gets both;
+the blocking serial read runs in a thread so it never stalls the loop.
 
 <a id="vanchor.hardware.drivers.hwt901b.open_hwt901b_compass"></a>
 

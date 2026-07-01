@@ -892,6 +892,12 @@ handler are logged and never break delivery to the others.
 
 a raw NMEA sentence arrived from a sensor
 
+<a id="vanchor.core.events.IMU_IN"></a>
+
+#### IMU\_IN
+
+a raw ImuSample (accel+gyro) arrived from an AHRS device
+
 <a id="vanchor.core.events.NAV_FIX"></a>
 
 #### NAV\_FIX
@@ -1120,6 +1126,30 @@ speed over ground
 #### cog\_deg
 
 course over ground
+
+<a id="vanchor.core.models.ImuSample"></a>
+
+## ImuSample Objects
+
+```python
+@dataclass(frozen=True)
+class ImuSample()
+```
+
+A raw AHRS/IMU sample in the boat's body frame.
+
+Auxiliary telemetry, populated only when a compass/AHRS driver that exposes
+an IMU is active (e.g. the HWT901B); ``None`` otherwise. Accelerations are in
+m/s^2, angular rates in deg/s (``gz`` is the yaw rate), roll/pitch in degrees.
+Not consumed by the controller yet -- surfaced for logging / debugging and
+future sensor fusion (see docs/roadmap.md). ``source`` names the producer
+("hwt901b" / "sim").
+
+<a id="vanchor.core.models.ImuSample.gz"></a>
+
+#### gz
+
+yaw rate
 
 <a id="vanchor.core.models.HeadingReading"></a>
 

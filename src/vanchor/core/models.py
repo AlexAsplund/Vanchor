@@ -55,6 +55,28 @@ class GpsFix:
 
 
 @dataclass(frozen=True)
+class ImuSample:
+    """A raw AHRS/IMU sample in the boat's body frame.
+
+    Auxiliary telemetry, populated only when a compass/AHRS driver that exposes
+    an IMU is active (e.g. the HWT901B); ``None`` otherwise. Accelerations are in
+    m/s^2, angular rates in deg/s (``gz`` is the yaw rate), roll/pitch in degrees.
+    Not consumed by the controller yet -- surfaced for logging / debugging and
+    future sensor fusion (see docs/roadmap.md). ``source`` names the producer
+    ("hwt901b" / "sim")."""
+
+    ax: float = 0.0
+    ay: float = 0.0
+    az: float = 0.0
+    gx: float = 0.0
+    gy: float = 0.0
+    gz: float = 0.0  # yaw rate
+    roll_deg: float = 0.0
+    pitch_deg: float = 0.0
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class HeadingReading:
     """A compass heading sample in degrees (0..360, magnetic or true)."""
 

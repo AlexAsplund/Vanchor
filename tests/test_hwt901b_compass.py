@@ -12,18 +12,40 @@ from vanchor.hardware.drivers.hwt901b import HeadingOffsetEstimator, HWT901BComp
 from vanchor.nav import nmea
 
 
-class _FakeSensor:
-    """Stands in for hwt901b.HWT901B: returns a fixed magnetic heading."""
+import types
 
-    def __init__(self, magnetic_deg: float) -> None:
+
+class _FakeSensor:
+    """Stands in for hwt901b.HWT901B: read_state() returns a State-like snapshot.
+
+    ``magnetic_deg`` is the desired compass heading; the module yaw is CCW-positive
+    so we store yaw = -heading (the driver negates it back). ``accel`` is in g,
+    ``gyro`` in deg/s (z = yaw rate)."""
+
+    def __init__(self, magnetic_deg: float, accel=(0.0, 0.0, 1.0), gyro=(0.0, 0.0, 0.0)) -> None:
         self.magnetic_deg = magnetic_deg
+        self.accel = accel
+        self.gyro = gyro
         self.closed = False
 
-    def read_true_heading(self, declination_deg: float = 0.0, timeout: float = 1.0) -> float:
-        return self.magnetic_deg  # declination applied by the driver, not here
+    def read_state(self, timeout: float = 1.0):
+        ns = types.SimpleNamespace
+        return ns(
+            angle=ns(roll=0.0, pitch=0.0, yaw=-self.magnetic_deg, version=0),
+            acceleration=ns(x=self.accel[0], y=self.accel[1], z=self.accel[2], temperature=25.0),
+            angular_velocity=ns(x=self.gyro[0], y=self.gyro[1], z=self.gyro[2], voltage=0.0),
+        )
 
     def close(self) -> None:
         self.closed = True
+
+
+class _RecordBus:
+    def __init__(self):
+        self.events = []
+
+    async def publish(self, topic, payload):
+        self.events.append((topic, payload))
 
 
 # ---- offset estimator (auto-declination) --------------------------------- #
@@ -78,6 +100,39 @@ def test_device_menu_shape_and_actions():
     prof = d.run_action("profile")
     assert prof["ok"] and "offset_deg" in prof["status"]
     assert d.run_action("nope")["ok"] is False
+
+
+# ---- IMU capture (accel + gyro) ------------------------------------------- #
+async def test_publishes_imu_sample_with_accel_and_gyro():
+    from vanchor.core import events
+    from vanchor.core.models import ImuSample
+
+    bus = _RecordBus()
+    # 1 g down, 12 deg/s yaw rate:
+    d = HWT901BCompass(_FakeSensor(50.0, accel=(0.1, 0.0, 1.0), gyro=(0.0, 0.0, 12.0)),
+                       bus=bus, declination_mode="off")
+    assert await d.sample_once(0.2) == nmea.encode_hdm(50.0)  # heading still emitted
+    imus = [p for t, p in bus.events if t == events.IMU_IN]
+    assert len(imus) == 1 and isinstance(imus[0], ImuSample)
+    assert abs(imus[0].az - 9.80665) < 0.01      # 1 g -> m/s^2
+    assert abs(imus[0].ax - 0.1 * 9.80665) < 0.01
+    assert abs(imus[0].gz - 12.0) < 1e-6         # yaw rate captured
+    assert imus[0].source == "hwt901b"
+
+
+async def test_navigator_stores_imu_on_state():
+    from vanchor.core.events import EventBus
+    from vanchor.core.models import ImuSample
+    from vanchor.core.state import NavigationState
+    from vanchor.nav.navigator import Navigator
+
+    bus = EventBus()
+    state = NavigationState()
+    Navigator(state, bus)   # subscribes to IMU_IN
+    sample = ImuSample(az=9.8, gz=3.0, source="hwt901b")
+    await bus.publish("imu.in", sample)
+    assert state.imu is sample
+    assert state.to_dict()["imu"]["gz"] == 3.0   # surfaced in telemetry
 
 
 # ---- registry self-registration ------------------------------------------ #

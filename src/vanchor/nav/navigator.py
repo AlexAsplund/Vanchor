@@ -37,6 +37,15 @@ class Navigator:
         self.gps_dlon = 0.0
         if bus is not None:
             bus.subscribe(events.NMEA_IN, self._on_nmea)
+            bus.subscribe(events.IMU_IN, self._on_imu)
+
+    async def _on_imu(self, sample) -> None:
+        """Store the latest raw IMU sample (accel+gyro) from an AHRS device.
+
+        Auxiliary: it's kept on the state for logging/analysis; the controller
+        does not steer on it. Heading still comes via NMEA (HDM), so the nav path
+        is unchanged whether or not an IMU is present."""
+        self.state.imu = sample
 
     # ------------------------------------------------------------------ #
     # GPS offset calibration (#45)

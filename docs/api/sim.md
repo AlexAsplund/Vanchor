@@ -344,6 +344,26 @@ class SimDepthSounder(Sensor)
 Simulated depth sounder: samples the synthetic bathymetry under the boat
 and emits DPT NMEA, exactly like a real transducer.
 
+<a id="vanchor.sim.devices.SimCompass"></a>
+
+## SimCompass Objects
+
+```python
+class SimCompass(Sensor)
+```
+
+<a id="vanchor.sim.devices.SimCompass.imu_sample"></a>
+
+#### imu\_sample
+
+```python
+def imu_sample(truth: BoatState, dt: float) -> ImuSample
+```
+
+A basic flat-water simulated IMU: yaw rate from the heading change,
+~1 g down, everything else ~0 plus light noise. Enough to exercise the
+IMU pipeline / data-collection path; it does NOT model waves or tilt.
+
 
 <a id="vanchor.sim.fossen"></a>
 

@@ -22,6 +22,7 @@ Handler = Callable[[Any], Awaitable[None] | None]
 
 # Common topic names, gathered here for discoverability.
 NMEA_IN = "nmea.in"  # a raw NMEA sentence arrived from a sensor
+IMU_IN = "imu.in"  # a raw ImuSample (accel+gyro) arrived from an AHRS device
 NAV_FIX = "nav.fix"  # navigator produced a fresh GpsFix
 NAV_HEADING = "nav.heading"  # navigator produced a fresh heading
 NAV_APB = "nav.apb"  # navigator parsed an APB autopilot sentence

@@ -14,6 +14,7 @@ from .models import (
     Environment,
     GeoPoint,
     GpsFix,
+    ImuSample,
     MotorCommand,
     Waypoint,
 )
@@ -34,6 +35,10 @@ class NavigationState:
     heading_deg: float = 0.0  # latest compass heading
     sog_knots: float = 0.0  # speed over ground from GPS
     depth_m: float = 0.0  # water depth under the boat (from a depth sounder)
+    # Latest raw IMU/AHRS sample (accel + gyro), if a compass driver exposes one
+    # (e.g. HWT901B). Auxiliary — not consumed by the controller yet; surfaced for
+    # logging/analysis and future fusion. None when no IMU-capable device is active.
+    imu: ImuSample | None = None
 
     # Sensor-anomaly protection: how many implausible readings were rejected.
     heading_rejected: int = 0
@@ -127,6 +132,7 @@ class NavigationState:
             "heading_deg": round(self.heading_deg, 2),
             "sog_knots": round(self.sog_knots, 2),
             "depth_m": round(self.depth_m, 1),
+            "imu": asdict(self.imu) if self.imu else None,
             "sensors": {
                 "heading_rejected": self.heading_rejected,
                 "position_rejected": self.position_rejected,

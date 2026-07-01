@@ -33,11 +33,30 @@ from typing import Any, Callable, Optional
 from ...core import events
 from ...core.events import EventBus
 from ...core.geo import angle_difference, normalize_deg
+from ...core.models import ImuSample
 from ...nav import nmea
 from ..interfaces import Sensor
 from ..registry import register_driver
 
 logger = logging.getLogger("vanchor.hardware.hwt901b")
+
+_G = 9.80665  # standard gravity, to convert the HWT901B's g-units to m/s^2
+
+
+def _imu_from_state(state, source: str = "hwt901b") -> ImuSample | None:
+    """Build an :class:`ImuSample` from an ``hwt901b`` State (accel in g -> m/s^2,
+    gyro deg/s, roll/pitch deg). None if neither accel nor gyro is present yet."""
+    a = getattr(state, "acceleration", None)
+    g = getattr(state, "angular_velocity", None)
+    ang = getattr(state, "angle", None)
+    if a is None and g is None:
+        return None
+    return ImuSample(
+        ax=a.x * _G if a else 0.0, ay=a.y * _G if a else 0.0, az=a.z * _G if a else 0.0,
+        gx=g.x if g else 0.0, gy=g.y if g else 0.0, gz=g.z if g else 0.0,
+        roll_deg=ang.roll if ang else 0.0, pitch_deg=ang.pitch if ang else 0.0,
+        source=source,
+    )
 
 # () -> (course_over_ground_deg, speed_over_ground_mps) or None when no fix.
 MotionProvider = Callable[[], Optional[tuple]]
@@ -166,18 +185,30 @@ class HWT901BCompass(Sensor):
         return self.estimator.update(magnetic_heading, cog, sog, dt)
 
     async def sample_once(self, dt: float) -> str | None:
-        """Read one heading and return the HDM sentence (or None on timeout). The
-        blocking serial read runs in a thread so it never stalls the loop."""
+        """Read one full AHRS state and return the HDM heading sentence (or None
+        on timeout). Also publishes the raw IMU sample (accel+gyro) on
+        :data:`events.IMU_IN` for logging/analysis. One ``read_state`` gets both;
+        the blocking serial read runs in a thread so it never stalls the loop."""
         loop = asyncio.get_event_loop()
         try:
-            magnetic = await loop.run_in_executor(
-                None, lambda: self._sensor.read_true_heading(0.0, self.read_timeout)
+            state = await loop.run_in_executor(
+                None, lambda: self._sensor.read_state(self.read_timeout)
             )
         except Exception as exc:  # noqa: BLE001 - timeout/parse; keep the loop alive
             logger.debug("hwt901b read: %s", exc)
             return None
+        angle = getattr(state, "angle", None)
+        if angle is None:
+            return None  # no fused heading yet
+        # Module yaw is CCW-positive [-180,180]; a compass bearing is CW-positive
+        # [0,360) -> negate (matches hwt901b.calibration.yaw_to_heading at decl 0).
+        magnetic = normalize_deg(-angle.yaw)
         heading = normalize_deg(magnetic + self._current_declination(magnetic, dt))
         self.last_heading_deg = heading
+        if self.bus is not None:
+            imu = _imu_from_state(state)
+            if imu is not None:
+                await self.bus.publish(events.IMU_IN, imu)
         return nmea.encode_hdm(heading)
 
     async def _loop(self) -> None:
