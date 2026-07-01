@@ -1,21 +1,15 @@
 # Vanchor-NG developer tasks. `make <target>`; run inside the project venv.
-.PHONY: help docs docs-serve test
+.PHONY: help docs test
 
 help:
-	@echo "make docs        Generate the API reference from docstrings -> docs/api/"
-	@echo "make docs-serve  Live, auto-reloading API docs server (browse while editing)"
-	@echo "make test        Run the test suite"
+	@echo "make docs   Generate the Markdown API reference from docstrings -> docs/api/"
+	@echo "make test   Run the test suite"
 
-# Auto-generated API reference for the whole `vanchor` package, built from the
-# code's docstrings with pdoc (needs the docs extra: pip install -e '.[docs]').
-# Output lives in docs/api/ and is gitignored — regenerate any time with `make docs`.
+# Auto-generated Markdown API reference for the whole `vanchor` package, built
+# from the code's docstrings with pydoc-markdown (needs the docs extra:
+# pip install -e '.[docs]'). One file per top-level package under docs/api/.
 docs:
-	pdoc vanchor -o docs/api --docformat google
-	@echo "API reference -> docs/api/index.html"
-
-# Same, but served live with auto-reload — handy while writing docstrings.
-docs-serve:
-	pdoc vanchor --docformat google
+	python scripts/gen_api_docs.py
 
 test:
 	pytest -q

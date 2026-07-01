@@ -29,8 +29,8 @@ serial = ["pyserial>=3.5", "pyserial-asyncio>=0.6"]
 # WitMotion HWT901B-TTL AHRS compass (compass_source="hwt901b"). Until the lib is
 # published, install the sibling checkout: pip install -e ../python-hwt901b-ttl[serial]
 hwt901b = ["hwt901b[serial]>=0.1"]
-# Auto-generated API reference from docstrings (make docs / make docs-serve):
-docs = ["pdoc>=14"]
+# Auto-generated Markdown API reference from docstrings (make docs):
+docs = ["pydoc-markdown>=4"]
 
 [project.scripts]
 vanchor = "vanchor.app:main"

@@ -73,9 +73,9 @@ clock**. Its sensor/control timing is load-bearing — see
 6. **[testing-and-workflow.md](testing-and-workflow.md)** — running, testing (harness timing!), headless browser verification, and the operational gotchas that bite every time.
 7. **[device-drivers.md](device-drivers.md)** — adding a hardware driver (the plugin registry, the `Sensor`/NMEA seam, `device_menu`). Friendlier intro: [../adding-a-device.md](../adding-a-device.md).
 
-**API reference:** `make docs` generates a full browsable API reference from the
-package docstrings into `docs/api/` (needs `pip install -e '.[docs]'`); `make
-docs-serve` serves it live with auto-reload.
+**API reference:** [`docs/api/`](../api/) is a Markdown API reference generated
+from the package docstrings (one file per top-level package). Regenerate with
+`make docs` (needs `pip install -e '.[docs]'`).
 
 There are also older, narrower design docs in `docs/` (`architecture.md`,
 `nav-control-api.md`, `ui-contract.md`, `routing-weather-api.md`,
