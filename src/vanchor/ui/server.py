@@ -99,6 +99,23 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     async def log(n: int = 50) -> dict:
         return {"telemetry": runtime.recorder.recent(n)}
 
+    @app.get("/api/logs")
+    async def app_logs(level: str = "INFO", n: int = 300,
+                       contains: str | None = None) -> dict:
+        """Recent in-memory application log records for the 'View logs' UI, at or
+        above ``level`` (DEBUG/INFO/WARNING/ERROR), newest last, optionally
+        text-filtered by ``contains``."""
+        import logging as _logging
+
+        from ..core.observability import log_ring
+
+        minno = _logging.getLevelName(level.upper())
+        if not isinstance(minno, int):
+            minno = _logging.INFO
+        n = max(1, min(int(n), 1000))
+        return {"ok": True, "level": level.upper(),
+                "records": log_ring().dump(minno, n, contains)}
+
     @app.get("/api/tune/jobs")
     async def tune_jobs() -> dict:
         from ..analysis.tuning import TUNING_JOBS

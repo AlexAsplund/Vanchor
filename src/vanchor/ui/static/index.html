@@ -103,6 +103,26 @@
     <p id="alerts-empty" class="alerts-empty">No alerts yet.</p>
   </dialog>
 
+  <!-- View logs: the in-memory application log, filterable by severity + text. -->
+  <dialog id="logs-dialog" class="logs-dialog">
+    <div class="alerts-head">
+      <strong>Logs</strong>
+      <div class="alerts-head-actions">
+        <select id="logs-level" class="logs-level" aria-label="Minimum severity">
+          <option value="DEBUG">Debug+</option>
+          <option value="INFO" selected>Info+</option>
+          <option value="WARNING">Warnings+</option>
+          <option value="ERROR">Errors</option>
+        </select>
+        <input id="logs-search" type="search" class="logs-search" placeholder="filter text…" aria-label="Filter logs" />
+        <button id="logs-refresh" class="alerts-clear" type="button" title="Refresh">↻</button>
+        <button id="logs-close" class="alerts-close" type="button" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <ol id="logs-list" class="logs-list"></ol>
+    <p id="logs-empty" class="alerts-empty">No log records.</p>
+  </dialog>
+
   <!-- ============================ GLASSY HUD ============================ -->
   <section id="hud" class="hud glass">
     <div class="hud-widget" data-hud="speed">
@@ -1078,6 +1098,8 @@
 
       <div class="drawer-section">Data &amp; diagnostics</div>
 
+      <button id="logs-open" class="btn-ghost wide" title="View the application log">📜 View logs</button>
+
       <details class="card">
         <summary>Live data</summary>
         <div class="row"><span>Mode</span><b id="r-mode">—</b></div>
@@ -1516,6 +1538,7 @@
   <script src="/static/guided.js"></script>
   <script src="/static/work-area.js"></script>
   <script src="/static/alerts.js"></script>
+  <script src="/static/logs.js"></script>
   <script src="/static/safety.js"></script>
   <script src="/static/measure.js"></script>
   <script src="/static/mobile.js"></script>

@@ -35,6 +35,51 @@ logger = logging.getLogger("vanchor.observability")
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 
 
+class RingLogHandler(logging.Handler):
+    """Keep the most recent log records in memory for the "View logs" UI.
+
+    A bounded ring of decoded records (time/level/logger/message). Cheap and
+    crash-safe; :func:`log_ring` returns the process-wide singleton so the buffer
+    survives repeated :func:`setup_logging` calls."""
+
+    def __init__(self, capacity: int = 800) -> None:
+        super().__init__()
+        self.records: Deque[dict] = deque(maxlen=capacity)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.records.append({
+                "t": record.created,
+                "level": record.levelname,
+                "levelno": record.levelno,
+                "name": record.name,
+                "msg": record.getMessage(),
+            })
+        except Exception:  # pragma: no cover - logging must never raise
+            pass
+
+    def dump(self, min_levelno: int = 0, limit: int = 500,
+             contains: str | None = None) -> list[dict]:
+        """Newest-last records at/above ``min_levelno``, optionally text-filtered."""
+        rows = [r for r in self.records if r["levelno"] >= min_levelno]
+        if contains:
+            needle = contains.lower()
+            rows = [r for r in rows if needle in r["msg"].lower() or needle in r["name"].lower()]
+        return rows[-limit:]
+
+
+_RING: RingLogHandler | None = None
+
+
+def log_ring() -> RingLogHandler:
+    """The process-wide in-memory log ring (created on first use)."""
+    global _RING
+    if _RING is None:
+        _RING = RingLogHandler()
+        _RING.setLevel(logging.INFO)
+    return _RING
+
+
 def setup_logging(level: str = "INFO", fmt: str | None = None) -> None:
     """Configure the root logger with a single stream handler.
 
@@ -55,8 +100,15 @@ def setup_logging(level: str = "INFO", fmt: str | None = None) -> None:
 
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(fmt or DEFAULT_LOG_FORMAT))
+    handler.setLevel(numeric)                 # console stays at the requested level
     root.addHandler(handler)
-    root.setLevel(numeric)
+
+    # In-memory ring for the "View logs" UI. Capture INFO+ regardless of the
+    # console level (so the log view is useful even at --log-level warning); the
+    # singleton persists its buffer across repeated setup_logging() calls.
+    ring = log_ring()
+    root.addHandler(ring)
+    root.setLevel(min(numeric, logging.INFO))  # let INFO+ reach the handlers
 
 
 class TelemetryRecorder:

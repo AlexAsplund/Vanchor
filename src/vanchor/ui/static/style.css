@@ -1922,3 +1922,23 @@ body.mobile.dock-collapsed .dock { padding-bottom: 0; }
   font: 600 10px "Inter", system-ui, sans-serif; letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--muted, #9fb0bd); padding: 4px 4px 1px; margin-top: 2px;
 }
+
+/* View-logs dialog (Settings -> Data & diagnostics -> View logs). */
+.logs-dialog { width: min(880px, 94vw); max-height: 82vh; border: none; padding: 0;
+  border-radius: 14px; background: var(--glass-solid); color: var(--text);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55); }
+.logs-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.logs-level, .logs-search { background: var(--glass-solid); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: 12px; }
+.logs-search { min-width: 120px; }
+.logs-list { list-style: none; margin: 0; padding: 6px 10px 12px; max-height: 68vh;
+  overflow: auto; font-family: var(--font-num, ui-monospace, monospace); font-size: 12px; line-height: 1.5; }
+.log-row { display: grid; grid-template-columns: auto 54px auto 1fr; gap: 8px; align-items: baseline;
+  padding: 1px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  white-space: pre-wrap; word-break: break-word; }
+.log-time, .log-name { color: var(--muted); }
+.log-lvl { font-weight: 700; font-size: 10px; letter-spacing: 0.04em; }
+.log-warning .log-lvl, .log-warning .log-msg { color: var(--warn, #f0b429); }
+.log-error .log-lvl, .log-error .log-msg,
+.log-critical .log-lvl, .log-critical .log-msg { color: var(--danger, #ff5a5a); }
+.log-debug { opacity: 0.6; }
