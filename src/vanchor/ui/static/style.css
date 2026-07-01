@@ -473,6 +473,13 @@ body.hud-fade-text .catch-fab::after {
 }
 .depth-legend-labels { display: flex; justify-content: space-between; margin-top: 4px; font-weight: 700; }
 .depth-legend-cap { color: var(--muted); text-align: center; margin-top: 1px; }
+/* Bottom-composition legend: YlOrBr ramp, stacked just above the depth legend so
+   both can show together. Deliberately a DIFFERENT ramp from depth + hardness. */
+.comp-legend { bottom: 84px; }
+.comp-legend-bar {
+  height: 10px; border-radius: 5px;
+  background: linear-gradient(to right, #ffffe5, #fee391, #fe9929, #d95f0e, #993404);
+}
 
 /* ============================ SAFETY BANNER ============================ */
 #banner {
@@ -1033,6 +1040,7 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
   .steering-gauge .sg-stat b { font-size: 13px; }
   .steering-gauge .sg-title { font-size: 10px; }
   .depth-legend { right: 8px; bottom: calc(54vh + 8px); }
+  .comp-legend { right: 8px; bottom: calc(54vh + 76px); }
   #banner { top: 132px; }
   .topbar { gap: 7px; padding: 6px 9px; }
   .brand-name { display: none; }

@@ -772,7 +772,17 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 raw = await websocket.receive_text()
                 runtime.client_activity()
                 try:
-                    runtime.handle_command(json.loads(raw))
+                    msg = json.loads(raw)
+                except Exception:
+                    logger.exception("bad command over websocket: %s", raw)
+                    continue
+                if msg.get("type") == "ping":
+                    # Application-level heartbeat: liveness already updated above.
+                    # Do NOT forward to the controller (it would log "unknown command").
+                    await websocket.send_text('{"type":"pong"}')
+                    continue
+                try:
+                    runtime.handle_command(msg)
                 except Exception:
                     logger.exception("bad command over websocket: %s", raw)
         except WebSocketDisconnect:

@@ -26,6 +26,58 @@ def test_bad_checksum_raises():
         nmea.parse("$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,,*00")
 
 
+def test_empty_checksum_raises():
+    # A sentence with '*' but nothing after it must be rejected.
+    with pytest.raises(nmea.NmeaError):
+        nmea.parse("$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,,*")
+
+
+def test_malformed_checksum_raises():
+    # Non-hex characters after '*' must be rejected.
+    with pytest.raises(nmea.NmeaError):
+        nmea.parse("$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,,*ZZ")
+
+
+def test_no_checksum_accepted_by_default():
+    # Devices that omit the '*checksum' entirely are still accepted by default.
+    s = "$GPHDM,123.4,M"
+    result = nmea.parse(s)
+    assert isinstance(result, nmea.Heading)
+
+
+def test_no_checksum_rejected_when_required():
+    with pytest.raises(nmea.NmeaError):
+        nmea.parse("$GPHDM,123.4,M", require_checksum=True)
+
+
+def test_valid_checksum_passes_require_checksum():
+    s = nmea.encode_hdm(123.4)
+    result = nmea.parse(s, require_checksum=True)
+    assert isinstance(result, nmea.Heading)
+
+
+def test_has_valid_checksum_dollar():
+    good = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
+    assert nmea.has_valid_checksum(good) is True
+    bad_cs = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*00"
+    assert nmea.has_valid_checksum(bad_cs) is False
+    no_star = "$GPHDM,123.4,M"
+    assert nmea.has_valid_checksum(no_star) is False
+
+
+def test_has_valid_checksum_bang():
+    # AIS sentence with correct checksum 0x40.
+    good = "!AIVDM,1,1,,A,foo,0*40"
+    assert nmea.has_valid_checksum(good) is True
+    bad = "!AIVDM,1,1,,A,foo,0*5C"
+    assert nmea.has_valid_checksum(bad) is False
+
+
+def test_has_valid_checksum_empty_field():
+    assert nmea.has_valid_checksum("$GPHDM,123.4,M*") is False
+    assert nmea.has_valid_checksum("") is False
+
+
 def test_missing_dollar_raises():
     with pytest.raises(nmea.NmeaError):
         nmea.parse("GPRMC,foo")

@@ -216,6 +216,15 @@
     <div class="depth-legend-cap" id="depth-legend-cap">depth (m)</div>
   </div>
 
+  <!-- Bottom-composition legend — shown only when the composition overlay is on.
+       An UNCALIBRATED 0–100% index (no substrate names, polarity unknown), on a
+       YlOrBr ramp kept distinct from the depth and hardness scales. -->
+  <div id="composition-legend" class="depth-legend comp-legend glass hidden">
+    <div class="comp-legend-bar"></div>
+    <div class="depth-legend-labels"><span>0</span><span>100</span></div>
+    <div class="depth-legend-cap">composition (0–100%, uncalibrated)</div>
+  </div>
+
   <!-- Drop-marker FAB: arms marker placement; tap the map to drop (or long-press
        the map). Icon is chosen in Settings → Map markers. -->
   <button id="marker-fab" class="map-fab" title="Drop a marker (tap map to place)" aria-label="Drop a marker">

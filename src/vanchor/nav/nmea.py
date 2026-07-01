@@ -96,17 +96,50 @@ def _dd_to_dm(dd: float, is_lat: bool) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 # Parsing
 # --------------------------------------------------------------------------- #
-def parse(sentence: str) -> Sentence | None:
+_HEX_CHARS = frozenset("0123456789ABCDEFabcdef")
+
+
+def has_valid_checksum(sentence: str) -> bool:
+    """Return ``True`` iff *sentence* carries a syntactically valid and correct
+    ``*XX`` checksum.
+
+    Works for both ``$`` (NMEA 0183) and ``!`` (AIS/VDM) prefixes. Does **not**
+    require the caller to strip the sentence first.
+    """
+    sentence = sentence.strip()
+    if "*" not in sentence:
+        return False
+    star = sentence.rindex("*")
+    cs_field = sentence[star + 1 : star + 3]
+    if len(cs_field) != 2 or not _HEX_CHARS.issuperset(cs_field):
+        return False
+    body = sentence[1:star]  # strip the leading $ or !
+    return checksum(body) == cs_field.upper()
+
+
+def parse(sentence: str, *, require_checksum: bool = False) -> Sentence | None:
     """Parse a single NMEA sentence. Returns ``None`` for a well-formed sentence
-    type we don't model; raises :class:`NmeaError` for malformed input."""
+    type we don't model; raises :class:`NmeaError` for malformed input.
+
+    Args:
+        sentence: A raw NMEA sentence, with or without a ``*checksum`` suffix.
+        require_checksum: When ``True``, sentences that have **no** ``*`` at all
+            are rejected.  Sentences that have ``*`` but an empty, non-hex, or
+            wrong checksum are *always* rejected regardless of this flag.
+    """
     sentence = sentence.strip()
     if not sentence.startswith("$"):
         raise NmeaError(f"missing '$': {sentence!r}")
 
     if "*" in sentence:
         body, _, given = sentence[1:].partition("*")
-        if given and checksum(body) != given.upper():
+        cs = given[:2]
+        if not cs or not _HEX_CHARS.issuperset(cs):
+            raise NmeaError(f"empty or malformed checksum on {sentence!r}")
+        if checksum(body) != cs.upper():
             raise NmeaError(f"bad checksum on {sentence!r}")
+    elif require_checksum:
+        raise NmeaError(f"checksum required but missing on {sentence!r}")
     else:
         body = sentence[1:]
 

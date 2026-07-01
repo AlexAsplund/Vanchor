@@ -5,12 +5,12 @@ Apps such as Navionics, iNavX and SignalK speak NMEA over a plain TCP socket
 exposes a tiny :class:`asyncio` server that:
 
 * accepts any number of concurrent clients;
-* forwards every inbound line that looks like NMEA (starts with ``$`` or ``!``)
-  onto the event bus as ``nmea.in``, so the navigator consumes phone-sourced
-  fixes/headings exactly like serial ones;
-* broadcasts outbound sentences to all connected clients, both via
-  :meth:`broadcast` and automatically by subscribing to the ``nmea.out`` topic
-  (the controller/simulator can publish there to feed the phone its position).
+* validates inbound lines (must carry a correct ``*XX`` checksum) before
+  forwarding onto the event bus as ``nmea.in``, so garbage/partial lines and
+  trivially-crafted injection attempts are silently dropped;
+* broadcasts outbound sentences to all connected clients via a non-blocking
+  per-client outbound queue, so one slow phone client cannot stall publishers
+  on the ``nmea.out`` topic.
 
 The server stays decoupled from everything else: it only knows the bus.
 """
@@ -19,14 +19,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from ..core import events
 from ..core.events import EventBus
+from .nmea import has_valid_checksum
 
 logger = logging.getLogger("vanchor.nmea_net")
 
 #: Topic the server listens on for sentences to push to connected clients.
 NMEA_OUT = "nmea.out"
+
+#: Per-client outbound queue capacity.  Oldest entries are dropped when full.
+_QUEUE_SIZE = 200
+
+#: Minimum seconds between "bad checksum" warning log messages (per server).
+_REJECT_LOG_INTERVAL = 10.0
 
 
 class NmeaTcpServer:
@@ -39,8 +47,21 @@ class NmeaTcpServer:
         self.host = host
         self.port = port
         self._server: asyncio.AbstractServer | None = None
-        self._writers: set[asyncio.StreamWriter] = set()
+        # writer -> (outbound_queue, writer_task)
+        self._clients: dict[
+            asyncio.StreamWriter,
+            tuple[asyncio.Queue[str | None], asyncio.Task[None]],
+        ] = {}
+        # Drop accounting
+        self._total_drops: int = 0
+        # Rate-limited reject logging state
+        self._reject_count: int = 0
+        self._last_reject_log: float = 0.0
         bus.subscribe(NMEA_OUT, self._on_nmea_out)
+
+    # ---------------------------------------------------------------------- #
+    # Public API
+    # ---------------------------------------------------------------------- #
 
     @property
     def bound_port(self) -> int | None:
@@ -54,7 +75,12 @@ class NmeaTcpServer:
 
     @property
     def client_count(self) -> int:
-        return len(self._writers)
+        return len(self._clients)
+
+    @property
+    def total_drops(self) -> int:
+        """Total number of outbound lines dropped due to a full client queue."""
+        return self._total_drops
 
     async def start(self) -> None:
         if self._server is not None:
@@ -76,41 +102,81 @@ class NmeaTcpServer:
             await server.wait_closed()
         except Exception:  # pragma: no cover - defensive
             logger.exception("error while closing NMEA TCP server")
-        # Drop every connected client.
-        for writer in list(self._writers):
+        # Drop every connected client: cancel writer tasks, close transports.
+        for writer, (queue, task) in list(self._clients.items()):
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
             await self._close_writer(writer)
-        self._writers.clear()
+        self._clients.clear()
         logger.info("NMEA TCP server stopped")
 
     async def broadcast(self, sentence: str) -> None:
-        """Send ``sentence`` (a single NMEA line) to all connected clients.
+        """Enqueue ``sentence`` for delivery to all connected clients.
 
-        A trailing CR/LF is appended if missing. Clients that error out are
-        dropped silently."""
-        if not self._writers:
+        Returns immediately (non-blocking).  Clients whose outbound queue is
+        full have the oldest queued entry dropped to make room for the new one.
+        """
+        if not self._clients:
             return
-        line = sentence if sentence.endswith("\r\n") else sentence.rstrip("\r\n") + "\r\n"
-        data = line.encode("ascii", "ignore")
-        dead: list[asyncio.StreamWriter] = []
-        for writer in list(self._writers):
+        line: str = (
+            sentence
+            if sentence.endswith("\r\n")
+            else sentence.rstrip("\r\n") + "\r\n"
+        )
+        for queue, _ in list(self._clients.values()):
+            if queue.full():
+                try:
+                    queue.get_nowait()  # drop oldest to make room
+                    self._total_drops += 1
+                except asyncio.QueueEmpty:
+                    pass
             try:
-                writer.write(data)
-                await writer.drain()
-            except Exception:
-                logger.debug("dropping NMEA client during broadcast")
-                dead.append(writer)
-        for writer in dead:
-            await self._close_writer(writer)
+                queue.put_nowait(line)
+            except asyncio.QueueFull:
+                # Another coroutine may have filled the slot between the two
+                # calls above; count and move on.
+                self._total_drops += 1
+
+    # ---------------------------------------------------------------------- #
+    # Internal helpers
+    # ---------------------------------------------------------------------- #
 
     async def _on_nmea_out(self, sentence: str) -> None:
         await self.broadcast(sentence)
+
+    async def _writer_loop(
+        self,
+        writer: asyncio.StreamWriter,
+        queue: asyncio.Queue[str | None],
+    ) -> None:
+        """Per-client task: drain the outbound queue to the TCP socket."""
+        try:
+            while True:
+                line = await queue.get()
+                if line is None:  # sentinel: stop gracefully
+                    break
+                try:
+                    writer.write(line.encode("ascii", "ignore"))
+                    await writer.drain()
+                except Exception:
+                    logger.debug("NMEA client write error; dropping client")
+                    break
+        except asyncio.CancelledError:
+            pass
 
     async def _handle_client(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         peer = writer.get_extra_info("peername")
         logger.info("NMEA client connected: %s", peer)
-        self._writers.add(writer)
+
+        queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=_QUEUE_SIZE)
+        task = asyncio.create_task(self._writer_loop(writer, queue))
+        self._clients[writer] = (queue, task)
+
         try:
             while True:
                 raw = await reader.readline()
@@ -120,6 +186,20 @@ class NmeaTcpServer:
                 if not line:
                     continue
                 if line[0] in ("$", "!"):
+                    if not has_valid_checksum(line):
+                        self._reject_count += 1
+                        now = time.monotonic()
+                        if now - self._last_reject_log >= _REJECT_LOG_INTERVAL:
+                            logger.warning(
+                                "Dropped %d inbound TCP line(s) with bad/missing "
+                                "checksum (last from %s: %r)",
+                                self._reject_count,
+                                peer,
+                                line,
+                            )
+                            self._reject_count = 0
+                            self._last_reject_log = now
+                        continue
                     await self.bus.publish(events.NMEA_IN, line)
                 else:
                     logger.debug("ignoring non-NMEA line from %s: %r", peer, line)
@@ -128,7 +208,13 @@ class NmeaTcpServer:
         except Exception:  # pragma: no cover - defensive
             logger.exception("error serving NMEA client %s", peer)
         finally:
-            self._writers.discard(writer)
+            # Signal the writer task to stop, then wait briefly.
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
+            self._clients.pop(writer, None)
             await self._close_writer(writer)
             logger.info("NMEA client disconnected: %s", peer)
 

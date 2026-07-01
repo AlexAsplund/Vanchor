@@ -223,3 +223,57 @@ def test_log_full_includes_depth_points(client):
     # depth_points should be present in at least one frame (recorder auto-fills
     # on each telemetry() call).
     assert any("depth_points" in f for f in frames)
+
+
+# ---- WS application-level heartbeat (ping/pong) ---------------------------- #
+
+
+@pytest.fixture()
+def runtime_client(tmp_path, monkeypatch):
+    """Like ``client`` but also yields the Runtime for direct state inspection."""
+    monkeypatch.setenv("VANCHOR_ALLOWED_HOSTS", "testserver")
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    app = create_app(rt)
+    with TestClient(app) as c:
+        yield c, rt
+
+
+def test_ws_ping_updates_liveness(runtime_client):
+    """A ping message over WS must advance runtime._last_client_seen."""
+    import time
+
+    c, rt = runtime_client
+    with c.websocket_connect("/ws") as ws:
+        ws.receive_json()  # initial snapshot
+        before = rt._last_client_seen
+        time.sleep(0.02)  # ensure the monotonic clock advances before pinging
+        ws.send_json({"type": "ping"})
+        # Drain messages until we receive the pong (telemetry frames may arrive first).
+        for _ in range(20):
+            msg = ws.receive_json()
+            if msg.get("type") == "pong":
+                break
+    assert rt._last_client_seen is not None
+    assert rt._last_client_seen > before
+
+
+def test_ws_ping_not_forwarded_to_controller(runtime_client, caplog):
+    """A ping must not reach the controller: no mode change, no unknown-command warning."""
+    import logging
+
+    c, rt = runtime_client
+    with caplog.at_level(logging.WARNING, logger="vanchor.controller"):
+        with c.websocket_connect("/ws") as ws:
+            ws.receive_json()  # initial snapshot
+            ws.send_json({"type": "ping"})
+            # Wait for the pong; telemetry frames may arrive first.
+            for _ in range(20):
+                msg = ws.receive_json()
+                if msg.get("type") == "pong":
+                    break
+    assert rt.state.mode.value == "manual"
+    assert not any("unknown command" in r.message for r in caplog.records)

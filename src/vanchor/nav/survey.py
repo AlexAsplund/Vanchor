@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import substring
 
 from .water import Projection
 
@@ -41,6 +42,13 @@ MAX_WAYPOINTS = 5000
 # Minimum spacing (m); guards against zero/negative/absurd spacing producing an
 # unbounded number of passes.
 MIN_SPACING_M = 0.5
+# Maximum intermediate boundary waypoints inserted per connecting leg when the
+# direct leg exits the constraint polygon.  Keeps the repaired route tractable.
+MAX_BOUNDARY_PTS = 20
+# Safety inset (m) applied to the routing constraint when inserting boundary
+# waypoints along a leg detour.  Keeps detour waypoints ~2 m inside the edge
+# (e.g. off the shoreline) so the boat does not hug dry land.
+INSET_M = 2.0
 
 
 @dataclass
@@ -95,6 +103,146 @@ def _ordered_lines_for_geom(geom: BaseGeometry) -> list[LineString]:
     return []
 
 
+def _containing_polygon(geom: BaseGeometry, pt: tuple[float, float]) -> Polygon | None:
+    """Return the Polygon component of *geom* that covers *pt*.
+
+    Falls back to the nearest component when no polygon strictly covers the
+    point (handles float-precision edge cases where a waypoint sits exactly on
+    the boundary).
+    """
+    p = Point(pt)
+    if geom.geom_type == "Polygon":
+        return geom  # type: ignore[return-value]
+    if geom.geom_type == "MultiPolygon":
+        for g in geom.geoms:
+            if g.covers(p):
+                return g
+        return min(geom.geoms, key=lambda g: g.distance(p))
+    return None
+
+
+def _inset_for_routing(poly: Polygon, a: tuple[float, float]) -> Polygon:
+    """Return an inward-buffered (INSET_M) version of *poly* for routing boundary
+    waypoints so they sit inside the edge rather than on it.
+
+    Robustness:
+    - If the negative buffer collapses the polygon (narrow throat < 2×INSET_M)
+      the original *poly* is returned as a fallback.
+    - If the inset splits into a MultiPolygon the component that covers (or is
+      nearest to) point *a* is returned; if none qualifies, falls back to *poly*.
+    """
+    inset = poly.buffer(-INSET_M)
+    if inset.is_empty:
+        return poly
+    if inset.geom_type == "Polygon":
+        return inset  # type: ignore[return-value]
+    if inset.geom_type == "MultiPolygon":
+        component = _containing_polygon(inset, a)
+        return component if component is not None else poly
+    return poly
+
+
+def _route_along_boundary(
+    poly: Polygon,
+    a: tuple[float, float],
+    b: tuple[float, float],
+    max_pts: int = MAX_BOUNDARY_PTS,
+) -> list[tuple[float, float]]:
+    """Intermediate waypoints for the shorter arc of *poly*'s exterior ring, a→b.
+
+    Both points are projected onto the exterior ring; the shorter of the two arcs
+    between the projections is extracted and its interior vertices returned (the
+    projected endpoints of a and b are excluded -- the caller already has those).
+
+    For a concave polygon the exterior ring traces the concavity edges, so
+    following it always stays inside (or on the boundary of) the polygon.
+    """
+    ring_ls = LineString(poly.exterior.coords)
+    L = ring_ls.length
+    if L < 1e-9:
+        return []
+
+    da = ring_ls.project(Point(a))
+    db = ring_ls.project(Point(b))
+    if abs(da - db) < 1e-9:
+        return []
+
+    # Forward arc: da → db increasing along the ring (wraps at L→0 if da > db).
+    fwd_len = (db - da) % L
+    bwd_len = L - fwd_len
+
+    def _arc_coords(start: float, end: float) -> list[tuple[float, float]]:
+        """Coords from *start* to *end* along ring_ls; handles wrap-around."""
+        if start <= end:
+            seg = substring(ring_ls, start, end)
+            return list(seg.coords) if seg and not seg.is_empty else []
+        # Wrapping: start → L, then 0 → end.
+        s1 = substring(ring_ls, start, L)
+        s2 = substring(ring_ls, 0.0, end)
+        c1 = list(s1.coords) if s1 and not s1.is_empty else []
+        c2 = list(s2.coords) if s2 and not s2.is_empty else []
+        # The ring's last coord equals its first; drop the duplicate at the seam.
+        if c1 and c2 and c1[-1] == c2[0]:
+            c2 = c2[1:]
+        return c1 + c2
+
+    if fwd_len <= bwd_len:
+        coords = _arc_coords(da, db)
+    else:
+        # Backward arc a→b = reverse of forward arc b→a.
+        coords = _arc_coords(db, da)[::-1]
+
+    # Strip the projected endpoints of a and b (interior vertices only).
+    interior = coords[1:-1]
+    if not interior:
+        return []
+    if len(interior) > max_pts:
+        step = max(1, len(interior) // max_pts)
+        interior = interior[::step][:max_pts]
+    return interior
+
+
+def _repair_legs(
+    ordered_pts: list[tuple[float, float]],
+    constraint: BaseGeometry,
+    max_insert: int = MAX_BOUNDARY_PTS,
+) -> list[tuple[float, float]]:
+    """Repair connecting legs that exit *constraint*, inserting boundary waypoints.
+
+    Each consecutive pair (a, b) in *ordered_pts* is checked against *constraint*
+    (buffered 0.5 m for floating-point tolerance).  When a leg exits, intermediate
+    waypoints are inserted along the exterior ring of the polygon component that
+    contains *a*, routing around the concavity without leaving the polygon.
+
+    Chord interiors are never problematic (they are clipped to the constraint by
+    ``_sweep_lines``), so the check is fast in the common case.
+    """
+    if len(ordered_pts) < 2:
+        return list(ordered_pts)
+
+    # Validation uses the original constraint (with 0.5 m float tolerance) so
+    # chord endpoints that legitimately sit near the edge are never rejected.
+    nav = constraint.buffer(0.5)
+    result: list[tuple[float, float]] = [ordered_pts[0]]
+
+    for i in range(1, len(ordered_pts)):
+        a = result[-1]
+        b = ordered_pts[i]
+        if nav.covers(LineString([a, b])):
+            result.append(b)
+        else:
+            poly = _containing_polygon(constraint, a)
+            if poly is not None:
+                # Route along an inset polygon so inserted waypoints sit
+                # ~INSET_M inside the edge rather than on the shoreline.
+                route_poly = _inset_for_routing(poly, a)
+                intermediates = _route_along_boundary(route_poly, a, b, max_pts=max_insert)
+                result.extend(intermediates)
+            result.append(b)
+
+    return result
+
+
 def _sweep_lines(poly_m: Polygon, spacing_m: float, angle_deg: float) -> list[LineString]:
     """Parallel lines ``spacing_m`` apart at ``angle_deg`` clipped to the polygon.
 
@@ -139,6 +287,8 @@ def plan_survey(
     polygon_latlon: list,
     spacing_m: float,
     angle_deg: float | None = None,
+    *,
+    water: BaseGeometry | None = None,
 ) -> SurveyResult:
     """Plan a boustrophedon coverage route over a closed area polygon.
 
@@ -152,6 +302,14 @@ def plan_survey(
     angle_deg:
         Sweep direction in **compass-ish math degrees in the metric frame**; if
         omitted the polygon's longest axis is used (fewest, longest passes).
+    water:
+        Optional navigable-water polygon (lon/lat shapely geometry, as produced
+        by :mod:`.water`).  When provided the survey polygon is clipped to the
+        water boundary first so chords never land on shore; connecting legs that
+        would exit the clipped area are rerouted along the polygon boundary.
+        When *None* the same leg-repair is applied using the survey polygon
+        itself as the constraint, so concave polygons never produce legs that
+        cross their own notch.
 
     Returns ordered waypoints ``[{name, lat, lon}]`` (``WP1``.. / ``DEST``).
     Pure CPU work (shapely); run it in an executor.
@@ -178,9 +336,41 @@ def plan_survey(
         else:
             return SurveyResult(False, message="Survey area polygon is degenerate.")
 
-    sweep_ang = _longest_axis_angle(poly_m) if angle_deg is None else float(angle_deg)
+    # Clip to water when provided so chords stay on water, and set the
+    # constraint used for leg validation.  Without water the survey polygon
+    # itself is the constraint (keeps legs inside even for concave shapes).
+    if water is not None:
+        water_m = proj.to_metric(water)
+        if not water_m.is_valid:
+            water_m = water_m.buffer(0)
+        constraint_m: BaseGeometry = poly_m.intersection(water_m)
+        if constraint_m.is_empty:
+            return SurveyResult(
+                False, message="Survey polygon does not overlap with navigable water."
+            )
+        if not constraint_m.is_valid:
+            constraint_m = constraint_m.buffer(0)
+        if constraint_m.geom_type not in ("Polygon", "MultiPolygon"):
+            return SurveyResult(
+                False, message="Survey polygon clips to a degenerate water shape."
+            )
+    else:
+        constraint_m = poly_m
 
-    lines = _sweep_lines(poly_m, float(spacing_m), sweep_ang)
+    # For pass-count geometry (angle, bounds) use a single Polygon reference --
+    # take the largest component when the constraint is a MultiPolygon.
+    ref_poly: Polygon = (
+        max(constraint_m.geoms, key=lambda g: g.area)
+        if constraint_m.geom_type == "MultiPolygon"
+        else constraint_m  # type: ignore[assignment]
+    )
+
+    sweep_ang = _longest_axis_angle(ref_poly) if angle_deg is None else float(angle_deg)
+
+    # _sweep_lines clips every scan line to the constraint, so chords are
+    # guaranteed to stay inside (handles both convex and concave shapes, and
+    # multi-part water clipping).
+    lines = _sweep_lines(constraint_m, float(spacing_m), sweep_ang)
     if not lines:
         return SurveyResult(
             False,
@@ -217,6 +407,11 @@ def plan_survey(
             spacing_m=float(spacing_m),
             angle_deg=sweep_ang,
         )
+
+    # Repair connecting legs that exit the constraint (e.g. across a concave
+    # notch or over a dry bank at the polygon edge).  Chord interiors are never
+    # checked here -- they are already clipped to the constraint by _sweep_lines.
+    ordered_pts = _repair_legs(ordered_pts, constraint_m)
 
     waypoints: list[dict] = []
     n = len(ordered_pts)

@@ -931,16 +931,19 @@
   let contourShow = false;       // Depth contours overlay on/off (default off)
 
   // ---- bottom-composition overlay (composition polygons) ----------
-  // Composition is a VECTOR POLYGON layer:
-  // FILLED polygons coloured by pct on a sequential YlOrBr ramp (0..100, fixed,
-  // uncalibrated), alpha ~0.6, drawn UNDER the contour lines. Never rasterise it
-  // and never fill bare areas -- patchy coverage is missing data, not 0%.
+  // Composition is a VECTOR POLYGON layer (RENDERING_COMPOSITION.md §3/§5):
+  // FILLED polygons coloured by pct on a sequential YlOrBr ramp (0..100, FIXED,
+  // uncalibrated -- no substrate names, polarity unknown), fill-opacity ~0.5 with
+  // a thin stroke, drawn UNDER the contour lines. Distinct from BOTH the depth
+  // palette AND the 0..127 hardness ramp -- never conflate them. Never rasterise
+  // it and never fill bare areas -- patchy coverage is missing data, not 0%.
+  const COMPOSITION_STOPS = [
+    [0.0, [255, 255, 229]], [0.25, [254, 227, 145]], [0.5, [254, 153, 41]],
+    [0.75, [217, 95, 14]], [1.0, [153, 52, 4]],
+  ];
   function compositionColorRGB(pct) {
     const f = Math.max(0, Math.min(1, (+pct || 0) / 100));   // fixed 0..100 domain
-    const stops = [
-      [0.0, [255, 255, 229]], [0.25, [254, 227, 145]], [0.5, [254, 153, 41]],
-      [0.75, [217, 95, 14]], [1.0, [153, 52, 4]],
-    ];
+    const stops = COMPOSITION_STOPS;
     let a = stops[0], b = stops[stops.length - 1];
     for (let i = 0; i < stops.length - 1; i++) {
       if (f >= stops[i][0] && f <= stops[i + 1][0]) { a = stops[i]; b = stops[i + 1]; break; }
@@ -1016,10 +1019,15 @@
       }
       ctx2.save();
       clipToWaterMask(ctx2, m);               // never paint composition over land
-      ctx2.globalAlpha = 0.4;                 // translucent so basemap/depth read through
+      ctx2.globalAlpha = 0.5;                 // fill-opacity ~0.5 so basemap/depth read through (spec §5)
+      ctx2.lineWidth = 0.6;                   // thin stroke on each polygon (spec §5)
+      ctx2.lineJoin = "round";
       for (const [pct, rings] of byPct) {
         const rgb = compositionColorRGB(pct);
         ctx2.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        // Thin stroke: a darkened shade of the same fill so boundaries read
+        // without introducing a second (conflatable) colour scale.
+        ctx2.strokeStyle = `rgb(${Math.round(rgb[0] * 0.6)},${Math.round(rgb[1] * 0.6)},${Math.round(rgb[2] * 0.6)})`;
         ctx2.beginPath();
         for (const ring of rings) {
           const p0 = m.latLngToContainerPoint([ring[0][0] + off.lat, ring[0][1] + off.lon]);
@@ -1031,6 +1039,7 @@
           ctx2.closePath();
         }
         ctx2.fill();
+        ctx2.stroke();
       }
       ctx2.restore();
     },
@@ -1099,6 +1108,8 @@
   let compositionSyncing = false;
   function setCompositionShow(on) {
     compositionShow = !!on;
+    const legend = document.getElementById("composition-legend");
+    if (legend) legend.classList.toggle("hidden", !compositionShow);
     if (compositionShow) {
       fetchComposition();
     } else {

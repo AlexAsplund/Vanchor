@@ -120,12 +120,19 @@ def test_fix_lost_after_timeout_forces_zero():
     assert cmd.thrust == 0.0
 
 
-def test_fix_failsafe_off_by_default_keeps_thrust():
-    """The loss-of-fix failsafe is OFF by default: a long fix dropout does NOT
-    cut thrust (the boat holds its command). This is the removed 'deadman'."""
-    gov = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=3.0)  # default: disabled
+def test_fix_failsafe_on_by_default_forces_stop():
+    """The loss-of-fix failsafe is ON by default now (the conservative coast for
+    a trolling motor): a long fix dropout forces thrust to zero. Turning it off
+    is opt-in via config."""
+    gov = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=3.0)  # default: enabled
     for _ in range(10):  # 20 s without a fresh fix, way past the timeout
         cmd, status = gov.govern(MotorCommand(thrust=0.9), _state(), dt=2.0, fix_is_fresh=False)
+    assert status.fix_lost
+    assert cmd.thrust == 0.0
+    # And it can still be disabled explicitly, holding the last command.
+    off = _gov(max_thrust_slew_per_s=100.0, fix_timeout_s=3.0, fix_failsafe_enabled=False)
+    for _ in range(10):
+        cmd, status = off.govern(MotorCommand(thrust=0.9), _state(), dt=2.0, fix_is_fresh=False)
     assert not status.fix_lost
     assert cmd.thrust > 0
 
@@ -137,6 +144,66 @@ def test_fresh_fix_resets_loss_timer():
     cmd, status = gov.govern(MotorCommand(thrust=0.5), _state(), dt=0.9, fix_is_fresh=True)
     assert not status.fix_lost
     assert cmd.thrust > 0
+
+
+def test_heading_stale_in_guided_mode_forces_coast():
+    # A guided (autopilot) mode with a stale compass must coast (zero thrust) and
+    # hold the steering head, raising the heading_stale flag.
+    gov = _gov(max_thrust_slew_per_s=100.0, max_steer_slew_per_s=100.0, heading_stale_s=3.0)
+    st = _state(mode=ControlModeName.HEADING_HOLD)
+    cmd, status = gov.govern(
+        MotorCommand(thrust=0.8, steering=0.5), st, dt=0.2, fix_is_fresh=True,
+        heading_age_s=5.0,
+    )
+    assert status.heading_stale
+    assert cmd.thrust == 0.0
+    assert cmd.steering == 0.0  # held at the (zero) last-applied steering
+
+
+def test_heading_stale_ignored_in_manual_mode():
+    # Manual mode is unaffected -- a human is steering, so a silent compass must
+    # not cut their thrust.
+    gov = _gov(max_thrust_slew_per_s=100.0, heading_stale_s=3.0)
+    st = _state(mode=ControlModeName.MANUAL)
+    cmd, status = gov.govern(
+        MotorCommand(thrust=0.8), st, dt=0.2, fix_is_fresh=True, heading_age_s=99.0
+    )
+    assert not status.heading_stale
+    assert cmd.thrust > 0
+
+
+def test_heading_fresh_or_unknown_does_not_coast():
+    gov = _gov(max_thrust_slew_per_s=100.0, heading_stale_s=3.0)
+    st = _state(mode=ControlModeName.HEADING_HOLD)
+    # Fresh heading -> steers normally.
+    cmd, status = gov.govern(
+        MotorCommand(thrust=0.8), st, dt=0.2, fix_is_fresh=True, heading_age_s=0.5
+    )
+    assert not status.heading_stale and cmd.thrust > 0
+    # Never stamped (None) -> treated as fresh, no coast.
+    cmd, status = gov.govern(
+        MotorCommand(thrust=0.8), st, dt=0.2, fix_is_fresh=True, heading_age_s=None
+    )
+    assert not status.heading_stale and cmd.thrust > 0
+
+
+def test_depth_stale_makes_shallow_check_treat_depth_as_unknown():
+    # A frozen shallow sounding must NOT keep stopping the boat once the sounder
+    # has gone stale -- treat it as unknown (same as depth <= 0), so thrust flows.
+    gov = _gov(max_thrust_slew_per_s=100.0, min_depth_m=2.0, depth_stale_s=10.0)
+    st = _state()
+    st.depth_m = 1.0  # below min_depth, but...
+    cmd, status = gov.govern(
+        MotorCommand(thrust=0.8), st, dt=0.2, fix_is_fresh=True, depth_age_s=30.0
+    )
+    assert not status.shallow_stop
+    assert cmd.thrust > 0
+    # Fresh (or unknown-age) shallow sounding still stops.
+    cmd, status = gov.govern(
+        MotorCommand(thrust=0.8), st, dt=0.2, fix_is_fresh=True, depth_age_s=1.0
+    )
+    assert status.shallow_stop
+    assert cmd.thrust == 0.0
 
 
 def test_drag_alarm_trips_beyond_threshold_in_anchor_mode():
@@ -245,6 +312,7 @@ def test_status_to_dict_shape():
         "reverse_blocked",
         "fix_lost",
         "drag_alarm",
+        "heading_stale",
         "shallow_stop",
         "nogo_stop",
         "min_depth_m",

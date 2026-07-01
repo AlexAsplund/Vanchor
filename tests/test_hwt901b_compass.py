@@ -66,6 +66,71 @@ def test_offset_estimator_ignores_stationary_and_turns():
     assert abs(est.offset_deg) < 5.0    # the turn sample didn't yank it
 
 
+# ---- estimator settling: sample-count / spread guards ------------------- #
+def test_offset_estimator_not_settled_after_one_sample():
+    """A single accepted sample must not trigger settled=True."""
+    est = HeadingOffsetEstimator(time_constant_s=1.0)
+    est.update(90.0, 100.0, 2.0, 0.2)
+    assert not est.settled
+
+
+def test_offset_estimator_settles_after_enough_consistent_samples():
+    """settled=True only after _MIN_SETTLE_SAMPLES samples + _MIN_SETTLE_TIME_S
+    accumulated, with a small residual-spread."""
+    est = HeadingOffsetEstimator(time_constant_s=1.0)
+    # 200 iterations × dt=0.2 → 200 samples, 40 s; consistent target→spread→0.
+    for _ in range(200):
+        est.update(90.0, 100.0, 2.0, 0.2)
+    assert est.settled
+    assert abs(angle_difference(est.offset_deg, 10.0)) < 1.0
+
+
+def test_offset_estimator_not_settled_with_inconsistent_samples():
+    """Alternating COG keeps the residual-spread high → not settled.
+
+    COG alternates ±6° (96°/84°) from the magnetic heading at dt=2.0 s, so the
+    COG-rate is 6 dps < max_turn_dps and all samples are accepted.  The offset
+    swings back and forth each iteration; |residual| stays large and spread_ema
+    exceeds MAX_SPREAD_DEG, preventing settlement."""
+    est = HeadingOffsetEstimator(time_constant_s=1.0)
+    for i in range(100):
+        cog = 96.0 if i % 2 == 0 else 84.0
+        est.update(90.0, cog, 2.0, 2.0)
+    assert not est.settled
+
+
+# ---- hz setting takes live effect in _loop ------------------------------- #
+async def test_hz_setting_applies_live_in_loop():
+    """_loop recomputes period each iteration; an hz change mid-run
+    must be reflected in the very next asyncio.sleep call."""
+    import asyncio
+    from unittest.mock import patch
+
+    d = HWT901BCompass(_FakeSensor(50.0), bus=None, hz=10.0)
+    sleep_calls: list[float] = []
+
+    async def mock_sleep(secs: float) -> None:
+        sleep_calls.append(secs)
+        if len(sleep_calls) == 2:
+            d.hz = 2.0          # change rate after 2nd iteration
+        if len(sleep_calls) >= 4:
+            raise asyncio.CancelledError()  # stop the loop
+
+    with patch("asyncio.sleep", mock_sleep):
+        try:
+            await d._loop()
+        except asyncio.CancelledError:
+            pass
+
+    assert len(sleep_calls) >= 4
+    # Iterations 1–2: period = 1/10 = 0.1 s
+    assert abs(sleep_calls[0] - 0.1) < 0.01
+    assert abs(sleep_calls[1] - 0.1) < 0.01
+    # Iterations 3–4: period = 1/2 = 0.5 s (hz change picked up immediately)
+    assert abs(sleep_calls[2] - 0.5) < 0.01
+    assert abs(sleep_calls[3] - 0.5) < 0.01
+
+
 # ---- driver: HDM emission + declination modes ---------------------------- #
 async def test_sample_once_off_mode_is_raw_magnetic():
     d = HWT901BCompass(_FakeSensor(123.0), bus=None, declination_mode="off")

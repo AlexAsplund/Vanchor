@@ -20,7 +20,7 @@ import asyncio
 import logging
 import time as _time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 from ..core import events
 from ..core.events import EventBus
@@ -68,62 +68,214 @@ def parse_steering_feedback(line: str) -> SteeringFeedback | None:
 
 
 # --------------------------------------------------------------------------- #
+# Supervised read loop (shared by every serial reader)
+# --------------------------------------------------------------------------- #
+SleepFn = Callable[[float], Awaitable[None]]
+LineHandler = Callable[[str], Awaitable[None]]
+
+
+class _SerialReadSupervisor:
+    """Read lines off a transport forever, reconnecting through drops.
+
+    This is the single piece of supervision shared by both serial readers (the
+    NMEA sensors and the motor controller's steering-feedback loop) so the
+    reconnect/backoff/health logic lives in exactly one place. The owning
+    device opens the transport once (in its ``start``) and then hands the
+    already-open transport here; on EOF or an unexpected read error the loop
+    closes the transport best-effort and retries :meth:`SerialTransport.open`
+    with exponential backoff (``backoff_start`` → ×2 → capped at
+    ``backoff_max``) *forever*, until :meth:`request_stop` is called. Re-opening
+    the same transport instance is what the real ``PySerialTransport`` supports
+    (``close`` drops the reader, ``open`` re-establishes it).
+
+    Each successfully read line is handed to ``handle_line`` (an async
+    callable). Garbage lines (``ValueError`` / ``asyncio.LimitOverrunError``,
+    e.g. wrong-baud binary with no newline in the 64 KB buffer) are discarded
+    and logged rate-limited without dropping the connection.
+
+    Health is exposed for other layers to poll (no telemetry wiring here):
+
+      ``healthy``              True while connected and reading; False while
+                               disconnected / backing off.
+      ``last_data_monotonic``  ``time.monotonic`` stamp of the last line read,
+                               or ``None`` before the first line.
+    """
+
+    def __init__(
+        self,
+        transport: SerialTransport,
+        handle_line: LineHandler,
+        *,
+        name: str,
+        sleep: SleepFn = asyncio.sleep,
+        backoff_start: float = 1.0,
+        backoff_max: float = 15.0,
+    ) -> None:
+        self.transport = transport
+        self._handle_line = handle_line
+        self._name = name
+        self._sleep = sleep
+        self._backoff_start = backoff_start
+        self._backoff_max = backoff_max
+        self._stop = asyncio.Event()
+        self.healthy: bool = False
+        self.last_data_monotonic: float | None = None
+
+    def request_stop(self) -> None:
+        """Ask the loop to exit; unblocks a backoff wait immediately."""
+        self._stop.set()
+
+    async def run(self) -> None:
+        # The transport is already open (the owning device opened it in start()).
+        self.healthy = True
+        last_garbage_warn = 0.0
+        while not self._stop.is_set():
+            try:
+                line = await self.transport.read_line()
+            except asyncio.CancelledError:
+                raise
+            except (ValueError, asyncio.LimitOverrunError) as exc:
+                # Oversized/garbage line — discard, keep the connection.
+                last_garbage_warn = self._warn_garbage(exc, last_garbage_warn)
+                continue
+            except EOFError:
+                logger.warning("%s: serial stream closed; reconnecting", self._name)
+                await self._reconnect()
+                continue
+            except Exception as exc:  # unexpected transport/read error
+                logger.warning(
+                    "%s: read error (%s); reconnecting", self._name, exc
+                )
+                await self._reconnect()
+                continue
+            self.last_data_monotonic = _time.monotonic()
+            await self._handle_line(line)
+
+    def _warn_garbage(self, exc: BaseException, last_warn: float) -> float:
+        now = _time.monotonic()
+        if now - last_warn >= 5.0:
+            logger.warning(
+                "%s: oversized/garbage line discarded – %s", self._name, exc
+            )
+            return now
+        return last_warn
+
+    async def _reconnect(self) -> None:
+        """Close and re-open the transport with exponential backoff.
+
+        Returns as soon as the transport is re-opened *or* a stop is requested;
+        the caller's loop re-checks the stop flag on return.
+        """
+        self.healthy = False
+        try:
+            await self.transport.close()
+        except Exception:  # best-effort — the port may already be gone
+            logger.debug("%s: error closing transport during reconnect", self._name)
+        backoff = self._backoff_start
+        while not self._stop.is_set():
+            if await self._wait(backoff):
+                return  # stop requested mid-backoff
+            try:
+                await self.transport.open()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                next_backoff = min(backoff * 2, self._backoff_max)
+                logger.warning(
+                    "%s: reconnect failed (%s); retrying in %.0fs",
+                    self._name,
+                    exc,
+                    next_backoff,
+                )
+                backoff = next_backoff
+                continue
+            logger.info("%s: serial reconnected", self._name)
+            self.healthy = True
+            return
+
+    async def _wait(self, delay: float) -> bool:
+        """Sleep ``delay`` but wake early if a stop is requested.
+
+        Races the (injectable) sleep against the stop event so backoff is both
+        interruptible and testable — tests inject a sleep that returns
+        immediately (recording the delay) and never wall-clock wait. Returns
+        True iff a stop was requested.
+        """
+        if self._stop.is_set():
+            return True
+        napping = asyncio.ensure_future(self._sleep(delay))
+        stopping = asyncio.ensure_future(self._stop.wait())
+        try:
+            await asyncio.wait(
+                {napping, stopping}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            napping.cancel()
+            stopping.cancel()
+        return self._stop.is_set()
+
+
+# --------------------------------------------------------------------------- #
 # Sensors
 # --------------------------------------------------------------------------- #
 class _SerialNmeaSensor(Sensor):
     """Shared read-loop for serial NMEA sensors.
 
-    Runs a background task that reads lines from the transport and publishes
-    each non-empty line onto the bus as :data:`events.NMEA_IN`. Parsing /
-    validation is the navigator's job; this layer is a dumb pipe.
+    Runs a background task (a :class:`_SerialReadSupervisor`) that reads lines
+    from the transport and publishes each non-empty line onto the bus as
+    :data:`events.NMEA_IN`. Parsing / validation is the navigator's job; this
+    layer is a dumb pipe. The supervisor reconnects automatically across an
+    unplug/replug, so a transient serial drop no longer silently kills the
+    sensor. :attr:`healthy` / :attr:`last_data_monotonic` are pollable health
+    signals (see :class:`_SerialReadSupervisor`).
     """
 
-    def __init__(self, transport: SerialTransport, bus: EventBus | None = None) -> None:
+    def __init__(
+        self,
+        transport: SerialTransport,
+        bus: EventBus | None = None,
+        *,
+        sleep: SleepFn = asyncio.sleep,
+        backoff_start: float = 1.0,
+        backoff_max: float = 15.0,
+    ) -> None:
         self.transport = transport
         self.bus = bus
         self._task: asyncio.Task | None = None
+        self._sup = _SerialReadSupervisor(
+            transport,
+            self._handle_line,
+            name=type(self).__name__,
+            sleep=sleep,
+            backoff_start=backoff_start,
+            backoff_max=backoff_max,
+        )
+
+    @property
+    def healthy(self) -> bool:
+        return self._sup.healthy
+
+    @property
+    def last_data_monotonic(self) -> float | None:
+        return self._sup.last_data_monotonic
+
+    async def _handle_line(self, line: str) -> None:
+        line = line.strip()
+        if not line:
+            return
+        if self.bus is not None:
+            await self.bus.publish(events.NMEA_IN, line)
 
     async def start(self) -> None:
         await self.transport.open()
-        self._task = asyncio.ensure_future(self._loop())
+        self._task = asyncio.ensure_future(self._sup.run())
 
     async def stop(self) -> None:
+        self._sup.request_stop()
         if self._task is not None:
             self._task.cancel()
             self._task = None
         await self.transport.close()
-
-    async def _loop(self) -> None:
-        _last_garbage_warn: float = 0.0
-        while True:
-            try:
-                line = await self.transport.read_line()
-            except asyncio.CancelledError:
-                raise
-            except EOFError:
-                logger.warning("%s: serial stream closed", type(self).__name__)
-                return
-            except (ValueError, asyncio.LimitOverrunError) as exc:
-                # Oversized or unparseable line (e.g. wrong-baud binary garbage
-                # with no newline within the 64 KB StreamReader buffer).
-                # Discard and keep reading; log at most once every 5 s.
-                _now = _time.monotonic()
-                if _now - _last_garbage_warn >= 5.0:
-                    logger.warning(
-                        "%s: oversized/garbage line discarded – %s",
-                        type(self).__name__,
-                        exc,
-                    )
-                    _last_garbage_warn = _now
-                continue
-            except Exception:  # pragma: no cover - defensive
-                logger.exception("%s: read error", type(self).__name__)
-                return
-            line = line.strip()
-            if not line:
-                continue
-            if self.bus is not None:
-                await self.bus.publish(events.NMEA_IN, line)
 
 
 class SerialGps(_SerialNmeaSensor):
@@ -184,6 +336,9 @@ class SerialMotorController(MotorController):
         *,
         reverse_delay_s: float = 0.9,
         time_fn: TimeFn | None = None,
+        sleep: SleepFn = asyncio.sleep,
+        backoff_start: float = 1.0,
+        backoff_max: float = 15.0,
     ) -> None:
         self.transport = transport
         self.reverse_delay_s = reverse_delay_s
@@ -199,6 +354,27 @@ class SerialMotorController(MotorController):
         # hardware (see the integration note below).
         self.last_feedback: SteeringFeedback | None = None
         self._feedback_task: asyncio.Task | None = None
+        # Reads the steering-feedback line off the same transport we write CMD
+        # to, and — crucially — reconnects that transport across a drop so the
+        # link comes back after an unplug/replug rather than dying silently.
+        self._sup = _SerialReadSupervisor(
+            transport,
+            self._handle_feedback_line,
+            name=type(self).__name__,
+            sleep=sleep,
+            backoff_start=backoff_start,
+            backoff_max=backoff_max,
+        )
+        # Rate-limit for the "write while transport down" warning in flush().
+        self._last_write_warn: float = 0.0
+
+    @property
+    def healthy(self) -> bool:
+        return self._sup.healthy
+
+    @property
+    def last_data_monotonic(self) -> float | None:
+        return self._sup.last_data_monotonic
 
     def apply(self, command: MotorCommand) -> None:
         self._command = command.clamped()
@@ -206,14 +382,17 @@ class SerialMotorController(MotorController):
     async def start(self) -> None:
         await self.transport.open()
         # Start reading the Arduino's steering-feedback line off the same
-        # transport we write ``CMD`` to. Lives entirely in the hardware layer.
-        self._feedback_task = asyncio.ensure_future(self._read_feedback())
+        # transport we write ``CMD`` to. The supervisor also reconnects that
+        # transport across a drop. Lives entirely in the hardware layer.
+        self._feedback_task = asyncio.ensure_future(self._sup.run())
 
     async def stop(self) -> None:
+        self._sup.request_stop()
         if self._feedback_task is not None:
             self._feedback_task.cancel()
             self._feedback_task = None
-        # Best-effort: command a full stop before closing.
+        # Best-effort: command a full stop before closing (only meaningful if
+        # the transport is currently open; a write on a down link is dropped).
         try:
             await self.transport.write_line(self._format(0, "F", 0))
         except Exception:  # pragma: no cover - defensive
@@ -221,14 +400,16 @@ class SerialMotorController(MotorController):
         await self.transport.close()
 
     # -- steering feedback (#83) ------------------------------------------ #
-    async def _read_feedback(self) -> None:
-        """Read ``A <angle> <ok> <wrap>`` feedback lines off the transport.
+    async def _handle_feedback_line(self, line: str) -> None:
+        """Consume one ``A <angle> <ok> <wrap>`` feedback line.
 
         The steering Arduino reports its measured azimuth on the same serial
         link the controller writes ``CMD`` to (~10 Hz). We keep only the latest
         report in :attr:`last_feedback`; the runtime reads it into the steering
         telemetry. Malformed/partial lines and unrelated line types (e.g. ``E``
-        error echoes) are ignored so the loop never dies on noisy serial.
+        error echoes) parse to ``None`` and are ignored, so noisy serial never
+        disturbs the last good value. Connection-level survival (garbage lines,
+        EOF, reconnect) is handled by :class:`_SerialReadSupervisor`.
 
         **Integration seam (#83):** :attr:`last_feedback` is the hook the app
         polls. ``VanchorApp._build_telemetry`` reads
@@ -237,43 +418,38 @@ class SerialMotorController(MotorController):
         from it. The simulator's motor controller has no such attribute, so the
         sim path is unaffected. No extra app.py wiring beyond that one read.
         """
-        _last_garbage_warn: float = 0.0
-        while True:
-            try:
-                line = await self.transport.read_line()
-            except asyncio.CancelledError:
-                raise
-            except EOFError:
-                logger.warning("%s: serial stream closed", type(self).__name__)
-                return
-            except (ValueError, asyncio.LimitOverrunError) as exc:
-                # Oversized or unparseable line (e.g. wrong-baud binary garbage).
-                # Discard and keep reading; log at most once every 5 s.
-                _now = _time.monotonic()
-                if _now - _last_garbage_warn >= 5.0:
-                    logger.warning(
-                        "%s: oversized/garbage feedback line discarded – %s",
-                        type(self).__name__,
-                        exc,
-                    )
-                    _last_garbage_warn = _now
-                continue
-            except Exception:  # pragma: no cover - defensive
-                logger.exception("%s: feedback read error", type(self).__name__)
-                return
-            feedback = parse_steering_feedback(line.strip())
-            if feedback is not None:
-                self.last_feedback = feedback
+        feedback = parse_steering_feedback(line.strip())
+        if feedback is not None:
+            self.last_feedback = feedback
 
     async def flush(self) -> None:
-        """Apply the reverse-delay interlock and write the latest command."""
+        """Apply the reverse-delay interlock and write the latest command.
+
+        A write must never raise out of the control loop while the transport is
+        down mid-reconnect: catch the error, mark unhealthy and drop the command
+        (log rate-limited). The firmware's own watchdog stops the motor on
+        command loss, and the feedback supervisor restores the link.
+        """
         thrust, steering = self._command.thrust, self._command.steering
         thrust = self._gate_reverse(thrust)
 
         pwm = min(255, max(0, round(abs(thrust) * 255)))
         direction = "R" if thrust < 0 else "F"
         steer = min(100, max(-100, round(steering * 100)))
-        await self.transport.write_line(self._format(pwm, direction, steer))
+        try:
+            await self.transport.write_line(self._format(pwm, direction, steer))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._sup.healthy = False
+            now = _time.monotonic()
+            if now - self._last_write_warn >= 5.0:
+                logger.warning(
+                    "%s: transport write failed while down (%s); dropping command",
+                    type(self).__name__,
+                    exc,
+                )
+                self._last_write_warn = now
 
     # -- protocol helpers ------------------------------------------------- #
     @staticmethod

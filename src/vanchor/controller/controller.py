@@ -191,11 +191,16 @@ class Controller:
         cruise_pid: PID | None = None,
         jog_increment_m: float = 1.5,
         track_min_distance_m: float = 5.0,
+        mono_fn=time.monotonic,
     ) -> None:
         self.state = state
         self.motor = motor
         self.bus = bus
         self.tick_hz = tick_hz
+        # MONOTONIC clock seam for the sensor-staleness ages fed to the governor.
+        # Injectable so it can be driven deterministically (matches Runtime's
+        # mono_fn, which is what the navigator stamps receive-times with).
+        self._mono_fn = mono_fn
         self.helm = helm or Helm()
 
         # Cruise Control: an optional SOG (speed-over-ground) PID that takes over
@@ -267,8 +272,18 @@ class Controller:
         fix_is_fresh = self.state.fix_seq != self._last_fix_seq
         self._last_fix_seq = self.state.fix_seq
 
+        # Sensor-staleness ages (seconds since each input last arrived). ``None``
+        # when never stamped -> the governor treats those as fresh (so a harness
+        # that never advances the clock can't be false-tripped).
+        heading_age_s, depth_age_s = self._sensor_ages()
+
         command, self.safety_status = self.safety.govern(
-            command, self.state, dt, fix_is_fresh
+            command,
+            self.state,
+            dt,
+            fix_is_fresh,
+            heading_age_s=heading_age_s,
+            depth_age_s=depth_age_s,
         )
         self.state.motor_command = command
         self.motor.apply(command)
@@ -290,6 +305,18 @@ class Controller:
             else:
                 self.handle_command({"type": "stop"})
         return command
+
+    def _sensor_ages(self) -> tuple[float | None, float | None]:
+        """(heading_age_s, depth_age_s) since each input was last ingested, or
+        ``None`` when it has never been stamped. Uses the injected monotonic
+        clock -- the same seam the navigator stamps receive-times with."""
+        now = self._mono_fn()
+        h = self.state.heading_received_mono
+        d = self.state.depth_received_mono
+        return (
+            (now - h) if h is not None else None,
+            (now - d) if d is not None else None,
+        )
 
     def _apply_cruise(self, setpoint: Setpoint, dt: float) -> Setpoint:
         """When Cruise Control is on, replace a guided mode's fixed throttle with

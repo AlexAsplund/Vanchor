@@ -44,6 +44,19 @@ class NavigationState:
     heading_rejected: int = 0
     position_rejected: int = 0
 
+    # --- Sensor staleness (freshness watchdog) --------------------------- #
+    # ``time.monotonic()`` (via the navigator's injectable clock) stamp of when
+    # each primary input was last ingested, so the governor can force a safe
+    # coast when a sensor a mode relies on goes silent (a dead compass in
+    # heading-hold, a frozen depth feeding the shallow-water stop). ``None`` =
+    # never received: treated as "fresh until the first sample" by the governor
+    # (so a harness that never stamps them can't be false-tripped), while the
+    # health telemetry reports it as null.
+    fix_received_mono: float | None = None
+    heading_received_mono: float | None = None
+    depth_received_mono: float | None = None
+    imu_received_mono: float | None = None
+
     # --- Control-loop supervision ---------------------------------------- #
     # Set to a short description when a control tick raises (the loop caught it,
     # zeroed the motor, and kept running); cleared after the next clean tick.

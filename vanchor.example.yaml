@@ -69,6 +69,9 @@ safety:
   max_thrust_slew_per_s: 2.0
   reverse_delay_s: 0.5
   fix_timeout_s: 5.0
+  fix_failsafe_enabled: true   # loss-of-fix failsafe; ON by default: coast after fix_timeout_s
+  heading_stale_s: 3.0         # stale compass -> coast while a guided mode steers
+  depth_stale_s: 10.0          # stale depth -> shallow-water stop treats depth as unknown
   drag_alarm_factor: 2.0
 
 server:

@@ -64,10 +64,21 @@ class SafetyConfig:
     reverse_delay_s: float = 1.0
     # Seconds without a fresh fix before thrust is forced to zero.
     fix_timeout_s: float = 3.0
-    # Loss-of-fix failsafe master switch. OFF by default: losing the GPS fix does
-    # NOT cut thrust (the boat holds its last command). Enable it to force a stop
-    # after fix_timeout_s without a fresh fix.
-    fix_failsafe_enabled: bool = False
+    # Loss-of-fix failsafe master switch. ON by default: the conservative coast
+    # is the right default for a trolling motor -- once no fresh fix has arrived
+    # for fix_timeout_s thrust is forced to zero rather than steaming blind. Set
+    # False to keep holding the last command through a fix dropout.
+    fix_failsafe_enabled: bool = True
+    # Seconds without a fresh COMPASS heading before it is judged stale. While a
+    # GUIDED (autopilot) mode is steering, a stale heading forces a safe coast
+    # (zero thrust, steering held) so a dead compass in heading-hold can't circle
+    # the boat at throttle forever. Manual driving is unaffected (a human steers).
+    heading_stale_s: float = 3.0
+    # Seconds without a fresh DEPTH sounding before it is judged stale. A stale
+    # depth is treated as UNKNOWN by the shallow-water stop (rather than trusting
+    # a frozen sounding), so a hung sounder neither false-stops nor silently
+    # passes the min-depth check.
+    depth_stale_s: float = 10.0
     # Anchor drag alarm trips beyond this multiple of the anchor radius.
     drag_alarm_factor: float = 2.0
     # --- Shallow-water / geofence auto-stop (#62) ----------------------- #
@@ -89,6 +100,8 @@ class SafetyStatus:
     reverse_blocked: bool = False
     fix_lost: bool = False
     drag_alarm: bool = False
+    # Stale compass heading forced a coast while a guided mode was steering.
+    heading_stale: bool = False
     # Shallow-water / geofence auto-stop (#62).
     shallow_stop: bool = False
     nogo_stop: bool = False
@@ -102,6 +115,7 @@ class SafetyStatus:
             "reverse_blocked": self.reverse_blocked,
             "fix_lost": self.fix_lost,
             "drag_alarm": self.drag_alarm,
+            "heading_stale": self.heading_stale,
             "shallow_stop": self.shallow_stop,
             "nogo_stop": self.nogo_stop,
             "min_depth_m": self.min_depth_m,
@@ -202,12 +216,21 @@ class SafetyGovernor:
         state: NavigationState,
         dt: float,
         fix_is_fresh: bool,
+        *,
+        heading_age_s: float | None = None,
+        depth_age_s: float | None = None,
     ) -> tuple[MotorCommand, SafetyStatus]:
         """Filter ``command`` and report what was done.
 
         ``dt`` is the elapsed time since the previous call in seconds.
         ``fix_is_fresh`` is True when a new GPS fix arrived since the last tick;
         the governor accumulates the gap itself for the loss-of-fix failsafe.
+
+        ``heading_age_s`` / ``depth_age_s`` are the seconds since the compass /
+        depth sounder last reported (``None`` = never sampled / caller not
+        tracking staleness -> treated as fresh, so unit tests and the harness are
+        never false-tripped). A stale heading in a guided mode forces a coast; a
+        stale depth is treated as unknown by the shallow-water stop.
         """
         status = SafetyStatus()
         cfg = self.config
@@ -217,11 +240,37 @@ class SafetyGovernor:
         desired = command.clamped().thrust
         steering = command.clamped().steering
 
+        # --- Stale compass heading ------------------------------------- #
+        # A guided (autopilot) mode steers on the compass; if it goes silent the
+        # boat would keep circling at throttle on a frozen heading. Force a coast
+        # (zero thrust) and hold the steering head (zero delta) until it recovers.
+        # Manual mode is untouched -- a human is doing the steering there.
+        heading_stale = (
+            heading_age_s is not None
+            and heading_age_s > cfg.heading_stale_s
+            and state.mode != ControlModeName.MANUAL
+        )
+        if heading_stale:
+            status.heading_stale = True
+            status.messages.append(
+                f"compass heading stale {heading_age_s:.1f}s > "
+                f"{cfg.heading_stale_s:.1f}s in {state.mode.value}; coasting"
+            )
+            desired = 0.0
+            steering = self._last_steering  # hold the head: no slew on stale data
+
         # --- Shallow-water / geofence auto-stop (#62) ------------------ #
         # A valid, too-shallow sounding cuts thrust. Depth <= 0 means "unknown /
         # no return", which must NOT trip the alarm (don't false-stop in deep
-        # water where the sounder simply isn't reporting).
-        if cfg.min_depth_m > 0.0 and 0.0 < state.depth_m < cfg.min_depth_m:
+        # water where the sounder simply isn't reporting). A STALE sounding is
+        # likewise treated as unknown -- don't keep judging against a frozen
+        # value once the sounder has gone quiet.
+        depth_stale = depth_age_s is not None and depth_age_s > cfg.depth_stale_s
+        if (
+            cfg.min_depth_m > 0.0
+            and not depth_stale
+            and 0.0 < state.depth_m < cfg.min_depth_m
+        ):
             status.shallow_stop = True
             status.messages.append(
                 f"shallow water: depth {state.depth_m:.1f}m < {cfg.min_depth_m:.1f}m; stop"

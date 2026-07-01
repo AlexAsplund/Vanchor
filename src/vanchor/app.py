@@ -311,6 +311,7 @@ class Runtime:
                 position_jump_max_m=cfg.sensors.position_jump_max_m,
                 heading_jump_max_deg=cfg.sensors.heading_jump_max_deg,
             ),
+            mono_fn=self._mono_fn,
         )
         self.controller = Controller(
             self.state,
@@ -356,6 +357,8 @@ class Runtime:
                 reverse_delay_s=cfg.safety.reverse_delay_s,
                 fix_timeout_s=cfg.safety.fix_timeout_s,
                 fix_failsafe_enabled=cfg.safety.fix_failsafe_enabled,
+                heading_stale_s=cfg.safety.heading_stale_s,
+                depth_stale_s=cfg.safety.depth_stale_s,
                 drag_alarm_factor=cfg.safety.drag_alarm_factor,
                 min_depth_m=cfg.safety.min_depth_m,
                 nogo_lookahead_m=cfg.safety.nogo_lookahead_m,
@@ -369,6 +372,7 @@ class Runtime:
             ),
             jog_increment_m=cfg.control.jog_increment_m,
             track_min_distance_m=cfg.control.track_min_distance_m,
+            mono_fn=self._mono_fn,
         )
 
         if cfg.nmea_tcp.enabled:
@@ -1403,10 +1407,29 @@ class Runtime:
         Pure CPU work (shapely); the UI endpoint calls it in an executor. Does
         NOT start navigation -- it returns waypoints for the route editor.
         """
-        from .nav import survey
+        from .nav import survey, water as water_mod
+
+        # Fetch the cached water polygon covering the drawn area so the survey
+        # is clipped to water and connecting legs stay off land. No cached
+        # water for the area -> plan against the polygon alone (survey.py still
+        # repairs legs that exit the drawn polygon itself).
+        water_geom = None
+        try:
+            lats = [float(p[0]) for p in polygon_latlon]
+            lons = [float(p[1]) for p in polygon_latlon]
+            if lats and lons:
+                cache = water_mod.WaterCache(self.config.data_dir)
+                bbox = water_mod.bbox_around(min(lats), min(lons), max(lats), max(lons))
+                geom = cache.find_covering(bbox)
+                if geom is not None and not geom.is_empty:
+                    water_geom = geom
+        except Exception as exc:  # noqa: BLE001 - clipping is best-effort
+            logger.warning("survey water lookup failed (planning unclipped): %s", exc)
 
         try:
-            result = survey.plan_survey(polygon_latlon, float(spacing_m), angle_deg)
+            result = survey.plan_survey(
+                polygon_latlon, float(spacing_m), angle_deg, water=water_geom
+            )
         except (ValueError, TypeError) as exc:
             logger.warning("survey plan failed: %s", exc)
             return {"ok": False, "waypoints": [], "message": f"Bad survey request: {exc}"}
@@ -1767,6 +1790,37 @@ class Runtime:
         return {"ok": True, "imported": len(pts), "hardness": len(hard),
                 "contours": len(cont), "composition": len(comp), "total": len(dm.points)}
 
+    def _health_snapshot(self) -> dict:
+        """Cheap per-sensor freshness + controller-loop health for telemetry.
+
+        Ages are seconds since each input last arrived (``None`` when it has
+        never been received); ``controller_tick_age_s`` is the control loop's
+        heartbeat age (``None`` before the loop has run). Also surfaces the
+        wave-1 ``controller_fault`` and the governor's active staleness flags.
+        No I/O -- pure reads off the shared state and the last governor status."""
+        now = self._mono_fn()
+        st = self.state
+
+        def _age(stamp: float | None) -> float | None:
+            return round(now - stamp, 2) if stamp is not None else None
+
+        tick = st.controller_last_tick_monotonic
+        status = self.controller.safety_status
+        depth_age = _age(st.depth_received_mono)
+        depth_stale_s = self.controller.safety.config.depth_stale_s
+        return {
+            "fix_age_s": _age(st.fix_received_mono),
+            "heading_age_s": _age(st.heading_received_mono),
+            "depth_age_s": depth_age,
+            "imu_age_s": _age(st.imu_received_mono),
+            "controller_fault": st.controller_fault,
+            "controller_tick_age_s": (round(now - tick, 2) if tick else None),
+            # Active staleness / freshness flags (last governor tick).
+            "heading_stale": status.heading_stale,
+            "fix_lost": status.fix_lost,
+            "depth_stale": depth_age is not None and depth_age > depth_stale_s,
+        }
+
     def telemetry(self) -> dict:
         # During replay, play recorded frames back instead of live state.
         if self.replay.active:
@@ -1783,6 +1837,7 @@ class Runtime:
 
         payload = self.state.to_dict()
         payload["safety"] = self.controller.safety_status.to_dict()
+        payload["health"] = self._health_snapshot()
         payload["battery"] = self.battery_snapshot()
         payload["link"] = {
             "client_connected": self._ui_clients > 0,

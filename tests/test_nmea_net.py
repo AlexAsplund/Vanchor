@@ -55,14 +55,15 @@ async def test_non_nmea_line_ignored():
     try:
         reader, writer = await asyncio.open_connection("127.0.0.1", server.bound_port)
         writer.write(b"hello world\r\n")
-        writer.write(b"!AIVDM,1,1,,A,foo,0*5C\r\n")  # '!' is NMEA-ish, should pass
+        # AIS sentence with correct checksum 0x40 (body: AIVDM,1,1,,A,foo,0).
+        writer.write(b"!AIVDM,1,1,,A,foo,0*40\r\n")
         await writer.drain()
 
         for _ in range(100):
             if received:
                 break
             await asyncio.sleep(0.01)
-        assert received == ["!AIVDM,1,1,,A,foo,0*5C"]
+        assert received == ["!AIVDM,1,1,,A,foo,0*40"]
 
         writer.close()
         await writer.wait_closed()
@@ -183,3 +184,149 @@ async def test_stop_is_idempotent_and_clean():
     except (ConnectionRefusedError, asyncio.TimeoutError, OSError):
         raised = True
     assert raised
+
+
+# --------------------------------------------------------------------------- #
+# Security + queue tests (new)
+# --------------------------------------------------------------------------- #
+
+async def test_inbound_bad_checksum_not_forwarded():
+    """A TCP inbound line with a wrong checksum must NOT reach the bus."""
+    bus = EventBus()
+    received: list[str] = []
+    bus.subscribe(events.NMEA_IN, received.append)
+
+    server = NmeaTcpServer(bus, host="127.0.0.1", port=0)
+    await server.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.bound_port)
+        for _ in range(50):
+            if server.client_count == 1:
+                break
+            await asyncio.sleep(0.01)
+
+        # Wrong checksum (*00 instead of *6A).
+        bad = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*00"
+        writer.write((bad + "\r\n").encode())
+        # No checksum at all.
+        no_cs = "$GPHDM,180.0,M"
+        writer.write((no_cs + "\r\n").encode())
+        await writer.drain()
+
+        # Give the server a moment to process.
+        await asyncio.sleep(0.1)
+        assert received == [], f"expected no forwarded lines, got {received!r}"
+
+        writer.close()
+        await writer.wait_closed()
+    finally:
+        await server.stop()
+
+
+async def test_inbound_valid_checksum_is_forwarded():
+    """A TCP inbound line with a correct checksum IS forwarded onto the bus."""
+    bus = EventBus()
+    received: list[str] = []
+    bus.subscribe(events.NMEA_IN, received.append)
+
+    server = NmeaTcpServer(bus, host="127.0.0.1", port=0)
+    await server.start()
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", server.bound_port)
+        for _ in range(50):
+            if server.client_count == 1:
+                break
+            await asyncio.sleep(0.01)
+
+        good = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
+        writer.write((good + "\r\n").encode())
+        await writer.drain()
+
+        for _ in range(100):
+            if received:
+                break
+            await asyncio.sleep(0.01)
+        assert received == [good]
+
+        writer.close()
+        await writer.wait_closed()
+    finally:
+        await server.stop()
+
+
+async def test_slow_client_does_not_block_fast_client():
+    """A stalled reader must not delay delivery to an active reader."""
+    bus = EventBus()
+    server = NmeaTcpServer(bus, host="127.0.0.1", port=0)
+    await server.start()
+    try:
+        r_fast, w_fast = await asyncio.open_connection("127.0.0.1", server.bound_port)
+        # Slow client: we open the connection but never read from r_slow.
+        _r_slow, w_slow = await asyncio.open_connection("127.0.0.1", server.bound_port)
+
+        for _ in range(50):
+            if server.client_count == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert server.client_count == 2
+
+        sentence = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
+
+        # broadcast() must return quickly (non-blocking enqueue) even though
+        # the slow client is not consuming data.  Send enough to fill the
+        # asyncio write buffer of the slow client's socket so its writer task
+        # eventually stalls on drain(), but broadcast() itself must not stall.
+        async def _blast() -> None:
+            for _ in range(300):
+                await server.broadcast(sentence)
+
+        await asyncio.wait_for(_blast(), timeout=3.0)
+
+        # The fast client should receive sentences promptly.
+        lines: list[bytes] = []
+        while True:
+            try:
+                ln = await asyncio.wait_for(r_fast.readline(), timeout=0.5)
+                if not ln:
+                    break
+                lines.append(ln)
+            except asyncio.TimeoutError:
+                break
+        assert len(lines) > 0
+
+        for w in (w_fast, w_slow):
+            w.close()
+            await w.wait_closed()
+    finally:
+        await server.stop()
+
+
+async def test_queue_overflow_drops_rather_than_blocks():
+    """When the per-client outbound queue is full, broadcasts are dropped (not
+    blocked), and total_drops is incremented."""
+    bus = EventBus()
+    server = NmeaTcpServer(bus, host="127.0.0.1", port=0)
+    await server.start()
+    try:
+        # Single stalled client (we never read).
+        _r, w = await asyncio.open_connection("127.0.0.1", server.bound_port)
+        for _ in range(50):
+            if server.client_count == 1:
+                break
+            await asyncio.sleep(0.01)
+
+        sentence = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"
+
+        # Broadcast well more than the queue capacity (200) without reading.
+        # Because broadcast() is non-blocking (no await inside the enqueue path),
+        # all 400 calls complete before the writer task can drain anything, so
+        # at least 200 must be dropped.
+        for _ in range(400):
+            await server.broadcast(sentence)
+
+        assert server.total_drops > 0
+
+        w.close()
+        await w.wait_closed()
+    finally:
+        await server.stop()

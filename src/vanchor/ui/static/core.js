@@ -166,13 +166,30 @@ function setConn(state, text) {
 }
 
 VA.connect = function () {
+  let _pingInterval = null;
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => setConn("connected", "connected");
-  ws.onclose = () => { setConn("disconnected", "reconnecting…"); setTimeout(VA.connect, 1000); };
+  ws.onopen = () => {
+    setConn("connected", "connected");
+    // Application-level heartbeat: send a ping every 2 s so the server's
+    // _last_client_seen advances while the socket is live.  This ensures the
+    // link-loss failsafe fires within link_loss_timeout_s of a true half-open
+    // connection, not delayed by the ~40 s transport-level WS ping.
+    // Sent directly on the socket (not via VA.send) to avoid spamming the log.
+    _pingInterval = setInterval(() => {
+      if (ws && ws.readyState === 1) ws.send('{"type":"ping"}');
+    }, 2000);
+  };
+  ws.onclose = () => {
+    clearInterval(_pingInterval);
+    _pingInterval = null;
+    setConn("disconnected", "reconnecting…");
+    setTimeout(VA.connect, 1000);
+  };
   ws.onerror = () => setConn("disconnected", "connection error");
   ws.onmessage = (ev) => {
     let t;
     try { t = JSON.parse(ev.data); } catch (err) { VA.logLine("bad telemetry: " + err); return; }
+    if (t.type === "pong") return;  // heartbeat reply; not a telemetry frame
     dispatch(t);
   };
 };

@@ -49,18 +49,46 @@ class Trip:
     # Whether this trip was started automatically (so auto-stop may end it).
     auto: bool = False
 
-    def duration_s(self, now: float) -> float:
-        end = self.ended_at if self.ended_at is not None else now
-        return max(0.0, end - self.started_at)
+    def __post_init__(self) -> None:
+        # Monotonic anchor for live duration; set by TripLog.start() (or by the
+        # caller when resuming a trip loaded from a file). NOT serialised.
+        # _wall_offset: wall-clock seconds elapsed before the monotonic anchor
+        # was captured (zero for a fresh trip; positive when resuming a trip
+        # loaded from JSON after a restart, to carry over the pre-restart
+        # wall-clock elapsed time).
+        self._mono_start: float | None = None
+        self._wall_offset: float = 0.0
 
-    def avg_speed_kn(self, now: float) -> float:
-        dur = self.duration_s(now)
+    def duration_s(self, now: float, mono_now: float | None = None) -> float:
+        """Elapsed trip time in seconds.
+
+        For a *finished* trip, uses wall-clock (start/end timestamps are
+        persisted and already final). For a *live* trip, prefers the monotonic
+        anchor so an NTP/GPS clock step on an RTC-less Pi cannot corrupt the
+        displayed value. Falls back to wall-clock when no monotonic anchor is
+        available (e.g. a trip object reconstructed from JSON before the anchor
+        is refreshed after a restart -- the pre-restart portion is covered by
+        wall-clock, and the post-restart portion by monotonic once the anchor
+        is set).
+        """
+        if self.ended_at is not None:
+            # Finalised trip: wall-clock timestamps are baked in and final.
+            return max(0.0, self.ended_at - self.started_at)
+        if self._mono_start is not None and mono_now is not None:
+            # Live with monotonic anchor: pre-restart wall-clock offset plus
+            # monotonic elapsed since the anchor was captured.
+            return max(0.0, self._wall_offset + (mono_now - self._mono_start))
+        # Live without monotonic info: fall back to wall-clock delta.
+        return max(0.0, now - self.started_at)
+
+    def avg_speed_kn(self, now: float, mono_now: float | None = None) -> float:
+        dur = self.duration_s(now, mono_now)
         if dur <= 0.0:
             return 0.0
         # metres-per-second -> knots
         return (self.distance_m / dur) / 0.514444
 
-    def summary(self, now: float) -> dict:
+    def summary(self, now: float, mono_now: float | None = None) -> dict:
         """Summary fields only (no point array) for the list endpoint."""
         return {
             "id": self.id,
@@ -68,15 +96,15 @@ class Trip:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "distance_m": round(self.distance_m, 1),
-            "duration_s": round(self.duration_s(now), 1),
-            "avg_speed_kn": round(self.avg_speed_kn(now), 2),
+            "duration_s": round(self.duration_s(now, mono_now), 1),
+            "avg_speed_kn": round(self.avg_speed_kn(now, mono_now), 2),
             "max_speed_kn": round(self.max_speed_kn, 2),
             "point_count": len(self.points),
         }
 
-    def to_dict(self, now: float) -> dict:
+    def to_dict(self, now: float, mono_now: float | None = None) -> dict:
         """Full record including the track points."""
-        d = self.summary(now)
+        d = self.summary(now, mono_now)
         d["points"] = [[p.lat, p.lon] for p in self.points]
         return d
 
@@ -99,6 +127,7 @@ class TripLog:
         start_speed_kn: float = 0.5,
         idle_timeout_s: float = 120.0,
         max_points: int = 5000,
+        mono_fn=time.monotonic,
     ) -> None:
         self.dir = os.path.join(data_dir, "trips")
         self.min_distance_m = min_distance_m
@@ -106,6 +135,10 @@ class TripLog:
         self.start_speed_kn = start_speed_kn
         self.idle_timeout_s = idle_timeout_s
         self.max_points = max_points
+        # Injectable monotonic clock seam (matches the now_fn/mono_fn convention
+        # in Runtime). Used for live duration so NTP/GPS wall-clock steps on an
+        # RTC-less Pi cannot corrupt the displayed trip duration or avg speed.
+        self._mono_fn = mono_fn
         self.current: Trip | None = None
         # Wall-clock time the boat was last seen making way (for auto-stop).
         self._last_moving_at: float | None = None
@@ -124,6 +157,14 @@ class TripLog:
             started_at=started,
             auto=auto,
         )
+        # Capture a monotonic anchor at the moment the trip starts.  The anchor
+        # is the reference for all live duration calculations, so a subsequent
+        # NTP/GPS clock step that shifts `now` has no effect on the displayed
+        # duration.  _wall_offset is 0 for a fresh trip; it is set > 0 when a
+        # trip is resumed after a restart (to carry over the pre-restart
+        # wall-clock elapsed time before the new anchor was captured).
+        trip._mono_start = self._mono_fn()
+        trip._wall_offset = 0.0
         self.current = trip
         self._last_moving_at = now
         logger.info("trip started: %s (%s)", trip.id, "auto" if auto else "manual")
@@ -142,7 +183,7 @@ class TripLog:
             "trip stopped: %s (%.0f m, %.0f s)",
             trip.id,
             trip.distance_m,
-            trip.duration_s(now),
+            trip.duration_s(now),  # ended_at is set; wall-clock delta is fine
         )
         return trip
 
@@ -208,12 +249,16 @@ class TripLog:
                 "avg_speed_kn": 0.0,
                 "max_speed_kn": 0.0,
             }
+        # Sample the monotonic clock once and pass it through so duration and
+        # avg_speed use the same instant (avoids a tiny inconsistency between
+        # the two calls if time.monotonic() were called twice).
+        mono_now = self._mono_fn()
         return {
             "active": True,
             "name": trip.name,
             "distance_m": round(trip.distance_m, 1),
-            "duration_s": round(trip.duration_s(now), 1),
-            "avg_speed_kn": round(trip.avg_speed_kn(now), 2),
+            "duration_s": round(trip.duration_s(now, mono_now), 1),
+            "avg_speed_kn": round(trip.avg_speed_kn(now, mono_now), 2),
             "max_speed_kn": round(trip.max_speed_kn, 2),
         }
 
@@ -224,10 +269,17 @@ class TripLog:
         return os.path.join(self.dir, f"{trip_id}.json")
 
     def _save(self, trip: Trip, now: float) -> None:
+        # Atomic write: stream into a .tmp file beside the target, then rename.
+        # A crash or power-loss between the write and the rename leaves either
+        # the old complete file OR the new complete file -- never a half-written
+        # one.  (Mirrors the pattern in nav/depth.py DepthMap._atomic_write.)
         try:
             os.makedirs(self.dir, exist_ok=True)
-            with open(self._path(trip.id), "w", encoding="utf-8") as fh:
+            path = self._path(trip.id)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(trip.to_dict(now), fh)
+            os.replace(tmp, path)
         except OSError as exc:  # pragma: no cover - disk failure
             logger.warning("could not save trip %s: %s", trip.id, exc)
 

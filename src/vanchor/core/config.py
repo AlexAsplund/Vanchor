@@ -220,11 +220,17 @@ class SafetyConfig:
     max_thrust_slew_per_s: float = 2.0
     reverse_delay_s: float = 0.5
     fix_timeout_s: float = 5.0
-    # Loss-of-fix failsafe. OFF by default (a switch in Settings -> Safety): when
-    # off, losing the GPS fix does NOT cut thrust. On = force a stop after the
-    # timeout. (Was previously always-on, which surfaced as a "deadman" cutting
-    # thrust whenever fixes lapsed.)
-    fix_failsafe_enabled: bool = False
+    # Loss-of-fix failsafe. ON by default (a switch in Settings -> Safety): once
+    # no fresh fix has arrived for fix_timeout_s thrust is forced to zero so the
+    # boat coasts rather than steaming blind -- the conservative default the
+    # review and roadmap call for on a trolling motor. Set False to keep holding
+    # the last command through a fix dropout.
+    fix_failsafe_enabled: bool = True
+    # Sensor-staleness watchdogs (seconds). A stale compass heading forces a
+    # coast while a guided mode steers; a stale depth is treated as unknown by
+    # the shallow-water stop instead of trusting a frozen sounding.
+    heading_stale_s: float = 3.0
+    depth_stale_s: float = 10.0
     drag_alarm_factor: float = 2.0
     # Shallow-water / geofence auto-stop (#62).
     min_depth_m: float = 0.0  # cut thrust below this sounded depth (0 = disabled)
@@ -670,7 +676,9 @@ safety:
   max_thrust_slew_per_s: 2.0
   reverse_delay_s: 0.5
   fix_timeout_s: 5.0
-  fix_failsafe_enabled: false  # loss-of-fix failsafe; OFF by default (Settings -> Safety)
+  fix_failsafe_enabled: true   # loss-of-fix failsafe; ON by default: coast after the timeout (Settings -> Safety)
+  heading_stale_s: 3.0         # stale compass -> coast while a guided mode steers
+  depth_stale_s: 10.0          # stale depth -> shallow-water stop treats depth as unknown
   drag_alarm_factor: 2.0
   min_depth_m: 0.0           # cut thrust below this sounded depth (0 = disabled) (#62)
   nogo_lookahead_m: 5.0      # also stop within this distance of a no-go zone (#62)
