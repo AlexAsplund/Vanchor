@@ -386,195 +386,198 @@ class Controller:
     def handle_command(self, command: dict) -> None:
         """Apply a command dict. Shape: ``{"type": ..., ...}``."""
         ctype = command.get("type")
-        if ctype == "manual":
-            self.manual.set(
-                float(command.get("thrust", 0.0)), float(command.get("steering", 0.0))
-            )
-            self.set_mode(ControlModeName.MANUAL)
-        elif ctype == "anchor_hold":
-            anchor = command.get("anchor")
-            if anchor:
-                self.state.anchor = GeoPoint(float(anchor["lat"]), float(anchor["lon"]))
-            elif self.state.position is not None:
-                self.state.anchor = self.state.position
-            if "radius_m" in command:
-                self.state.anchor_radius_m = float(command["radius_m"])
-            # Record the heading at the moment of dropping (for display); the boat
-            # holds this passively once on station (no active heading slew).
-            self.state.anchor_heading = self.state.heading_deg
-            self.set_mode(ControlModeName.ANCHOR_HOLD)
-        elif ctype == "anchor_ml":
-            # Learned spot-lock: same mark-setting as anchor_hold, but driven by
-            # the tiny NN. Falls back to the PID mode if the model isn't loaded.
-            anchor = command.get("anchor")
-            if anchor:
-                self.state.anchor = GeoPoint(float(anchor["lat"]), float(anchor["lon"]))
-            elif self.state.position is not None:
-                self.state.anchor = self.state.position
-            if "radius_m" in command:
-                self.state.anchor_radius_m = float(command["radius_m"])
-            self.state.anchor_heading = self.state.heading_deg
-            self.set_mode(
-                ControlModeName.ANCHOR_ML
-                if ControlModeName.ANCHOR_ML in self.modes
-                else ControlModeName.ANCHOR_HOLD
-            )
-        elif ctype == "heading_hold":
-            heading = command.get("heading")
-            self.state.target_heading = (
-                float(heading) if heading is not None else self.state.heading_deg
-            )
-            if "throttle" in command:
-                self.modes[ControlModeName.HEADING_HOLD].throttle = float(
-                    command["throttle"]
+        try:
+            if ctype == "manual":
+                self.manual.set(
+                    float(command.get("thrust", 0.0)), float(command.get("steering", 0.0))
                 )
-            self.set_mode(ControlModeName.HEADING_HOLD)
-        elif ctype == "goto":
-            wps = command.get("waypoints", [])
-            self.state.waypoints = [
-                Waypoint(
-                    name=str(w.get("name", f"WP{i}")),
-                    point=GeoPoint(float(w["lat"]), float(w["lon"])),
+                self.set_mode(ControlModeName.MANUAL)
+            elif ctype == "anchor_hold":
+                anchor = command.get("anchor")
+                if anchor:
+                    self.state.anchor = GeoPoint(float(anchor["lat"]), float(anchor["lon"]))
+                elif self.state.position is not None:
+                    self.state.anchor = self.state.position
+                if "radius_m" in command:
+                    self.state.anchor_radius_m = float(command["radius_m"])
+                # Record the heading at the moment of dropping (for display); the boat
+                # holds this passively once on station (no active heading slew).
+                self.state.anchor_heading = self.state.heading_deg
+                self.set_mode(ControlModeName.ANCHOR_HOLD)
+            elif ctype == "anchor_ml":
+                # Learned spot-lock: same mark-setting as anchor_hold, but driven by
+                # the tiny NN. Falls back to the PID mode if the model isn't loaded.
+                anchor = command.get("anchor")
+                if anchor:
+                    self.state.anchor = GeoPoint(float(anchor["lat"]), float(anchor["lon"]))
+                elif self.state.position is not None:
+                    self.state.anchor = self.state.position
+                if "radius_m" in command:
+                    self.state.anchor_radius_m = float(command["radius_m"])
+                self.state.anchor_heading = self.state.heading_deg
+                self.set_mode(
+                    ControlModeName.ANCHOR_ML
+                    if ControlModeName.ANCHOR_ML in self.modes
+                    else ControlModeName.ANCHOR_HOLD
                 )
-                for i, w in enumerate(wps)
-            ]
-            if "throttle" in command:
-                self.modes[ControlModeName.WAYPOINT].config.throttle = float(
-                    command["throttle"]
+            elif ctype == "heading_hold":
+                heading = command.get("heading")
+                self.state.target_heading = (
+                    float(heading) if heading is not None else self.state.heading_deg
                 )
-            # "active" present => a LIVE EDIT of the running route (the user
-            # dragged/inserted/deleted/reordered a committed waypoint and the UI
-            # re-sent it). Resume from the given index (clamped) instead of
-            # restarting at 0, and leave the route's mode/flags/progress intact so
-            # an edit doesn't make the boat start over. Absent => a fresh start.
-            resume = command.get("active")
-            if resume is None:
-                self.state.active_waypoint = 0
-                # What to do when the route finishes: "anchor", "stop", or "none".
-                self.state.route_on_arrival = str(command.get("on_arrival", "none"))
-                # Closed-loop route (e.g. "around island"): circle continuously.
-                self.state.route_loop = bool(command.get("loop", False))
-                # Patrol: at each end, reverse and run the route back.
-                self.state.route_patrol = bool(command.get("patrol", False))
-                self.set_mode(ControlModeName.WAYPOINT)
-            else:
-                n = len(self.state.waypoints)
-                self.state.active_waypoint = max(0, min(int(resume), n - 1)) if n else 0
-                if self.state.mode != ControlModeName.WAYPOINT:
-                    self.set_mode(ControlModeName.WAYPOINT)
-        elif ctype == "load_route":
-            # Waypoints already parsed (from GPX) and placed on the state by the
-            # runtime; just (re)start waypoint navigation.
-            self.state.active_waypoint = 0
-            self.state.route_loop = bool(command.get("loop", False))
-            self.state.route_patrol = bool(command.get("patrol", False))
-            if "throttle" in command:
-                self.modes[ControlModeName.WAYPOINT].config.throttle = float(
-                    command["throttle"]
-                )
-            self.set_mode(ControlModeName.WAYPOINT)
-        elif ctype == "work_area":
-            # Work Area: spots = waypoints (each with optional hold heading); visit
-            # each, spot-lock + hold, advance on the "next spot" button and/or a
-            # dwell timer. loop/patrol cycle the spots like a route.
-            wps = command.get("waypoints", [])
-            self.state.waypoints = [
-                Waypoint(
-                    name=str(w.get("name", f"Spot {i + 1}")),
-                    point=GeoPoint(float(w["lat"]), float(w["lon"])),
-                    heading=(float(w["heading"]) if w.get("heading") is not None else None),
-                )
-                for i, w in enumerate(wps)
-            ]
-            self.state.active_waypoint = 0
-            self.state.route_loop = bool(command.get("loop", False))
-            self.state.route_patrol = bool(command.get("patrol", False))
-            wa = self.modes[ControlModeName.WORK_AREA].config
-            if "dwell_s" in command:
-                wa.dwell_s = max(0.0, float(command["dwell_s"]))
-            if "advance" in command:
-                wa.advance = "timed" if str(command["advance"]) == "timed" else "manual"
-            if "throttle" in command:
-                wa.throttle = float(command["throttle"])
-            self.set_mode(ControlModeName.WORK_AREA)
-        elif ctype == "next_spot":
-            # The big on-screen "Go to next spot" button (Work Area mode).
-            self.state.work_next_requested = True
-        elif ctype == "follow_apb":
-            if "throttle" in command:
-                self.modes[ControlModeName.FOLLOW_APB].config.throttle = float(
-                    command["throttle"]
-                )
-            self.set_mode(ControlModeName.FOLLOW_APB)
-        elif ctype == "drift":
-            heading = command.get("heading")
-            self.state.target_heading = (
-                float(heading) if heading is not None else self.state.heading_deg
-            )
-            if "knots" in command:
-                self.state.drift_target_knots = float(command["knots"])
-            self.set_mode(ControlModeName.DRIFT)
-        elif ctype == "contour_follow":
-            self.state.contour_target_depth_m = float(command.get("target_depth_m", 0.0))
-            self.state.contour_side = str(command.get("side", "deep"))
-            self._apply_speed_knots(command.get("speed_knots"))
-            self.set_mode(ControlModeName.CONTOUR_FOLLOW)
-        elif ctype == "orbit":
-            self.state.orbit_center = GeoPoint(
-                float(command["center_lat"]), float(command["center_lon"])
-            )
-            self.state.orbit_radius_m = float(command.get("radius_m", 20.0))
-            self.state.orbit_direction = str(command.get("direction", "cw"))
-            self._apply_speed_knots(command.get("speed_knots"))
-            self.set_mode(ControlModeName.ORBIT)
-        elif ctype == "trolling":
-            base = command.get("base_heading")
-            self.state.trolling_base_heading = (
-                float(base) if base is not None else self.state.heading_deg
-            )
-            self.state.trolling_amplitude_deg = float(command.get("amplitude_deg", 20.0))
-            self.state.trolling_period_s = float(command.get("period_s", 20.0))
-            self._apply_speed_knots(command.get("speed_knots"))
-            self.set_mode(ControlModeName.TROLLING)
-        elif ctype == "jog":
-            self._jog(command)
-        elif ctype == "cruise":
-            self._set_cruise(command.get("knots"))
-        elif ctype == "set_throttle":
-            self._set_throttle(command.get("percent"))
-        elif ctype == "pause_nav":
-            self._pause_nav()
-        elif ctype == "resume_nav":
-            self._resume_nav()
-        elif ctype in ("record", "replay", "backtrack"):
-            self._track_command(ctype, command)
-        elif ctype == "set_nogo_zones":
-            self.safety.set_nogo_zones(
-                [
-                    [(float(p[0]), float(p[1])) for p in ring]
-                    for ring in command.get("zones", [])
+                if "throttle" in command:
+                    self.modes[ControlModeName.HEADING_HOLD].throttle = float(
+                        command["throttle"]
+                    )
+                self.set_mode(ControlModeName.HEADING_HOLD)
+            elif ctype == "goto":
+                wps = command.get("waypoints", [])
+                self.state.waypoints = [
+                    Waypoint(
+                        name=str(w.get("name", f"WP{i}")),
+                        point=GeoPoint(float(w["lat"]), float(w["lon"])),
+                    )
+                    for i, w in enumerate(wps)
                 ]
-            )
-            logger.info("no-go zones set: %d", self.safety.nogo_zone_count)
-        elif ctype == "set_min_depth":
-            self.safety.config.min_depth_m = float(command.get("min_depth_m", 0.0))
-            logger.info("min depth set: %.1f m", self.safety.config.min_depth_m)
-        elif ctype == "set_fix_failsafe":
-            self.safety.config.fix_failsafe_enabled = bool(command.get("enabled", False))
-            logger.info("loss-of-fix failsafe %s",
-                        "ON" if self.safety.config.fix_failsafe_enabled else "OFF")
-        elif ctype == "set_launch":
-            self._set_launch()
-        elif ctype == "mob":
-            self._mob()
-        elif ctype == "mob_clear":
-            self._mob_clear()
-        elif ctype == "stop":
-            self.suspended = None  # a hard stop clears any paused nav
-            self.manual.set(0.0, 0.0)
-            self.set_mode(ControlModeName.MANUAL)
-        else:
-            logger.warning("unknown command: %r", command)
+                if "throttle" in command:
+                    self.modes[ControlModeName.WAYPOINT].config.throttle = float(
+                        command["throttle"]
+                    )
+                # "active" present => a LIVE EDIT of the running route (the user
+                # dragged/inserted/deleted/reordered a committed waypoint and the UI
+                # re-sent it). Resume from the given index (clamped) instead of
+                # restarting at 0, and leave the route's mode/flags/progress intact so
+                # an edit doesn't make the boat start over. Absent => a fresh start.
+                resume = command.get("active")
+                if resume is None:
+                    self.state.active_waypoint = 0
+                    # What to do when the route finishes: "anchor", "stop", or "none".
+                    self.state.route_on_arrival = str(command.get("on_arrival", "none"))
+                    # Closed-loop route (e.g. "around island"): circle continuously.
+                    self.state.route_loop = bool(command.get("loop", False))
+                    # Patrol: at each end, reverse and run the route back.
+                    self.state.route_patrol = bool(command.get("patrol", False))
+                    self.set_mode(ControlModeName.WAYPOINT)
+                else:
+                    n = len(self.state.waypoints)
+                    self.state.active_waypoint = max(0, min(int(resume), n - 1)) if n else 0
+                    if self.state.mode != ControlModeName.WAYPOINT:
+                        self.set_mode(ControlModeName.WAYPOINT)
+            elif ctype == "load_route":
+                # Waypoints already parsed (from GPX) and placed on the state by the
+                # runtime; just (re)start waypoint navigation.
+                self.state.active_waypoint = 0
+                self.state.route_loop = bool(command.get("loop", False))
+                self.state.route_patrol = bool(command.get("patrol", False))
+                if "throttle" in command:
+                    self.modes[ControlModeName.WAYPOINT].config.throttle = float(
+                        command["throttle"]
+                    )
+                self.set_mode(ControlModeName.WAYPOINT)
+            elif ctype == "work_area":
+                # Work Area: spots = waypoints (each with optional hold heading); visit
+                # each, spot-lock + hold, advance on the "next spot" button and/or a
+                # dwell timer. loop/patrol cycle the spots like a route.
+                wps = command.get("waypoints", [])
+                self.state.waypoints = [
+                    Waypoint(
+                        name=str(w.get("name", f"Spot {i + 1}")),
+                        point=GeoPoint(float(w["lat"]), float(w["lon"])),
+                        heading=(float(w["heading"]) if w.get("heading") is not None else None),
+                    )
+                    for i, w in enumerate(wps)
+                ]
+                self.state.active_waypoint = 0
+                self.state.route_loop = bool(command.get("loop", False))
+                self.state.route_patrol = bool(command.get("patrol", False))
+                wa = self.modes[ControlModeName.WORK_AREA].config
+                if "dwell_s" in command:
+                    wa.dwell_s = max(0.0, float(command["dwell_s"]))
+                if "advance" in command:
+                    wa.advance = "timed" if str(command["advance"]) == "timed" else "manual"
+                if "throttle" in command:
+                    wa.throttle = float(command["throttle"])
+                self.set_mode(ControlModeName.WORK_AREA)
+            elif ctype == "next_spot":
+                # The big on-screen "Go to next spot" button (Work Area mode).
+                self.state.work_next_requested = True
+            elif ctype == "follow_apb":
+                if "throttle" in command:
+                    self.modes[ControlModeName.FOLLOW_APB].config.throttle = float(
+                        command["throttle"]
+                    )
+                self.set_mode(ControlModeName.FOLLOW_APB)
+            elif ctype == "drift":
+                heading = command.get("heading")
+                self.state.target_heading = (
+                    float(heading) if heading is not None else self.state.heading_deg
+                )
+                if "knots" in command:
+                    self.state.drift_target_knots = float(command["knots"])
+                self.set_mode(ControlModeName.DRIFT)
+            elif ctype == "contour_follow":
+                self.state.contour_target_depth_m = float(command.get("target_depth_m", 0.0))
+                self.state.contour_side = str(command.get("side", "deep"))
+                self._apply_speed_knots(command.get("speed_knots"))
+                self.set_mode(ControlModeName.CONTOUR_FOLLOW)
+            elif ctype == "orbit":
+                self.state.orbit_center = GeoPoint(
+                    float(command["center_lat"]), float(command["center_lon"])
+                )
+                self.state.orbit_radius_m = float(command.get("radius_m", 20.0))
+                self.state.orbit_direction = str(command.get("direction", "cw"))
+                self._apply_speed_knots(command.get("speed_knots"))
+                self.set_mode(ControlModeName.ORBIT)
+            elif ctype == "trolling":
+                base = command.get("base_heading")
+                self.state.trolling_base_heading = (
+                    float(base) if base is not None else self.state.heading_deg
+                )
+                self.state.trolling_amplitude_deg = float(command.get("amplitude_deg", 20.0))
+                self.state.trolling_period_s = float(command.get("period_s", 20.0))
+                self._apply_speed_knots(command.get("speed_knots"))
+                self.set_mode(ControlModeName.TROLLING)
+            elif ctype == "jog":
+                self._jog(command)
+            elif ctype == "cruise":
+                self._set_cruise(command.get("knots"))
+            elif ctype == "set_throttle":
+                self._set_throttle(command.get("percent"))
+            elif ctype == "pause_nav":
+                self._pause_nav()
+            elif ctype == "resume_nav":
+                self._resume_nav()
+            elif ctype in ("record", "replay", "backtrack"):
+                self._track_command(ctype, command)
+            elif ctype == "set_nogo_zones":
+                self.safety.set_nogo_zones(
+                    [
+                        [(float(p[0]), float(p[1])) for p in ring]
+                        for ring in command.get("zones", [])
+                    ]
+                )
+                logger.info("no-go zones set: %d", self.safety.nogo_zone_count)
+            elif ctype == "set_min_depth":
+                self.safety.config.min_depth_m = float(command.get("min_depth_m", 0.0))
+                logger.info("min depth set: %.1f m", self.safety.config.min_depth_m)
+            elif ctype == "set_fix_failsafe":
+                self.safety.config.fix_failsafe_enabled = bool(command.get("enabled", False))
+                logger.info("loss-of-fix failsafe %s",
+                            "ON" if self.safety.config.fix_failsafe_enabled else "OFF")
+            elif ctype == "set_launch":
+                self._set_launch()
+            elif ctype == "mob":
+                self._mob()
+            elif ctype == "mob_clear":
+                self._mob_clear()
+            elif ctype == "stop":
+                self.suspended = None  # a hard stop clears any paused nav
+                self.manual.set(0.0, 0.0)
+                self.set_mode(ControlModeName.MANUAL)
+            else:
+                logger.warning("unknown command: %r", command)
+        except (KeyError, ValueError, TypeError) as exc:
+            logger.warning("handle_command %r: malformed payload: %s", ctype, exc)
 
     # -- Tier-1 features ------------------------------------------------- #
     def _jog(self, command: dict) -> None:

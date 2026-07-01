@@ -28,10 +28,17 @@ class Navigator:
         bus: EventBus | None = None,
         guard_config: SensorGuardConfig | None = None,
         *,
+        declination_deg: float = 0.0,
         mono_fn=time.monotonic,
     ) -> None:
         self.state = state
         self.bus = bus
+        # Local magnetic declination (degrees East-positive). Applied to MAGNETIC
+        # headings (HDM/HDG with reference="M") to yield true before the control
+        # stack uses state.heading_deg. True headings (HDT/HDG fully corrected,
+        # reference="T") pass through unchanged. Set to 0 if the compass source
+        # already emits true heading to avoid double-correction.
+        self.declination_deg = declination_deg
         # MONOTONIC clock used to stamp each sensor's receive time on the state
         # (the freshness watchdog). Injectable so the runtime can drive it and
         # tests can advance it deterministically; matches the Runtime's mono_fn.
@@ -159,10 +166,18 @@ class Navigator:
                 self.state.fix_received_mono = self._mono_fn()
                 events_out.append((events.NAV_FIX, fix))
         elif isinstance(parsed, nmea.Heading):
-            if self.guard.check_heading(parsed.heading_deg):
-                self.state.heading_deg = parsed.heading_deg
+            # Normalise to TRUE heading before storing.
+            # Sign convention: True = Magnetic + declination (East-positive).
+            # HDT (reference="T") and fully-corrected HDG already carry a true
+            # heading — pass through unchanged to avoid double-correction.
+            if parsed.reference == "M":
+                true_deg = (parsed.heading_deg + self.declination_deg) % 360
+            else:  # "T"
+                true_deg = parsed.heading_deg
+            if self.guard.check_heading(true_deg):
+                self.state.heading_deg = true_deg
                 self.state.heading_received_mono = self._mono_fn()
-                events_out.append((events.NAV_HEADING, parsed.heading_deg))
+                events_out.append((events.NAV_HEADING, true_deg))
         elif isinstance(parsed, nmea.Depth):
             self.state.depth_m = parsed.depth_m
             self.state.depth_received_mono = self._mono_fn()

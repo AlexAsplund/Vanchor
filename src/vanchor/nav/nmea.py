@@ -186,8 +186,32 @@ def _parse_gga(f: list[str]) -> GGA:
 
 
 def _parse_heading(f: list[str], kind: str) -> Heading:
-    ref = "T" if kind == "HDT" else "M"
-    return Heading(heading_deg=float(f[1]) if f[1] else 0.0, reference=ref)
+    """Parse HDM (magnetic), HDT (true), or HDG (sensor + deviation + variation).
+
+    Sign convention (NMEA 0183 § 6.7 / §8.3.21):
+        True = sensor_heading + deviation(E+, W-) + variation(E+, W-)
+    HDG returns ``reference="T"`` only when *both* deviation **and** variation
+    fields are present and valid; otherwise it falls back to ``"M"``
+    (uncorrected magnetic).
+    """
+    if kind == "HDT":
+        return Heading(heading_deg=float(f[1]) if f[1] else 0.0, reference="T")
+    if kind == "HDG":
+        heading = float(f[1]) if f[1] else 0.0
+        dev_raw = f[2] if len(f) > 2 else ""
+        dev_dir = f[3] if len(f) > 3 else ""
+        var_raw = f[4] if len(f) > 4 else ""
+        var_dir = f[5] if len(f) > 5 else ""
+        has_dev = bool(dev_raw) and dev_dir in ("E", "W")
+        has_var = bool(var_raw) and var_dir in ("E", "W")
+        if has_dev and has_var:
+            dev = float(dev_raw) * (1.0 if dev_dir == "E" else -1.0)
+            var = float(var_raw) * (1.0 if var_dir == "E" else -1.0)
+            return Heading(heading_deg=(heading + dev + var) % 360, reference="T")
+        # Partial or absent correction fields → return raw sensor heading as magnetic.
+        return Heading(heading_deg=heading, reference="M")
+    # HDM: magnetic heading, no correction applied.
+    return Heading(heading_deg=float(f[1]) if f[1] else 0.0, reference="M")
 
 
 def _parse_dpt(f: list[str]) -> Depth:
@@ -258,6 +282,30 @@ def encode_hdm(heading_deg: float, *, talker: str = "HC") -> str:
 
 def encode_hdt(heading_deg: float, *, talker: str = "HC") -> str:
     return _wrap(f"{talker}HDT,{heading_deg % 360:.1f},T")
+
+
+def encode_hdg(
+    heading_deg: float,
+    deviation_deg: float | None = None,
+    variation_deg: float | None = None,
+    *,
+    talker: str = "HC",
+) -> str:
+    """Encode an HDG sentence.
+
+    ``deviation_deg`` and ``variation_deg`` are signed (East-positive,
+    West-negative); pass ``None`` to omit that field pair (empty fields).
+    Sign convention: True = heading + deviation(E+) + variation(E+).
+    """
+
+    def _fmt(val: float | None) -> str:
+        if val is None:
+            return ","
+        return f"{abs(val):.1f},{'E' if val >= 0 else 'W'}"
+
+    return _wrap(
+        f"{talker}HDG,{heading_deg % 360:.1f},{_fmt(deviation_deg)},{_fmt(variation_deg)}"
+    )
 
 
 def encode_dpt(depth_m: float, *, talker: str = "SD") -> str:

@@ -41,6 +41,11 @@ sensors:
   depth_hz: 2.0
   gps_noise_m: 1.5
   compass_noise_deg: 1.0
+  # Local magnetic declination, degrees East-positive; applied to MAGNETIC headings
+  # (HDM/HDG) to produce true. Leave 0 if your compass source already emits true
+  # heading (HDT) — e.g. HWT901B in auto/manual mode corrects internally and emits
+  # HDT, so setting this nonzero alongside it would double-correct.
+  magnetic_declination_deg: 0.0
   position_jump_max_m: 15.0    # reject GPS jumps bigger than this (unless confirmed)
   heading_jump_max_deg: 30.0   # reject heading spikes bigger than this per sample
 

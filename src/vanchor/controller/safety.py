@@ -323,9 +323,11 @@ class SafetyGovernor:
             desired = 0.0
 
         # --- Thrust slew limiting ------------------------------------- #
+        # <= 0 means DISABLED (no slew limiting), matching the steering slew
+        # behaviour where max_steer_slew_per_s <= 0 likewise means unlimited.
         max_step = cfg.max_thrust_slew_per_s * dt
         delta = desired - self._last_thrust
-        if max_step >= 0.0 and abs(delta) > max_step:
+        if cfg.max_thrust_slew_per_s > 0.0 and abs(delta) > max_step:
             status.thrust_limited = True
             status.messages.append(
                 f"thrust slew-limited: |Δ|={abs(delta):.3f} > {max_step:.3f}"
@@ -355,12 +357,13 @@ class SafetyGovernor:
 
         # --- Anchor drag alarm ---------------------------------------- #
         # Any station-keeping mode that holds via an anchor must be watched,
-        # including the learned spot-lock (ANCHOR_ML). WORK_AREA is deliberately
-        # excluded: it also sets state.anchor, but leaves it stale while TRAVELLING
-        # between spots, which would false-trip the alarm on the way to a spot.
-        if state.anchor is not None and state.mode in (
-            ControlModeName.ANCHOR_HOLD,
-            ControlModeName.ANCHOR_ML,
+        # including the learned spot-lock (ANCHOR_ML). WORK_AREA is gated on
+        # state.work_holding so the alarm only fires while actually spot-locked
+        # at a spot (not while travelling between spots, when state.anchor is
+        # stale and would otherwise false-trip the alarm).
+        if state.anchor is not None and (
+            state.mode in (ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML)
+            or (state.mode == ControlModeName.WORK_AREA and state.work_holding)
         ):
             threshold = cfg.drag_alarm_factor * state.anchor_radius_m
             if state.distance_to_anchor_m > threshold:

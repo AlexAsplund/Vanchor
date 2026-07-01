@@ -23,10 +23,45 @@ def test_invalid_rmc_does_not_update():
 
 
 def test_heading_updates_state():
+    """HDM with default declination (0) passes through unchanged."""
     state = NavigationState()
     nav = Navigator(state, bus=None)
     nav.handle_sentence(nmea.encode_hdm(177.0))
     assert state.heading_deg == pytest.approx(177.0)
+
+
+def test_hdm_shifted_by_declination():
+    """HDM + 10° East declination → state.heading_deg = raw + 10."""
+    state = NavigationState()
+    nav = Navigator(state, bus=None, declination_deg=10.0)
+    nav.handle_sentence(nmea.encode_hdm(100.0))
+    assert state.heading_deg == pytest.approx(110.0, abs=0.1)
+
+
+def test_hdm_west_declination_subtracts():
+    """West declination (negative) is subtracted from the magnetic reading."""
+    state = NavigationState()
+    nav = Navigator(state, bus=None, declination_deg=-7.0)
+    nav.handle_sentence(nmea.encode_hdm(100.0))
+    assert state.heading_deg == pytest.approx(93.0, abs=0.1)
+
+
+def test_hdt_unchanged_by_declination():
+    """HDT already carries a true heading; declination must NOT be applied."""
+    state = NavigationState()
+    nav = Navigator(state, bus=None, declination_deg=10.0)
+    nav.handle_sentence(nmea.encode_hdt(100.0))
+    assert state.heading_deg == pytest.approx(100.0, abs=0.1)
+
+
+def test_hdg_fully_corrected_not_shifted_again():
+    """HDG with both dev+var yields reference='T'; the navigator must not apply
+    declination a second time even when declination_deg is nonzero."""
+    state = NavigationState()
+    nav = Navigator(state, bus=None, declination_deg=10.0)
+    # sensor=100, dev=2E, var=5W → True=97 via HDG parser (reference='T')
+    nav.handle_sentence(nmea.encode_hdg(100.0, deviation_deg=2.0, variation_deg=-5.0))
+    assert state.heading_deg == pytest.approx(97.0, abs=0.1)
 
 
 def test_apb_stored():

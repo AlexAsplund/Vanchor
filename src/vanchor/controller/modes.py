@@ -431,10 +431,37 @@ class WaypointMode(ControlMode):
         distance = haversine_m(pos, target)
         state.distance_to_waypoint_m = distance
 
-        if distance <= self.config.arrival_radius_m:
-            # Arrived: advance to the next leg (in the current direction).
+        # Arrival: within the radius, OR passed the leg's perpendicular (the
+        # boat sailed past the waypoint abeam without entering the circle).
+        arrived = distance <= self.config.arrival_radius_m
+        if not arrived:
+            leg_len = haversine_m(self._leg_start, target)
+            if leg_len > 0.0:
+                brg_leg = initial_bearing(self._leg_start, target)
+                brg_pos = initial_bearing(self._leg_start, pos)
+                d_from_start = haversine_m(self._leg_start, pos)
+                along = d_from_start * math.cos(
+                    math.radians(angle_difference(brg_leg, brg_pos))
+                )
+                xte_m = abs(cross_track(self._leg_start, target, pos).distance_m)
+                if along >= leg_len and xte_m <= 3.0 * self.config.arrival_radius_m:
+                    arrived = True
+
+        if arrived:
+            # Advance to the next leg (in the current traversal direction).
             state.active_waypoint += self._step
             self._leg_start = target
+            # Multi-advance: consume stacked waypoints already within the arrival
+            # radius in one tick, so dense replay tracks don't stall one point per tick.
+            for _ in range(len(state.waypoints)):
+                if not 0 <= state.active_waypoint < len(state.waypoints):
+                    break
+                nxt = state.waypoints[state.active_waypoint].point
+                if haversine_m(pos, nxt) <= self.config.arrival_radius_m:
+                    state.active_waypoint += self._step
+                    self._leg_start = nxt
+                else:
+                    break
             if not 0 <= state.active_waypoint < len(state.waypoints):
                 if self._wrap_or_bounce(state, pos):
                     return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)

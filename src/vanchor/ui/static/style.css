@@ -1471,6 +1471,21 @@ body.mobile[data-sheet="full"] .wa-next { display: none; }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ---- Health sensor-age chips (Settings > Data & diagnostics > Live data) ---- */
+.health-ages {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 3px 0;
+}
+.health-age-chip {
+  display: inline-flex; align-items: baseline; gap: 4px; font-size: 11px;
+}
+.health-age-chip .hac-lbl {
+  color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.health-age-chip .hac-val {
+  font-family: var(--font-num); color: var(--text); min-width: 32px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---- Alert history (#97): top-bar bell + badge ---- */
 .alerts-bell { position: relative; }
 .alerts-badge {

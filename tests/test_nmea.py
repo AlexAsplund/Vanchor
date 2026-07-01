@@ -113,6 +113,45 @@ def test_hdm_roundtrip():
     assert p.heading_deg == pytest.approx(123.4)
 
 
+def test_hdt_reference():
+    """HDT sentences must be parsed with reference='T'."""
+    s = nmea.encode_hdt(180.5)
+    p = nmea.parse(s)
+    assert isinstance(p, nmea.Heading)
+    assert p.reference == "T"
+    assert p.heading_deg == pytest.approx(180.5)
+
+
+def test_hdg_with_dev_and_var_yields_true():
+    """HDG with both deviation and variation → reference='T', corrected value.
+
+    Convention: True = sensor + deviation(E+, W-) + variation(E+, W-)
+    Example: sensor=100, dev=2°E, var=5°W → True = 100 + 2 - 5 = 97°
+    """
+    s = nmea.encode_hdg(100.0, deviation_deg=2.0, variation_deg=-5.0)
+    p = nmea.parse(s)
+    assert isinstance(p, nmea.Heading)
+    assert p.reference == "T"
+    assert p.heading_deg == pytest.approx(97.0, abs=0.1)
+
+
+def test_hdg_with_east_var_adds():
+    """Easterly variation is positive — adds to the sensor heading."""
+    s = nmea.encode_hdg(90.0, deviation_deg=0.0, variation_deg=10.0)
+    p = nmea.parse(s)
+    assert p.reference == "T"
+    assert p.heading_deg == pytest.approx(100.0, abs=0.1)
+
+
+def test_hdg_without_dev_var_yields_magnetic():
+    """HDG with no correction fields → reference='M', raw sensor heading."""
+    s = nmea.encode_hdg(100.0)
+    p = nmea.parse(s)
+    assert isinstance(p, nmea.Heading)
+    assert p.reference == "M"
+    assert p.heading_deg == pytest.approx(100.0)
+
+
 def test_apb_roundtrip():
     s = nmea.encode_apb(12.5, "R", 95.0, dest_id="WP3", arrived=False)
     p = nmea.parse(s)

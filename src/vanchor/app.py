@@ -176,26 +176,6 @@ def _build_battery_config(cfg: AppConfig):
     )
 
 
-class _DebugLogHandler(logging.Handler):
-    """Funnels log records into the debug recorder while it's active."""
-
-    def __init__(self, recorder) -> None:
-        super().__init__()
-        self._recorder = recorder
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if not self._recorder.active:
-            return
-        try:
-            self._recorder.write(
-                "log",
-                {"level": record.levelname, "name": record.name, "msg": record.getMessage()},
-                time.time(),
-            )
-        except Exception:  # pragma: no cover - never let logging crash
-            pass
-
-
 class _TeeMotor:
     """Fan one ``MotorCommand`` out to several motor controllers at once — e.g.
     drive the simulated boat AND a real steering servo for bench testing.
@@ -265,7 +245,11 @@ class Runtime:
         self.debug = DebugRecorder(cfg.data_dir)
         self.replay = ReplayPlayer()
         self.bus.subscribe(events.NMEA_IN, self._record_nmea)
-        logging.getLogger("vanchor").addHandler(_DebugLogHandler(self.debug))
+        # NOTE: the debug recorder attaches its OWN log handler to the ROOT
+        # logger for the duration of a recording (see DebugRecorder.start), which
+        # already captures every ``vanchor.*`` line. We deliberately do NOT add a
+        # second handler on the ``vanchor`` logger here -- doing so recorded each
+        # line twice in a debug session (review finding L3).
 
         self.state = NavigationState()
         self.state.anchor_radius_m = cfg.control.anchor_radius_m
@@ -312,6 +296,7 @@ class Runtime:
                 heading_jump_max_deg=cfg.sensors.heading_jump_max_deg,
             ),
             mono_fn=self._mono_fn,
+            declination_deg=cfg.sensors.magnetic_declination_deg,
         )
         self.controller = Controller(
             self.state,
@@ -419,6 +404,10 @@ class Runtime:
         # True while an auto-RTL plan is in flight, so the periodic evaluator
         # doesn't launch duplicate concurrent RTL plans (#61).
         self._rtl_in_flight = False
+        # True while a depth-map save is running in a worker thread, so the
+        # supervisor never launches an overlapping save (finding M3): the save
+        # is offloaded off the event loop and must not stack up.
+        self._depth_save_in_flight = False
 
     # ------------------------------------------------------------------ #
     # Boat profile (Init-boat wizard)
@@ -1240,6 +1229,87 @@ class Runtime:
         finally:
             self._rtl_in_flight = False
 
+    # ------------------------------------------------------------------ #
+    # Periodic safety supervisor (1 Hz) + depth accumulation
+    # ------------------------------------------------------------------ #
+    def _supervise_once(self) -> None:
+        """Run one periodic safety/bookkeeping pass -- the side effects that used
+        to live in ``telemetry()`` (findings M2/H4/#7).
+
+        Runs REGARDLESS of replay mode and connected-client count. Each step is
+        isolated so a single failing evaluator can't stop the others (and, at the
+        loop level, can't kill the supervisor)."""
+        steps = (
+            ("maybe_record_launch", self.controller.maybe_record_launch),
+            ("evaluate_rtl_recommend", self.evaluate_rtl_recommend),
+            ("evaluate_link_failsafe", self.evaluate_link_failsafe),
+            ("trip_update", lambda: self.trip.update(
+                self.state.position, self.state.sog_knots, self._now_fn())),
+        )
+        for name, step in steps:
+            try:
+                step()
+            except Exception:  # noqa: BLE001 - one bad evaluator must not stop safety
+                logger.exception("supervisor step %s failed; continuing", name)
+
+    async def _run_supervisor(self, period_s: float = 1.0) -> None:
+        """~1 Hz task driving the periodic safety evaluations + depth persistence.
+
+        Exception-proof: the whole body is guarded so a raise (from a step or a
+        save) only logs and continues -- the task NEVER exits on its own; it ends
+        only on cancellation at shutdown."""
+        while True:
+            try:
+                await asyncio.sleep(period_s)
+                self._supervise_once()
+                await self._maybe_persist_depth()
+            except asyncio.CancelledError:
+                raise  # shutdown -> let the cancellation propagate
+            except Exception:  # noqa: BLE001 - supervisor must never die
+                logger.exception("supervisor loop error -- will continue")
+
+    def record_depth_sounding(self) -> None:
+        """Accumulate one depth sounding at the boat's DRAWN position.
+
+        Called by the WS broadcaster at the telemetry rate (~5 Hz) so soundings
+        keep their original cadence now that ``telemetry()`` is a pure snapshot.
+        A no-op during replay (replayed depth must not pollute the live map).
+
+        Record each sounding at the SAME position the boat marker is drawn at, so
+        the depth dots sit under the boat. In the sim the marker uses ground truth
+        -- and the sounder samples the bottom at that true position too -- whereas
+        the GPS fix carries noise that would offset the dots beside the boat. On
+        real hardware there is no truth, so both use the GPS fix."""
+        if self.replay.active:
+            return
+        sounding_pos = (
+            self.simulator.truth().point
+            if self.simulator is not None
+            else self.state.position
+        )
+        self.depth_map.record(sounding_pos, self.state.depth_m)
+
+    async def _maybe_persist_depth(self) -> None:
+        """Checkpoint newly-accumulated soundings to disk OFF the event loop
+        (finding M3), at most one save in flight at a time.
+
+        ``depth_map.save`` does an atomic JSON write; on a large map that is a
+        real blocking cost, so it runs in a worker thread. The in-flight guard
+        stops the 1 Hz supervisor from stacking overlapping saves."""
+        if self._depth_save_in_flight:
+            return
+        n = len(self.depth_map.points)
+        if n - self._depth_saved_n < 25:
+            return
+        self._depth_save_in_flight = True
+        try:
+            await asyncio.to_thread(self.depth_map.save, self._depth_map_path)
+            self._depth_saved_n = n
+        except Exception:  # noqa: BLE001 - a failed checkpoint must not wedge saves
+            logger.exception("depth map checkpoint failed")
+        finally:
+            self._depth_save_in_flight = False
+
     def _load_route(self, command: dict) -> None:
         from .nav.routes import parse_gpx
 
@@ -1808,7 +1878,7 @@ class Runtime:
         status = self.controller.safety_status
         depth_age = _age(st.depth_received_mono)
         depth_stale_s = self.controller.safety.config.depth_stale_s
-        return {
+        health = {
             "fix_age_s": _age(st.fix_received_mono),
             "heading_age_s": _age(st.heading_received_mono),
             "depth_age_s": depth_age,
@@ -1820,20 +1890,61 @@ class Runtime:
             "fix_lost": status.fix_lost,
             "depth_stale": depth_age is not None and depth_age > depth_stale_s,
         }
+        # Per-device connection health, surfaced from serial devices that expose
+        # ``healthy`` / ``last_data_monotonic`` (the reconnect work). Sim devices
+        # lack the attributes, so the block is omitted entirely on a sim-only
+        # runtime -- keeping the base health shape unchanged when no real device
+        # reports health.
+        devices = self._device_health(now)
+        if devices:
+            health["devices"] = devices
+        return health
+
+    def _device_health(self, now: float | None = None) -> dict:
+        """``{gps: {healthy, data_age_s}, compass: ..., depth: ..., motor: ...}``
+        for any device exposing ``healthy`` / ``last_data_monotonic``.
+
+        Null-safe: a device without a ``healthy`` attribute (sim devices) is
+        omitted; a present-but-never-received ``last_data_monotonic`` yields a
+        ``data_age_s`` of ``None``."""
+        if now is None:
+            now = self._mono_fn()
+        out: dict = {}
+        for name, dev in (
+            ("gps", self.gps),
+            ("compass", self.compass),
+            ("depth", self.depth_sounder),
+            ("motor", self.controller.motor),
+        ):
+            healthy = getattr(dev, "healthy", None)
+            if healthy is None:
+                continue  # sim / attribute-less device -> no health to report
+            last = getattr(dev, "last_data_monotonic", None)
+            out[name] = {
+                "healthy": bool(healthy),
+                "data_age_s": round(now - last, 2) if last is not None else None,
+            }
+        return out
 
     def telemetry(self) -> dict:
-        # During replay, play recorded frames back instead of live state.
+        """Build a PURE telemetry snapshot -- no side effects.
+
+        This is called by BOTH the WS broadcaster and ``GET /api/state``, so it
+        must not mutate anything: the periodic safety evaluations (launch
+        capture, RTL recommend, link failsafe), trip accumulation and depth
+        persistence all live in the supervisor task (see ``_run_supervisor`` /
+        ``_supervise_once``); depth-sounding accumulation is driven by the
+        broadcaster via ``record_depth_sounding`` so polling ``/api/state`` can't
+        double-record soundings or perturb failsafe timing (findings M2/H4/#7).
+        """
+        # During replay, play recorded frames back instead of live state. Live
+        # safety evaluation keeps running regardless -- it lives in the
+        # supervisor now, not here -- so swapping the displayed frame can't
+        # disable it.
         if self.replay.active:
             frame = self.replay.current(time.time())
             if frame is not None:
                 return frame
-        # Auto-record the launch point on the first good fix (#61), then run the
-        # periodic safety evaluations (battery RTL recommend + link failsafe).
-        self.controller.maybe_record_launch()
-        self.evaluate_rtl_recommend()
-        self.evaluate_link_failsafe()
-        # Trip log (#66): accumulate the current outing + run auto start/stop.
-        self.trip.update(self.state.position, self.state.sog_knots, self._now_fn())
 
         payload = self.state.to_dict()
         payload["safety"] = self.controller.safety_status.to_dict()
@@ -1860,22 +1971,10 @@ class Runtime:
             "points": [[p.lat, p.lon] for p in ctrl.track.points[-300:]],
         }
         payload["trip"] = self.trip.snapshot(self._now_fn())
-        # Accumulate and expose the depth map; checkpoint to disk periodically
-        # so soundings survive a crash/power loss on a real boat.
-        # Record each sounding at the SAME position the boat marker is drawn at,
-        # so the depth dots sit under the boat. In the sim the marker uses ground
-        # truth -- and the sounder samples the bottom at that true position too --
-        # whereas the GPS fix carries noise that would offset the dots beside the
-        # boat. On real hardware there is no truth, so both use the GPS fix.
-        sounding_pos = (
-            self.simulator.truth().point
-            if self.simulator is not None
-            else self.state.position
-        )
-        self.depth_map.record(sounding_pos, self.state.depth_m)
-        if len(self.depth_map.points) - self._depth_saved_n >= 25:
-            self.depth_map.save(self._depth_map_path)
-            self._depth_saved_n = len(self.depth_map.points)
+        # Expose (read-only) the accumulated depth map. Accumulation + periodic
+        # persistence are NOT done here (telemetry() is a pure snapshot): the
+        # broadcaster drives sounding accumulation via record_depth_sounding()
+        # and the supervisor checkpoints to disk off the event loop.
         # depth_count is a cheap scalar; depth_points (~28 KB) is the bulk of the
         # frame. telemetry() returns the COMPLETE snapshot (so /api/state is
         # deterministic + full); the high-rate WS broadcaster decimates
@@ -1986,8 +2085,9 @@ class Runtime:
             }
         payload["debug"] = self.debug.status()
         payload["replay"] = {"active": self.replay.active, "name": self.replay.name} if self.replay.active else {"active": False}
-        if self.debug.active:
-            self.debug.write("telemetry", payload, time.time())
+        # NB: recording this frame into the debug session is done by the
+        # broadcaster (off the event loop), not here -- telemetry() is pure so
+        # that GET /api/state polling can't inject phantom frames into a session.
         return payload
 
     # ------------------------------------------------------------------ #
@@ -2027,6 +2127,10 @@ class Runtime:
             self._sim_task = asyncio.ensure_future(self.simulator.run())
             self._tasks.append(self._sim_task)
         self._tasks.append(asyncio.ensure_future(self.controller.run()))
+        # Periodic safety supervisor (~1 Hz): launch capture, RTL recommend, link
+        # failsafe, trip accumulation + depth checkpointing. Runs regardless of
+        # replay mode and client count (findings M2/H4/#7).
+        self._tasks.append(asyncio.ensure_future(self._run_supervisor()))
         logger.info("runtime started (model=%s, hardware=%s)", self.config.sim.model, self.config.hardware.enabled)
 
     async def stop(self) -> None:

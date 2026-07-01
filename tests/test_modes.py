@@ -6,6 +6,7 @@ from vanchor.controller.modes import (
     DriftMode,
     HeadingHoldMode,
     ManualMode,
+    WaypointConfig,
     WaypointMode,
 )
 from vanchor.core.geo import angle_difference, destination_point
@@ -194,3 +195,93 @@ def test_anchor_drift_ema_is_frame_rate_independent():
     coarse = run(dt=0.5, steps=20)   # 10 s total
     fine = run(dt=0.05, steps=200)   # 10 s total
     assert coarse == pytest.approx(fine, abs=0.05)
+
+
+# --------------------------------------------------------------------------- #
+# Fix 2: waypoint arrival robustness
+# --------------------------------------------------------------------------- #
+def test_waypoint_mode_advances_when_boat_passes_perpendicular():
+    """A boat that sails PAST a waypoint 10 m abeam must advance to the next,
+    even though it never entered the arrival radius."""
+    wp0 = destination_point(HERE, 100.0, 0.0)   # 100 m due north
+    wp1 = destination_point(HERE, 200.0, 0.0)   # 200 m due north
+    state = _state_at(HERE, heading=0.0)
+    state.waypoints = [Waypoint("WP0", wp0), Waypoint("WP1", wp1)]
+    mode = WaypointMode(WaypointConfig(arrival_radius_m=5.0, allow_reverse=False))
+    mode.activate(state)
+
+    # First tick with the boat at HERE sets up leg_start.
+    mode.update(state, 0.2)
+    assert state.active_waypoint == 0
+
+    # Boat sails past wp0: 110 m north + 10 m east (well outside the 5 m radius,
+    # but abeam-past the perpendicular with <15 m cross-track).
+    boat_past = destination_point(destination_point(HERE, 110.0, 0.0), 10.0, 90.0)
+    state.fix = GpsFix(point=boat_past)
+    mode.update(state, 0.2)
+    assert state.active_waypoint == 1  # advanced even without entering the circle
+
+
+def test_waypoint_mode_perpendicular_advance_does_not_fire_on_wide_miss():
+    """A boat far off to the side (> 3x radius) must NOT trigger the perpendicular
+    advance, to prevent wild-miss false advances."""
+    wp0 = destination_point(HERE, 100.0, 0.0)
+    wp1 = destination_point(HERE, 200.0, 0.0)
+    state = _state_at(HERE)
+    state.waypoints = [Waypoint("WP0", wp0), Waypoint("WP1", wp1)]
+    mode = WaypointMode(WaypointConfig(arrival_radius_m=5.0, allow_reverse=False))
+    mode.activate(state)
+    mode.update(state, 0.2)
+
+    # 110 m north but 100 m off to the side — way beyond 3x arrival radius (15 m).
+    boat_wide = destination_point(destination_point(HERE, 110.0, 0.0), 100.0, 90.0)
+    state.fix = GpsFix(point=boat_wide)
+    mode.update(state, 0.2)
+    assert state.active_waypoint == 0  # NOT advanced
+
+
+def test_waypoint_mode_multi_advance_stacked_waypoints():
+    """Three consecutive waypoints all within the arrival radius must all be
+    consumed in a single tick, leaving the boat heading for the next distant one."""
+    r = 5.0
+    wp0 = destination_point(HERE, 1.0, 0.0)    # 1 m away — within r
+    wp1 = destination_point(HERE, 2.0, 90.0)   # 2 m away — within r
+    wp2 = destination_point(HERE, 3.0, 180.0)  # 3 m away — within r
+    wp3 = destination_point(HERE, 100.0, 0.0)  # 100 m away — outside r
+    state = _state_at(HERE)
+    state.waypoints = [
+        Waypoint("WP0", wp0), Waypoint("WP1", wp1),
+        Waypoint("WP2", wp2), Waypoint("WP3", wp3),
+    ]
+    mode = WaypointMode(WaypointConfig(arrival_radius_m=r, allow_reverse=False))
+    mode.activate(state)
+    mode.update(state, 0.2)
+    # All three stacked waypoints consumed in one tick.
+    assert state.active_waypoint == 3
+
+
+def test_waypoint_mode_normal_arrival_unaffected():
+    """Existing radius-based arrival still advances correctly after the fix."""
+    wp0 = destination_point(HERE, 50.0, 90.0)
+    wp1 = destination_point(HERE, 100.0, 90.0)
+    state = _state_at(HERE)
+    state.waypoints = [Waypoint("WP0", wp0), Waypoint("WP1", wp1)]
+    mode = WaypointMode(WaypointConfig(arrival_radius_m=5.0, allow_reverse=False))
+    mode.activate(state)
+    state.fix = GpsFix(point=wp0)  # exactly on wp0
+    mode.update(state, 0.2)
+    assert state.active_waypoint == 1
+
+
+def test_waypoint_mode_route_complete_fires_on_final_stacked_waypoint():
+    """Multi-advance to the last waypoint must still fire route_complete."""
+    r = 5.0
+    wp0 = destination_point(HERE, 1.0, 0.0)
+    wp1 = destination_point(HERE, 2.0, 90.0)
+    state = _state_at(HERE)
+    state.waypoints = [Waypoint("WP0", wp0), Waypoint("WP1", wp1)]
+    mode = WaypointMode(WaypointConfig(arrival_radius_m=r, allow_reverse=False))
+    mode.activate(state)
+    sp = mode.update(state, 0.2)
+    assert state.route_complete is True
+    assert sp.thrust == 0.0

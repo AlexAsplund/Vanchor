@@ -182,8 +182,11 @@ def _state_at(point, heading=0.0):
 
 
 def test_loop_following_wraps_back_to_start():
-    wp0 = destination_point(HERE, 3.0, 90.0)
-    wp1 = destination_point(HERE, 6.0, 90.0)
+    # Waypoints must sit farther apart than the arrival radius (5 m): a
+    # neighbour inside the radius is legitimately consumed in the same tick by
+    # the stacked-waypoint multi-advance, which is not what this test is about.
+    wp0 = destination_point(HERE, 20.0, 90.0)
+    wp1 = destination_point(HERE, 40.0, 90.0)
     state = _state_at(HERE)
     state.waypoints = [Waypoint("WP0", wp0), Waypoint("WP1", wp1)]
     state.route_loop = True

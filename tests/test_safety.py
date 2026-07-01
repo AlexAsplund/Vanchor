@@ -318,3 +318,52 @@ def test_status_to_dict_shape():
         "min_depth_m",
         "messages",
     }
+
+
+# --------------------------------------------------------------------------- #
+# Fix 3: slew limiting — zero / negative means DISABLED (not "freeze")
+# --------------------------------------------------------------------------- #
+def test_thrust_slew_zero_means_disabled():
+    # max_thrust_slew_per_s=0 must pass thrust through immediately (disabled),
+    # not freeze it at 0 (which was the broken behaviour: 0*dt=0 step).
+    gov = _gov(max_thrust_slew_per_s=0.0)
+    cmd, status = gov.govern(MotorCommand(thrust=1.0), _state(), dt=0.2, fix_is_fresh=True)
+    assert not status.thrust_limited
+    assert cmd.thrust == pytest.approx(1.0)
+
+
+def test_thrust_slew_negative_means_disabled():
+    gov = _gov(max_thrust_slew_per_s=-5.0)
+    cmd, status = gov.govern(MotorCommand(thrust=0.8), _state(), dt=0.2, fix_is_fresh=True)
+    assert not status.thrust_limited
+    assert cmd.thrust == pytest.approx(0.8)
+
+
+def test_steer_slew_zero_means_disabled():
+    # Steering already treated 0 as disabled; verify the symmetry holds.
+    gov = _gov(max_steer_slew_per_s=0.0, max_thrust_slew_per_s=100.0)
+    cmd, status = gov.govern(
+        MotorCommand(thrust=0.1, steering=1.0), _state(), dt=0.2, fix_is_fresh=True
+    )
+    assert not status.steer_limited
+    assert cmd.steering == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Fix 4: Work Area drag alarm — fires while holding, silent while travelling
+# --------------------------------------------------------------------------- #
+def test_drag_alarm_fires_in_work_area_while_holding():
+    gov = _gov(drag_alarm_factor=2.0)
+    st = _state(mode=ControlModeName.WORK_AREA, dist=11.0, radius=5.0)
+    st.work_holding = True   # spot-locked at a spot
+    _, status = gov.govern(MotorCommand(thrust=0.1), st, dt=0.2, fix_is_fresh=True)
+    assert status.drag_alarm
+
+
+def test_drag_alarm_silent_in_work_area_while_travelling():
+    # state.anchor is stale from the last hold; drag alarm must NOT fire.
+    gov = _gov(drag_alarm_factor=2.0)
+    st = _state(mode=ControlModeName.WORK_AREA, dist=11.0, radius=5.0)
+    st.work_holding = False  # travelling to next spot
+    _, status = gov.govern(MotorCommand(thrust=0.1), st, dt=0.2, fix_is_fresh=True)
+    assert not status.drag_alarm

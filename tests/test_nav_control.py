@@ -412,3 +412,34 @@ def test_resend_same_mode_does_not_reset_governor_slew():
     ctrl.state.fix_seq += 1
     cmd = ctrl.control_tick(0.2)
     assert cmd.thrust == pytest.approx(0.8, abs=0.02)
+
+
+# --------------------------------------------------------------------------- #
+# Fix 1: handle_command malformed-payload robustness
+# --------------------------------------------------------------------------- #
+def test_handle_command_bad_heading_no_exception_mode_unchanged():
+    # A non-numeric heading value must not propagate a ValueError up; the mode
+    # must stay MANUAL (no partial mode switch after a parse error).
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    ctrl.handle_command({"type": "heading_hold", "heading": "abc"})  # ValueError
+    assert ctrl.state.mode == ControlModeName.MANUAL
+
+
+def test_handle_command_goto_no_waypoints_no_exception():
+    # An empty / missing waypoints list must not raise.
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    ctrl.handle_command({"type": "goto"})  # no exception
+
+
+def test_handle_command_goto_malformed_waypoint_no_exception():
+    # A waypoint dict missing lat/lon must not propagate a KeyError.
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    ctrl.handle_command({"type": "goto", "waypoints": [{"name": "bad"}]})  # KeyError
+    assert ctrl.state.mode == ControlModeName.MANUAL  # mode not switched
+
+
+def test_handle_command_jog_no_anchor_no_exception():
+    # Jog with no anchor set returns early without error; mode stays MANUAL.
+    ctrl = _controller_at(GeoPoint(59.0, 18.0))
+    ctrl.handle_command({"type": "jog"})
+    assert ctrl.state.mode == ControlModeName.MANUAL

@@ -1127,6 +1127,13 @@
         <div class="row"><span>Steer</span><b id="r-steer">—</b></div>
         <div class="row"><span>Cruise</span><b id="r-cruise">off</b></div>
         <div class="hint" id="sensors-rejected">rejected: hdg —, pos —</div>
+        <div class="ctx-sub">Sensor ages</div>
+        <div class="health-ages">
+          <span class="health-age-chip"><span class="hac-lbl">FIX</span><span class="hac-val" id="health-age-fix">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">HDG</span><span class="hac-val" id="health-age-hdg">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">DEPTH</span><span class="hac-val" id="health-age-depth">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">IMU</span><span class="hac-val" id="health-age-imu">—</span></span>
+        </div>
       </details>
 
       <details class="card" id="debug-card">
@@ -1554,6 +1561,7 @@
   <script src="/static/alerts.js"></script>
   <script src="/static/logs.js"></script>
   <script src="/static/safety.js"></script>
+  <script src="/static/health.js"></script>
   <script src="/static/measure.js"></script>
   <script src="/static/mobile.js"></script>
 </body>

@@ -89,6 +89,16 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             try:
                 snapshot = runtime.telemetry()
                 runtime.recorder.record(snapshot)   # recorder keeps the COMPLETE frame
+                # telemetry() is a pure snapshot now, so the broadcaster (the ~5 Hz
+                # heartbeat) drives depth-sounding accumulation -- keeping the
+                # original per-frame cadence -- and records the frame into the debug
+                # session. The debug write does gzip compression, so it runs off the
+                # event loop (write() is lock-guarded / thread-safe).
+                runtime.record_depth_sounding()
+                if runtime.debug.active:
+                    await asyncio.to_thread(
+                        runtime.debug.write, "telemetry", snapshot, time.time()
+                    )
                 if clients:
                     frame_n += 1
                     # depth_points (~28 KB) is the bulk of a frame; over the high-rate

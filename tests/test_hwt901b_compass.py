@@ -1,9 +1,12 @@
-"""HWT901B compass driver: emits HDM, auto-learns declination (+ mount offset)
-from GPS course, exposes a device menu, and self-registers as a compass source.
+"""HWT901B compass driver: emits HDT (true heading, internally corrected),
+auto-learns declination (+ mount offset) from GPS course, exposes a device menu,
+and self-registers as a compass source.
 Uses a fake sensor -- no hwt901b library and no serial port required.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from vanchor.core.geo import angle_difference
 from vanchor.hardware import registry
@@ -131,16 +134,18 @@ async def test_hz_setting_applies_live_in_loop():
     assert abs(sleep_calls[3] - 0.5) < 0.01
 
 
-# ---- driver: HDM emission + declination modes ---------------------------- #
-async def test_sample_once_off_mode_is_raw_magnetic():
+# ---- driver: HDT emission + declination modes ---------------------------- #
+async def test_sample_once_off_mode_emits_hdt():
+    """'off' mode applies no declination correction but still emits HDT so the
+    navigator cannot mistake the output for a magnetic sentence and double-correct."""
     d = HWT901BCompass(_FakeSensor(123.0), bus=None, declination_mode="off")
-    assert await d.sample_once(0.2) == nmea.encode_hdm(123.0)
+    assert await d.sample_once(0.2) == nmea.encode_hdt(123.0)
 
 
 async def test_sample_once_manual_declination():
     d = HWT901BCompass(_FakeSensor(100.0), bus=None,
                        declination_mode="manual", manual_declination_deg=5.0)
-    assert await d.sample_once(0.2) == nmea.encode_hdm(105.0)
+    assert await d.sample_once(0.2) == nmea.encode_hdt(105.0)
 
 
 async def test_sample_once_auto_declination_from_motion():
@@ -176,7 +181,7 @@ async def test_publishes_imu_sample_with_accel_and_gyro():
     # 1 g down, 12 deg/s yaw rate:
     d = HWT901BCompass(_FakeSensor(50.0, accel=(0.1, 0.0, 1.0), gyro=(0.0, 0.0, 12.0)),
                        bus=bus, declination_mode="off")
-    assert await d.sample_once(0.2) == nmea.encode_hdm(50.0)  # heading still emitted
+    assert await d.sample_once(0.2) == nmea.encode_hdt(50.0)  # heading still emitted
     imus = [p for t, p in bus.events if t == events.IMU_IN]
     assert len(imus) == 1 and isinstance(imus[0], ImuSample)
     assert abs(imus[0].az - 9.80665) < 0.01      # 1 g -> m/s^2
@@ -244,3 +249,26 @@ def test_driver_menu_schema_available_before_any_instance(tmp_path):
     assert menu and menu["device"] == "compass"
     decl = next(s for s in menu["settings"] if s["key"] == "declination_mode")
     assert decl["value"] == "manual"        # saved value overlaid on the schema
+
+
+# ---- HDT round-trip: HWT901B output must not be double-corrected --------- #
+async def test_hwt901b_hdt_not_double_corrected_by_navigator():
+    """HWT901B corrects to true internally and emits HDT.  When a nonzero
+    ``declination_deg`` is configured on the Navigator the heading must still
+    pass through unchanged — HDT signals 'already true', so declination is
+    never applied a second time."""
+    from vanchor.core.state import NavigationState
+    from vanchor.nav.navigator import Navigator
+
+    state = NavigationState()
+    nav = Navigator(state, bus=None, declination_deg=10.0)
+
+    # sensor reads 90° magnetic; manual declination +5° → driver outputs 95° true as HDT
+    d = HWT901BCompass(_FakeSensor(90.0), bus=None,
+                       declination_mode="manual", manual_declination_deg=5.0)
+    sentence = await d.sample_once(0.2)
+    assert sentence == nmea.encode_hdt(95.0)   # label is HDT (true)
+
+    nav.handle_sentence(sentence)
+    # Navigator sees HDT → passes straight through; no extra +10° declination applied
+    assert state.heading_deg == pytest.approx(95.0, abs=0.1)

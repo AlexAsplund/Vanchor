@@ -1,8 +1,8 @@
 """Pluggable compass driver for the WitMotion HWT901B-TTL 9-axis AHRS.
 
 Wraps the external ``hwt901b`` library and adapts it to vanchor's device seam: a
-:class:`~vanchor.hardware.interfaces.Sensor` that emits ``HDM`` NMEA onto the bus
-(``nmea.in``), exactly like ``SimCompass``/``SerialCompass`` -- so the navigator,
+:class:`~vanchor.hardware.interfaces.Sensor` that emits ``HDT`` NMEA onto the bus
+(``nmea.in``) -- so the navigator,
 controller and every mode are unchanged. Registers itself as the compass source
 ``"hwt901b"`` (see :mod:`vanchor.hardware.registry`), so it needs no edit to
 ``app.py``'s build seam.
@@ -238,7 +238,7 @@ class HWT901BCompass(Sensor):
         return self.estimator.update(magnetic_heading, cog, sog, dt, yaw_rate_dps)
 
     async def sample_once(self, dt: float) -> str | None:
-        """Read one full AHRS state and return the HDM heading sentence (or None
+        """Read one full AHRS state and return the HDT heading sentence (or None
         on timeout). Also publishes the raw IMU sample (accel+gyro) on
         :data:`events.IMU_IN` for logging/analysis. One ``read_state`` gets both;
         the blocking serial read runs in a thread so it never stalls the loop."""
@@ -266,7 +266,7 @@ class HWT901BCompass(Sensor):
             imu = _imu_from_state(state)
             if imu is not None:
                 await self.bus.publish(events.IMU_IN, imu)
-        return nmea.encode_hdm(heading)
+        return nmea.encode_hdt(heading)
 
     async def _loop(self) -> None:
         while True:
