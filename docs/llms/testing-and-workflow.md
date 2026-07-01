@@ -4,6 +4,19 @@
 > run/tested, the harness timing, or discover a new operational gotcha, update
 > this file.** This page is mostly hard-won gotchas — keep it current.
 
+## CI (GitHub Actions)
+
+`.github/workflows/ci.yml` runs on every push and pull request:
+
+- **test** job: `python -m pytest -q` on Python 3.11 and 3.12 (matrix,
+  `fail-fast: false`). `pytest-timeout` enforces a **120 s per-test** timeout
+  (configured in `pyproject.toml`).
+- **lint** job: `ruff check src tests` — baseline `E9` (syntax errors) + `F`
+  (pyflakes); `F401`/`F841` suppressed.
+- **js-syntax** job: `node --check` on every `static/*.js`.
+
+Run locally with `make lint` (runs both ruff and node --check).
+
 ## Running locally
 
 ```bash
@@ -70,6 +83,25 @@ paint a light background in JS; you can fire Leaflet events
 (`VA.map.leaflet.fire('click',{latlng})`) but for click-pipeline bugs use **real**
 `pg.mouse`/`pg.touchscreen` (touch context for mobile) — synthetic events can
 mask real failures.
+
+## Chaos / fault-injection suite (`tests/test_chaos.py`)
+
+`tests/test_chaos.py` contains **24 deterministic fault-injection tests** that
+prove the safety floor holds under failure. Coverage includes: tick exception
+(supervised loop zeroes motor + continues), compass silence (guided coast),
+link-loss while in guided and manual modes (respective failsafes), serial EOF
+(reconnect/no-throw), through-zero reversal, NTP clock step, and STOP from all
+11 major modes. See `docs/safety-matrix.md` for the 12-failure-mode×layer×test
+matrix this suite encodes. (Source: `tests/test_chaos.py` line 1 docstring.)
+
+## `tests/conftest.py` — Host-header allowlist
+
+`tests/conftest.py` sets `os.environ.setdefault("VANCHOR_ALLOWED_HOSTS",
+"testserver")` at import time. This allows the FastAPI test client (whose default
+host header is `testserver`) to pass the `_HostCheckMiddleware` that guards
+against DNS-rebinding attacks. Any new test file that uses `TestClient` against
+the real app inherits this automatically (conftest loads before tests). If you
+need to test host rejection, unset the env var in the test.
 
 ## Operational gotchas (these bite every time)
 

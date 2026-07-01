@@ -20,63 +20,64 @@ STOP always works.
 
 ### Phase 0 — Safety floor repairs
 
-1. **(safety floor)** Wire `motor.start()/stop()` into Runtime
-   start/stop/reload + a runtime-level serial-motor test — today the serial
-   motor transport is never opened and real-hardware motor mode is dead on
-   arrival.
-2. **(safety floor)** Supervise the control loop: try/except per tick (zero
+1. ✅ **(safety floor)** Wire `motor.start()/stop()` into Runtime
+   start/stop/reload + a runtime-level serial-motor test.
+2. ✅ **(safety floor)** Supervise the control loop: try/except per tick (zero
    motor + alarm on repeated failure), done-callbacks on all runtime tasks,
-   `controller_heartbeat_age_s` in telemetry with a UI red-banner.
-3. **(safety floor)** Kill the boot-time `manual` command sent by slider
+   `controller_fault` / `controller_tick_age_s` in telemetry with a UI red-banner.
+3. ✅ **(safety floor)** Kill the boot-time `manual` command sent by slider
    binding; gate motor-engaging rail taps behind the existing per-panel Go
    buttons.
-4. **(safety floor)** Manual deadman: treat manual-with-thrust as underway
+4. ✅ **(safety floor)** Manual deadman: treat manual-with-thrust as underway
    (link failsafe → stop), plus an app-level WS heartbeat.
-5. **(safety floor)** Fix both through-zero reverse-interlock bypasses
+5. ✅ **(safety floor)** Fix both through-zero reverse-interlock bypasses
    (governor + serial driver); stop resetting the governor on same-mode
    commands; seed slew anchors from the last applied command.
-6. Fix the X9C digipot INC/CS sequencing in `engine.ino` (NVM wear-out on
+6. ✅ Fix the X9C digipot INC/CS sequencing in `engine.ino` (NVM wear-out on
    every throttle change).
-7. **(safety floor)** Sensor staleness: timestamps on fixes/heading/depth/IMU;
-   stale sensor → forced idle + alarm; ship `fix_failsafe_enabled: true`.
-8. Sign-preserving cruise; fold ANCHOR_ML and Work-Area holds into the drag
-   alarm; move `auto_rtl` planning to an executor (it currently blocks the
-   event loop on a 60 s network fetch).
-9. Sanitize the debug-recorder session name (path-traversal write); Host
-   validation + optional PIN on control/restart/restore endpoints.
-10. **Safety matrix doc**: failure mode (Pi crash / GPS loss / link loss /
-    serial loss / UI crash) × which layer cuts the motor × the test that
-    proves it — then encode it as a chaos-test suite (serial EOF mid-run,
-    sensor silence, mode exception, clock step ⇒ assert boat ends motionless
-    with an alarm).
+7. ✅ **(safety floor)** Sensor staleness: monotonic timestamps on
+   fixes/heading/depth/IMU; stale compass in guided mode → coast + alarm;
+   stale depth → treated as unknown; `fix_failsafe_enabled: true` by default.
+8. ✅ Sign-preserving cruise; fold ANCHOR_ML and Work-Area holds into the drag
+   alarm; move `auto_rtl` planning to an executor.
+9. ✅ Sanitize the debug-recorder session name (path-traversal write); Host
+   validation (`_HostCheckMiddleware`, `VANCHOR_ALLOWED_HOSTS`) on all endpoints.
+10. ✅ **Safety matrix doc** (`docs/safety-matrix.md`): 12 failure modes × detecting
+    layer × behaviour × proving test; **chaos test suite** (`tests/test_chaos.py`,
+    24 deterministic fault-injection tests).
 
 ### Phase 1 — Project infrastructure
 
-11. GitHub Actions CI: pytest + `e2e_smoke.py` + `node --check`, Python
-    3.11/3.12, with `pytest-timeout`.
-12. LICENSE file; adopt ruff (lint+format) and mypy on `core/` +
-    `controller/`; pre-commit.
+11. ✅ GitHub Actions CI: pytest on Python 3.11/3.12, `node --check`, ruff,
+    `pytest-timeout` (120 s).
+12. (partial) LICENSE file; ✅ ruff `E9+F` baseline adopted; mypy on `core/` +
+    `controller/` and pre-commit not yet.
 13. `requirements.lock` for the Pi; cut the `1.0-alpha` tag; `__version__` +
     `/api/version`.
-14. `docs/deploy-pi.md` (systemd unit, install script, health-checked update
-    with rollback); CONTRIBUTING.md; fix stale doc counts; reconcile
-    `docs/ui-contract.md` with code and add a schema-drift test.
+14. (partial) ✅ `docs/ui-contract.md` reconciled with code (~22 commands
+    documented); ✅ stale doc counts fixed; `docs/deploy-pi.md` and
+    CONTRIBUTING.md not yet.
 
 ### Phase 2 — Robustness & health
 
-15. Supervised driver base class: backoff reconnect on EOF/error, `healthy`
-    flag, `last_data_monotonic` — enforced for all drivers.
-16. A dedicated 1 Hz safety supervisor task (link failsafe, RTL recommend,
-    sensor ages, task liveness) — out of `telemetry()`, immune to replay,
-    independent of clients; make `GET /api/state` a pure read.
-17. `health` telemetry block + degraded modes: GPS-lost → coast + alarm;
-    compass-lost → COG-derived heading fallback when making way.
+15. ✅ Supervised driver base class: exponential-backoff reconnect on EOF/error,
+    `healthy` flag, `last_data_monotonic` pollable — implemented in
+    `serial_link.py`; `motor.flush()` no longer raises while the link is down.
+16. ✅ Dedicated ~1 Hz safety supervisor task (`_run_supervisor` in `app.py`):
+    link-failsafe evaluation, RTL recommend, launch capture, trip update,
+    depth-map checkpoint — exception-proof, immune to replay, independent of
+    connected clients; `telemetry()` / `GET /api/state` are pure reads.
+17. (partial) ✅ `health` telemetry block: per-sensor ages, `controller_fault`,
+    `controller_tick_age_s`, staleness flags, per-device `healthy`/`data_age_s`;
+    ✅ health UI banners (`health.js`); COG-derived heading fallback when
+    compass-lost not yet implemented.
 18. Firmware heartbeat round-trip (sequence number echoed in the `A`
     feedback line) so the Pi detects one-way serial failure; parse the
     currently ignored `E` lines.
-19. Measured `dt` + monotonic clocks everywhere; non-blocking telemetry
-    broadcast; move depth-map/debug-recorder writes off the control thread;
-    harden `handle_command` parsing.
+19. (mostly done) ✅ Monotonic clocks everywhere (injectable `mono_fn`); ✅
+    non-blocking telemetry broadcast with per-client bounded queues; ✅ depth-map
+    saves and debug-recorder gzip moved off event loop (`asyncio.to_thread`); ✅
+    `handle_command` hardened against malformed payloads.
 20. Always-on low-rate black-box ring recording with pre-trigger dump on any
     alarm; record applied-vs-desired motor commands.
 
@@ -85,8 +86,9 @@ STOP always works.
 21. Versioned WS envelope (`{v, type, seq, ts}`) with server acks; dual-path
     (WS+POST) STOP that verifies the next telemetry frame and escalates
     visually if unconfirmed within ~1 s.
-22. Telemetry-age watchdog overlay ("data N s old"); Screen Wake Lock while
-    a motor mode is active.
+22. (partial) ✅ Telemetry-age watchdog overlay ("DATA STALE (Ns old) — link may
+    be down" banner in `core.js`); Screen Wake Lock while a motor mode is active
+    not yet implemented.
 23. Server-persisted safety geometry (no-go zones, min-depth) and UI prefs —
     the browser as cache, not the source of truth.
 24. Multi-client model: helm vs observer roles, "another helm is connected",
@@ -120,8 +122,9 @@ STOP always works.
 
 ### Phase 5 — Simulation & testing depth
 
-36. Sim actuation parity: reverse dead-time, soft-start, first-order prop
-    lag in `SimMotorController`.
+36. (partial) ✅ `SimMotorController` opt-in actuation shaping implemented
+    (`reverse_delay_s`, `thrust_slew_per_s`, `thrust_lag_tau_s`, `step(dt)`);
+    not yet wired to the config YAML or device-config API.
 37. Fault injection as first-class sim knobs + API triggers (GPS
     dropout/glitch, compass freeze, serial EOF, NMEA garbage,
     baud-saturation latency) — wired into CI safety scenarios.

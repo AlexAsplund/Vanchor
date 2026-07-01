@@ -290,7 +290,17 @@ class HardwareConfig:
     gps_port: str = "/dev/ttyUSB0"
     compass_port: str = "/dev/ttyUSB1"
     motor_port: str = "/dev/ttyUSB2"
+    # Shared baud fallback (NMEA 0183 standard). Kept for backward compat — if
+    # per-device keys are absent this value is used for compass and motor.
     baudrate: int = 4800
+    # Per-device baud rates. ``gps_baud`` defaults to 38400 because 5 Hz GPS
+    # (RMC + GGA) needs ~8200 bit/s — already 170 % of a 4800-baud link, so the
+    # OS RX buffer fills and fixes arrive stale within seconds. 38400 gives 4.5×
+    # headroom. Set compass_baud / motor_baud only if your device needs it;
+    # otherwise the shared ``baudrate`` (4800) is the right NMEA 0183 default.
+    gps_baud: int = 38400
+    compass_baud: int = 4800
+    motor_baud: int = 4800
     # Sensors also accept "nmea": build NO internal device and let the navigator
     # be fed by external NMEA over the TCP bridge (--nmea-tcp) or inject_nmea —
     # e.g. a phone or chart-plotter GPS. So "GPS from NMEA" is never blocked.
@@ -559,6 +569,9 @@ def apply_env_overrides(config: AppConfig) -> AppConfig:
     _apply("VANCHOR_COMPASS_PORT", config.hardware, "compass_port", str)
     _apply("VANCHOR_MOTOR_PORT", config.hardware, "motor_port", str)
     _apply("VANCHOR_BAUDRATE", config.hardware, "baudrate", int)
+    _apply("VANCHOR_GPS_BAUD", config.hardware, "gps_baud", int)
+    _apply("VANCHOR_COMPASS_BAUD", config.hardware, "compass_baud", int)
+    _apply("VANCHOR_MOTOR_BAUD", config.hardware, "motor_baud", int)
     _apply("VANCHOR_GPS_SOURCE", config.hardware, "gps_source", str)
     _apply("VANCHOR_COMPASS_SOURCE", config.hardware, "compass_source", str)
     _apply("VANCHOR_DEPTH_SOURCE", config.hardware, "depth_source", str)
@@ -715,7 +728,13 @@ hardware:
   gps_port: /dev/ttyUSB0
   compass_port: /dev/ttyUSB1
   motor_port: /dev/ttyUSB2
-  baudrate: 4800
+  baudrate: 4800            # shared fallback; prefer per-device keys below
+  # Per-device baud rates. gps_baud is 38400 by default: a 5 Hz GPS sending
+  # RMC+GGA (~8200 bit/s) saturates a 4800-baud link and causes ever-growing
+  # fix lag. compass_baud / motor_baud default to 4800 (NMEA 0183 standard).
+  gps_baud: 38400
+  compass_baud: 4800
+  motor_baud: 4800
   # Per-device source overrides (null = follow `enabled`). Mix sim + real freely:
   #   gps_source: nmea       # GPS from external NMEA (phone/plotter via nmea_tcp)
   #   motor_source: both     # drive the sim boat AND a real servo (bench testing)

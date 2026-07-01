@@ -88,7 +88,14 @@ hardware:
   gps_port: /dev/ttyUSB0
   compass_port: /dev/ttyUSB1
   motor_port: /dev/ttyUSB2
-  baudrate: 4800
+  baudrate: 4800            # shared fallback for devices without a per-device key
+  # Per-device baud rates. gps_baud MUST be ≥ 38400 for 5 Hz GPS: at 4800 baud
+  # two sentences per fix (RMC+GGA, ~82 bytes each) already consume 170 % of link
+  # capacity, causing the OS RX buffer to fill and fixes to arrive stale within
+  # seconds. compass_baud / motor_baud stay at 4800 (NMEA 0183 standard rate).
+  gps_baud: 38400
+  compass_baud: 4800
+  motor_baud: 4800
 
 nmea_tcp:
   enabled: false

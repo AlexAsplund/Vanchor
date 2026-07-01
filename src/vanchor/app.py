@@ -740,11 +740,37 @@ class Runtime:
         # Persisted + reflected in-memory; devices are rebuilt on the next start.
         return {"ok": True, "restart_required": True}
 
+    # --- GPS baud capacity constants (used for the link-saturation warning) ---
+    # Assume RMC + GGA per fix; each sentence is ≤ 82 bytes; 10 bits per byte
+    # (UART: 8 data + 1 start + 1 stop, no parity at these rates).
+    _GPS_BYTES_PER_SENTENCE: int = 82
+    _GPS_SENTENCES_PER_FIX: int = 2
+    _BAUD_WARN_FRACTION: float = 0.70   # warn when estimated load exceeds 70 %
+
     def _build_serial_gps(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialGps
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialGps(PySerialTransport(hw.gps_port, baudrate=hw.baudrate), self.bus)
+        baud = hw.gps_baud
+        gps_hz = cfg.sensors.gps_hz
+        required_bps = (
+            gps_hz
+            * self._GPS_SENTENCES_PER_FIX
+            * self._GPS_BYTES_PER_SENTENCE
+            * 10  # bits per byte (UART framing)
+        )
+        capacity_bps = baud * self._BAUD_WARN_FRACTION
+        if required_bps > capacity_bps:
+            logger.warning(
+                "gps_baud too low for %.0f Hz — expect growing fix lag; raise "
+                "gps_baud (need ~%d bit/s, %.0f%% of %d baud). Set gps_baud: "
+                "38400 (or higher) in your hardware config.",
+                gps_hz,
+                int(required_bps),
+                100.0 * required_bps / baud,
+                baud,
+            )
+        return SerialGps(PySerialTransport(hw.gps_port, baudrate=baud), self.bus)
 
     def _device_menus(self) -> list:
         """Collect device-specific menus (settings/actions) from the active
@@ -813,13 +839,13 @@ class Runtime:
         from .hardware.serial_devices import SerialCompass
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialCompass(PySerialTransport(hw.compass_port, baudrate=hw.baudrate), self.bus)
+        return SerialCompass(PySerialTransport(hw.compass_port, baudrate=hw.compass_baud), self.bus)
 
     def _build_serial_motor(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialMotorController
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialMotorController(PySerialTransport(hw.motor_port, baudrate=hw.baudrate))
+        return SerialMotorController(PySerialTransport(hw.motor_port, baudrate=hw.motor_baud))
 
     def _construct_devices(self, cfg: AppConfig) -> dict:
         """Build the device set (simulator + sensors + motor) for ``cfg.hardware``.

@@ -26,6 +26,8 @@ for LLMs and takes precedence on implementation detail.)
 - **[analysis.md](analysis.md)** — the headless, deterministic scenario runner +
   auto-tuner for measuring control changes.
 - **[roadmap.md](roadmap.md)** — what's implemented and what's planned next.
+- **[safety-matrix.md](safety-matrix.md)** — 12 failure modes × detecting layer ×
+  boat behaviour × the test that proves it; companion to `tests/test_chaos.py`.
 - **[assumptions.md](assumptions.md)** — the deliberate simplifications taken to
   reach a working baseline.
 

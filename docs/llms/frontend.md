@@ -25,6 +25,7 @@
 | `VA.simEnabled` | `true` in simulation (gate sim-only UI on this). |
 | `VA.onTelemetry(fn)` | subscribe; `fn(t)` runs every frame (~5 Hz). |
 | `VA.send(cmd)` | send a command `{type:"...",...}` (→ `/api/command`). |
+| `VA.sendCritical(cmd, confirmFn)` | send a safety-critical command (e.g. STOP) over **both** WS and `POST /api/command`; if `confirmFn(telemetryFrame)` does not return `true` within ~1.5 s, a red "STOP not confirmed" banner stays up. Default `confirmFn` checks that `mode == "stop"`. |
 | `VA.getJSON(url)` / `VA.postJSON(url, body)` | REST helpers. |
 | `VA.onConnState(fn)` / `VA.connect()` | connection state / (re)connect the socket. |
 | `VA.setText(id,v)`, `VA.fmt`, `VA.num`, `VA.fin`, `VA.continuousAngle` | small DOM/format helpers. |
@@ -32,6 +33,24 @@
 
 Always guard telemetry reads (`VA.fin(...)`, `VA.last && ...`) — fields may be
 absent early or on hardware.
+
+**Telemetry staleness overlay** (`core.js`). If no telemetry frame arrives for
+> 3 s, a full-width `"DATA STALE (Ns old) — link may be down"` banner appears.
+A fresh frame clears it. This is distinct from sensor-level staleness (headings,
+depth) which is handled by `health.js`.
+
+**WS heartbeat.** The browser sends `{type:"ping"}` every ~2 s (client-side
+interval). The server responds with `{type:"pong"}` and counts the message as
+client activity (`runtime.client_activity()`), so the link-failsafe fires within
+the real timeout even on a half-open TCP socket with no user commands.
+
+**Safety engagement rules (no boot-time motor commands).** The slider-binding
+function (`bindSlider`) updates the display value only — it does **not** send a
+`manual` command on bind. Motor engagement only happens when the user explicitly
+taps a "Go" button in a mode's contextual panel. Mode-rail taps (the icon strip)
+open the panel for that mode; they do not activate the motor. This prevents the
+UI from sending a `manual` command on page load or after a service-worker
+auto-reload.
 
 ## The `VA.map` API (`map.js`)
 
@@ -98,12 +117,27 @@ its visibility via computed `display`, not `offsetParent`.)
 - HUD/instrument opacity is driven by the `--hud-opacity` var off the
   `#hud-opacity` slider (`app.js`).
 
+## `health.js` — sensor + controller health banners
+
+`health.js` subscribes to telemetry and drives three classes of UI alerts from
+the `health` block (`VA.last.health`):
+
+- **Red alarm banners** (`sbanner-alarm`) for `controller_fault` (CONTROL FAULT
+  — motor zeroed), `heading_stale` (COMPASS STALE — coasting), and GPS fix loss
+  (GPS LOST, inferred from `fix_age_s > threshold`).
+- **Amber warn banner** (`sbanner-warn`) for `depth_stale`.
+- **Per-sensor age diagnostics** that update the device settings card with live
+  freshness values.
+- Integrates with the **alert bell** — health events ring it.
+- `health.js` is included in the SW shell precache list (see below).
+
 ## The PWA service worker (`sw.js`)
 
 - Strategy is **network-first** for the same-origin shell (fresh from the Pi
   every load; cache only as offline fallback). Don't revert to cache-first — that
   was the "my changes don't show up" bug.
-- `const VERSION` is the cache name. **Bump it when you change shell assets.**
+- `const VERSION` is the cache name — currently `"vanchor-shell-v51"`. **Bump it
+  when you change shell assets.**
 - The `SHELL` precache list enumerates every JS file. **When you add a
   `static/*.js`, add it to `SHELL` *and* to `index.html`'s script tags.**
 - `/api`, `/ws`, and tile hosts are bypassed (never cached by the SW).

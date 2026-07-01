@@ -57,6 +57,30 @@ hardware too — as a prior the calibration drive refines.
 `SimGps`, `SimCompass`, `SimDepthSounder` build NMEA from ground truth + add
 noise. Config defaults live in `SensorConfig` (`core/config.py`).
 
+**Sensor loop robustness.** Each sensor's `_loop` is wrapped in a top-level
+`try/except` (with `logger.exception` + `continue`) so a publish error doesn't
+kill the sim loop. The loops use **monotonic cadence** — the period accounts for
+any drift in the previous iteration so sensor timing stays steady across the
+session.
+
+## `SimMotorController` — opt-in actuation shaping (`sim/devices.py`)
+
+`SimMotorController` models a real propulsion system's physical imperfections,
+defaulting to zero (= OFF, same behaviour as before). Set any parameter non-zero
+to enable:
+
+| Parameter | Effect |
+|-----------|--------|
+| `reverse_delay_s` | When commanded thrust crosses zero, holds at zero for this many seconds before applying the opposite direction (propeller reverse lag). |
+| `thrust_slew_per_s` | Maximum rate of thrust change per second (soft-start / ramp limiting). |
+| `thrust_lag_tau_s` | First-order exponential lag from the slewed target toward the actual applied thrust (prop inertia). |
+
+**`step(dt)`** must be called each physics step (the `Simulator` does this
+automatically). The shaping chain is: commanded → reverse interlock → slew →
+lag → applied. All three parameters are independent — you can mix any subset.
+These are intended for future sim/real parity work; they are not yet wired to
+the config YAML / device-config API.
+
 > ### ⚠️ The GPS-noise lesson (read this)
 > A real marine GPS/chart-plotter **smooths (Kalman/SBAS) the fix before emitting
 > NMEA**, so the track is *steady* frame-to-frame (~0.2–0.4 m), not the ~1.5 m

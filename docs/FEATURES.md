@@ -91,6 +91,10 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **NMEA-over-TCP** server (feed a phone/plotter), **debug recorder** (gzip NDJSON
   capture + replay), typed YAML/JSON config.
 - **Offline operation** — pre-download map tiles + the routing chart for an area.
+- **Safety matrix + chaos suite** — `docs/safety-matrix.md` maps 12 failure modes
+  (Pi crash, GPS loss, link loss, serial loss, compass silence, …) to their
+  detecting layer and proving test; `tests/test_chaos.py` (24 deterministic
+  fault-injection tests) encodes this as a runnable CI gate.
 
 ---
 
@@ -116,7 +120,7 @@ from real hardware.
 - **Battery** — discharge model driven by motor load.
 - **Deterministic harness** — the whole loop (physics, sensors, navigator,
   controller) steps in lockstep with seeded noise for fast, non-flaky tests
-  (~556 tests).
+  (~718 tests).
 
 **Default sim location:** Lake Vänern / Visten area near Karlstad, Sweden
 (59.66275 N, 13.32247 E). Water/routing data from **OpenStreetMap** (Overpass).

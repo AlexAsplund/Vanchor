@@ -63,6 +63,12 @@ exactly. Canonical rates:
 | GPS sample | ~1 Hz | emit an RMC fix (this is the slow, quantised one) |
 | compass sample | ~5 Hz | emit a heading sentence |
 | telemetry broadcast | ~5 Hz | push `state.to_dict()` to all `/ws` clients |
+| **safety supervisor** | **~1 Hz** | link-failsafe evaluation, RTL recommend, launch capture, trip update, depth-map checkpoint — all via `_run_supervisor` in `app.py`; exception-proof, runs regardless of replay mode and connected clients |
+
+**`telemetry()` is a pure snapshot** — it calls `state.to_dict()` and returns it
+without side effects. All safety evaluations and persistence that formerly ran
+inside `telemetry()` now live in the safety supervisor, so `GET /api/state` is a
+safe, idempotent read.
 
 ⚠️ **Do not tick the controller every physics step in a test** — that produces a
 faster control loop than reality and manufactures phantom oscillation. Use
