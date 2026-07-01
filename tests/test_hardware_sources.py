@@ -66,3 +66,25 @@ async def test_start_survives_unopenable_serial_device():
     rt = Runtime(cfg)
     await rt.start()                     # must not raise despite the open failure
     await rt.stop()
+
+
+def test_registry_driver_build_failure_does_not_crash_startup(tmp_path):
+    """A saved config selecting a pluggable driver that can't be built (missing
+    optional lib, no hardware) must NOT crash startup — building is eager, so the
+    failure is caught and the device skipped, leaving the UI reachable to fix it.
+    (Regression: compass_source='hwt901b' without the lib crashed __init__.)"""
+    from vanchor.hardware import registry
+
+    def _boom(runtime, cfg):
+        raise RuntimeError("no hardware / lib here")
+
+    registry.register_driver("compass", "_test_boom", _boom, label="boom")
+    try:
+        cfg = load(None)
+        cfg.data_dir = str(tmp_path)          # isolate from the repo's vanchor_data/
+        cfg.hardware.compass_source = "_test_boom"
+        rt = Runtime(cfg)                     # must not raise
+        assert rt.compass is None             # skipped; the rest of the boat runs
+        assert rt.simulator is not None
+    finally:
+        registry._REGISTRY.pop(("compass", "_test_boom"), None)

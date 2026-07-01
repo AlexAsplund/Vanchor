@@ -29,15 +29,25 @@ class DriverSpec:
     source: str        # the *_source value that selects it, e.g. "hwt901b"
     build: BuildFn     # (runtime, cfg) -> device
     label: str = ""    # human label for the UI
+    menu: dict | None = None  # static device_menu() schema (defaults), so the UI
+                              # can render settings/actions on selection
 
 
 _REGISTRY: dict[tuple[str, str], DriverSpec] = {}
 
 
-def register_driver(kind: str, source: str, build: BuildFn, *, label: str = "") -> None:
-    """Register a driver as a selectable ``{kind}_source`` value. Idempotent
-    (re-registering the same key overwrites)."""
-    _REGISTRY[(kind, source)] = DriverSpec(kind, source, build, label)
+def register_driver(kind: str, source: str, build: BuildFn, *,
+                    label: str = "", menu: dict | None = None) -> None:
+    """Register a driver as a selectable ``{kind}_source`` value. Optional
+    ``menu`` is the driver's default device_menu() schema, so the UI can render
+    its settings/actions the moment the source is selected. Idempotent."""
+    _REGISTRY[(kind, source)] = DriverSpec(kind, source, build, label, menu)
+
+
+def menus(kind: str) -> dict:
+    """``{source: menu_schema}`` for registered drivers of ``kind`` shipping a
+    menu -- used to render device settings on selection."""
+    return {s.source: s.menu for s in _REGISTRY.values() if s.kind == kind and s.menu}
 
 
 def has(kind: str, source: str) -> bool:

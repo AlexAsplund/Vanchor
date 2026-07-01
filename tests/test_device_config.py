@@ -125,14 +125,18 @@ def client(tmp_path):
 
 def test_get_returns_config_and_options(client):
     data = client.get("/api/config/devices").json()
-    assert set(data) == {"hardware", "nmea_tcp", "options", "menus", "restart_required"}
+    assert set(data) == {"hardware", "nmea_tcp", "options", "menus",
+                         "driver_menus", "restart_required"}
     assert data["restart_required"] is False
     assert data["options"] == {
         "sensor": ["sim", "serial", "nmea"],
         "compass": ["sim", "serial", "nmea", "hwt901b"],  # + registered drivers
         "motor": ["sim", "serial", "both"],
     }
-    assert isinstance(data["menus"], list)  # device-specific menus (sim => empty)
+    assert isinstance(data["menus"], list)  # active device menus (sim => empty)
+    # Driver menu schemas by source, shown on selection (hwt901b ships one):
+    assert "hwt901b" in data["driver_menus"]
+    assert data["driver_menus"]["hwt901b"]["device"] == "compass"
     # Mirrors the live (default) config.
     assert data["hardware"]["enabled"] is False
     assert data["nmea_tcp"]["enabled"] is False

@@ -101,8 +101,26 @@ def test_runtime_dispatches_device_menu_settings_and_actions(tmp_path):
     assert any(m.get("device") == "compass" for m in menus)
 
     assert rt.apply_device_setting("compass", "declination_mode", "manual")["ok"]
-    assert rt.compass.declination_mode == "manual"
+    assert rt.compass.declination_mode == "manual"                 # applied live
+    # ...and persisted, so it survives restart / applies when the device is built:
+    assert rt.config.hardware.device_settings["compass"]["declination_mode"] == "manual"
     assert rt.run_device_action("compass", "profile")["ok"] is True
     # a device with no menu (the sim GPS) degrades gracefully, not a crash:
     assert rt.apply_device_setting("gps", "whatever", 1)["ok"] is False
     assert rt.run_device_action("depth", "nope")["ok"] is False
+
+
+def test_driver_menu_schema_available_before_any_instance(tmp_path):
+    """The menu shows on SELECTION: the registry exposes a schema (with saved
+    values overlaid) even when no hwt901b device is running."""
+    from vanchor.app import Runtime
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    cfg.hardware.device_settings = {"compass": {"declination_mode": "manual"}}
+    rt = Runtime(cfg)                       # default sim compass — no hwt901b instance
+    menu = rt._driver_menus().get("hwt901b")
+    assert menu and menu["device"] == "compass"
+    decl = next(s for s in menu["settings"] if s["key"] == "declination_mode")
+    assert decl["value"] == "manual"        # saved value overlaid on the schema

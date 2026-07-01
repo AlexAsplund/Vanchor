@@ -283,6 +283,12 @@ class HardwareConfig:
     depth_source: str | None = None    # "sim" | "nmea" (no serial depth yet)
     motor_source: str | None = None    # "sim" | "serial" | "both"
 
+    # Per-device settings from a driver's device_menu(), keyed by device kind:
+    # e.g. {"compass": {"declination_mode": "manual", "manual_declination_deg": 3}}.
+    # Persisted so menu choices survive a restart and are applied when the driver
+    # is built. Free-form (each driver validates via apply_setting).
+    device_settings: dict = field(default_factory=dict)
+
     def source(self, device: str) -> str:
         """Resolve the source for ``device`` ("gps"/"compass"/"depth"/"motor"),
         honouring its override else falling back to ``enabled``."""

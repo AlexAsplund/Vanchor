@@ -74,6 +74,19 @@ _UNDERWAY_MODES = frozenset(
 )
 
 
+def _overlay_menu_values(schema: dict, saved: dict) -> dict:
+    """Return a copy of a device-menu ``schema`` with each setting's ``value``
+    replaced by the saved value for that key (when present) -- so the UI shows
+    persisted choices, not just factory defaults."""
+    settings = []
+    for s in schema.get("settings", []):
+        s = dict(s)
+        if s.get("key") in saved:
+            s["value"] = saved[s["key"]]
+        settings.append(s)
+    return {**schema, "settings": settings, "actions": list(schema.get("actions", []))}
+
+
 def _build_boat_params(cfg: AppConfig):
     """Build the physics-model parameters for the configured boat geometry."""
     bc = cfg.boat
@@ -613,6 +626,7 @@ class Runtime:
                 "motor": list(self._MOTOR_SOURCES),
             },
             "menus": self._device_menus(),
+            "driver_menus": self._driver_menus(),
             "restart_required": False,
         }
 
@@ -691,19 +705,44 @@ class Runtime:
                     logger.warning("device_menu failed: %s", exc)
         return out
 
+    def _driver_menus(self) -> dict:
+        """Per-source device-menu SCHEMAS from registered drivers, with any saved
+        settings overlaid -- so the UI can render a device's menu the moment its
+        source is selected, before any instance exists. Keyed by source name."""
+        out: dict = {}
+        saved_all = self.config.hardware.device_settings or {}
+        for kind in ("compass",):  # device kinds with pluggable driver menus
+            for src, schema in registry.menus(kind).items():
+                out[src] = _overlay_menu_values(schema, saved_all.get(kind, {}))
+        return out
+
     def _device_by_kind(self, kind: str):
         return {"gps": self.gps, "compass": self.compass,
                 "depth": self.depth_sounder}.get(kind)
 
     def apply_device_setting(self, kind: str, key: str, value) -> dict:
-        """Apply a device-menu setting to the active device of ``kind``."""
+        """Persist a device-menu setting for ``kind`` and apply it live if the
+        device is running. Persisted settings are read when the device is
+        (re)built, so a choice sticks even when the device isn't active yet."""
         fn = getattr(self._device_by_kind(kind), "apply_setting", None)
-        if not callable(fn):
+        known = any(
+            key in {s.get("key") for s in menu.get("settings", [])}
+            for menu in registry.menus(kind).values()
+        )
+        if not known and not callable(fn):
             return {"ok": False, "message": f"no settings for device {kind!r}"}
+        ds = self.config.hardware.device_settings
+        ds.setdefault(kind, {})[key] = value
         try:
-            return fn(key, value)
-        except Exception as exc:  # noqa: BLE001 - surface as a failed result, not a 500
-            return {"ok": False, "message": str(exc)}
+            save_device_overrides(self.config.data_dir, self.config.hardware,
+                                  self.config.nmea_tcp)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "message": f"could not save: {exc}"}
+        # Apply to the running device too, if there is one that accepts it.
+        live = fn(key, value) if callable(fn) else None
+        applied_live = bool(live and live.get("ok"))
+        return {"ok": True, "saved": True, "applied_live": applied_live,
+                "restart_required": not applied_live}
 
     def run_device_action(self, kind: str, name: str, params: dict | None = None) -> dict:
         """Run a device-menu action on the active device of ``kind``."""
@@ -773,7 +812,18 @@ class Runtime:
             compass = SimCompass(simulator.truth, self.bus, update_hz=cfg.sensors.compass_hz,
                                  heading_noise_deg=cfg.sensors.compass_noise_deg)
         elif registry.has("compass", src["compass"]):
-            compass = registry.build_device("compass", src["compass"], self, cfg)
+            # A pluggable driver builds eagerly (may open a port / import an
+            # optional lib), so a failure here must NOT crash startup -- skip it,
+            # log why, and leave the UI reachable to fix the config (mirrors the
+            # serial "unopenable device" resilience). The warning shows in
+            # Settings -> View logs.
+            try:
+                compass = registry.build_device("compass", src["compass"], self, cfg)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "compass source %r could not be built (%s); running without a "
+                    "compass. Change it in Settings -> Devices.", src["compass"], exc)
+                compass = None
         if src["depth"] == "sim":
             depth = SimDepthSounder(
                 simulator.truth,

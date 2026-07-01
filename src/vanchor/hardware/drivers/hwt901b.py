@@ -43,6 +43,40 @@ logger = logging.getLogger("vanchor.hardware.hwt901b")
 MotionProvider = Callable[[], Optional[tuple]]
 
 
+def _menu_schema(declination_mode: str, manual_declination_deg: float, hz: float) -> dict:
+    """The HWT901B device_menu() schema for the given values -- used both live
+    (an instance's values) and as the default the registry advertises so the UI
+    can show the menu the moment ``hwt901b`` is selected."""
+    return {
+        "device": "compass",
+        "title": "Compass — HWT901B AHRS",
+        "settings": [
+            {"key": "declination_mode", "label": "Declination", "type": "select",
+             "options": ["auto", "manual", "off"], "value": declination_mode,
+             "help": "auto = learn declination + mount offset from GPS course."},
+            {"key": "manual_declination_deg", "label": "Manual declination",
+             "type": "number", "min": -30, "max": 30, "step": 0.1, "unit": "°",
+             "value": round(manual_declination_deg, 1),
+             "shown_when": {"declination_mode": "manual"}},
+            {"key": "hz", "label": "Update rate", "type": "number",
+             "min": 1, "max": 50, "step": 1, "unit": "Hz", "value": hz},
+        ],
+        "actions": [
+            {"name": "profile", "label": "Sensor status",
+             "help": "Read the live heading + the learned declination/offset "
+                     "(needs the device running)."},
+            {"name": "calibrate_mag", "label": "Calibrate magnetometer",
+             "help": "Slowly rotate the boat through a full circle to fit the "
+                     "hard/soft-iron correction (interactive; coming next)."},
+        ],
+    }
+
+
+def default_menu() -> dict:
+    """The default (factory) menu schema advertised by the registry."""
+    return _menu_schema("auto", 0.0, 5.0)
+
+
 class HeadingOffsetEstimator:
     """Learn the fixed offset (declination + compass mount error) between the
     magnetic heading and true north, from GPS course-over-ground.
@@ -161,28 +195,7 @@ class HWT901BCompass(Sensor):
 
     # -- device-specific settings menu (rendered generically by the UI) ---- #
     def device_menu(self) -> dict:
-        return {
-            "device": "compass",
-            "title": "Compass — HWT901B AHRS",
-            "settings": [
-                {"key": "declination_mode", "label": "Declination", "type": "select",
-                 "options": ["auto", "manual", "off"], "value": self.declination_mode,
-                 "help": "auto = learn declination + mount offset from GPS course."},
-                {"key": "manual_declination_deg", "label": "Manual declination",
-                 "type": "number", "min": -30, "max": 30, "step": 0.1, "unit": "°",
-                 "value": round(self.manual_declination_deg, 1),
-                 "shown_when": {"declination_mode": "manual"}},
-                {"key": "hz", "label": "Update rate", "type": "number",
-                 "min": 1, "max": 50, "step": 1, "unit": "Hz", "value": self.hz},
-            ],
-            "actions": [
-                {"name": "profile", "label": "Sensor status",
-                 "help": "Read the live heading + the learned declination/offset."},
-                {"name": "calibrate_mag", "label": "Calibrate magnetometer",
-                 "help": "Slowly rotate the boat through a full circle to fit the "
-                         "hard/soft-iron correction (interactive; coming next)."},
-            ],
-        }
+        return _menu_schema(self.declination_mode, self.manual_declination_deg, self.hz)
 
     def apply_setting(self, key: str, value: Any) -> dict:
         if key == "declination_mode" and value in ("auto", "manual", "off"):
@@ -232,7 +245,7 @@ def open_hwt901b_compass(
 
 def _build(runtime: Any, cfg: Any) -> HWT901BCompass:
     """Registry build hook: create the driver wired to the runtime's GPS motion
-    (for auto-declination) and bus."""
+    (for auto-declination) and bus, applying persisted device-menu settings."""
     hw = cfg.hardware
 
     def motion():
@@ -241,10 +254,15 @@ def _build(runtime: Any, cfg: Any) -> HWT901BCompass:
             return None
         return (st.fix.cog_deg, st.sog_knots * 0.514444)  # knots -> m/s
 
+    saved = (getattr(hw, "device_settings", None) or {}).get("compass", {})
     return open_hwt901b_compass(
         hw.compass_port, hw.baudrate, runtime.bus,
-        hz=cfg.sensors.compass_hz, motion_provider=motion,
+        hz=float(saved.get("hz", cfg.sensors.compass_hz)),
+        motion_provider=motion,
+        declination_mode=str(saved.get("declination_mode", "auto")),
+        manual_declination_deg=float(saved.get("manual_declination_deg", 0.0)),
     )
 
 
-register_driver("compass", "hwt901b", _build, label="WitMotion HWT901B AHRS")
+register_driver("compass", "hwt901b", _build,
+                label="WitMotion HWT901B AHRS", menu=default_menu())

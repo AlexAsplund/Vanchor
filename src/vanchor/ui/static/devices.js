@@ -61,6 +61,8 @@
 
   let loaded = false;
   let options = DEFAULT_OPTS;
+  let driverMenus = {};   // { source: menu-schema } — shown on selection
+  let activeMenus = [];   // menus from the running devices (live values)
   let lastRestartRequired = false;
 
   function setStatus(msg, kind) {
@@ -103,11 +105,14 @@
     sel.value = has ? want : "";
   }
 
-  // Reveal serial settings only when any source is explicitly "serial".
+  // Reveal serial settings (ports + baud) when any source is WIRED -- i.e. not
+  // Auto/sim/nmea. Covers "serial", motor "both", and pluggable serial drivers
+  // like "hwt901b" (which needs its port set), without hardcoding driver names.
+  const _WIRELESS = { "": 1, sim: 1, nmea: 1 };
   function anySerial() {
     return SRC_FIELDS.some((f) => {
       const sel = $(f.id);
-      return sel && sel.value === "serial";
+      return sel && !(sel.value in _WIRELESS);
     });
   }
 
@@ -188,7 +193,25 @@
     syncSerial();
     syncNmea();
     setBadge(hw.enabled ? "● hardware" : "sim");
-    renderMenus(cfg.menus);
+    driverMenus = (cfg.driver_menus && typeof cfg.driver_menus === "object") ? cfg.driver_menus : {};
+    activeMenus = Array.isArray(cfg.menus) ? cfg.menus : [];
+    refreshMenus();
+  }
+
+  // Show the menu for the currently-SELECTED source of each device (from the
+  // driver schema, so it appears the instant you pick e.g. HWT901B — before any
+  // restart), plus any running device's live menu not already covered.
+  function refreshMenus() {
+    const list = [];
+    SRC_FIELDS.forEach((f) => {
+      const sel = $(f.id);
+      const src = sel ? sel.value : "";
+      if (src && driverMenus[src]) list.push(driverMenus[src]);
+    });
+    (activeMenus || []).forEach((m) => {
+      if (!list.some((x) => x.device === m.device)) list.push(m);
+    });
+    renderMenus(list);
   }
 
   // ---- device-specific menus (driver device_menu(): settings + actions) --
@@ -260,7 +283,12 @@
       const value = s.type === "toggle" ? input.checked
         : s.type === "number" ? parseFloat(input.value) : input.value;
       VA.postJSON("/api/device/setting", { device, key: s.key, value })
-        .then(() => applyShownWhen(box))   // e.g. reveal manual declination
+        .then((r) => {
+          applyShownWhen(box);   // e.g. reveal manual declination
+          const out = box.querySelector(".dev-menu-out");
+          if (out) out.textContent = (r && r.restart_required)
+            ? "Saved — restart to apply." : "Saved.";
+        })
         .catch(() => {});
     });
     wrap.append(lab, input);
@@ -405,10 +433,10 @@
     });
   }
 
-  // Source selects → toggle serial disclosure.
+  // Source selects → toggle serial disclosure + show the picked driver's menu.
   SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
-    if (sel) sel.addEventListener("change", syncSerial);
+    if (sel) sel.addEventListener("change", () => { syncSerial(); refreshMenus(); });
   });
 
   const nEn = $("dev-nmea-enabled");
