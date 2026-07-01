@@ -109,11 +109,11 @@ def test_setup_logging_idempotent():
     setup_logging("DEBUG")
     root = logging.getLogger()
     first = list(root.handlers)
-    assert len(first) == 1
+    assert len(first) == 2  # stream (console) + the in-memory ring for "View logs"
     assert root.level == logging.DEBUG
 
     setup_logging("INFO")
-    assert len(root.handlers) == 1  # no duplicate handler
+    assert len(root.handlers) == 2  # no accumulation across calls
     assert root.level == logging.INFO
 
     setup_logging("NOT_A_LEVEL")
