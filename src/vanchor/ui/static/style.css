@@ -381,7 +381,10 @@ body.hud-frame-on .heading-tape { display: block; }
   transition: opacity 0.15s ease;
 }
 .hud::after, .steering-gauge::after, .catch-fab::after {
-  content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: -1;
+  /* height:auto is load-bearing: #hud is also `.glass`, whose `.glass::after`
+     highlight sets height:1px -- without this reset that bleeds through and
+     collapses this backing to a 1px sliver, leaving the HUD transparent. */
+  content: ""; position: absolute; inset: 0; height: auto; border-radius: inherit; z-index: -1;
   /* Darker than the general glass so these always-on readouts stay readable
      over the BRIGHT basemaps (Light/Topo/Satellite). The translucent glass let
      the light map show through and washed out the HUD text. */
