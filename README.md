@@ -23,6 +23,40 @@ the boat's own Raspberry Pi.
 > **This is 1.0-alpha** — a from-scratch rewrite that supersedes the 0.1-alpha project.
 > See [`RELEASE.md`](RELEASE.md) for release notes and migration notes.
 
+## Hardware — the boat build
+
+Vanchor-NG runs on any single-board computer that can reach a motor + steering
+driver over serial/GPIO — wire it up however suits your boat. If you'd rather
+not design that part yourself, the companion
+**[vanchor-pcb](https://github.com/AlexAsplund/vanchor-pcb)** project is an
+easy, ready-made option: an open-hardware carrier board (~$41, 12 V,
+125 × 95 mm) that drops an **Orange Pi Zero 3** (or a Raspberry Pi) running
+Vanchor-NG next to a **Raspberry Pi Pico 2** real-time motor controller, with
+an on-board servo bridge, a cabled trolling-motor **thrust-driver board**,
+headers for the **HWT901B** compass/IMU and GPS, and an optional
+**NMEA 2000 / CAN** provision. The Pico holds the **hardware deadman** — it
+ramps the motor to neutral if Vanchor-NG stops talking, so STOP survives a
+computer crash. It's just one convenient way to build the helm, not a
+requirement — and nothing here is needed to *try* Vanchor-NG, which is
+[sim-first](#sim-first).
+
+A typical build wired that way:
+
+```mermaid
+graph TD
+    TAB["📱 Phone / tablet<br/>(installable PWA)"] <-->|"WiFi · HTTP + WebSocket"| VNG
+    subgraph SBC["Orange Pi Zero 3 / Raspberry Pi"]
+      VNG["<b>Vanchor-NG</b><br/>navigator · controller · safety governor"]
+    end
+    GPS["GPS receiver"] -->|"NMEA (serial / TCP)"| VNG
+    HWT["HWT901B AHRS<br/>compass + IMU"] -->|"UART"| VNG
+    VNG <-->|"link (helm PCB)"| PICO["Raspberry Pi Pico 2<br/>real-time motor controller<br/>⏱ 800 ms deadman watchdog"]
+    N2K[("NMEA 2000 bus")] <-->|"CAN"| PICO
+    PICO -->|"PWM"| TD["Thrust-driver board<br/>BTN8982TA H-bridge"] --> MOT(("Trolling motor"))
+    PICO -->|"PWM"| SRV["Servo bridge"] --> WORM["Steering worm servo"]
+    WORM -->|"AS5600 angle feedback"| PICO
+```
+
 ## Screenshots
 
 | | |
