@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from vanchor.app import Runtime
 from vanchor.core.config import load
 from vanchor.nav.depth import parse_depth_features, parse_depth_soundings
@@ -92,7 +94,13 @@ def test_parse_geojson_collects_contours():
          "properties": {"depth_m": 15.0, "kind": "contour"}},
     ]}).encode()
     parsed = parse_depth_features("c.geojson", gj)
-    assert parsed["contours"] == [{"d": 15.0, "pts": [[59.0, 18.0], [59.01, 18.0]]}]
+    # contours are now stored columnar; materialise to the frozen {d, pts} shape.
+    # Coords are packed float32, so compare with a small tolerance (~1 m).
+    cs = list(parsed["contours"])
+    assert len(cs) == 1
+    assert cs[0]["d"] == 15.0
+    flat = [x for pt in cs[0]["pts"] for x in pt]
+    assert flat == pytest.approx([59.0, 18.0, 59.01, 18.0], abs=1e-4)
 
 
 def test_import_keeps_and_windows_contours(tmp_path):
@@ -154,7 +162,8 @@ def test_parse_jsonl_mixed_kinds():
     assert parsed["soundings"][0] == (59.729343, 12.317056, 35.0)
     assert parsed["hardness"][0] == (59.729343, 12.317056, 18.0)
     assert parsed["composition"][0]["pct"] == 75.0
-    assert parsed["composition"][0]["ring"][0] == [59.721141, 12.310318]  # [lat, lon]
+    assert list(parsed["composition"][0]["ring"][0]) == pytest.approx(
+        [59.721141, 12.310318], abs=1e-4)  # [lat, lon], float32-packed
 
 
 def test_parse_jsonl_detected_without_extension():
@@ -187,5 +196,5 @@ def test_parse_malformed_geojson_returns_full_shape():
         "error path must return the same shape as the success path"
     )
     assert result["soundings"] == []
-    assert result["contours"] == []
-    assert result["composition"] == []
+    assert len(result["contours"]) == 0       # empty columnar layer
+    assert len(result["composition"]) == 0

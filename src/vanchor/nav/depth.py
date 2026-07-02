@@ -12,6 +12,9 @@ import logging
 import math
 import os
 import re
+from array import array as _pyarray
+
+import numpy as np
 
 try:
     import orjson
@@ -43,6 +46,198 @@ def _json_loads(data):
     return json.loads(data)
 
 
+# --------------------------------------------------------------------------- #
+# Columnar store for the STATIC imported vector layers (contours, composition) #
+# --------------------------------------------------------------------------- #
+# The imported static chart is huge -- ~140k composition polygons + ~84k depth
+# contours = ~10M vertices. Held as Python lists-of-lists-of-boxed-floats (the
+# old shape) that is ~1.7 GB resident and needs a ~2.9 GB transient peak to load
+# via a whole-file json.loads. Packed as float32 arrays it is ~80 MB.
+#
+# ``ColumnarFeatures`` keeps each layer as three flat numpy arrays -- a packed
+# vertex array, per-feature ring offsets, and a per-feature scalar (depth / pct)
+# -- plus a precomputed per-feature bbox array so windowing is a vectorised mask
+# instead of a 161 ms Python scan. Plain-Python ``{d/pct, pts/ring}`` dicts (the
+# frozen API shape) are materialised ONLY for the <= limit selected features.
+#
+# It also behaves enough like a list (``len``/``bool``/iter/getitem/``extend``)
+# for the frozen import path in app.py, which does ``dm.contours.extend(...)``
+# and reads ``len(...)`` directly.
+
+
+class _FeatureBuilder:
+    """Accumulate features incrementally into flat ``array('f')`` buffers, so a
+    huge import/migration never materialises all-Python intermediate dict lists.
+    ``add(val, verts)`` appends one feature; ``build()`` freezes to numpy."""
+
+    __slots__ = ("val_key", "vtx_key", "_coords", "_offsets", "_vals", "_n")
+
+    def __init__(self, val_key: str, vtx_key: str) -> None:
+        self.val_key = val_key
+        self.vtx_key = vtx_key
+        self._coords = _pyarray("f")      # flat [lat, lon, lat, lon, ...] float32
+        self._offsets = _pyarray("q", [0])  # int64 ring boundaries
+        self._vals = _pyarray("f")        # per-feature scalar (depth / pct)
+        self._n = 0                       # vertices so far
+
+    def add(self, val: float, verts) -> None:
+        c = self._coords
+        n = self._n
+        for la, lo in verts:
+            c.append(la)
+            c.append(lo)
+            n += 1
+        self._n = n
+        self._offsets.append(n)
+        self._vals.append(val)
+
+    def build(self) -> "ColumnarFeatures":
+        coords = np.frombuffer(self._coords, dtype=np.float32).reshape(-1, 2)
+        offsets = np.frombuffer(self._offsets, dtype=np.int64)
+        vals = np.frombuffer(self._vals, dtype=np.float32)
+        return ColumnarFeatures.from_arrays(coords, offsets, vals,
+                                            self.val_key, self.vtx_key)
+
+
+class ColumnarFeatures:
+    """A static vector layer (contours or composition) stored columnar.
+
+    * ``coords``  float32[N, 2]  -- all rings' vertices packed flat, [lat, lon]
+    * ``offsets`` int64[F+1]     -- feature i's ring = coords[offsets[i]:offsets[i+1]]
+    * ``vals``    float32[F]     -- per-feature scalar (``d`` depth / ``pct``)
+    * ``bboxes``  float32[F, 4]  -- (lat_min, lon_min, lat_max, lon_max) per feature
+    """
+
+    __slots__ = ("coords", "offsets", "vals", "bboxes", "val_key", "vtx_key")
+
+    @classmethod
+    def from_arrays(cls, coords, offsets, vals, val_key: str, vtx_key: str) -> "ColumnarFeatures":
+        obj = cls.__new__(cls)
+        obj.coords = np.ascontiguousarray(coords, dtype=np.float32).reshape(-1, 2)
+        obj.offsets = np.ascontiguousarray(offsets, dtype=np.int64).reshape(-1)
+        obj.vals = np.ascontiguousarray(vals, dtype=np.float32).reshape(-1)
+        obj.val_key = val_key
+        obj.vtx_key = vtx_key
+        obj.bboxes = cls._compute_bboxes(obj.coords, obj.offsets)
+        return obj
+
+    @classmethod
+    def empty(cls, val_key: str, vtx_key: str) -> "ColumnarFeatures":
+        return cls.from_arrays(np.empty((0, 2), np.float32), np.zeros(1, np.int64),
+                               np.empty(0, np.float32), val_key, vtx_key)
+
+    @staticmethod
+    def _compute_bboxes(coords, offsets):
+        f = len(offsets) - 1
+        if f <= 0:
+            return np.empty((0, 4), np.float32)
+        starts = offsets[:-1]
+        lat, lon = coords[:, 0], coords[:, 1]
+        return np.stack(
+            [np.minimum.reduceat(lat, starts), np.minimum.reduceat(lon, starts),
+             np.maximum.reduceat(lat, starts), np.maximum.reduceat(lon, starts)],
+            axis=1,
+        ).astype(np.float32, copy=False)
+
+    # -- list-ish surface (the frozen import path treats these like lists) -- #
+    def __len__(self) -> int:
+        return int(self.vals.shape[0])
+
+    def __bool__(self) -> bool:
+        return self.vals.shape[0] > 0
+
+    def _feature(self, i: int) -> dict:
+        a, b = int(self.offsets[i]), int(self.offsets[i + 1])
+        # Round to 6 dp vectorised (float32 -> float64) to match the original
+        # dict producer's precision, then hand out plain-Python nested lists.
+        ring = np.round(self.coords[a:b].astype(np.float64), 6).tolist()
+        return {self.val_key: round(float(self.vals[i]), 1), self.vtx_key: ring}
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return [self._feature(i) for i in range(*key.indices(len(self)))]
+        if key < 0:
+            key += len(self)
+        return self._feature(key)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self._feature(i)
+
+    def extend(self, other) -> None:
+        """Append features from another ColumnarFeatures or an iterable of dicts.
+        Concatenates the underlying arrays (no per-feature dict blow-up when the
+        source is already columnar)."""
+        if isinstance(other, ColumnarFeatures):
+            oc, oo, ov = other.coords, other.offsets, other.vals
+        else:
+            b = _FeatureBuilder(self.val_key, self.vtx_key)
+            for d in other:
+                verts = d.get(self.vtx_key) or []
+                b.add(float(d.get(self.val_key, 0.0)),
+                      [(p[0], p[1]) for p in verts
+                       if isinstance(p, (list, tuple)) and len(p) >= 2])
+            tmp = b.build()
+            oc, oo, ov = tmp.coords, tmp.offsets, tmp.vals
+        if ov.shape[0] == 0:
+            return
+        base = int(self.offsets[-1])
+        self.coords = np.concatenate([self.coords, oc])
+        self.offsets = np.concatenate([self.offsets, oo[1:] + base])
+        self.vals = np.concatenate([self.vals, ov])
+        self.bboxes = self._compute_bboxes(self.coords, self.offsets)
+
+    def window(self, bbox, limit: int) -> list[dict]:
+        """Features whose bbox intersects the (west, south, east, north) query
+        box, capped at ``limit``. Vectorised over the precomputed bbox array."""
+        if self.vals.shape[0] == 0:
+            return []
+        w, s, e, n = bbox
+        bb = self.bboxes
+        mask = (bb[:, 2] >= s) & (bb[:, 0] <= n) & (bb[:, 3] >= w) & (bb[:, 1] <= e)
+        idx = np.nonzero(mask)[0]
+        if limit is not None and idx.shape[0] > limit:
+            idx = idx[:limit]
+        return [self._feature(int(i)) for i in idx]
+
+    @property
+    def nbytes(self) -> int:
+        return int(self.coords.nbytes + self.offsets.nbytes
+                   + self.vals.nbytes + self.bboxes.nbytes)
+
+
+def _as_columnar(store, val_key: str, vtx_key: str) -> ColumnarFeatures:
+    """Coerce ``store`` (already-columnar, or a plain list of feature dicts left
+    behind by app.py's replace-import path) to a ColumnarFeatures."""
+    if isinstance(store, ColumnarFeatures):
+        return store
+    b = _FeatureBuilder(val_key, vtx_key)
+    for d in (store or []):
+        verts = d.get(vtx_key) or []
+        b.add(float(d.get(val_key, 0.0)),
+              [(p[0], p[1]) for p in verts
+               if isinstance(p, (list, tuple)) and len(p) >= 2])
+    return b.build()
+
+
+def _window_dict_list(store, bbox, limit: int, vtx_key: str) -> list[dict]:
+    """Legacy per-vertex windowing for a plain list of feature dicts (used when
+    app.py's replace-import or a test assigns a raw list). Kept for byte-identical
+    behaviour on that path; a feature is kept if ANY vertex falls inside."""
+    if bbox is None:
+        return store[:limit]
+    w, s, e, n = bbox
+    out: list[dict] = []
+    for feat in store:
+        for la, lo in feat.get(vtx_key, ()):
+            if s <= la <= n and w <= lo <= e:
+                out.append(feat)
+                break
+        if len(out) >= limit:
+            break
+    return out
+
+
 class DepthMap:
     def __init__(self, min_distance_m: float = 3.0, max_points: int = 60000) -> None:
         self.min_distance_m = min_distance_m
@@ -55,11 +250,13 @@ class DepthMap:
         self.hardness: list[tuple[float, float, float]] = []
         # Imported depth contours (isobaths): each {"d": depth_m, "pts":
         # [[lat, lon], ...]}. A vector overlay, served windowed to the viewport.
-        self.contours: list[dict] = []
+        # Stored COLUMNAR (ColumnarFeatures) so the huge imported chart is ~80 MB
+        # instead of ~1.7 GB; dicts are materialised only for windowed results.
+        self.contours: ColumnarFeatures | list[dict] = ColumnarFeatures.empty("d", "pts")
         # Imported bottom-composition polygons: each {"pct": 0..100,
         # "ring": [[lat, lon], ...]}. A vector polygon overlay rendered FILLED
-        # (not rasterised), served windowed.
-        self.composition: list[dict] = []
+        # (not rasterised), served windowed. Also stored columnar.
+        self.composition: ColumnarFeatures | list[dict] = ColumnarFeatures.empty("pct", "ring")
         self._last: GeoPoint | None = None
 
     # -- persistence ------------------------------------------------------ #
@@ -85,15 +282,107 @@ class DepthMap:
         except OSError as exc:  # pragma: no cover - defensive
             logger.warning("could not save depth soundings: %s", exc)
 
+    @staticmethod
+    def _npz_path(chart_path: str) -> str:
+        """The columnar sibling of the legacy JSON chart path (depthchart.json ->
+        depthchart.npz). Derived internally so callers still pass the .json path."""
+        root, _ = os.path.splitext(chart_path)
+        return root + ".npz"
+
+    def _save_npz(self, npz_path: str) -> None:
+        """Write the static chart as compressed float32 arrays, atomically."""
+        comp = _as_columnar(self.composition, "pct", "ring")
+        cont = _as_columnar(self.contours, "d", "pts")
+        hard = (np.asarray(self.hardness, dtype=np.float32).reshape(-1, 3)
+                if self.hardness else np.empty((0, 3), np.float32))
+        os.makedirs(os.path.dirname(npz_path) or ".", exist_ok=True)
+        tmp = npz_path + ".tmp"
+        with open(tmp, "wb") as fh:
+            np.savez_compressed(
+                fh,
+                comp_coords=comp.coords, comp_offsets=comp.offsets, comp_vals=comp.vals,
+                cont_coords=cont.coords, cont_offsets=cont.offsets, cont_vals=cont.vals,
+                hard=hard,
+            )
+        os.replace(tmp, npz_path)   # atomic: matches the JSON writer's tmp+replace
+
+    def _load_npz(self, npz_path: str) -> None:
+        with np.load(npz_path) as z:
+            self.composition = ColumnarFeatures.from_arrays(
+                z["comp_coords"], z["comp_offsets"], z["comp_vals"], "pct", "ring")
+            self.contours = ColumnarFeatures.from_arrays(
+                z["cont_coords"], z["cont_offsets"], z["cont_vals"], "d", "pts")
+            hard = z["hard"]
+        self.hardness = [(round(float(r[0]), 6), round(float(r[1]), 6), round(float(r[2]), 1))
+                         for r in hard][-self.max_points:]
+
+    @staticmethod
+    def _iter_json_array(text: str, key: str):
+        """Yield the elements of the top-level array ``"<key>": [ ... ]`` from a
+        JSON chart document WITHOUT decoding the whole doc: locate the array, then
+        ``raw_decode`` one element at a time. Only one element is materialised at
+        once, so the peak is the text plus the growing target arrays -- bounded."""
+        marker = '"%s"' % key
+        ki = text.find(marker)
+        if ki < 0:
+            return
+        br = text.find("[", ki)
+        if br < 0:
+            return
+        dec = json.JSONDecoder()
+        idx, n = br + 1, len(text)
+        while idx < n:
+            while idx < n and text[idx] in " \t\r\n,":
+                idx += 1
+            if idx >= n or text[idx] == "]":
+                return
+            obj, idx = dec.raw_decode(text, idx)
+            yield obj
+
+    def _migrate_json_chart(self, chart_path: str, npz_path: str) -> None:
+        """Parse a legacy depthchart.json into the columnar store with a bounded
+        peak (raw_decode feature-by-feature, no whole-doc json.loads) and write
+        the .npz. Peak stays ~text + arrays (well under ~600 MB for a 259 MB file)."""
+        with open(chart_path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        hard: list[tuple[float, float, float]] = []
+        for el in self._iter_json_array(text, "hardness"):
+            if isinstance(el, (list, tuple)) and len(el) == 3:
+                try:
+                    hard.append((round(float(el[0]), 6), round(float(el[1]), 6),
+                                 round(float(el[2]), 1)))
+                except (TypeError, ValueError):
+                    continue
+        cont_b = _FeatureBuilder("d", "pts")
+        for el in self._iter_json_array(text, "contours"):
+            if not isinstance(el, dict):
+                continue
+            verts = [(p[0], p[1]) for p in (el.get("pts") or [])
+                     if isinstance(p, (list, tuple)) and len(p) >= 2]
+            if len(verts) >= 2:
+                cont_b.add(float(el.get("d", 0.0)), verts)
+        comp_b = _FeatureBuilder("pct", "ring")
+        for el in self._iter_json_array(text, "composition"):
+            if not isinstance(el, dict):
+                continue
+            verts = [(p[0], p[1]) for p in (el.get("ring") or [])
+                     if isinstance(p, (list, tuple)) and len(p) >= 2]
+            if len(verts) >= 3:
+                comp_b.add(float(el.get("pct", 0.0)), verts)
+        del text
+        self.hardness = hard[-self.max_points:]
+        self.contours = cont_b.build()
+        self.composition = comp_b.build()
+        self._save_npz(npz_path)
+
     def save_chart(self, path: str) -> None:
-        """Persist the STATIC imported chart (hardness/contours/composition);
-        written only on import, not on every recorded sounding."""
+        """Persist the STATIC imported chart (hardness/contours/composition) as a
+        compressed columnar .npz beside the given (legacy .json) path; written
+        only on import, not on every recorded sounding."""
         if not self.hardness and not self.contours and not self.composition:
             return
         try:
-            self._atomic_write(path, {"hardness": self.hardness,
-                                      "contours": self.contours,
-                                      "composition": self.composition})
+            self._save_npz(self._npz_path(path))
         except OSError as exc:  # pragma: no cover - defensive
             logger.warning("could not save depth chart: %s", exc)
 
@@ -108,13 +397,21 @@ class DepthMap:
                     self._last = GeoPoint(la, lo)
             except (OSError, ValueError, TypeError) as exc:  # pragma: no cover
                 logger.warning("could not load depth soundings: %s", exc)
-        if chart_path and os.path.exists(chart_path):  # static chart (separate file)
+        if chart_path:                                # static chart (separate file)
+            npz_path = self._npz_path(chart_path)
             try:
-                with open(chart_path, "rb") as fh:
-                    ch = _json_loads(fh.read())
-                self.hardness = [tuple(p) for p in ch.get("hardness", []) if len(p) == 3][-self.max_points:]
-                self.contours = ch.get("contours", []) or []
-                self.composition = ch.get("composition", []) or []
+                if os.path.exists(npz_path):
+                    self._load_npz(npz_path)
+                elif os.path.exists(chart_path):
+                    # Legacy JSON present, no .npz yet: migrate once (bounded peak),
+                    # write the .npz, and rename the JSON aside (keep the user's data).
+                    logger.info("depth chart: migrating legacy JSON %s -> %s "
+                                "(bounded parse)", chart_path, npz_path)
+                    self._migrate_json_chart(chart_path, npz_path)
+                    migrated = chart_path + ".migrated"
+                    os.replace(chart_path, migrated)
+                    logger.info("depth chart: migration complete; renamed %s -> %s",
+                                chart_path, migrated)
             except (OSError, ValueError, TypeError) as exc:  # pragma: no cover
                 logger.warning("could not load depth chart: %s", exc)
         logger.info("loaded %d soundings, %d hardness, %d contours, %d composition",
@@ -139,22 +436,16 @@ class DepthMap:
         limit: int = 5000,
     ) -> list[dict]:
         """Imported depth contours, windowed to a (west, south, east, north)
-        bbox -- a contour polyline is kept if any vertex falls inside. Capped at
-        ``limit`` so a zoomed-out view can't ship the whole (huge) chart."""
+        bbox -- a contour polyline is kept if its bbox intersects the view.
+        Capped at ``limit`` so a zoomed-out view can't ship the whole (huge)
+        chart. Returns freshly-materialised ``{d, pts}`` dicts."""
         if not self.contours:
             return []
-        if bbox is None:
-            return self.contours[:limit]
-        w, s, e, n = bbox
-        out: list[dict] = []
-        for c in self.contours:
-            for la, lo in c.get("pts", ()):
-                if s <= la <= n and w <= lo <= e:
-                    out.append(c)
-                    break
-            if len(out) >= limit:
-                break
-        return out
+        if isinstance(self.contours, ColumnarFeatures):
+            if bbox is None:
+                return self.contours[:limit]
+            return self.contours.window(bbox, limit)
+        return _window_dict_list(self.contours, bbox, limit, "pts")
 
     def composition_in(
         self,
@@ -162,21 +453,15 @@ class DepthMap:
         limit: int = 4000,
     ) -> list[dict]:
         """Imported composition polygons, windowed to a (west, south, east,
-        north) bbox -- a polygon is kept if any ring vertex falls inside."""
+        north) bbox -- a polygon is kept if its bbox intersects the view.
+        Returns freshly-materialised ``{pct, ring}`` dicts."""
         if not self.composition:
             return []
-        if bbox is None:
-            return self.composition[:limit]
-        w, s, e, n = bbox
-        out: list[dict] = []
-        for poly in self.composition:
-            for la, lo in poly.get("ring", ()):
-                if s <= la <= n and w <= lo <= e:
-                    out.append(poly)
-                    break
-            if len(out) >= limit:
-                break
-        return out
+        if isinstance(self.composition, ColumnarFeatures):
+            if bbox is None:
+                return self.composition[:limit]
+            return self.composition.window(bbox, limit)
+        return _window_dict_list(self.composition, bbox, limit, "ring")
 
     def as_grid(
         self,
@@ -547,7 +832,9 @@ def parse_depth_features(filename: str, data: bytes) -> dict:
             or text.lstrip()[:1] in "{[":
         return _parse_geojson_features(text)
     return {"soundings": _parse_csv_xyz_depth(text, xyz=name.endswith(".xyz")),
-            "hardness": [], "contours": [], "composition": []}
+            "hardness": [],
+            "contours": ColumnarFeatures.empty("d", "pts"),
+            "composition": ColumnarFeatures.empty("pct", "ring")}
 
 
 def _coerce(lat: float, lon: float, depth: float) -> tuple[float, float, float] | None:
@@ -645,8 +932,11 @@ def _parse_geojson_features(text: str) -> dict:
     feats = _iter_geojson_features(text)
     soundings: list[tuple[float, float, float]] = []
     hardness: list[tuple[float, float, float]] = []
-    contours: list[dict] = []
-    composition: list[dict] = []
+    # Contours/composition go straight into columnar builders so a huge import
+    # (the real 377k-line file is ~10M vertices) never materialises Python dict
+    # lists for every feature -- the peak stays bounded (float32 buffers).
+    contours = _FeatureBuilder("d", "pts")
+    composition = _FeatureBuilder("pct", "ring")
 
     def depth_of(props: dict, coords: list) -> float | None:
         for k in ("depth", "depth_m", "z", "d", "DEPTH", "Depth"):
@@ -709,7 +999,7 @@ def _parse_geojson_features(text: str) -> dict:
                         if -90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0:
                             pts.append([round(la, 6), round(lo, 6)])
                 if len(pts) >= 2:
-                    contours.append({"d": round(abs(dep), 1), "pts": pts})
+                    contours.add(round(abs(dep), 1), pts)
         if gtype in ("Polygon", "MultiPolygon"):
             # Composition is a VECTOR POLYGON layer: keep the rings + pct and render filled. Do NOT
             # rasterise/interpolate it -- that destroys the boundaries.
@@ -735,6 +1025,6 @@ def _parse_geojson_features(text: str) -> dict:
                     if -90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0:
                         ring.append([round(la, 6), round(lo, 6)])
                 if len(ring) >= 3:
-                    composition.append({"pct": round(pctv, 1), "ring": ring})
+                    composition.add(round(pctv, 1), ring)
     return {"soundings": soundings, "hardness": hardness,
-            "contours": contours, "composition": composition}
+            "contours": contours.build(), "composition": composition.build()}
