@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
+import hashlib
 import ipaddress
 import json
 import logging
@@ -29,6 +31,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("vanchor.ui")
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Placeholder in sw.js replaced at serve time with the content hash below.
+_SW_VERSION_PLACEHOLDER = "__SHELL_VERSION__"
+
+
+@functools.lru_cache(maxsize=4)
+def _shell_version(static_dir: Path) -> str:
+    """A content hash of the whole static shell, used as the service-worker
+    cache name. The SW's cache busts (clients auto-refresh) exactly when the
+    assets change -- no manual version bump. Computed once per process; a deploy
+    restarts the app, so a changed file yields a new hash and a no-op restart
+    keeps the same hash (no needless re-download)."""
+    h = hashlib.sha256()
+    for path in sorted(static_dir.rglob("*")):
+        if path.is_file():
+            h.update(path.relative_to(static_dir).as_posix().encode())
+            h.update(b"\0")
+            h.update(path.read_bytes())
+    return "sh-" + h.hexdigest()[:12]
 
 # WebSocket envelope protocol version (#21). Every server->client message carries
 # a top-level ``type`` and ``v``; telemetry frames additionally carry ``seq``
@@ -362,12 +383,18 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/sw.js")
-    async def service_worker() -> FileResponse:
+    async def service_worker() -> Response:
         """Serve the service worker at root scope so it controls the whole
         origin (not just /static). The ``Service-Worker-Allowed`` header lets it
-        claim a scope above its own URL (#82)."""
-        return FileResponse(
-            STATIC_DIR / "sw.js",
+        claim a scope above its own URL (#82). The ``__SHELL_VERSION__``
+        placeholder is replaced with the static-content hash so the SW cache
+        name (and thus the client's cached shell) refreshes automatically when
+        any asset changes -- no manual version bump."""
+        text = (STATIC_DIR / "sw.js").read_text(encoding="utf-8").replace(
+            _SW_VERSION_PLACEHOLDER, _shell_version(STATIC_DIR)
+        )
+        return Response(
+            content=text,
             media_type="application/javascript",
             headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
         )

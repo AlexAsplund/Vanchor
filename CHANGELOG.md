@@ -2,6 +2,13 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## Unreleased
+
+- Service-worker cache version is now a **content hash of the static shell**,
+  injected into `sw.js` at serve time — the PWA auto-refreshes exactly when
+  assets change, with no manual `VERSION` bump and no needless re-download on a
+  no-op restart.
+
 ## [1.2-alpha] — 2026-07-02
 
 UI rehaul for on-the-water reachability (design spec: `docs/ui-redesign.md`).

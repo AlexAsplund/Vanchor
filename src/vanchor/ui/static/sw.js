@@ -19,7 +19,10 @@
  */
 "use strict";
 
-const VERSION = "vanchor-shell-v57";
+// Replaced at serve time by the server with a content hash of the static shell
+// (see server.py `/sw.js`), so the cache busts automatically when assets change
+// — no manual version bump. Stays a literal only if served unprocessed (dev).
+const VERSION = "__SHELL_VERSION__";
 const CACHE = VERSION;
 
 // The app shell. Kept in sync with index.html's <link>/<script> tags. "/" and

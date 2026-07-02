@@ -809,3 +809,27 @@ def test_audit_n_param_limits_returned(client):
         client.post("/api/command", json={"type": "anchor_hold", "radius_m": i + 1})
     cmds = client.get("/api/audit?n=3").json()["commands"]
     assert len(cmds) == 3  # only the 3 most recent
+
+
+# ---- service worker: content-hash cache versioning ------------------------- #
+
+def test_sw_js_injects_content_hash(client):
+    """/sw.js replaces the __SHELL_VERSION__ placeholder with a content hash so
+    the SW cache busts automatically when static assets change (no manual bump)."""
+    r = client.get("/sw.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+    assert r.headers.get("Service-Worker-Allowed") == "/"
+    assert "__SHELL_VERSION__" not in r.text          # placeholder replaced
+    assert 'const VERSION = "sh-' in r.text            # injected content hash
+    assert client.get("/sw.js").text == r.text         # stable for unchanged assets
+
+
+def test_shell_version_is_a_content_hash(tmp_path):
+    from vanchor.ui.server import _shell_version
+    a = tmp_path / "a"; a.mkdir(); (a / "x.js").write_text("hello")
+    b = tmp_path / "b"; b.mkdir(); (b / "x.js").write_text("hello")
+    c = tmp_path / "c"; c.mkdir(); (c / "x.js").write_text("changed")
+    assert _shell_version(a).startswith("sh-")
+    assert _shell_version(a) == _shell_version(b)      # same content -> same hash
+    assert _shell_version(a) != _shell_version(c)      # changed content -> new hash
