@@ -346,11 +346,22 @@ VA.connect = function () {
 //      auto-replayed — it is marked failed("expired"). This stops a stale
 //      motor-engage tapped during an outage from firing minutes later.
 //  (c) a command that was SENT but unacked when the link dropped MAY be re-sent
-//      ONCE on reconnect to obtain confirmation. VA.send carries idempotent
-//      mode/setpoint commands (e.g. heading_hold, anchor_hold, cruise), which
-//      are safe to repeat; a genuinely non-idempotent action must not rely on
-//      this path.
+//      ONCE on reconnect to obtain confirmation — but ONLY if it is an
+//      idempotent mode/setpoint command (e.g. heading_hold, anchor_hold,
+//      cruise) AND the outage was shorter than RESEND_TTL_MS. Motor-engaging
+//      direct-drive commands (`manual`, `jog` — see _NO_RESEND_TYPES) are
+//      NEVER resent, and any resend whose outage outlived RESEND_TTL_MS is
+//      dropped, so a stale drive command can't fire after the server failsafe
+//      has already STOPped the unattended boat.
 const QUEUE_TTL_MS = 5000;   // rule (b): max age a queued command may be replayed
+const RESEND_TTL_MS = QUEUE_TTL_MS;  // rule (c): max outage age before a resend is dropped
+// SAFETY FLOOR — command types that DIRECTLY ENGAGE THE MOTOR must NEVER be
+// resent on reconnect. They are one-shot direct-drive commands, not the
+// idempotent mode/setpoint commands the resend path was meant for. Replaying a
+// stale `manual {thrust:0.8}` after the link dropped (and the SERVER failsafe
+// already issued STOP for the unattended boat) would lurch the boat forward
+// unattended. STOP (sendCritical) is unaffected — it dual-paths immediately.
+const _NO_RESEND_TYPES = new Set(["manual", "jog"]);
 const MAX_CMD_LOG = 50;
 VA.commandLog = [];          // bounded list of recent commands (with state)
 const _cmdQueue = [];        // entries in "queued" state awaiting a live socket
@@ -412,16 +423,33 @@ function _flushQueue() {
 // expire; their state may transition to failed(timeout) meanwhile — the resend
 // still fires and re-drives them to confirmed.
 function _markSentForResend() {
+  const now = Date.now();
   for (const e of VA.commandLog) {
-    if (e.state === "sent" && (e.resends || 0) < 1 && _resend.indexOf(e) === -1) {
-      _resend.push(e);
+    if (e.state !== "sent" || (e.resends || 0) >= 1 || _resend.indexOf(e) !== -1) {
+      continue;
     }
+    // SAFETY FLOOR: never resend a motor-engaging (direct-drive) command.
+    if (_NO_RESEND_TYPES.has(e.type)) {
+      VA.logLine("not queuing motor-engage command for resend: " + (e.type || "?"));
+      continue;
+    }
+    // Stamp the moment the link dropped so a long outage (long enough for the
+    // server failsafe to STOP the boat) drops the resend instead of replaying it.
+    e.tResendMarked = now;
+    _resend.push(e);
   }
 }
-// Reconnect: re-send each sent-but-unacked command exactly once (rule c).
+// Reconnect: re-send each sent-but-unacked command exactly once (rule c),
+// dropping any whose outage outlived RESEND_TTL_MS (a stale command must not
+// fire after the server failsafe has already acted on the lost link).
 function _resendUnacked() {
+  const now = Date.now();
   const items = _resend.splice(0, _resend.length);
   for (const entry of items) {
+    if (now - (entry.tResendMarked || entry.tSent || entry.tCreated) > RESEND_TTL_MS) {
+      VA.logLine("stale unacked command dropped (not resent): " + (entry.type || "?"));
+      continue;
+    }
     if (ws && ws.readyState === 1) {
       entry.resends = (entry.resends || 0) + 1;
       VA.logLine("re-sending unacked command (idempotent): " + (entry.type || "?"));

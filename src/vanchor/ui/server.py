@@ -75,6 +75,11 @@ def shape_frame(snapshot: dict, full: bool) -> dict:
     * ``waypoints`` -- omitted entirely (absent, not null/empty; a concurrent
       client guard mirrors this contract: waypoints is only applied when the
       key is present in the frame).
+    * ``safety_geometry`` -- omitted entirely (the full no-go polygons change
+      rarely, so they ride only the ~1 Hz full frames, not every 5 Hz frame).
+      The client (``safety.js`` ``onServerGeometry``) treats an ABSENT key as
+      "no change / retain current", exactly like ``waypoints`` -- so a decimated
+      frame missing the key must NOT be read as "server has no geometry".
     * ``track`` -- present but with only its scalar keys (``recording``,
       ``count``, etc.); the ``points`` array is dropped so the UI updates the
       breadcrumb count readout every frame but redraws the trail only on full
@@ -84,7 +89,7 @@ def shape_frame(snapshot: dict, full: bool) -> dict:
         return snapshot
     out: dict = {}
     for k, v in snapshot.items():
-        if k in ("depth_points", "waypoints"):
+        if k in ("depth_points", "waypoints", "safety_geometry"):
             continue
         if k == "track" and isinstance(v, dict):
             out[k] = {sk: sv for sk, sv in v.items() if sk != "points"}
@@ -207,13 +212,17 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         """Send ``ws`` its current role plus the shared presence scalars."""
         n, present = _presence()
         role = "helm" if ws is _helm["ws"] else "observer"
+        msg = json.dumps({
+            "type": "role", "v": _PROTOCOL_V, "role": role,
+            "clients": n, "helm_present": present,
+        })
+        # Per-client timeout mirrors the broadcaster: one wedged socket must not
+        # stall a connect/disconnect. Best-effort — a client that won't drain
+        # within 2 s is discarded rather than blocking the role update.
         try:
-            await ws.send_text(json.dumps({
-                "type": "role", "v": _PROTOCOL_V, "role": role,
-                "clients": n, "helm_present": present,
-            }))
-        except Exception:  # noqa: BLE001 - a dead socket is cleaned up elsewhere
-            pass
+            await asyncio.wait_for(ws.send_text(msg), timeout=2.0)
+        except Exception:  # noqa: BLE001 - drop a dead/wedged socket
+            clients.discard(ws)
 
     async def _broadcast_roles() -> None:
         """Re-send role+presence to every connected client (on any role change)."""

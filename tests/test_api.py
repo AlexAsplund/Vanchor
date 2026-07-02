@@ -401,6 +401,8 @@ def test_shape_frame_full_returns_complete_snapshot():
         "mode": "manual",
         "depth_points": [[59.0, 18.0, 5.0]],
         "waypoints": [{"lat": 59.0, "lon": 18.0, "name": "wp1", "heading": 0.0}],
+        "safety_geometry": {"nogo_zones": [[[59.0, 18.0], [59.1, 18.0], [59.1, 18.1]]],
+                            "min_depth_m": 1.0, "fix_failsafe_enabled": True},
         "track": {"recording": False, "count": 3, "points": [[59.0, 18.0], [59.001, 18.0]]},
         "depth_count": 1,
     }
@@ -408,6 +410,7 @@ def test_shape_frame_full_returns_complete_snapshot():
     assert out is snap or out == snap
     assert "waypoints" in out
     assert "depth_points" in out
+    assert "safety_geometry" in out          # full frames carry the no-go polygons
     assert "points" in out["track"]
     assert out["track"]["count"] == 3
 
@@ -418,12 +421,15 @@ def test_shape_frame_non_full_strips_bulky_arrays():
         "mode": "anchor_hold",
         "depth_points": [[59.0, 18.0, 5.0]],
         "waypoints": [{"lat": 59.0, "lon": 18.0, "name": "wp1", "heading": 0.0}],
+        "safety_geometry": {"nogo_zones": [[[59.0, 18.0], [59.1, 18.0], [59.1, 18.1]]],
+                            "min_depth_m": 1.0, "fix_failsafe_enabled": True},
         "track": {"recording": True, "count": 7, "points": [[59.0, 18.0]]},
         "depth_count": 42,
     }
     out = shape_frame(snap, full=False)
     assert "depth_points" not in out         # omitted
     assert "waypoints" not in out            # absent (not null/empty)
+    assert "safety_geometry" not in out      # absent (rides ~1 Hz full frames only)
     assert "track" in out
     assert "points" not in out["track"]      # array stripped
     assert out["track"]["recording"] is True
@@ -447,6 +453,33 @@ def test_shape_frame_non_full_tolerates_missing_waypoints():
     out = shape_frame(snap, full=False)
     assert "waypoints" not in out
     assert "track" in out and "points" not in out["track"]
+
+
+def test_shape_frame_safety_geometry_only_on_full_frames():
+    """F5: safety_geometry (the full no-go polygons) rides ONLY the ~1 Hz full
+    frames, not every 5 Hz frame.
+
+    Client-side contract (safety.js): the telemetry handler calls
+    ``onServerGeometry`` ONLY when the frame CARRIES ``safety_geometry``
+    (``if (t && t.safety_geometry)``), exactly like the waypoints guard. So a
+    decimated (non-full) frame that OMITS the key is a no-op — the client
+    RETAINS its current geometry and does NOT re-run adoption/migration. An
+    absent key therefore means "no change", never "server has no geometry"
+    (which would wrongly re-migrate/clobber the client's zones). The connect
+    snapshot is a FULL frame, so ``serverGeomSeen`` is still set on connect.
+    """
+    geom = {"nogo_zones": [[[59.0, 18.0], [59.1, 18.0], [59.1, 18.1]]],
+            "min_depth_m": 1.0, "fix_failsafe_enabled": True}
+    snap = {"mode": "manual", "depth_count": 0, "safety_geometry": geom}
+
+    # Full frame: geometry present and unchanged.
+    full = shape_frame(snap, full=True)
+    assert full.get("safety_geometry") == geom
+
+    # Non-full frame: key entirely ABSENT (not null/empty) so the client's
+    # `if (t.safety_geometry)` guard skips adoption and retains current zones.
+    decimated = shape_frame(snap, full=False)
+    assert "safety_geometry" not in decimated
 
 
 # ---- Fix 1: depth overlay endpoints: limit param + truncated flag ----------

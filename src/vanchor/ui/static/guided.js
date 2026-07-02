@@ -266,24 +266,22 @@
     if (el) el.addEventListener("change", () => { if (VA.last && VA.last.mode === "trolling") startTroll(); });
   });
 
-  // Live weave indicator: drive a dot left↔right from telemetry. Prefer a
-  // backend-supplied phase if present, else synthesize from period locally.
+  // Live corridor indicator: show which side of the S the boat is currently on.
+  // Trolling is now a GROUND-TRACK corridor (amplitude = lateral half-width in
+  // METRES), not a time-based heading weave — so we drive the dot ONLY from a
+  // real corridor offset the backend supplies (metres, ±amplitude across the
+  // track). We do NOT synthesize a time-based sine: that animation no longer
+  // matches the ground track and would mislead the operator. With no real
+  // offset the dot rests centred.
   function updateTroll(t) {
     const dot = $("troll-dot");
     if (!dot) return;
     if (t.mode !== "trolling") { dot.style.left = "50%"; return; }
-    const amp = Math.max(1, fnum("troll-amp"));
-    let frac;                            // -1..1 across the track
+    const ampM = Math.max(1, fnum("troll-amp"));   // lateral half-width (m)
     const tr = t.trolling || {};
-    if (VA.fin(tr.offset_deg) !== null) {
-      frac = Math.max(-1, Math.min(1, tr.offset_deg / amp));
-    } else if (VA.fin(t.target_heading) !== null && VA.fin(t.heading_deg) !== null) {
-      let d = ((t.target_heading - t.heading_deg + 540) % 360) - 180;
-      frac = Math.max(-1, Math.min(1, d / amp));
-    } else {
-      const period = Math.max(1, fnum("troll-period"));
-      frac = Math.sin((Date.now() / 1000) * (2 * Math.PI / period));
-    }
+    const offsetM = VA.fin(tr.offset_m);           // real lateral offset (m), if any
+    if (offsetM === null) { dot.style.left = "50%"; return; }
+    const frac = Math.max(-1, Math.min(1, offsetM / ampM));   // -1..1 across the track
     dot.style.left = (50 + frac * 50) + "%";
   }
 
