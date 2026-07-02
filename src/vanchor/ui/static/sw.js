@@ -19,7 +19,7 @@
  */
 "use strict";
 
-const VERSION = "vanchor-shell-v55";
+const VERSION = "vanchor-shell-v56";
 const CACHE = VERSION;
 
 // The app shell. Kept in sync with index.html's <link>/<script> tags. "/" and
@@ -108,6 +108,7 @@ const SHELL = [
   "/static/measure.js",
   "/static/mobile.js",
   "/static/wakelock.js",
+  "/static/views.js",
 ];
 
 // Map-tile hosts handled by offline.js's IndexedDB cache — the SW must not
@@ -179,6 +180,9 @@ self.addEventListener("fetch", (event) => {
           return resp;
         })
         .catch(() =>
+          // Offline fallback. For ANY navigation — including deep-linked
+          // /view/<name> URLs that were never individually cached — serve the
+          // precached index.html shell so views.js can boot and read the path.
           caches.match(req).then(
             (cached) => cached || (req.mode === "navigate" ? caches.match("/index.html") : undefined)
           )

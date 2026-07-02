@@ -31,6 +31,37 @@ def test_index_served(client):
     assert "Vanchor-NG" in r.text
 
 
+def test_view_routes_serve_shell(client):
+    # Every known view URL returns the SAME SPA shell as "/" (the client picks
+    # the layout from the path via body[data-view]).
+    for name in ("chart", "helm", "instruments", "manual"):
+        r = client.get(f"/view/{name}")
+        assert r.status_code == 200, name
+        assert "Vanchor-NG" in r.text
+        assert 'id="map"' in r.text  # identical shell, map element present
+
+
+def test_view_unknown_serves_shell(client):
+    # An unknown view name is not a hard 404 — it serves the shell so the client
+    # can fall back to the default chart view.
+    r = client.get("/view/does-not-exist")
+    assert r.status_code == 200
+    assert "Vanchor-NG" in r.text
+
+
+def test_prefs_roundtrips_view(client):
+    # The Views customisation persists the chosen view + per-view widget toggles
+    # through the prefs KV so it survives a reinstall / syncs across devices.
+    payload = {"views": {"view": "helm", "widgets": {"instruments": {"battery": False}}}}
+    r = client.put("/api/prefs", json=payload)
+    assert r.status_code == 200
+    assert r.json()["views"]["view"] == "helm"
+    r2 = client.get("/api/prefs")
+    got = r2.json()["views"]
+    assert got["view"] == "helm"
+    assert got["widgets"]["instruments"]["battery"] is False
+
+
 def test_state_endpoint_shape(client):
     r = client.get("/api/state")
     assert r.status_code == 200
