@@ -1470,13 +1470,20 @@ class Runtime:
     # Smart "Take me here" water routing (task #43)
     # ------------------------------------------------------------------ #
     def plan_route(
-        self, dest_lat: float, dest_lon: float, mode: str = "fastest", offset_m: float = 25.0
+        self, dest_lat: float, dest_lon: float, mode: str = "fastest",
+        offset_m: float = 25.0, depth_aware: bool = True,
     ) -> dict:
         """Plan a water-only route from the boat's current position.
 
         Synchronous and CPU/IO-heavy (Overpass fetch + shapely/networkx); the UI
         endpoint calls it in an executor. Returns the API contract dict. Does NOT
         start navigation.
+
+        When ``depth_aware`` is set (default) and a ``min_depth_m`` safety
+        threshold is configured, imported depth data (contours + soundings) is
+        turned into a shallow no-go mask so the route proactively goes AROUND
+        shoals instead of relying on the reactive shallow-stop. Falls back
+        transparently to plain routing when there is no depth data.
         """
         from .nav import routing, water
 
@@ -1513,6 +1520,22 @@ class Runtime:
             except OSError as exc:  # pragma: no cover - disk failure
                 logger.warning("water cache store failed: %s", exc)
 
+        # Depth-aware routing: build a shallow no-go mask from imported depth
+        # (contours + soundings) so routes avoid shoals by default. Cheap and
+        # bounded (bbox-windowed, capped); yields None when no depth data exists,
+        # in which case routing is byte-identical to before.
+        avoid_shallow_ll = None
+        min_depth_m = self.config.safety.min_depth_m
+        if depth_aware and min_depth_m and min_depth_m > 0.0:
+            try:
+                # bbox is (south, west, north, east); depth windowing wants
+                # (west, south, east, north).
+                s, w, n, e = bbox
+                avoid_shallow_ll = self.depth_map.shallow_polygons((w, s, e, n), min_depth_m)
+            except Exception as exc:  # pragma: no cover - defensive; never block a plan
+                logger.warning("shallow mask build failed: %s", exc)
+                avoid_shallow_ll = None
+
         result = routing.plan_route(
             start_lat=start_lat,
             start_lon=start_lon,
@@ -1522,6 +1545,7 @@ class Runtime:
             mode=mode,
             shoreline_offset_m=offset_m,
             cancelled=lambda: self._route_plan_cancelled,
+            avoid_shallow_ll=avoid_shallow_ll,
         )
         return {
             "ok": result.ok,

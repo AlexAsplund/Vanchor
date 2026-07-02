@@ -33,6 +33,7 @@ from ..core.models import (
 )
 from ..core.pid import PID
 from ..core.state import NavigationState
+from .estimator import crab_offset_deg
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -99,11 +100,21 @@ class DriftMode(ControlMode):
         self.pid = PID(
             kp=self.config.kp, ki=self.config.ki, kd=0.0, output_min=-1.0, output_max=1.0
         )
+        # The real environmental drift AXIS from the shared estimator (compass deg
+        # the set pushes toward), exposed for telemetry/UI and available as the
+        # natural "let it ride" heading. None until the estimator has settled.
+        self.drift_axis_deg: float | None = None
 
     def activate(self, state: NavigationState) -> None:
         self.pid.reset()
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
+        # Surface the real drift axis learned by the persistent estimator. The
+        # signed-speed regulation below still holds the operator-chosen
+        # ``target_heading`` axis; the estimated axis tells the UI which way the
+        # set actually runs (and is the axis a future "ride the drift" toggle
+        # would hand to target_heading).
+        self.drift_axis_deg = state.est_drift_dir if state.est_drift_settled else None
         self.pid.setpoint = state.drift_target_knots
         # Regulate the SIGNED speed ALONG the held drift heading, not the
         # unsigned speed-over-ground. With the held heading transverse to the
@@ -193,38 +204,15 @@ class AnchorHoldMode(ControlMode):
         self._reverse = False  # hysteresis on the forward/reverse decision
         self._recovering = False  # hysteresis on the recover/station decision
         self._filt: GeoPoint | None = None  # EMA-filtered perceived position
-        self._drift_e = 0.0  # estimated drift velocity (world east, m/s)
-        self._drift_n = 0.0  # estimated drift velocity (world north, m/s)
 
     def activate(self, state: NavigationState) -> None:
         self._reverse = False
         self._recovering = False
         self._filt = None
-        self._drift_e = 0.0
-        self._drift_n = 0.0
-
-    def _update_drift(self, state: NavigationState, state_dt: float) -> None:
-        """Estimate the environmental drift velocity (world frame) by subtracting
-        our own propulsion from the observed GPS velocity, low-passed."""
-        fix = state.fix
-        if fix is None:
-            return
-        v = knots_to_mps(fix.sog_knots)
-        cog = math.radians(fix.cog_deg)
-        v_e, v_n = v * math.sin(cog), v * math.cos(cog)
-        # Our thrust roughly produces thrust*max_speed along the boat heading.
-        h = math.radians(state.heading_deg)
-        thr = state.motor_command.thrust
-        int_e = thr * self.config.boat_max_speed_mps * math.sin(h)
-        int_n = thr * self.config.boat_max_speed_mps * math.cos(h)
-        # dt-scaled EMA weight so the smoothing time constant is fixed at
-        # drift_tau_s regardless of the control rate.
-        dt = max(1e-3, state_dt)
-        a = dt / (self.config.drift_tau_s + dt)
-        self._drift_e += a * ((v_e - int_e) - self._drift_e)
-        self._drift_n += a * ((v_n - int_n) - self._drift_n)
-        state.est_drift_mps = math.hypot(self._drift_e, self._drift_n)
-        state.est_drift_dir = math.degrees(math.atan2(self._drift_e, self._drift_n)) % 360.0
+        # NOTE: the environmental-drift estimate is NOT reset here. It now lives in
+        # the persistent, controller-owned WindCurrentEstimator (published on
+        # ``state.est_drift_*``), so Spot-Lock engages already knowing the set
+        # instead of relearning it over ~10 s on every activation.
 
     def _filtered_position(self, raw: GeoPoint) -> GeoPoint:
         a = self.config.pos_filter_alpha
@@ -258,8 +246,6 @@ class AnchorHoldMode(ControlMode):
         cfg = self.config
         radius = state.anchor_radius_m
 
-        self._update_drift(state, dt)
-
         # Recover (actively re-point at the mark) only when pushed clearly out of
         # the radius; resume station-keeping once back well inside. The
         # hysteresis stops GPS noise from toggling the two. The effective trigger
@@ -291,13 +277,15 @@ class AnchorHoldMode(ControlMode):
             )
 
         # --- Station-keeping inside the radius --------------------------- #
-        drift_mag = math.hypot(self._drift_e, self._drift_n)
-        if cfg.feedforward and drift_mag >= cfg.drift_min_mps:
+        # Drift comes from the shared, persistent estimator (state.est_drift_*),
+        # already warm on activation -- no mode-local relearn.
+        drift_mag = state.est_drift_mps
+        if cfg.feedforward and drift_mag >= cfg.drift_min_mps and state.est_drift_settled:
             # Predictive: point the bow *into* the drift and hold a steady
             # counter-thrust (feed-forward), so the boat sits still against
-            # wind/current instead of drifting out and darting back. The bow
-            # axis is the direction opposing the drift.
-            held = math.degrees(math.atan2(-self._drift_e, -self._drift_n)) % 360.0
+            # wind/current instead of drifting out and darting back. The bow axis
+            # opposes the drift direction (which points where the drift pushes).
+            held = normalize_deg(state.est_drift_dir + 180.0)
             feed_forward = cfg.feedforward_gain * drift_mag / cfg.boat_max_speed_mps
         else:
             # No significant drift learned yet: hold the current heading.
@@ -374,6 +362,13 @@ class WaypointConfig:
     reverse_efficiency: float = 0.6
     turn_rate_dps: float = 18.0
     boat_speed_mps: float = 1.6
+    # Crab-angle feed-forward: bias the commanded heading upwind/upstream by the
+    # crab angle needed to hold the GROUND track against the estimated beam drift
+    # (from the shared WindCurrentEstimator). It ADDS to the cross-track feedback
+    # rather than replacing it, and only engages once the estimate is settled --
+    # otherwise the boat falls back to pure XTE feedback. Bounded to keep it safe.
+    crab_feedforward: bool = True
+    max_crab_deg: float = 25.0
 
 
 class WaypointMode(ControlMode):
@@ -500,8 +495,23 @@ class WaypointMode(ControlMode):
             -self.config.max_xte_correction_deg,
             min(self.config.max_xte_correction_deg, self.config.xte_gain * xte.distance_m),
         )
+        # Crab feed-forward: point the bow into the estimated beam drift so the
+        # ground track (not just the heading) holds. It ADDS to the XTE feedback
+        # -- the feedback still corrects residual error and short-term gusts, the
+        # feed-forward removes the steady bias the feedback would otherwise have to
+        # chase (especially at low speed, where xte_gain saturates). Falls back to
+        # pure feedback until the estimate is settled.
+        crab = 0.0
+        if self.config.crab_feedforward and state.est_drift_settled:
+            crab = crab_offset_deg(
+                bearing,
+                state.est_drift_east,
+                state.est_drift_north,
+                self.config.throttle * self.config.boat_speed_mps,
+                max_crab_deg=self.config.max_crab_deg,
+            )
         # Positive xte => boat is right of track => steer left => reduce heading.
-        heading = normalize_deg(bearing - correction)
+        heading = normalize_deg(bearing - correction + crab)
         return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
 
 

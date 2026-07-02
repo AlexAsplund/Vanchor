@@ -154,6 +154,38 @@ def _bounded_basin(
     return body
 
 
+def _subtract_shallow(
+    basin: BaseGeometry,
+    shallow_ll: BaseGeometry,
+    proj: Projection,
+    boat_pt: Point,
+) -> BaseGeometry | None:
+    """Subtract shallow no-go areas (lon/lat geometry) from the boat's ``basin``.
+
+    Returns the boat's navigable water body with the shallow areas removed and
+    re-generalized (bounded vertex count), or ``None`` if the subtraction empties
+    the basin -- in which case the caller keeps the full basin. Keeping only the
+    boat's component means a shoal that splits the lake leaves us with the reach
+    the boat is in; if the destination lands in a severed reach, planning simply
+    finds no path and the caller falls back gracefully.
+    """
+    shallow_m = proj.to_metric(shallow_ll)
+    if not shallow_m.is_valid:
+        shallow_m = shallow_m.buffer(0)
+    if shallow_m.is_empty:
+        return None
+    cut = basin.difference(shallow_m)
+    if not cut.is_valid:
+        cut = cut.buffer(0)
+    if cut.is_empty:
+        return None
+    body = _water_body_for(boat_pt, cut)
+    simple = body.simplify(ROUTE_SIMPLIFY_M)
+    if not simple.is_empty and simple.is_valid:
+        body = _largest_polygon(simple) if simple.geom_type == "MultiPolygon" else simple
+    return None if body.is_empty else body
+
+
 def _simplify_to_waypoints(
     line_m: LineString,
     proj: Projection,
@@ -205,6 +237,9 @@ def _plan_fastest_metric(
     dest_m: Point,
     water_m: BaseGeometry,
     cancelled: Callable[[], bool] | None = None,
+    *,
+    soft_m: BaseGeometry | None = None,
+    soft_penalty: float = 1.0,
 ) -> LineString | None:
     """Shortest water-only polyline from ``start_m`` to ``dest_m`` (metric).
 
@@ -214,9 +249,17 @@ def _plan_fastest_metric(
     with foci start/dest -- so routing across a small part of a big lake ignores
     far-off shore. If that prunes a needed detour (no path), we retry on the full
     vertex set.
+
+    ``soft_m`` (metric geometry, e.g. a near-shallow penalty band) softly steers
+    the search away from those areas: any visibility edge crossing it has its A*
+    weight multiplied by ``soft_penalty`` (>= 1). The heuristic stays the raw
+    straight-line distance -- a lower bound on the penalised cost, so A* remains
+    admissible. Shallow water can still be crossed if it is the only way through.
     """
     prepared = prep(water_m)
-    if prepared.covers(LineString([start_m, dest_m])):
+    soft_prep = prep(soft_m) if (soft_m is not None and not soft_m.is_empty
+                                 and soft_penalty > 1.0) else None
+    if soft_prep is None and prepared.covers(LineString([start_m, dest_m])):
         return LineString([start_m, dest_m])  # direct line of sight
 
     verts = _boundary_vertices(water_m)
@@ -250,7 +293,10 @@ def _plan_fastest_metric(
             for j in range(i + 1, len(unique)):
                 seg = LineString([(ax, ay), unique[j]])
                 if prepared.covers(seg):
-                    graph.add_edge(i, j, length=seg.length)
+                    w = seg.length
+                    if soft_prep is not None and soft_prep.intersects(seg):
+                        w *= soft_penalty
+                    graph.add_edge(i, j, length=w)
 
         def heuristic(a: int, b: int) -> float:
             return math.hypot(unique[a][0] - unique[b][0], unique[a][1] - unique[b][1])
@@ -376,6 +422,9 @@ def plan_route(
     mode: str = "fastest",
     shoreline_offset_m: float = 25.0,
     cancelled: Callable[[], bool] | None = None,
+    avoid_shallow_ll: BaseGeometry | None = None,
+    penalize_shallow_ll: BaseGeometry | None = None,
+    shallow_penalty: float = 4.0,
 ) -> RouteResult:
     """Plan a water-only route over an already-assembled water polygon.
 
@@ -385,6 +434,17 @@ def plan_route(
     ``cancelled`` is an optional predicate polled periodically during the heavy
     visibility-graph build; if it returns True the plan aborts and returns a
     cancelled result (#54).
+
+    **Depth-awareness (optional, default off -- existing callers unchanged).**
+
+    * ``avoid_shallow_ll`` -- shallow AREAS (lon/lat shapely geometry, e.g. from
+      :meth:`DepthMap.shallow_polygons`) treated as HARD no-go: subtracted from
+      navigable water so routes go *around* shoals. If the subtraction would trap
+      the start/destination or leave no path, the planner falls back to routing
+      on the full water (a note is logged) so it never returns worse than before.
+    * ``penalize_shallow_ll`` -- a SOFT penalty band (lon/lat geometry): edges
+      crossing it are weighted ``shallow_penalty``x in the fastest search, so
+      A* prefers deeper water but can still cross if unavoidable.
     """
     try:
         return _plan_route_inner(
@@ -396,6 +456,9 @@ def plan_route(
             mode=mode,
             shoreline_offset_m=shoreline_offset_m,
             cancelled=cancelled,
+            avoid_shallow_ll=avoid_shallow_ll,
+            penalize_shallow_ll=penalize_shallow_ll,
+            shallow_penalty=shallow_penalty,
         )
     except RoutePlanCancelled:
         return RouteResult(False, message="Route planning cancelled.", mode=mode)
@@ -411,6 +474,9 @@ def _plan_route_inner(
     mode: str,
     shoreline_offset_m: float,
     cancelled: Callable[[], bool] | None,
+    avoid_shallow_ll: BaseGeometry | None = None,
+    penalize_shallow_ll: BaseGeometry | None = None,
+    shallow_penalty: float = 4.0,
 ) -> RouteResult:
     _check_cancel(cancelled)
     proj = Projection.for_point(dest_lon, dest_lat)
@@ -443,6 +509,14 @@ def _plan_route_inner(
 
     req_mode = mode  # the requested mode (the retry loop must not flip it)
 
+    # Soft penalty band (metric): edges crossing near-shallow water are weighted
+    # up so A* prefers deeper routes but can still cross if it must.
+    soft_m: BaseGeometry | None = None
+    if penalize_shallow_ll is not None and not penalize_shallow_ll.is_empty:
+        soft_m = proj.to_metric(penalize_shallow_ll)
+        if not soft_m.is_valid:
+            soft_m = soft_m.buffer(0)
+
     def _plan(b: BaseGeometry, s_m: Point, d_m: Point) -> tuple[LineString | None, str, str]:
         """Plan on geometry ``b``; returns (line, result_mode, message)."""
         if req_mode == "shoreline":
@@ -450,36 +524,66 @@ def _plan_route_inner(
             if ln is not None:
                 return ln, "shoreline", ""
             # Fall back to fastest rather than blocking the request.
-            fb = _plan_fastest_metric(s_m, d_m, b, cancelled)
+            fb = _plan_fastest_metric(s_m, d_m, b, cancelled,
+                                      soft_m=soft_m, soft_penalty=shallow_penalty)
             msg = f"Shoreline mode unavailable ({reason}); returned fastest route instead." if fb is not None else ""
             return fb, "fastest", msg
-        return _plan_fastest_metric(s_m, d_m, b, cancelled), "fastest", ""
+        return _plan_fastest_metric(s_m, d_m, b, cancelled,
+                                    soft_m=soft_m, soft_penalty=shallow_penalty), "fastest", ""
 
-    message = ""
-    if _vertex_count(basin) <= MAX_PLAN_VERTS:
-        line_m, mode, message = _plan(basin, start_m, dest_m)
-    else:
+    def _run(nav: BaseGeometry) -> tuple[LineString | None, str, str, BaseGeometry]:
+        """Plan on ``nav`` (the full basin, or a shallow-subtracted variant),
+        returning (line, result_mode, message, geometry-used). Bounds a huge
+        basin exactly as before. Returns ``line=None`` if the start/dest can't be
+        reached on ``nav`` (so the caller can fall back to a different geometry).
+        """
+        s_m, ss = _snap_into_water(Point(sx, sy), nav)
+        d_m, sd = _snap_into_water(Point(dx, dy), nav)
+        if ss > MAX_SNAP_M or sd > MAX_SNAP_M:
+            return None, req_mode, "", nav
+        if _vertex_count(nav) <= MAX_PLAN_VERTS:
+            ln, m, msg = _plan(nav, s_m, d_m)
+            return ln, m, msg, nav
         # Huge water body (e.g. a lake merged with a far larger one via a river):
         # the O(n^2) visibility graph and the shoreline ring are intractable at
         # full detail and would hang. Bound the planning geometry -- clip to a
         # corridor around the route + cap the vertex count -- widening the corridor
         # (and finally dropping it, but STILL capped) if no route is found, so a
         # route is still produced. Every attempt is bounded; it can never hang.
-        direct = start_m.distance(dest_m)
+        direct = s_m.distance(d_m)
         base = min(MAX_CORRIDOR_M, max(MIN_CORRIDOR_M, direct * 0.15))
-        line_m = None
         for corridor_m in (base, base * 3.0, None):
-            pb = _bounded_basin(basin, start_m, dest_m, corridor_m, MAX_PLAN_VERTS)
+            pb = _bounded_basin(nav, s_m, d_m, corridor_m, MAX_PLAN_VERTS)
             if pb.is_empty:
                 continue
-            s_m, ss = _snap_into_water(start_m, pb)
-            d_m, sd = _snap_into_water(dest_m, pb)
-            if ss > MAX_SNAP_M or sd > MAX_SNAP_M:
+            ps_m, pss = _snap_into_water(s_m, pb)
+            pd_m, psd = _snap_into_water(d_m, pb)
+            if pss > MAX_SNAP_M or psd > MAX_SNAP_M:
                 continue
-            line_m, mode, message = _plan(pb, s_m, d_m)
-            if line_m is not None:
-                basin = pb  # final waypoint simplify + coverage check use this geometry
-                break
+            ln, m, msg = _plan(pb, ps_m, pd_m)
+            if ln is not None:
+                return ln, m, msg, pb
+        return None, req_mode, "", nav
+
+    # Depth-aware HARD avoidance: subtract shallow areas from the boat's basin and
+    # try that first; fall back to the full basin if it isolates the start/dest or
+    # yields no path (so depth-awareness never returns worse than plain routing).
+    attempts: list[tuple[BaseGeometry, bool]] = []
+    if avoid_shallow_ll is not None and not avoid_shallow_ll.is_empty:
+        nav_basin = _subtract_shallow(basin, avoid_shallow_ll, proj, Point(sx, sy))
+        if nav_basin is not None:
+            attempts.append((nav_basin, True))
+    attempts.append((basin, False))
+
+    line_m = None
+    message = ""
+    for nav, is_depth in attempts:
+        line_m, mode, message, basin = _run(nav)
+        if line_m is not None:
+            if not is_depth and len(attempts) > 1:
+                logger.info("depth-aware routing fell back to full water "
+                            "(shallow subtraction left no route)")
+            break
 
     if line_m is None:
         return RouteResult(False, message="No water route to the destination.", mode=mode)

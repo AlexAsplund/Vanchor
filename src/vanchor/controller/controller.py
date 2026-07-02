@@ -34,6 +34,7 @@ from ..core.pid import PID
 from ..core.state import NavigationState
 from ..hardware.interfaces import MotorController
 from ..nav.track import TrackRecorder
+from .estimator import EstimatorConfig, WindCurrentEstimator
 from .modes import (
     AnchorConfig,
     AnchorHoldMode,
@@ -188,6 +189,7 @@ class Controller:
         orbit_config: OrbitConfig | None = None,
         trolling_config: TrollingConfig | None = None,
         safety_config: SafetyConfig | None = None,
+        estimator_config: EstimatorConfig | None = None,
         cruise_pid: PID | None = None,
         jog_increment_m: float = 1.5,
         track_min_distance_m: float = 5.0,
@@ -202,6 +204,21 @@ class Controller:
         # mono_fn, which is what the navigator stamps receive-times with).
         self._mono_fn = mono_fn
         self.helm = helm or Helm()
+
+        # Persistent wind/current (drift) estimator: ONE instance, fed every
+        # control tick in EVERY mode, so the environmental drift estimate is
+        # always warm. It NEVER resets on a mode change -- so Spot-Lock, waypoint
+        # crab feed-forward and drift mode all engage already knowing the set,
+        # instead of relearning it. Its estimate is published onto ``state`` for
+        # any mode (and the HUD) to read.
+        if estimator_config is None:
+            # Keep the estimator's thrust-decoupling boat speed in step with the
+            # boat spec app.py configured on the anchor config, so it doesn't need
+            # its own tuning path.
+            estimator_config = EstimatorConfig()
+            if anchor_config is not None:
+                estimator_config.boat_max_speed_mps = anchor_config.boat_max_speed_mps
+        self.estimator = WindCurrentEstimator(estimator_config)
 
         # Cruise Control: an optional SOG (speed-over-ground) PID that takes over
         # the throttle of guided "underway" modes when a target speed is set.
@@ -262,6 +279,11 @@ class Controller:
     # Core control logic (synchronous, deterministic)
     # ------------------------------------------------------------------ #
     def control_tick(self, dt: float) -> MotorCommand:
+        # Update the persistent drift estimate FIRST, so the active mode sees a
+        # fresh ``state.est_drift_*`` this tick. It decouples our own propulsion
+        # using the PREVIOUS tick's applied command (state.motor_command), exactly
+        # as the old mode-local estimator did.
+        self.estimator.update(self.state, dt)
         mode = self.modes[self.state.mode]
         setpoint = mode.update(self.state, dt)
         setpoint = self._apply_cruise(setpoint, dt)

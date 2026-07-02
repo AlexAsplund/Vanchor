@@ -130,9 +130,19 @@ class NavigationState:
     bearing_to_dest: float = 0.0
     last_apb: str | None = None
 
-    # Anchor controller's learned environmental drift (for display / feed-forward).
+    # Shared wind/current estimator's learned environmental drift velocity (world
+    # frame), published every control tick by the persistent
+    # ``WindCurrentEstimator`` and consumed by waypoint crab feed-forward, drift
+    # mode and Spot-Lock. ``est_drift_mps`` / ``est_drift_dir`` are the magnitude
+    # and the compass direction the drift pushes TOWARD; east/north are the
+    # components; ``settled`` gates feed-forward consumers (they fall back to pure
+    # feedback until it is True); ``confidence`` is a 0..1 quality signal.
     est_drift_mps: float = 0.0
     est_drift_dir: float = 0.0  # degrees the drift pushes toward
+    est_drift_east: float = 0.0
+    est_drift_north: float = 0.0
+    est_drift_settled: bool = False
+    est_drift_confidence: float = 0.0
 
     # Latest parsed APB (decomposed to keep core/ free of nav imports) used by
     # the external-autopilot FollowAPB mode.
@@ -194,6 +204,7 @@ class NavigationState:
             "bearing_to_dest": round(self.bearing_to_dest, 2),
             "est_drift_mps": round(self.est_drift_mps, 3),
             "est_drift_dir": round(self.est_drift_dir, 1),
+            "est_drift_settled": self.est_drift_settled,
             "last_apb": self.last_apb,
             "launch": {
                 "lat": self.launch.lat if self.launch else None,

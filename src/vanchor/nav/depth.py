@@ -552,6 +552,119 @@ class DepthMap:
             return self.composition.window(bbox, limit)
         return _window_dict_list(self.composition, bbox, limit, "ring")
 
+    # -- depth-aware routing: shallow no-go mask -------------------------- #
+    def shallow_polygons(
+        self,
+        bbox: tuple[float, float, float, float] | None,
+        min_depth_m: float,
+        *,
+        margin_m: float = 1.0,
+        cell_m: float = 20.0,
+        contour_band_m: float = 12.0,
+        max_features: int = 4000,
+    ):
+        """Areas shallower than ``min_depth_m + margin_m`` as a shapely geometry
+        in **LON/LAT** order (x=lon, y=lat), or ``None`` when the imported depth
+        data yields no shallow area (so routing gets no false obstacles).
+
+        Used by the router to proactively avoid shoals instead of relying on the
+        reactive shallow-stop. Two complementary, deliberately COARSE sources --
+        both DEPTH, never the bottom-composition/hardness layer:
+
+        * **Soundings grid.** Windowed soundings (``bbox``) are binned into
+          ~``cell_m`` metre square cells; a cell whose MEAN depth is below the
+          threshold becomes a square shallow polygon. The cell size is the
+          resolution of the shallow-edge approximation.
+        * **Contours.** Windowed depth contours (isobaths) with depth below the
+          threshold become shallow polygons: a CLOSED isobath is FILLED (its
+          interior is the shoal); an OPEN one is BUFFERED into a thin strip
+          ``contour_band_m`` wide (we only know the line is shallow, not which
+          side is shallower, so a symmetric band is the conservative guess).
+
+        Reuses the columnar bbox windowing and caps feature counts, so it stays
+        cheap on a Pi (composition's ~140k polygons are never touched -- that
+        layer is bottom hardness, not depth). Buffering/cell sizing converts
+        metres to degrees with a flat mean-latitude factor (fine for a coarse
+        safety mask).
+        """
+        import math as _math
+
+        from shapely.geometry import LineString, Polygon
+        from shapely.ops import unary_union
+
+        threshold = float(min_depth_m) + float(margin_m)
+        if threshold <= 0.0:
+            return None
+        polys: list = []
+
+        if bbox is not None:
+            w, s, e, n = bbox
+        else:
+            w, s, e, n = -180.0, -90.0, 180.0, 90.0
+
+        # -- soundings -> square shallow cells ------------------------------ #
+        pts = [p for p in self.points if s <= p[0] <= n and w <= p[1] <= e]
+        if pts:
+            mean_lat = sum(p[0] for p in pts) / len(pts)
+            dlat = cell_m / _M_PER_DEG_LAT
+            dlon = cell_m / (_M_PER_DEG_LAT * max(0.01, _math.cos(_math.radians(mean_lat))))
+            lat0 = min(p[0] for p in pts)
+            lon0 = min(p[1] for p in pts)
+            acc: dict[tuple[int, int], list[float]] = {}
+            for la, lo, d in pts:
+                i = int((la - lat0) / dlat)
+                j = int((lo - lon0) / dlon)
+                b = acc.get((i, j))
+                if b is None:
+                    acc[(i, j)] = [d, 1.0]
+                else:
+                    b[0] += d
+                    b[1] += 1.0
+            for (i, j), (sd, cnt) in acc.items():
+                if sd / cnt >= threshold:
+                    continue
+                la_c = lat0 + i * dlat
+                lo_c = lon0 + j * dlon
+                polys.append(Polygon([
+                    (lo_c, la_c), (lo_c + dlon, la_c),
+                    (lo_c + dlon, la_c + dlat), (lo_c, la_c + dlat),
+                ]))
+                if len(polys) >= max_features:
+                    break
+
+        # -- contours -> filled shoals / buffered strips -------------------- #
+        if len(polys) < max_features and self.contours:
+            band_deg = contour_band_m / _M_PER_DEG_LAT
+            for c in self.contours_in(bbox=bbox, limit=max_features):
+                d = c.get("d")
+                pts_c = c.get("pts") or []
+                if d is None or float(d) >= threshold or len(pts_c) < 2:
+                    continue
+                ring = [(p[1], p[0]) for p in pts_c]  # (lat, lon) -> (lon, lat)
+                closed = (
+                    len(ring) >= 4
+                    and abs(ring[0][0] - ring[-1][0]) < 1e-9
+                    and abs(ring[0][1] - ring[-1][1]) < 1e-9
+                )
+                try:
+                    if closed:
+                        poly = Polygon(ring)
+                        if not poly.is_valid:
+                            poly = poly.buffer(0)
+                    else:
+                        poly = LineString(ring).buffer(band_deg)
+                except Exception:  # pragma: no cover - defensive geometry guard
+                    continue
+                if not poly.is_empty:
+                    polys.append(poly)
+                if len(polys) >= max_features:
+                    break
+
+        if not polys:
+            return None
+        mask = unary_union(polys)
+        return None if mask.is_empty else mask
+
     def as_grid(
         self,
         cell_m: float = 15.0,
