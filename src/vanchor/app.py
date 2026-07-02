@@ -19,13 +19,14 @@ import argparse
 import asyncio
 import collections
 import contextlib
+import json
 import logging
 import math
 import os
 import time
 
 from .controller.calibration import CalibrationRunner
-from .controller.controller import Controller, Helm
+from .controller.controller import Controller, GainSchedule, Helm
 from .controller.modes import AnchorConfig, DriftConfig, FollowApbConfig, WaypointConfig
 from .controller.safety import SafetyConfig
 from .core import events, observability
@@ -331,6 +332,17 @@ class Runtime:
                 steer_sign=1.0 if cfg.boat.thruster_x_m() >= 0 else -1.0,
                 # Pre-cancel the yaw a laterally-offset motor makes under thrust.
                 thrust_yaw_ff=_thrust_yaw_ff_norm(cfg),
+                # SOG-keyed steering-gain schedule (#31). Neutral by default
+                # (both multipliers 1.0) so the tuned gain is unchanged until a
+                # non-flat schedule is configured (per config or a boat profile).
+                gain_schedule=GainSchedule(
+                    sog_lo_kn=cfg.control.steer_gain_sog_lo_kn,
+                    sog_hi_kn=cfg.control.steer_gain_sog_hi_kn,
+                    mult_lo=cfg.control.steer_gain_mult_lo,
+                    mult_hi=cfg.control.steer_gain_mult_hi,
+                    mult_min=cfg.control.steer_gain_mult_min,
+                    mult_max=cfg.control.steer_gain_mult_max,
+                ),
             ),
             anchor_config=AnchorConfig(
                 kp=cfg.control.anchor_kp,
@@ -400,6 +412,17 @@ class Runtime:
         active = self.boats.active()
         if active is not None:
             self._apply_boat_specs(active["specs"])
+
+        # --- Per-boat saved gain profiles (#31) -------------------------- #
+        # Controller gains (helm/anchor/cruise/drift PIDs + the steering-gain
+        # schedule) that a boat profile can carry, persisted in a sidecar
+        # ``<data_dir>/boat_gains.json`` keyed by profile id. Kept separate from
+        # boats.json so the boat-profile store stays a pure spec bundle; applied
+        # on top of the profile's specs whenever a profile becomes active. A
+        # profile with no saved gains leaves the current/default gains standing.
+        self._boat_gains_path = os.path.join(cfg.data_dir, "boat_gains.json")
+        self._boat_gains: dict = self._load_boat_gains()
+        self._apply_active_boat_gains()
 
         # --- Server-persisted safety geometry (#23) ---------------------- #
         # No-go zones / min-depth / fix-failsafe live on the SERVER now, not just
@@ -602,6 +625,7 @@ class Runtime:
             active = self.boats.active()
             if active is not None:
                 self._apply_boat_specs(active["specs"])
+            self._apply_active_boat_gains()
         return self.boats.get(profile_id)
 
     def boat_profiles_activate(self, profile_id: str) -> dict | None:
@@ -612,6 +636,8 @@ class Runtime:
         active = self.boats.active()
         if active is not None:
             self._apply_boat_specs(active["specs"])
+        # Apply this profile's saved gains on top of its specs (else keep current).
+        self._apply_active_boat_gains()
         logger.info("activated boat profile %s", profile_id)
         return self.boat_profile()
 
@@ -623,7 +649,134 @@ class Runtime:
         active = self.boats.active()
         if active is not None:
             self._apply_boat_specs(active["specs"])
+        self._apply_active_boat_gains()
         return True
+
+    # ------------------------------------------------------------------ #
+    # Per-boat saved gain profiles (#31)
+    # ------------------------------------------------------------------ #
+    def _load_boat_gains(self) -> dict:
+        """Read the per-profile gains sidecar (``boat_gains.json``); ``{}`` when
+        absent or unreadable, so a missing/corrupt file never breaks startup."""
+        try:
+            with open(self._boat_gains_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_boat_gains_file(self) -> None:
+        """Persist the per-profile gains map atomically."""
+        os.makedirs(self.config.data_dir, exist_ok=True)
+        tmp = self._boat_gains_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self._boat_gains, fh, indent=2)
+        os.replace(tmp, self._boat_gains_path)
+
+    def current_gains(self) -> dict:
+        """Snapshot the live controller gains as a gains block (the shape stored
+        per boat profile). Covers the helm heading PID, anchor/cruise/drift gains
+        and the steering-gain schedule."""
+        c = self.controller
+        block: dict = {
+            "heading": {
+                "kp": c.helm.pid.kp,
+                "ki": c.helm.pid.ki,
+                "kd": c.helm.pid.kd,
+            },
+            "cruise": {"kp": c.cruise_pid.kp, "ki": c.cruise_pid.ki},
+        }
+        anchor = c.modes.get(ControlModeName.ANCHOR_HOLD)
+        if anchor is not None and hasattr(anchor, "config"):
+            block["anchor"] = {
+                "kp": anchor.config.kp,
+                "kd": anchor.config.kd,
+                "idle_deadband_m": anchor.config.idle_deadband_m,
+            }
+        drift = c.modes.get(ControlModeName.DRIFT)
+        if drift is not None and hasattr(drift, "pid"):
+            block["drift"] = {"kp": drift.pid.kp, "ki": drift.pid.ki}
+        sched = c.helm.gain_schedule
+        if sched is not None:
+            block["steer_schedule"] = {
+                "sog_lo_kn": sched.sog_lo_kn,
+                "sog_hi_kn": sched.sog_hi_kn,
+                "mult_lo": sched.mult_lo,
+                "mult_hi": sched.mult_hi,
+                "mult_min": sched.mult_min,
+                "mult_max": sched.mult_max,
+            }
+        return block
+
+    def _apply_gains_block(self, gains: dict) -> None:
+        """Apply a (partial) gains block to the live controllers. Missing
+        sections/fields are left untouched, so a profile can carry just the gains
+        it cares about."""
+        if not isinstance(gains, dict):
+            return
+        c = self.controller
+        h = gains.get("heading")
+        if isinstance(h, dict):
+            for attr in ("kp", "ki", "kd"):
+                if h.get(attr) is not None:
+                    setattr(c.helm.pid, attr, float(h[attr]))
+            c.helm.pid.reset()
+        a = gains.get("anchor")
+        anchor = c.modes.get(ControlModeName.ANCHOR_HOLD)
+        if isinstance(a, dict) and anchor is not None and hasattr(anchor, "config"):
+            for attr in ("kp", "kd", "idle_deadband_m"):
+                if a.get(attr) is not None:
+                    setattr(anchor.config, attr, float(a[attr]))
+        cr = gains.get("cruise")
+        if isinstance(cr, dict):
+            for attr in ("kp", "ki"):
+                if cr.get(attr) is not None:
+                    setattr(c.cruise_pid, attr, float(cr[attr]))
+            c.cruise_pid.reset()
+        dr = gains.get("drift")
+        drift = c.modes.get(ControlModeName.DRIFT)
+        if isinstance(dr, dict) and drift is not None and hasattr(drift, "pid"):
+            for attr in ("kp", "ki"):
+                if dr.get(attr) is not None:
+                    setattr(drift.pid, attr, float(dr[attr]))
+            drift.pid.reset()
+        s = gains.get("steer_schedule")
+        sched = c.helm.gain_schedule
+        if isinstance(s, dict) and sched is not None:
+            for attr in ("sog_lo_kn", "sog_hi_kn", "mult_lo", "mult_hi",
+                         "mult_min", "mult_max"):
+                if s.get(attr) is not None:
+                    setattr(sched, attr, float(s[attr]))
+        logger.info("applied boat gains: %s", gains)
+
+    def _apply_active_boat_gains(self) -> None:
+        """Apply the active profile's saved gains (if any) to the controllers."""
+        if getattr(self, "boats", None) is None:
+            return
+        gains = self._boat_gains.get(self.boats.active_id)
+        if gains:
+            self._apply_gains_block(gains)
+
+    def save_boat_gains(self, profile_id: str | None = None) -> dict:
+        """Persist the CURRENTLY-applied controller gains into a boat profile
+        (defaults to the active one), closing the "persist applied gains back to
+        a config file" debt. Returns the saved gains block."""
+        if getattr(self, "boats", None) is None:
+            return {}
+        pid = profile_id or self.boats.active_id
+        block = self.current_gains()
+        self._boat_gains[pid] = block
+        self._save_boat_gains_file()
+        logger.info("saved applied gains into boat profile %s", pid)
+        return block
+
+    def boat_gains(self, profile_id: str | None = None) -> dict:
+        """Return the saved gains block for a profile (active one by default), or
+        ``{}`` if that profile carries none."""
+        pid = profile_id or (
+            self.boats.active_id if getattr(self, "boats", None) is not None else ""
+        )
+        return dict(self._boat_gains.get(pid, {}))
 
     # ------------------------------------------------------------------ #
     # Versioned backup / restore of all persistent state
@@ -667,6 +820,9 @@ class Runtime:
             active = self.boats.active()
             if active is not None:
                 self._apply_boat_specs(active["specs"])
+            # Per-boat gains (#31) live in a sidecar; reload + re-apply too.
+            self._boat_gains = self._load_boat_gains()
+            self._apply_active_boat_gains()
         except Exception:  # pragma: no cover - defensive
             logger.exception("restore: reloading boat profiles failed")
             restart_required = True
@@ -1852,8 +2008,14 @@ class Runtime:
         self.simulator.set_weather_base()
         logger.info("applied weather preset %r", preset_id)
 
-    def apply_tuned_gains(self, job: str, params: dict) -> None:
-        """Apply auto-tuned gains to the live controller (used by /api/tune)."""
+    def apply_tuned_gains(self, job: str, params: dict, *, persist: bool = False) -> None:
+        """Apply auto-tuned gains to the live controller (used by /api/tune).
+
+        With ``persist=True`` the tuned gains are ALSO written into the active
+        boat profile's saved gains (``boat_gains.json``), closing the "persist
+        applied gains back to a config file" debt. It defaults to ``False`` so
+        the existing ``POST /api/tune`` behaviour (live-apply only) is unchanged.
+        """
         from .core.models import ControlModeName
 
         c = self.controller
@@ -1876,6 +2038,25 @@ class Runtime:
             cfg.kd = float(params["kd"])
             cfg.idle_deadband_m = float(params["idle_deadband_m"])
         logger.info("applied tuned %s gains live: %s", job, params)
+        if persist:
+            self._persist_tuned_gains(job, params)
+
+    def _persist_tuned_gains(self, job: str, params: dict) -> None:
+        """Merge an auto-tuned job's gains into the active boat profile's saved
+        gains (only the section that job tuned) and persist them."""
+        if getattr(self, "boats", None) is None:
+            return
+        from .analysis.tuning import gains_block_from_tuning
+
+        frag = gains_block_from_tuning(job, params)
+        if not frag:
+            return
+        pid = self.boats.active_id
+        block = dict(self._boat_gains.get(pid, {}))
+        block.update(frag)  # replace only the tuned section(s)
+        self._boat_gains[pid] = block
+        self._save_boat_gains_file()
+        logger.info("persisted tuned %s gains into boat profile %s", job, pid)
 
     # ------------------------------------------------------------------ #
     # Depth-map gridding (server-side averaging for the depth overlay)

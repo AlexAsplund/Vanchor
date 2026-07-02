@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from ..core.geo import (
     angle_difference,
     cross_track,
+    destination_point,
     haversine_m,
     initial_bearing,
     knots_to_mps,
@@ -883,33 +884,182 @@ class OrbitMode(ControlMode):
 @dataclass
 class TrollingConfig:
     throttle: float = 0.4
+    # Cross-track steering onto each virtual corridor leg: degrees of heading
+    # correction per metre of cross-track error, capped. Same knobs (and units)
+    # as WaypointMode -- the corridor is tracked exactly like a route.
+    xte_gain: float = 3.0
+    max_xte_correction_deg: float = 60.0
+    # A virtual corridor waypoint is "reached" within this radius. Arrival also
+    # fires on sailing abeam past the leg's perpendicular (see WaypointMode), so a
+    # boat that rounds a peak short of the radius still advances.
+    arrival_radius_m: float = 3.0
+    # Crab-angle feed-forward against the estimated beam drift (reuses the shared
+    # WindCurrentEstimator), exactly like WaypointMode -- points the bow into the
+    # set so the GROUND track (not just the heading) holds. Falls back to pure XTE
+    # feedback until the estimate settles.
+    crab_feedforward: bool = True
+    max_crab_deg: float = 25.0
+    boat_speed_mps: float = 1.6
+    # Virtual waypoints kept buffered AHEAD of the boat. The buffer rolls forward
+    # (pop the reached point, append the next) so memory stays bounded no matter
+    # how long the pattern runs.
+    lookahead_points: int = 4
 
 
 class TrollingMode(ControlMode):
-    """S-curve trolling weave.
+    """Ground-track S-curve trolling.
 
-    Adds a sinusoidal heading offset ``amplitude_deg * sin(2*pi*t/period_s)``
-    around a base heading (the heading when engaged, unless one is given) while
-    driving forward at the set speed -- the lazy S-pattern used to cover water
-    and vary lure action when trolling. ``phase`` (radians) is exposed for
-    telemetry.
+    Traces a fixed-width lawnmower-S over the GROUND by following a *corridor of
+    virtual waypoints* laid +/- amplitude either side of a straight base course,
+    instead of weaving the target HEADING. Because it tracks ground positions
+    with cross-track correction (plus crab feed-forward), wind/current no longer
+    shear the S downstream and the swath width stays constant regardless of boat
+    speed -- the whole point of the ground-track variant over the old heading
+    weave (which sheared with the set and whose swath scaled with speed).
+
+    The virtual waypoints sit at the sine peaks/troughs of the S: point ``k`` is
+    at along-course distance ``(2k+1) * wavelength/4`` from the anchor point,
+    offset ``amplitude`` metres to alternating sides. Following that zig-zag with
+    the XTE helm produces a smooth, fixed-width S over the ground. The buffer is a
+    small rolling window (``lookahead_points``): reaching a point pops it and
+    appends the next, so the pattern advances indefinitely in bounded memory.
+
+    PARAM SEMANTICS CHANGE (from the old heading weave): the stored
+    ``state.trolling_amplitude_deg`` is now the lateral half-width of the S in
+    METRES, and ``state.trolling_period_s`` is the longitudinal wavelength (one
+    full S cycle along the base course) in METRES. ``state.trolling_base_heading``
+    is the centreline bearing (unchanged -- defaults to the heading when engaged).
+    The command/state field names are kept so the controller wiring and the UI
+    telemetry (which read those fields, and ``phase``) keep working unchanged.
+
+    ``phase`` (radians, derived from the boat's along-course progress) is still
+    exposed for the UI weave indicator.
     """
 
     name = ControlModeName.TROLLING
 
     def __init__(self, config: TrollingConfig | None = None) -> None:
         self.config = config or TrollingConfig()
-        self._t = 0.0
-        self.phase = 0.0  # exposed for telemetry
+        self._base: GeoPoint | None = None   # anchor point of the base course
+        self._bearing = 0.0                  # centreline bearing (deg)
+        self._amplitude_m = 0.0              # lateral half-width (m)
+        self._wavelength_m = 1.0             # longitudinal wavelength (m)
+        self._pending: list[GeoPoint] = []   # bounded rolling buffer of targets
+        self._next_k = 0                     # index of the next point to generate
+        self._leg_start: GeoPoint | None = None
+        self.phase = 0.0                     # exposed for telemetry
 
     def activate(self, state: NavigationState) -> None:
-        self._t = 0.0
+        self._base = None
+        self._pending = []
+        self._next_k = 0
+        self._leg_start = None
         self.phase = 0.0
+        if state.position is not None:
+            self._establish(state)
+
+    def _establish(self, state: NavigationState) -> None:
+        """Anchor the base course at the current position/heading and fill the
+        look-ahead buffer. Called on activation, or lazily on the first update
+        that has a fix (if the mode was engaged before one arrived)."""
+        self._base = state.position
+        self._bearing = normalize_deg(state.trolling_base_heading)
+        # Reinterpret the stored params as METRES (see the class docstring).
+        self._amplitude_m = max(0.0, state.trolling_amplitude_deg)
+        self._wavelength_m = max(1.0, state.trolling_period_s)
+        self._next_k = 0
+        self._leg_start = self._base
+        self._pending = []
+        for _ in range(max(1, self.config.lookahead_points)):
+            self._pending.append(self._make_point(self._next_k))
+            self._next_k += 1
+
+    def _make_point(self, k: int) -> GeoPoint:
+        """The k-th virtual corridor waypoint -- a sine peak/trough of the S laid
+        along the base course, offset to alternating sides (starboard first)."""
+        assert self._base is not None
+        along = (2 * k + 1) * (self._wavelength_m / 4.0)
+        tip = destination_point(self._base, along, self._bearing)  # on centreline
+        if self._amplitude_m <= 0.0:
+            return tip  # degenerate: a straight base course
+        side = 90.0 if (k % 2 == 0) else -90.0
+        return destination_point(
+            tip, self._amplitude_m, normalize_deg(self._bearing + side)
+        )
+
+    def _advance(self) -> None:
+        """Consume the reached target and roll the buffer forward one point,
+        keeping ``_pending`` at a constant length (bounded memory)."""
+        self._leg_start = self._pending.pop(0)
+        self._pending.append(self._make_point(self._next_k))
+        self._next_k += 1
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
-        self._t += dt
-        period = max(0.1, state.trolling_period_s)
-        self.phase = (2.0 * math.pi * self._t / period) % (2.0 * math.pi)
-        offset = state.trolling_amplitude_deg * math.sin(self.phase)
-        heading = normalize_deg(state.trolling_base_heading + offset)
-        return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
+        pos = state.position
+        if pos is None:
+            return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
+        if self._base is None:
+            self._establish(state)
+
+        cfg = self.config
+        leg_start = self._leg_start or self._base
+        target = self._pending[0]
+        distance = haversine_m(pos, target)
+
+        # Arrival: within the radius, or having sailed abeam past the leg's
+        # perpendicular (same rule WaypointMode uses). Consume any stacked points
+        # in one tick so a short wavelength doesn't stall one point per tick.
+        for _ in range(len(self._pending)):
+            arrived = distance <= cfg.arrival_radius_m
+            if not arrived:
+                leg_len = haversine_m(leg_start, target)
+                if leg_len > 0.0:
+                    brg_leg = initial_bearing(leg_start, target)
+                    brg_pos = initial_bearing(leg_start, pos)
+                    d_from_start = haversine_m(leg_start, pos)
+                    along = d_from_start * math.cos(
+                        math.radians(angle_difference(brg_leg, brg_pos))
+                    )
+                    xte_m = abs(cross_track(leg_start, target, pos).distance_m)
+                    if along >= leg_len and xte_m <= 3.0 * cfg.arrival_radius_m:
+                        arrived = True
+            if not arrived:
+                break
+            self._advance()
+            leg_start = self._leg_start
+            target = self._pending[0]
+            distance = haversine_m(pos, target)
+
+        state.distance_to_waypoint_m = distance
+        bearing = initial_bearing(pos, target)
+        xte = cross_track(leg_start, target, pos)
+        state.cross_track_m = xte.distance_m
+        state.bearing_to_dest = bearing
+
+        # Along-course progress -> phase for the UI weave indicator.
+        d_base = haversine_m(self._base, pos)
+        brg_base = initial_bearing(self._base, pos)
+        along_course = d_base * math.cos(
+            math.radians(angle_difference(self._bearing, brg_base))
+        )
+        self.phase = (2.0 * math.pi * along_course / self._wavelength_m) % (2.0 * math.pi)
+
+        correction = _clamp(
+            cfg.xte_gain * xte.distance_m,
+            -cfg.max_xte_correction_deg,
+            cfg.max_xte_correction_deg,
+        )
+        # Crab feed-forward: bias the bow into the estimated beam drift so the
+        # ground track holds against the set (adds to the XTE feedback).
+        crab = 0.0
+        if cfg.crab_feedforward and state.est_drift_settled:
+            crab = crab_offset_deg(
+                bearing,
+                state.est_drift_east,
+                state.est_drift_north,
+                cfg.throttle * cfg.boat_speed_mps,
+                max_crab_deg=cfg.max_crab_deg,
+            )
+        # Positive xte => boat right of track => steer left => reduce heading.
+        heading = normalize_deg(bearing - correction + crab)
+        return GuidedSetpoint(target_heading=heading, thrust=cfg.throttle)

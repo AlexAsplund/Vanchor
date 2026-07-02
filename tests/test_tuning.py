@@ -6,6 +6,7 @@ from vanchor.analysis.tuning import (
     Param,
     TUNING_JOBS,
     format_result,
+    gains_block_from_tuning,
     optimize,
     tune,
 )
@@ -55,3 +56,14 @@ def test_format_result_includes_config_suggestion():
 def test_unknown_job_raises():
     with pytest.raises(ValueError):
         tune("nope")
+
+
+def test_gains_block_from_tuning_maps_each_job():
+    # Every tuning job maps onto exactly the boat-profile gains section it tuned.
+    assert set(gains_block_from_tuning("heading", {"heading_kp": 0.04, "heading_kd": 0.01})) == {
+        "heading"
+    }
+    assert set(gains_block_from_tuning("anchor", {"kp": 0.1, "kd": 0.5, "idle_deadband_m": 0.8})) == {
+        "anchor"
+    }
+    assert gains_block_from_tuning("bogus", {}) == {}

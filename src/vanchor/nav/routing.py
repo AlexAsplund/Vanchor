@@ -7,7 +7,8 @@ Go). Two modes:
 
 - ``fastest``  -- the shortest navigable water path. Computed as the exact
   shortest obstacle-avoiding path with a **visibility graph** over the water
-  polygon (bends occur only at shore/island vertices), via shapely + networkx.
+  polygon (bends occur only at reflex shore/island vertices), explored with
+  lazy A* over shapely geometry.
 - ``shoreline`` -- head to the nearest shore (ending ``shoreline_offset_m`` m
   off it), hug that offset ring toward the destination, then cut straight in as
   soon as there is clear open-water line-of-sight.
@@ -18,14 +19,16 @@ final waypoints are converted back to lat/lon.
 
 from __future__ import annotations
 
+import heapq
+import itertools
 import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-import networkx as nx
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
+from shapely.geometry.polygon import orient
 from shapely.ops import nearest_points
 from shapely.prepared import prep
 
@@ -117,6 +120,60 @@ def _boundary_vertices(water_m: BaseGeometry) -> list[tuple[float, float]]:
         for ring in poly.interiors:
             verts.extend(ring.coords[:-1])
     return verts
+
+
+# A vertex whose normalized turn (sin of the exterior angle) exceeds this toward
+# the water interior is *clearly convex*; below it (reflex or near-straight) the
+# vertex is kept as a possible bend point. Being generous (keeping near-straight
+# vertices) can only add nodes, never drop a needed turn.
+_CONVEX_TOL = 1e-6
+
+
+def _reflex_vertices(water_m: BaseGeometry) -> list[tuple[float, float]]:
+    """Boundary vertices at which a shortest water path could actually bend.
+
+    A classic computational-geometry result: in a polygonal domain, every
+    shortest path is a chain whose intermediate vertices are **reflex** vertices
+    of the free space (interior angle > 180deg). Convex boundary corners -- e.g.
+    every vertex of a convex lake shore or the outward bulges of a rounded shore
+    -- can never be a turn point (you could always cut the corner), so dropping
+    them from the visibility graph is provably loss-less: the shortest-path
+    *length* is unchanged. For a rounded basin with one island this trims the
+    candidate set from the whole shoreline to just the island's corners -- a ~10x
+    reduction on top of lazy A*.
+
+    Orientation is normalised first (exterior CCW, holes CW) so the interior of
+    the water is consistently on the left of every directed ring; then a
+    right-hand turn (cross <= tol) marks a reflex/near-straight vertex to keep.
+    """
+    kept: list[tuple[float, float]] = []
+    polys = water_m.geoms if water_m.geom_type == "MultiPolygon" else [water_m]
+    for poly in polys:
+        try:
+            poly = orient(poly, 1.0)
+        except Exception:  # pragma: no cover - orient is robust on valid polys
+            pass
+        for ring in (poly.exterior, *poly.interiors):
+            coords = list(ring.coords)
+            if len(coords) < 4:  # degenerate ring: keep whatever's there
+                kept.extend((c[0], c[1]) for c in coords[:-1] or coords)
+                continue
+            m = len(coords) - 1  # coords[-1] repeats coords[0]
+            for k in range(m):
+                px, py = coords[k]
+                ax, ay = coords[(k - 1) % m]
+                bx, by = coords[(k + 1) % m]
+                v1x, v1y = px - ax, py - ay
+                v2x, v2y = bx - px, by - py
+                n1 = math.hypot(v1x, v1y)
+                n2 = math.hypot(v2x, v2y)
+                if n1 == 0.0 or n2 == 0.0:
+                    kept.append((px, py))
+                    continue
+                cross = (v1x * v2y - v1y * v2x) / (n1 * n2)
+                if cross <= _CONVEX_TOL:  # reflex or ~straight -> keep
+                    kept.append((px, py))
+    return kept
 
 
 def _vertex_count(geom: BaseGeometry) -> int:
@@ -230,8 +287,111 @@ def _simplify_to_waypoints(
 
 
 # --------------------------------------------------------------------------- #
-# Fastest route: visibility graph
+# Fastest route: visibility graph (lazy A*)
 # --------------------------------------------------------------------------- #
+# Sentinel for "this vertex pair has not been visibility-tested yet" in the
+# per-plan cache (distinct from ``None`` = tested, not visible).
+_VIS_UNKNOWN = object()
+
+
+def _segment_ok(prepared: BaseGeometry, seg: LineString) -> bool:
+    """Visibility predicate: is ``seg`` fully inside the (prepared) water?
+
+    The **single choke point** for the shapely ``covers`` test used to build the
+    visibility graph. Routing every visibility check through this one function
+    lets the search cache results per plan and lets tests count exactly how many
+    covers() calls a plan performs (the eager build did ~n^2 of these; lazy A*
+    does far fewer).
+    """
+    return prepared.covers(seg)
+
+
+def _lazy_shortest_path(
+    unique: list[tuple[float, float]],
+    prepared: BaseGeometry,
+    soft_prep: BaseGeometry | None,
+    soft_penalty: float,
+    cancelled: Callable[[], bool] | None,
+) -> LineString | None:
+    """Shortest path from node 0 (start) to node 1 (goal) over the visibility
+    graph of ``unique`` -- computed with **lazy A*** that never materialises the
+    full O(n^2) edge set.
+
+    Neighbours are generated on demand: only when a node is *expanded* (popped
+    from the frontier) do we test its visibility to the other vertices. Because
+    the straight-line heuristic is consistent (``h(u) - h(v) <= dist(u, v) <=
+    edge_cost(u, v)`` -- the soft penalty only ever raises an edge's cost), A*
+    settles each node's shortest distance the first time it is popped, so a
+    ``closed`` set is safe and the returned length is provably optimal -- the
+    same optimum the eager visibility-graph + A* produced, just visiting a small
+    fraction of the vertex pairs. Visibility results are cached per plan so no
+    pair is tested twice.
+    """
+    n = len(unique)
+    if n < 2:
+        return None
+    start, goal = 0, 1
+    gx, gy = unique[goal]
+
+    def h(i: int) -> float:
+        return math.hypot(unique[i][0] - gx, unique[i][1] - gy)
+
+    vis_cache: dict[tuple[int, int], float | None] = {}
+
+    def edge_weight(i: int, j: int) -> float | None:
+        """Cached A* edge cost between vertices ``i`` and ``j`` (``None`` if the
+        segment is not covered by water, i.e. no edge)."""
+        key = (i, j) if i < j else (j, i)
+        cached = vis_cache.get(key, _VIS_UNKNOWN)
+        if cached is not _VIS_UNKNOWN:
+            return cached
+        ax, ay = unique[key[0]]
+        bx, by = unique[key[1]]
+        seg = LineString([(ax, ay), (bx, by)])
+        if _segment_ok(prepared, seg):
+            w = seg.length
+            if soft_prep is not None and soft_prep.intersects(seg):
+                w *= soft_penalty
+        else:
+            w = None
+        vis_cache[key] = w
+        return w
+
+    g_score: dict[int, float] = {start: 0.0}
+    came_from: dict[int, int] = {}
+    closed: set[int] = set()
+    counter = itertools.count()  # tie-breaker keeps heap entries strictly ordered
+    frontier: list[tuple[float, int, int]] = [(h(start), next(counter), start)]
+    while frontier:
+        _, _, u = heapq.heappop(frontier)
+        if u in closed:
+            continue
+        if u == goal:
+            path = [u]
+            while u in came_from:
+                u = came_from[u]
+                path.append(u)
+            path.reverse()
+            return LineString([unique[i] for i in path])
+        closed.add(u)
+        # Expanding a node is the unit of heavy work (an O(n) sweep of visibility
+        # tests); poll the cancel flag here so a long plan aborts promptly.
+        _check_cancel(cancelled)
+        gu = g_score[u]
+        for v in range(n):
+            if v == u or v in closed:
+                continue
+            w = edge_weight(u, v)
+            if w is None:
+                continue
+            ng = gu + w
+            if ng < g_score.get(v, math.inf):
+                g_score[v] = ng
+                came_from[v] = u
+                heapq.heappush(frontier, (ng + h(v), next(counter), v))
+    return None
+
+
 def _plan_fastest_metric(
     start_m: Point,
     dest_m: Point,
@@ -243,12 +403,22 @@ def _plan_fastest_metric(
 ) -> LineString | None:
     """Shortest water-only polyline from ``start_m`` to ``dest_m`` (metric).
 
-    Visibility graph over shore vertices + A* search. Speed-ups: the shore is
-    already generalized by the caller (ROUTE_SIMPLIFY_M); here we additionally
-    prune vertices that cannot lie on a sensible path -- those outside an ellipse
-    with foci start/dest -- so routing across a small part of a big lake ignores
-    far-off shore. If that prunes a needed detour (no path), we retry on the full
-    vertex set.
+    Visibility graph over shore vertices + A* search, built to stay cheap on a
+    Pi. Three loss-less speed-ups stack:
+
+    * the shore is already generalized by the caller (ROUTE_SIMPLIFY_M);
+    * only **reflex** vertices are candidates -- the only places a shortest path
+      can bend (:func:`_reflex_vertices`), trimming a rounded shore ~10x;
+    * the visibility graph is explored with **lazy A***
+      (:func:`_lazy_shortest_path`): edges are tested on demand as nodes are
+      expanded, so a mostly-open route touches a small fraction of the O(n^2)
+      vertex pairs the old eager build tested.
+
+    We additionally prune vertices that cannot lie on a sensible path -- those
+    outside an ellipse with foci start/dest -- so routing across a small part of
+    a big lake ignores far-off shore. If that prunes a needed detour (no path),
+    we retry on the full (reflex) vertex set. All three reductions preserve the
+    optimal path *length*.
 
     ``soft_m`` (metric geometry, e.g. a near-shallow penalty band) softly steers
     the search away from those areas: any visibility edge crossing it has its A*
@@ -259,10 +429,13 @@ def _plan_fastest_metric(
     prepared = prep(water_m)
     soft_prep = prep(soft_m) if (soft_m is not None and not soft_m.is_empty
                                  and soft_penalty > 1.0) else None
-    if soft_prep is None and prepared.covers(LineString([start_m, dest_m])):
+    if soft_prep is None and _segment_ok(prepared, LineString([start_m, dest_m])):
         return LineString([start_m, dest_m])  # direct line of sight
 
-    verts = _boundary_vertices(water_m)
+    # Only reflex vertices can be turn points on a shortest path, so restrict the
+    # candidate set to them (loss-less -- see :func:`_reflex_vertices`). This trims
+    # the graph ~10x for rounded shores before lazy A* even starts.
+    verts = _reflex_vertices(water_m)
     sx, sy, dx, dy = start_m.x, start_m.y, dest_m.x, dest_m.y
     direct = start_m.distance(dest_m)
 
@@ -282,30 +455,11 @@ def _plan_fastest_metric(
             if key not in seen:
                 seen[key] = len(unique)
                 unique.append(node)
-
-        graph = nx.Graph()
-        graph.add_nodes_from(range(len(unique)))
-        for i in range(len(unique)):
-            # The visibility-graph build is the O(n^2) hot loop; poll the cancel
-            # flag once per source vertex so a long plan aborts promptly.
-            _check_cancel(cancelled)
-            ax, ay = unique[i]
-            for j in range(i + 1, len(unique)):
-                seg = LineString([(ax, ay), unique[j]])
-                if prepared.covers(seg):
-                    w = seg.length
-                    if soft_prep is not None and soft_prep.intersects(seg):
-                        w *= soft_penalty
-                    graph.add_edge(i, j, length=w)
-
-        def heuristic(a: int, b: int) -> float:
-            return math.hypot(unique[a][0] - unique[b][0], unique[a][1] - unique[b][1])
-
-        try:
-            path = nx.astar_path(graph, 0, 1, heuristic=heuristic, weight="length")
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            return None
-        return LineString([unique[i] for i in path])
+        # Lazy A*: build no edges up front -- expand vertices on demand. The
+        # admissible/consistent straight-line heuristic keeps expansions (and
+        # therefore visibility tests) to a small fraction of the eager n^2 build,
+        # while returning the identical optimal-length path.
+        return _lazy_shortest_path(unique, prepared, soft_prep, soft_penalty, cancelled)
 
     line = _search(max(direct * 2.5, direct + 400.0))
     if line is None and verts:
@@ -429,7 +583,7 @@ def plan_route(
     """Plan a water-only route over an already-assembled water polygon.
 
     ``water_ll`` is a lon/lat polygon (as produced by :mod:`.water`). This is
-    pure CPU work (shapely + networkx); run it in an executor.
+    pure CPU work (shapely); run it in an executor.
 
     ``cancelled`` is an optional predicate polled periodically during the heavy
     visibility-graph build; if it returns True the plan aborts and returns a

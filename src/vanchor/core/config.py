@@ -199,6 +199,27 @@ class ControlConfig:
     heading_kd: float = 0.012
     steer_tau: float = 0.6  # low-pass (s) on steering so the head isn't driven by noise
 
+    # --- Adaptive helm gain scheduling (roadmap #31) --------------------- #
+    # A single steerable trolling motor vectors the boat with its prop wash, so
+    # its steering AUTHORITY scales with thrust / boat speed (see STEER_EPS in
+    # controller.py: below a thrust floor it has no authority at all). One fixed
+    # ``heading_kp`` is therefore brittle across the 0.2-2 m/s band: at low speed
+    # authority is WEAK so the loop is sluggish (wants MORE gain); at high speed
+    # authority is STRONG so the same gain oscillates (wants LESS gain). This
+    # schedule scales the helm's proportional gain with SOG:
+    #   kp_eff = heading_kp * mult(sog),  mult linearly interpolated between
+    #   ``mult_lo`` (at/below ``sog_lo_kn``) and ``mult_hi`` (at/above
+    #   ``sog_hi_kn``), then clamped to [mult_min, mult_max].
+    # The physically-correct shape is ``mult_lo >= mult_hi`` (more gain when slow).
+    # Defaults are NEUTRAL (both multipliers 1.0) => kp_eff == heading_kp at every
+    # speed, so behaviour is UNCHANGED until a non-flat schedule is configured.
+    steer_gain_sog_lo_kn: float = 0.3   # SOG (kn) at/below which mult_lo applies
+    steer_gain_sog_hi_kn: float = 2.0   # SOG (kn) at/above which mult_hi applies
+    steer_gain_mult_lo: float = 1.0     # gain multiplier at low SOG (weak authority)
+    steer_gain_mult_hi: float = 1.0     # gain multiplier at high SOG (strong authority)
+    steer_gain_mult_min: float = 0.1    # clamp on the multiplier (bounds kp_eff)
+    steer_gain_mult_max: float = 5.0
+
     anchor_kp: float = 0.12  # thrust per metre of position error
     anchor_kd: float = 0.6  # braking thrust per (m/s) of closing speed (reverse)
     anchor_radius_m: float = 5.0
@@ -685,6 +706,15 @@ control:
   heading_ki: 0.0
   heading_kd: 0.012
   steer_tau: 0.6              # low-pass (s) on steering so the head isn't noise-driven
+  # Adaptive helm gain scheduling (#31): scale the helm's proportional gain with
+  # SOG so steering stays consistent as prop-wash authority changes with speed.
+  # Defaults below are NEUTRAL (both multipliers 1.0 -> kp_eff == heading_kp).
+  steer_gain_sog_lo_kn: 0.3   # SOG (kn) at/below which mult_lo applies
+  steer_gain_sog_hi_kn: 2.0   # SOG (kn) at/above which mult_hi applies
+  steer_gain_mult_lo: 1.0     # gain multiplier at low SOG (weak authority -> more gain)
+  steer_gain_mult_hi: 1.0     # gain multiplier at high SOG (strong authority -> less gain)
+  steer_gain_mult_min: 0.1    # clamp on the multiplier (bounds kp_eff)
+  steer_gain_mult_max: 5.0
   anchor_kp: 0.12             # thrust per metre of position error
   anchor_kd: 0.6              # braking thrust per (m/s) closing speed (enables reverse)
   anchor_radius_m: 5.0

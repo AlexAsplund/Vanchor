@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 import time
+from dataclasses import dataclass
 
 from ..core import events
 from ..core.events import EventBus
@@ -83,6 +84,49 @@ _JOG_OFFSETS = {"forward": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
 STEER_EPS = 0.03
 
 
+@dataclass
+class GainSchedule:
+    """SOG-keyed multiplier on the helm's steering (proportional) gain (#31).
+
+    A single steerable thruster vectors the boat with its prop wash, so steering
+    AUTHORITY scales with thrust / boat speed. That makes one fixed heading ``kp``
+    brittle across the speed range: slow => weak authority => the loop wants MORE
+    gain; fast => strong authority => the same gain oscillates => wants LESS gain.
+    So the physically-correct schedule has ``mult_lo >= mult_hi`` (more gain when
+    slow, verified against how thrust-scaled steering authority works here -- see
+    ``STEER_EPS`` above, where a barely-turning prop has no authority at all).
+
+    ``multiplier(sog)`` is a linear interpolation between ``mult_lo`` (at/below
+    ``sog_lo_kn``) and ``mult_hi`` (at/above ``sog_hi_kn``), held flat outside
+    that band and clamped to ``[mult_min, mult_max]``. The default (all
+    multipliers 1.0) is NEUTRAL: it returns exactly 1.0 for every SOG, so an
+    unconfigured schedule leaves the tuned gain untouched.
+    """
+
+    sog_lo_kn: float = 0.3
+    sog_hi_kn: float = 2.0
+    mult_lo: float = 1.0
+    mult_hi: float = 1.0
+    mult_min: float = 0.1
+    mult_max: float = 5.0
+
+    def multiplier(self, sog_knots: float) -> float:
+        lo, hi = self.sog_lo_kn, self.sog_hi_kn
+        if hi <= lo or sog_knots <= lo:
+            m = self.mult_lo
+        elif sog_knots >= hi:
+            m = self.mult_hi
+        else:
+            frac = (sog_knots - lo) / (hi - lo)
+            m = self.mult_lo + frac * (self.mult_hi - self.mult_lo)
+        return max(self.mult_min, min(self.mult_max, m))
+
+    @property
+    def is_neutral(self) -> bool:
+        """True when the schedule leaves the base gain unchanged everywhere."""
+        return self.mult_lo == 1.0 and self.mult_hi == 1.0
+
+
 class Helm:
     """Turns a heading intent into a steering command via one shared PID.
 
@@ -92,8 +136,19 @@ class Helm:
 
     def __init__(self, pid: PID | None = None, steer_tau: float = 0.6,
                  autopilot_steer_scale: float = 1.0, steer_sign: float = 1.0,
-                 thrust_yaw_ff: float = 0.0) -> None:
+                 thrust_yaw_ff: float = 0.0,
+                 gain_schedule: "GainSchedule | None" = None) -> None:
         self.pid = pid or PID(kp=0.035, ki=0.0, kd=0.012, output_min=-1.0, output_max=1.0)
+        # Optional SOG-keyed schedule on the steering (proportional) gain (#31).
+        # ``None`` (the default) leaves ``pid.kp`` as-is; a neutral schedule
+        # (multiplier 1.0 everywhere) is numerically identical to that. The base
+        # gain remains ``pid.kp`` -- the schedule only scales it transiently while
+        # computing each tick's proportional term, so external code (auto-tune,
+        # per-boat gains) keeps reading/writing ``pid.kp`` as the base.
+        self.gain_schedule = gain_schedule
+        # Last effective steering gain actually used (base * schedule multiplier),
+        # exposed for telemetry/tests. Seeded from the base gain.
+        self.kp_eff = self.pid.kp
         # First-order low-pass time constant (s) on the steering command. The
         # raw PID output chases ~1deg compass noise; without smoothing the motor
         # would slew back and forth constantly. ~0.6 s removes that jitter with
@@ -150,7 +205,7 @@ class Helm:
         else:
             # Positive error => target is to starboard => steer right (positive).
             error = angle_difference(state.heading_deg, setpoint.target_heading)
-            raw = self.pid.update_error(error, dt)
+            raw = self._pid_update_scheduled(error, state.sog_knots, dt)
             # A single steerable thruster reverses its steering authority when
             # the prop runs in reverse, so flip the command to stay stable.
             if setpoint.thrust < 0:
@@ -170,6 +225,27 @@ class Helm:
         ff = self.thrust_yaw_ff if abs(setpoint.thrust) >= STEER_EPS else 0.0
         steering = (self._filtered * self.autopilot_steer_scale + ff) * self.steer_sign
         return MotorCommand(thrust=setpoint.thrust, steering=steering).clamped()
+
+    def _pid_update_scheduled(self, error: float, sog_knots: float, dt: float) -> float:
+        """Run the heading PID with an SOG-scheduled proportional gain (#31).
+
+        ``kp_eff = pid.kp * schedule.multiplier(sog)`` is applied for THIS update
+        only, then ``pid.kp`` is restored to its base value -- so the schedule
+        scales the effective steering gain without permanently mutating the tuned
+        base (auto-tune / per-boat gains keep owning ``pid.kp``). With no schedule
+        (or a neutral one) ``kp_eff == pid.kp`` and this is identical to a plain
+        ``pid.update_error`` call.
+        """
+        if self.gain_schedule is None:
+            self.kp_eff = self.pid.kp
+            return self.pid.update_error(error, dt)
+        base = self.pid.kp
+        self.kp_eff = base * self.gain_schedule.multiplier(sog_knots)
+        self.pid.kp = self.kp_eff
+        try:
+            return self.pid.update_error(error, dt)
+        finally:
+            self.pid.kp = base
 
 
 class Controller:
