@@ -2,6 +2,35 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## [1.2-alpha] — 2026-07-02
+
+UI rehaul for on-the-water reachability (design spec: `docs/ui-redesign.md`).
+
+- **Command menu** replaces the cramped right-side settings drawer: the ☰
+  button opens a centered modal with 8 large category tiles → big stacked
+  sub-panels. Full-bleed sheet on phone, centered panel on landscape; ≥56 px
+  touch targets. All existing card ids/handlers preserved.
+- **Information architecture fixed**: the time-series "Charts" card (uPlot
+  graphs) renamed "Time-series graphs" and moved out of "Map & charts" (a
+  nautical-chart name collision) into "Data & system"; calibration + auto-tune
+  consolidated under "Boat & tuning".
+- **Specialised URL-addressable views** at `/view/<name>`, composed from the
+  existing live widgets (chart-optional): `helm` (big mode grid + quick actions
+  + dominant STOP), `instruments` (large glance HUD), `manual` (big thrust/
+  steering), and `chart` (default full UI). Topbar + menu switchers; last view
+  and per-view widget toggles persist via `/api/prefs`; offline via the SW.
+- **Daylight theme**: an opt-in high-contrast palette (Appearance card,
+  persisted, applied pre-paint) for direct sun; dark stays default. Raised
+  secondary-text contrast.
+- **Mobile mode sheet**: selecting a mode now slides the bottom sheet up and
+  scrolls the mode rail out of view so the mode's options are immediately
+  reachable (no manual drag). Any "tap the map" action (drop marker, add
+  waypoints, go-to, orbit centre, work-area spots, GPS-adjust, offline-area,
+  teleport) now auto-shows the chart view, closes the menu, and drops the
+  sheet so the map is reachable.
+- Mobile and landscape are both first-class throughout; STOP stays present and
+  unmissable in every view and every sheet state.
+
 ## [1.1-alpha] — 2026-07-02
 
 Phase 3 (UI/API maturity) and Phase 4 (nav & control quality) from the roadmap —

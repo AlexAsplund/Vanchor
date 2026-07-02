@@ -201,4 +201,30 @@
     current: () => body.dataset.view,
     set: switchTo,
   };
+
+  // ---- "tap the map" actions force the chart into view ----------------------
+  // Marker drop, Add-waypoints, Go-to, Orbit centre, Work-area spots, GPS-
+  // position adjust, offline-area select and Teleport all need the user to tap
+  // the leaflet map. If they're triggered from a non-chart view (helm/manual/
+  // instruments), from an open menu, or with the mobile sheet up, the map is
+  // hidden — so show the chart, close the menu, and drop the sheet first. A
+  // capture-phase listener runs BEFORE each module's own arm handler, so the arm
+  // state is set with the map already visible.
+  const MAP_TAP_BUTTONS = new Set([
+    "marker-fab", "wp-arm", "orbit-pick", "wa-arm", "goto-arm",
+    "gpscal-adjust", "offline-pick", "teleport-pick",
+  ]);
+  VA.showChart = function () {
+    if (body.dataset.view !== "chart") switchTo("chart");
+    const menu = document.getElementById("settings");
+    if (menu && !menu.classList.contains("hidden")) {
+      const close = document.getElementById("settings-close");
+      if (close) close.click(); else menu.classList.add("hidden");
+    }
+    if (VA.sheet && VA.sheet.collapse) VA.sheet.collapse();
+  };
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest && e.target.closest("button");
+    if (btn && MAP_TAP_BUTTONS.has(btn.id)) VA.showChart();
+  }, true);
 })();

@@ -52,6 +52,26 @@
       b.classList.toggle("active", b.dataset.mode === currentMode));
   }
 
+  // On mobile, picking a mode should slide the bottom sheet up AND scroll the
+  // mode rail out of view, so the mode's options fill the sheet — instead of
+  // forcing the user to drag it up and then scroll past the mode buttons.
+  function revealModeOptions() {
+    if (!(VA.sheet && VA.sheet.active())) return;
+    VA.sheet.reveal("mid");
+    // Wait for the sheet's expand transition, then scroll the rail off-screen:
+    // target the guided nav bar if it's showing (keeps Speed/Pause visible),
+    // else the active panel — either way the mode buttons scroll away.
+    setTimeout(() => {
+      const dock = document.getElementById("dock");
+      if (!dock) return;
+      const navbar = document.querySelector("#dock-navbar:not(.hidden)");
+      const target = navbar || document.querySelector(".ctx-panel.active");
+      if (target && target.scrollIntoView) {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 170);
+  }
+
   // Registry of "enter mode" command builders, populated by the control modules
   // (manual/heading/anchor/drift/route). Keyed by the rail button's data-mode.
   const modeCommands = {};
@@ -66,6 +86,7 @@
     highlightRail,
     panelFor,
     modeCommands,
+    revealModeOptions,
     get currentMode() { return currentMode; },
   };
 
@@ -80,6 +101,7 @@
       // the backend mode — or you could never reach the route-building controls.
       applyModePanels(panelFor(m));
       highlightRail();
+      if (m !== "stop") revealModeOptions();
     }));
 
   // Telemetry reflects the live mode: only switch the panel when the BACKEND mode

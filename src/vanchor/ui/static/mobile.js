@@ -221,6 +221,16 @@
     return names[m] || (m ? m.replace(/_/g, " ") : "—");
   }
 
+  // ---- public: let other modules reveal the sheet ---------------------------
+  // Selecting a mode should slide the sheet up so that mode's options come into
+  // view, instead of forcing a manual drag (mobile only). Consumed by
+  // appcore.js (mode rail) and guided.js (the "More" flyout).
+  VA.sheet = {
+    reveal(min) { if (mq.matches) ensureAtLeast(min || "mid"); },
+    collapse() { if (mq.matches) setSheet("peek"); },  // drop the sheet to reveal the map
+    active() { return mq.matches; },
+  };
+
   // ---- boot -----------------------------------------------------------------
   applyMobile();
   // matchMedia change + resize + orientation all re-evaluate mobile state.

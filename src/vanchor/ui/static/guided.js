@@ -92,6 +92,7 @@
     b.addEventListener("click", () => {
       showPanel(b.dataset.mode);
       setMore(false);
+      if (VA.ui && VA.ui.revealModeOptions) VA.ui.revealModeOptions();
     }));
 
   // ===== #57 contour-follow ===============================================
