@@ -57,7 +57,9 @@
   // forcing the user to drag it up and then scroll past the mode buttons.
   function revealModeOptions() {
     if (!(VA.sheet && VA.sheet.active())) return;
-    VA.sheet.reveal("mid");
+    // Expand to FULL (as tall as dragging the sheet all the way up) so the
+    // mode's options get the whole sheet, then scroll the mode rail off-screen.
+    VA.sheet.reveal("full");
     // Wait for the sheet's expand transition, then scroll the rail off-screen:
     // target the guided nav bar if it's showing (keeps Speed/Pause visible),
     // else the active panel — either way the mode buttons scroll away.
