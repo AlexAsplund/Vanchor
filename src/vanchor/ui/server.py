@@ -348,6 +348,19 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/view/{name}")
+    async def view(name: str) -> FileResponse:
+        """Serve the SAME single-page shell for every ``/view/<name>`` URL.
+
+        Views are a pure client-side concern: ``views.js`` reads
+        ``location.pathname`` and selects the layout via ``body[data-view]``.
+        We deliberately serve the shell for ANY name (even unknown ones) rather
+        than 404 — a typo or a renamed view then lands on the default chart view
+        client-side instead of a hard error, and deep-linked/offline navigations
+        to ``/view/*`` always boot the app. The host-check middleware still runs.
+        """
+        return FileResponse(STATIC_DIR / "index.html")
+
     @app.get("/sw.js")
     async def service_worker() -> FileResponse:
         """Serve the service worker at root scope so it controls the whole

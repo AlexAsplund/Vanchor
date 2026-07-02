@@ -36,7 +36,7 @@ input, textarea, [contenteditable="true"], .selectable {
 :root {
   --bg: #04060c;
   --text: #eaf2fb;
-  --muted: #7d8aa0;
+  --muted: #a3b4cc;   /* raised from #7d8aa0 for AA-ish legibility on near-black */
   --faint: rgba(120, 170, 255, 0.05);
   --line: rgba(130, 180, 255, 0.13);
   --line-bright: rgba(130, 200, 255, 0.28);
@@ -78,6 +78,34 @@ body.light {
   --warn: #b9740a;
   --stop: #d8463f;
 }
+
+/* Daylight: a bright, high-contrast palette for direct sun where the dark theme
+   washes out. Keyed on html[data-theme] (set pre-paint by the <head> script, so
+   no flash) AND body.light.theme-daylight (added by settings.js) so charts.js /
+   light-aware modules adapt while this more-specific rule wins the palette.
+   Safety colours (STOP coral, warning amber) keep their semantics. */
+html[data-theme="daylight"],
+body.light.theme-daylight {
+  --bg: #eef3f9;
+  --text: #071018;
+  --muted: #364759;         /* strong secondary contrast on white */
+  --faint: rgba(12, 46, 86, 0.06);
+  --line: rgba(12, 46, 86, 0.30);
+  --line-bright: rgba(10, 70, 120, 0.55);
+  --glass: linear-gradient(155deg, rgba(255, 255, 255, 0.95), rgba(231, 241, 251, 0.9));
+  --glass-solid: rgba(255, 255, 255, 0.98);
+  --shadow: 0 8px 24px rgba(18, 52, 92, 0.22), 0 0 0 1px rgba(12, 46, 86, 0.06);
+  --accent: #0068a6;
+  --accent-rgb: 0, 104, 166;
+  --accent-2: #0a7a50;
+  --accent-3: #4a3fce;
+  --active: #0a7a50;
+  --warn: #a85600;          /* amber, darkened for contrast on white */
+  --stop: #d21f3c;          /* coral/red stop — high-contrast for sun */
+}
+/* Flatten the dark tactical vignette so the daylight bg stays bright. */
+html[data-theme="daylight"] body::before,
+body.light.theme-daylight::before { background: var(--bg); }
 
 /* Deep tactical backdrop: gradient + faint grid + vignette, beneath the map. */
 body::before {
@@ -701,8 +729,73 @@ button#track-rec.recording { background: color-mix(in srgb, var(--stop) 35%, var
 .tune-imp.good { color: var(--accent-2); font-weight: 700; }
 .tune-imp.bad { color: var(--stop); font-weight: 700; }
 
-/* ============================ SETTINGS DRAWER ============================ */
-.scrim { position: fixed; inset: 0; z-index: 1900; background: rgba(0,0,0,0.5); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+/* ===================== COMMAND MENU (centred modal) =====================
+   The ☰ button opens a centred command modal (id="settings") over a dimmed
+   backdrop: a home grid of big category tiles ⇄ a per-category panel of the
+   existing settings cards. Full-bleed sheet on phones, centred panel on wide.
+   ------------------------------------------------------------------------ */
+.command-menu {
+  position: fixed; inset: 0; z-index: 2000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; pointer-events: none;
+}
+.command-menu.hidden { display: none; }
+.cm-modal {
+  pointer-events: auto;
+  width: min(920px, 92vw); height: 86vh; max-height: 920px;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--line-bright); border-radius: var(--r);
+  box-shadow: var(--shadow); overflow: hidden;
+  animation: cm-in 0.2s ease;
+}
+@keyframes cm-in { from { transform: translateY(14px) scale(0.985); opacity: 0; } to { transform: none; opacity: 1; } }
+.cm-appbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  min-height: 60px; padding: 10px 12px;
+  padding-top: max(10px, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--line);
+}
+.cm-title {
+  flex: 1 1 auto; text-align: center; min-width: 0;
+  font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: 0.02em;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cm-back, .cm-close {
+  flex: 0 0 auto; width: 46px; height: 46px; font-size: 22px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--faint); color: var(--text); cursor: pointer;
+}
+.cm-back:active, .cm-close:active { transform: scale(0.96); }
+.cm-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+
+/* Home: big thumb-sized category tiles. */
+.cm-home { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px; }
+.cm-tile {
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px;
+  min-height: 104px; padding: 14px 16px; text-align: left;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--faint); color: var(--text); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.05s;
+}
+.cm-tile:hover { border-color: var(--line-bright); background: color-mix(in srgb, var(--accent) 8%, var(--faint)); }
+.cm-tile:active { transform: scale(0.98); }
+.cm-tile-ic { font-size: 28px; line-height: 1; }
+.cm-tile-lbl { font-family: var(--font-display); font-weight: 700; font-size: 16px; line-height: 1.15; }
+.cm-tile-hint { color: var(--muted); font-size: 12px; line-height: 1.3; }
+
+/* Category panels: the moved cards, stacked. */
+.cm-panels { display: block; }
+.cm-panel { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 28px; }
+.cm-panel.drawer-body { flex: 0 1 auto; overflow: visible; } /* neutralise old drawer-body sizing */
+
+/* Bigger touch targets inside the menu for wet/gloved use. */
+.command-menu details.card { padding: 11px 13px; }
+.command-menu details.card > summary { min-height: 40px; font-size: 14px; }
+.command-menu .drawer-setup { min-height: 52px; font-size: 15px; }
+
+/* ============================ SETTINGS DRAWER (legacy) ============================ */
+.scrim { position: fixed; inset: 0; z-index: 1900; background: rgba(0,0,0,0.55); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0; z-index: 2000;
   width: min(380px, 92vw); border-radius: 0; border-left: 1px solid var(--line);
@@ -1878,9 +1971,21 @@ body.mobile .leaflet-top.leaflet-left { top: 56px; left: auto; right: 8px; }
 body.mobile .leaflet-top.leaflet-left .leaflet-control { float: right; clear: both; }
 body.mobile .leaflet-control-attribution { font-size: 9px; }
 
-/* 6. Settings drawer already goes near-fullscreen on mobile; keep it on top. */
+/* 6. Command menu: full-bleed sheet on phones; keep it above everything. */
 body.mobile #settings { z-index: 1300; }
 body.mobile #settings-scrim { z-index: 1290; }
+@media (max-width: 560px) {
+  .command-menu { padding: 0; }
+  .cm-modal {
+    width: 100vw; height: 100vh; height: 100dvh; max-height: none;
+    border: 0; border-radius: 0;
+  }
+  .cm-home { grid-template-columns: repeat(2, 1fr); }
+}
+/* Wide landscape: 4 tile columns so all 8 fit in two tidy rows. */
+@media (min-width: 900px) {
+  .cm-home { grid-template-columns: repeat(4, 1fr); }
+}
 
 /* The map must receive pans everywhere except under the sheet/FABs. */
 body.mobile #map { touch-action: pan-x pan-y; }
@@ -1982,3 +2087,194 @@ body.mobile.dock-collapsed .dock { padding-bottom: 0; }
 .dev-menu { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .dev-menu .btn-row { margin-top: 6px; }
 .dev-menu-out { margin-top: 6px; min-height: 1em; white-space: pre-wrap; }
+
+/* ===================================================================== */
+/* VIEWS (spec §3) — specialised, URL-addressable layouts of the SAME live  */
+/* widgets, composed via body[data-view=...]. The chart view has NO rules   */
+/* here, so it is byte-for-byte the current UI (regression-safe).           */
+/* ===================================================================== */
+
+/* ---- topbar view switcher (always reachable) ---- */
+.view-switcher {
+  display: inline-flex; align-items: center; flex: 0 0 auto;
+  border: 1px solid var(--line); border-radius: 999px; overflow: hidden;
+  background: var(--faint);
+}
+.view-chip {
+  border: 0; background: transparent; cursor: pointer; color: var(--muted);
+  font-size: 15px; line-height: 1; padding: 8px 9px; min-width: 34px; min-height: 34px;
+  filter: grayscale(0.4) opacity(0.8); transition: background 0.15s, filter 0.15s;
+}
+.view-chip:hover { color: var(--text); filter: none; }
+.view-chip.active {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  filter: none; box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.6);
+}
+.view-chip:active { transform: scale(0.94); }
+
+/* ---- Display > Views card ---- */
+.views-seg { flex-wrap: wrap; }
+.views-seg button { padding: 9px 12px; font-size: 12px; }
+.views-widgets { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 4px 0 2px; }
+
+/* ---- view overlay dock (STOP + helm quick actions + back to chart) ---- */
+/* Hidden by default (chart view); each non-chart view reveals what it needs. */
+.view-dock { display: none; }
+body[data-view="helm"] .view-dock,
+body[data-view="manual"] .view-dock,
+body[data-view="instruments"] .view-dock {
+  display: flex; flex-direction: column; gap: 8px;
+  position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 1600;
+}
+.vd-quick { display: none; gap: 8px; }
+body[data-view="helm"] .vd-quick { display: grid; grid-template-columns: repeat(3, 1fr); }
+.vd-act {
+  min-height: 52px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--glass-solid, rgba(10, 18, 28, 0.82)); color: var(--text);
+  font: 700 13px var(--font-display); letter-spacing: 0.02em; cursor: pointer;
+  padding: 8px 6px;
+}
+.vd-act:active { transform: scale(0.97); }
+.vd-mob { border-color: color-mix(in srgb, var(--stop) 55%, var(--line)); color: var(--stop); }
+.vd-bottom { display: grid; grid-template-columns: minmax(120px, 1fr) 2.2fr; gap: 8px; }
+.vd-exit {
+  min-height: 60px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--glass-solid, rgba(10, 18, 28, 0.82)); color: var(--text);
+  font: 700 14px var(--font-display); cursor: pointer;
+}
+.vd-exit:active { transform: scale(0.98); }
+/* STOP is sacred: big, unmissable, never dimmed by the observer rule. */
+.vd-stop {
+  min-height: 60px; border: 2px solid var(--stop); border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--stop) 30%, rgba(10, 12, 20, 0.85)); color: #fff;
+  font: 900 24px var(--font-display); letter-spacing: 0.14em; cursor: pointer;
+  box-shadow: 0 0 0 1px var(--stop), 0 0 22px rgba(255, 90, 122, 0.45);
+}
+.vd-stop:active { transform: scale(0.98); }
+body.va-observer .vd-stop { opacity: 1 !important; }
+body[data-view="helm"] .vd-stop { min-height: 84px; font-size: 30px; }
+
+/* ---- common non-chart chrome: drop the map + its decorations ---- */
+body[data-view="helm"] #map, body[data-view="manual"] #map, body[data-view="instruments"] #map,
+body[data-view="helm"] #hud-frame, body[data-view="manual"] #hud-frame, body[data-view="instruments"] #hud-frame,
+body[data-view="helm"] #steering-gauge, body[data-view="manual"] #steering-gauge, body[data-view="instruments"] #steering-gauge,
+body[data-view="helm"] #catch-open, body[data-view="manual"] #catch-open, body[data-view="instruments"] #catch-open,
+body[data-view="helm"] #marker-fab, body[data-view="manual"] #marker-fab, body[data-view="instruments"] #marker-fab,
+body[data-view="helm"] .follow-fab, body[data-view="manual"] .follow-fab, body[data-view="instruments"] .follow-fab,
+body[data-view="helm"] #depth-legend, body[data-view="manual"] #depth-legend, body[data-view="instruments"] #depth-legend,
+body[data-view="helm"] #composition-legend, body[data-view="manual"] #composition-legend, body[data-view="instruments"] #composition-legend {
+  display: none !important;
+}
+
+/* Reused #hud strip (helm + manual): a slim horizontal readout under the topbar.
+   Force it (and its widgets) visible, overriding the global HUD-overlay prefs. */
+body[data-view="helm"] #hud, body[data-view="manual"] #hud {
+  position: fixed !important; left: 10px !important; right: 10px !important;
+  top: 62px !important; bottom: auto !important; max-width: none !important;
+  display: flex !important; flex-direction: row; flex-wrap: nowrap; gap: 8px;
+  justify-content: space-around; align-items: center; padding: 8px 10px;
+  opacity: 1 !important; z-index: 1050;
+  border-radius: var(--r); background: var(--glass); border: 1px solid var(--line);
+}
+body[data-view="helm"] #hud .hud-widget, body[data-view="manual"] #hud .hud-widget {
+  display: flex !important; flex: 1 1 0; align-items: center; justify-content: center;
+  gap: 6px; border-left: none; padding: 2px 4px; min-width: 0;
+}
+body[data-view="helm"] #hud .hud-widget.vw-off { display: none !important; }
+/* Compact strip = numeric only: drop the compass rose + battery extras. */
+body[data-view="helm"] #hud .hud-compass, body[data-view="manual"] #hud .hud-compass,
+body[data-view="helm"] #hud .hud-batt-row .batt-icon, body[data-view="manual"] #hud .hud-batt-row .batt-icon,
+body[data-view="helm"] #hud .hud-sub, body[data-view="manual"] #hud .hud-sub { display: none; }
+body[data-view="helm"] #hud .hud-big, body[data-view="manual"] #hud .hud-big { font-size: 26px; }
+/* Manual view: fixed compact readout (speed / heading / depth). */
+body[data-view="manual"] #hud .hud-widget[data-hud="anchor"],
+body[data-view="manual"] #hud .hud-widget[data-hud="battery"] { display: none !important; }
+
+/* ---- HELM: big mode-button grid + dominant STOP + quick actions ---- */
+/* Neutralise the dock box (and its mobile scroll wrapper) so the mode rail can
+   fill the screen, then show ONLY the mode rail from within the dock. */
+body[data-view="helm"] #dock, body[data-view="helm"] .dock-scroll,
+body[data-view="manual"] #dock, body[data-view="manual"] .dock-scroll { display: contents !important; }
+body[data-view="helm"] #dock-handle, body[data-view="helm"] #sheet-head,
+body[data-view="helm"] #more-menu, body[data-view="helm"] #dock-navbar,
+body[data-view="helm"] #dock-panels { display: none !important; }
+body[data-view="helm"] #mode-rail {
+  position: fixed; left: 10px; right: 10px; top: 138px; bottom: 168px; z-index: 1100;
+  display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; gap: 12px;
+  overflow-y: auto;
+}
+body[data-view="helm"] .mode-btn {
+  flex-direction: column; gap: 8px; padding: 10px 6px; font-size: 13px;
+  border-radius: var(--r);
+}
+body[data-view="helm"] .mode-btn .mi { font-size: 34px; filter: none; }
+body[data-view="helm"] .mode-btn .ml { font-size: 13px; }
+
+/* ---- MANUAL: big thrust + steering controls ---- */
+body[data-view="manual"] #dock-handle, body[data-view="manual"] #sheet-head,
+body[data-view="manual"] #more-menu, body[data-view="manual"] #dock-navbar,
+body[data-view="manual"] #mode-rail { display: none !important; }
+body[data-view="manual"] #dock-panels {
+  display: block !important; position: fixed;
+  left: 10px; right: 10px; top: 138px; bottom: 100px; z-index: 1100; overflow-y: auto;
+}
+body[data-view="manual"] #dock-panels > *:not(#ctx-manual) { display: none !important; }
+body[data-view="manual"] #ctx-manual {
+  display: flex !important; height: 100%; justify-content: center; gap: 26px;
+  padding: 22px 18px; animation: none;
+}
+body[data-view="manual"] #ctx-manual .slider-row { gap: 14px; }
+body[data-view="manual"] #ctx-manual label { font-size: 17px; }
+body[data-view="manual"] #ctx-manual output { font-size: 20px; font-weight: 800; color: var(--text); }
+body[data-view="manual"] #ctx-manual input[type=range] { height: 60px; }
+body[data-view="manual"] #ctx-manual input[type=range]::-webkit-slider-runnable-track { height: 10px; }
+body[data-view="manual"] #ctx-manual input[type=range]::-moz-range-track { height: 10px; }
+body[data-view="manual"] #ctx-manual input[type=range]::-webkit-slider-thumb {
+  width: 44px; height: 44px; margin-top: -17px;
+}
+body[data-view="manual"] #ctx-manual input[type=range]::-moz-range-thumb { width: 44px; height: 44px; }
+
+/* ---- INSTRUMENTS: a large arranged HUD filling the screen ---- */
+body[data-view="instruments"] #dock { display: none !important; }
+body[data-view="instruments"] #hud {
+  position: fixed !important; left: 10px !important; right: 10px !important;
+  top: 62px !important; bottom: 96px !important; max-width: none !important;
+  opacity: 1 !important; padding: 0 !important;
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); grid-auto-rows: 1fr; gap: 12px;
+  z-index: 1050;
+}
+body[data-view="instruments"] #hud .hud-widget {
+  display: flex !important; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; border: 1px solid var(--line); border-left: 1px solid var(--line);
+  border-radius: var(--r); background: var(--glass); padding: 14px;
+}
+body[data-view="instruments"] #hud .hud-widget.vw-off { display: none !important; }
+body[data-view="instruments"] #hud .hud-label { font-size: 14px; }
+body[data-view="instruments"] #hud .hud-big { font-size: clamp(38px, 9vw, 92px); }
+body[data-view="instruments"] #hud .hud-big small { font-size: 0.32em; }
+body[data-view="instruments"] #hud .hud-hdg-readout { font-size: clamp(26px, 6vw, 58px); }
+body[data-view="instruments"] #hud .hud-compass svg { width: 140px; height: 140px; }
+body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
+
+/* ---- phone tuning (~390px): keep it clean, big targets, no h-scroll ---- */
+@media (max-width: 760px) {
+  body[data-view="helm"] #mode-rail, body[data-view="manual"] #dock-panels {
+    left: 8px; right: 8px;
+  }
+  body[data-view="helm"] .view-dock,
+  body[data-view="manual"] .view-dock,
+  body[data-view="instruments"] .view-dock { left: 8px; right: 8px; bottom: 8px; }
+  body[data-view="helm"] #hud, body[data-view="manual"] #hud,
+  body[data-view="instruments"] #hud { left: 8px !important; right: 8px !important; }
+  body[data-view="helm"] .mode-btn .mi { font-size: 28px; }
+  body[data-view="instruments"] #hud { grid-template-columns: repeat(2, 1fr); }
+  /* The instrument strip on phones sits just under the slimmer topbar. */
+  body[data-view="helm"] #hud, body[data-view="manual"] #hud { top: 56px !important; }
+  body[data-view="helm"] #mode-rail, body[data-view="manual"] #dock-panels { top: 128px; }
+  body[data-view="instruments"] #hud { top: 56px !important; }
+}
+@media (max-width: 420px) {
+  .view-chip { padding: 7px 6px; min-width: 30px; font-size: 14px; }
+  body[data-view="helm"] #mode-rail { grid-template-columns: repeat(2, 1fr); }
+}

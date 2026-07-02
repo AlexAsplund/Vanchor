@@ -10,36 +10,57 @@
 (function () {
   const { $, send, bindSlider } = VA.ui;
 
-  // ===== settings drawer ===================================================
+  // ===== command menu (centred modal; nav lives in menu.js) ================
+  // We still own open/close: setDrawer toggles the modal + backdrop and, on
+  // open, resets the modal to its home tile grid (via menu.js).
   const drawer = $("settings");
   const drawerScrim = $("settings-scrim");
   function setDrawer(on) {
     drawer.classList.toggle("hidden", !on);
     drawerScrim.classList.toggle("hidden", !on);
+    if (on && window.VA && VA.menu && VA.menu.showHome) VA.menu.showHome();
   }
   $("settings-open").addEventListener("click", () => setDrawer(true));
   $("settings-close").addEventListener("click", () => setDrawer(false));
   drawerScrim.addEventListener("click", () => setDrawer(false));
 
   // ===== theme (persisted; default dark for the marine aesthetic) ==========
+  // Two themes: "dark" (default) and "daylight" (bright high-contrast for direct
+  // sun). Daylight keys its palette on html[data-theme="daylight"] (also set
+  // pre-paint by the inline <head> script, so no flash) and additionally carries
+  // body.light so charts.js / light-aware code adapt. "light" is treated as a
+  // legacy alias for daylight.
   const THEME_KEY = "vanchor-theme";
+  const themeSeg = $("theme-seg");
+  const themeBox = $("theme-toggle-box"); // hidden; kept for layout.js profiles
   function applyTheme(theme) {
-    const dark = theme !== "light";
-    document.body.classList.toggle("light", !dark);
-    const box = $("theme-toggle-box");
-    if (box) box.checked = dark;
-    // (charts repaint on next open; avoid touching chart state declared later)
+    const daylight = theme === "daylight" || theme === "light";
+    if (daylight) document.documentElement.setAttribute("data-theme", "daylight");
+    else document.documentElement.removeAttribute("data-theme");
+    document.body.classList.toggle("theme-daylight", daylight);
+    document.body.classList.toggle("light", daylight);
+    if (themeBox) themeBox.checked = !daylight;
+    if (themeSeg) themeSeg.querySelectorAll("button").forEach((b) => {
+      b.classList.toggle("on", (b.dataset.theme === "daylight") === daylight);
+    });
+  }
+  function setTheme(theme) {
+    const t = (theme === "daylight" || theme === "light") ? "daylight" : "dark";
+    applyTheme(t);
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* ignore */ }
   }
   (function initTheme() {
     let saved;
     try { saved = localStorage.getItem(THEME_KEY); } catch (e) { saved = null; }
     applyTheme(saved || "dark");
   })();
-  $("theme-toggle-box").addEventListener("change", () => {
-    const dark = $("theme-toggle-box").checked;
-    applyTheme(dark ? "dark" : "light");
-    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (e) { /* ignore */ }
-  });
+  if (themeSeg) themeSeg.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => setTheme(b.dataset.theme))
+  );
+  // The hidden checkbox is driven by layout.js when restoring a profile.
+  if (themeBox) themeBox.addEventListener("change", () =>
+    setTheme(themeBox.checked ? "dark" : "daylight")
+  );
 
   // ===== depth overlay toggle ==============================================
   const depthShowBox = $("depth-show");

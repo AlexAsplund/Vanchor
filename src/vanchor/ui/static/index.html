@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#05080d" />
   <title>Vanchor-NG</title>
+  <!-- Apply the persisted theme BEFORE first paint to avoid a flash. The
+       Daylight (high-contrast) palette keys on html[data-theme="daylight"];
+       settings.js later adds the body classes charts.js/light-aware code read. -->
+  <script>try{var _t=localStorage.getItem('vanchor-theme');if(_t==='daylight'||_t==='light'){document.documentElement.setAttribute('data-theme','daylight');}}catch(e){}</script>
   <!-- PWA: installable, loads fully offline on the boat (#82). -->
   <link rel="manifest" href="/manifest.webmanifest" />
   <meta name="mobile-web-app-capable" content="yes" />
@@ -82,6 +86,14 @@
       </div>
     </div>
     <div class="topbar-actions">
+      <!-- Always-reachable view switcher (segmented control). Deep-links each
+           preset view; the active chip is set by views.js from body[data-view]. -->
+      <div id="view-switcher" class="view-switcher" role="group" aria-label="View">
+        <button class="view-chip" type="button" data-view="chart" title="Chart view" aria-label="Chart view">🗺</button>
+        <button class="view-chip" type="button" data-view="helm" title="Helm view" aria-label="Helm view">🕹</button>
+        <button class="view-chip" type="button" data-view="instruments" title="Instruments view" aria-label="Instruments view">📊</button>
+        <button class="view-chip" type="button" data-view="manual" title="Manual view" aria-label="Manual view">🎚</button>
+      </div>
       <button id="alerts-open" class="btn-icon alerts-bell" title="Alert history" aria-label="Alert history">
         🔔<span id="alerts-badge" class="alerts-badge hidden">0</span>
       </button>
@@ -693,16 +705,89 @@
     </div>
   </nav>
 
-  <!-- ============== SETTINGS / SIMULATOR / ADVANCED DRAWER ============== -->
-  <div id="settings-scrim" class="scrim hidden"></div>
-  <aside id="settings" class="drawer glass hidden" aria-label="Settings and advanced">
-    <div class="drawer-head">
-      <b>Settings &amp; Advanced</b>
-      <button id="settings-close" class="btn-icon" aria-label="Close">✕</button>
+  <!-- ============== VIEW OVERLAY DOCK ============== -->
+  <!-- The always-present control strip for the non-chart views (helm / manual /
+       instruments): a dominant STOP, the helm quick actions, and a clear way
+       back to the chart view. Hidden entirely in the chart view via CSS. It
+       COMPOSES existing commands — nothing here duplicates a live widget; the
+       STOP uses the safety-critical dual-path and is never covered or dimmed. -->
+  <div id="view-dock" class="view-dock" aria-hidden="true">
+    <div class="vd-quick" id="vd-quick">
+      <button id="view-anchor" class="vd-act" type="button">⚓ Anchor here</button>
+      <button id="view-rtl" class="vd-act" type="button">🏠 Return to Launch</button>
+      <button id="view-mob" class="vd-act vd-mob" type="button">🛟 MOB</button>
     </div>
-    <div class="drawer-body">
+    <div class="vd-bottom">
+      <button id="view-exit" class="vd-exit" type="button" title="Back to the chart view">🗺 Chart</button>
+      <button id="view-stop" class="vd-stop" type="button">■ STOP</button>
+    </div>
+  </div>
 
-      <div class="drawer-section drawer-section-first">Boat &amp; calibration</div>
+  <!-- ============== COMMAND MENU (centred modal) ============== -->
+  <!-- Reuses id="settings" so settings.js / map-boat.js selectors still resolve.
+       Home = a grid of big category tiles; tapping one shows that category's
+       stacked cards (.cm-panel). The cards keep their ids + inner markup so all
+       module JS keeps working — only the container + grouping changed. -->
+  <div id="settings-scrim" class="scrim hidden"></div>
+  <aside id="settings" class="command-menu hidden" aria-label="Command menu">
+    <div class="cm-modal glass" role="dialog" aria-modal="true">
+      <header class="cm-appbar">
+        <button id="cm-back" class="cm-back hidden" type="button" aria-label="Back">‹</button>
+        <div class="cm-title" id="cm-title">Menu</div>
+        <button id="settings-close" class="cm-close" type="button" aria-label="Close">✕</button>
+      </header>
+      <div class="cm-body">
+
+      <!-- HOME: category tiles -->
+      <div class="cm-home" id="cm-home">
+        <button class="cm-tile" type="button" data-cat="boat">
+          <span class="cm-tile-ic" aria-hidden="true">⚓</span>
+          <span class="cm-tile-lbl">Boat &amp; tuning</span>
+          <span class="cm-tile-hint">Profiles, GPS calibration, auto-tune</span>
+        </button>
+        <button class="cm-tile" type="button" data-cat="map">
+          <span class="cm-tile-ic" aria-hidden="true">🗺</span>
+          <span class="cm-tile-lbl">Map &amp; charts</span>
+          <span class="cm-tile-hint">Markers, depth map, offline maps</span>
+        </button>
+        <button class="cm-tile" type="button" data-cat="display">
+          <span class="cm-tile-ic" aria-hidden="true">🎨</span>
+          <span class="cm-tile-lbl">Display</span>
+          <span class="cm-tile-hint">Theme, HUD overlay, layout</span>
+        </button>
+        <button class="cm-tile" type="button" data-cat="safety">
+          <span class="cm-tile-ic" aria-hidden="true">🛟</span>
+          <span class="cm-tile-lbl">Safety</span>
+          <span class="cm-tile-hint">Power, RTL, no-go zones, min depth</span>
+        </button>
+        <button class="cm-tile" type="button" data-cat="fishing">
+          <span class="cm-tile-ic" aria-hidden="true">🎣</span>
+          <span class="cm-tile-lbl">Fishing</span>
+          <span class="cm-tile-hint">Catch logger &amp; trips</span>
+        </button>
+        <button class="cm-tile" type="button" data-cat="devices">
+          <span class="cm-tile-ic" aria-hidden="true">🔌</span>
+          <span class="cm-tile-lbl">Devices</span>
+          <span class="cm-tile-hint">Sensors, motor &amp; hardware</span>
+        </button>
+        <button class="cm-tile" type="button" data-cat="data">
+          <span class="cm-tile-ic" aria-hidden="true">📊</span>
+          <span class="cm-tile-lbl">Data &amp; system</span>
+          <span class="cm-tile-hint">Live data, graphs, logs, backup</span>
+        </button>
+        <button class="cm-tile" type="button" data-cat="sim">
+          <span class="cm-tile-ic" aria-hidden="true">🧪</span>
+          <span class="cm-tile-lbl">Simulator</span>
+          <span class="cm-tile-hint">Environment &amp; teleport</span>
+        </button>
+      </div>
+
+      <!-- CATEGORY PANELS -->
+      <div class="cm-panels" id="cm-panels">
+
+      <!-- Boat & tuning. drawer-body class kept so map-boat.js's
+           "#settings .drawer-body" injection target still resolves here. -->
+      <section class="cm-panel drawer-body hidden" data-cat="boat">
 
       <button id="setup-open" class="btn-primary wide drawer-setup" title="Init / calibrate the boat">⚙ Set up / calibrate boat</button>
 
@@ -814,11 +899,21 @@
         <button id="tune-apply" class="btn-primary wide" disabled hidden>Apply live</button>
       </details>
 
-      <div class="drawer-section">Display</div>
+      </section><!-- /boat -->
 
-      <details class="card">
+      <!-- Display -->
+      <section class="cm-panel hidden" data-cat="display">
+
+      <details class="card" id="appearance-card">
         <summary>Appearance</summary>
-        <label class="switch"><input type="checkbox" id="theme-toggle-box" checked /><span class="track"></span> Dark theme</label>
+        <div class="ctx-sub">Theme</div>
+        <div class="seg theme-seg" id="theme-seg" role="group" aria-label="Theme">
+          <button type="button" data-theme="dark" class="on">🌙 Dark</button>
+          <button type="button" data-theme="daylight">☀ Daylight</button>
+        </div>
+        <div class="hint">Daylight is a bright, high-contrast palette for direct sun.</div>
+        <!-- Kept (hidden) for layout.js profile save/restore compatibility. -->
+        <span class="theme-compat" hidden aria-hidden="true"><input type="checkbox" id="theme-toggle-box" checked /></span>
       </details>
 
       <details class="card" id="hud-card">
@@ -850,7 +945,40 @@
         <button id="layout-reset" class="btn-ghost wide">Reset layout</button>
       </details>
 
-      <div class="drawer-section">Map &amp; charts</div>
+      <details class="card" id="views-card">
+        <summary>Views <span id="views-current" class="badge"></span></summary>
+        <div class="hint">Specialised, URL-addressable layouts of the same live
+          controls. Each is deep-linkable at <code>/view/&lt;name&gt;</code> and
+          keeps a visible STOP.</div>
+        <div class="ctx-sub">Active view</div>
+        <div class="seg views-seg" id="views-seg" role="group" aria-label="View">
+          <button type="button" data-view="chart">🗺 Chart</button>
+          <button type="button" data-view="helm">🕹 Helm</button>
+          <button type="button" data-view="instruments">📊 Instruments</button>
+          <button type="button" data-view="manual">🎚 Manual</button>
+        </div>
+        <div class="ctx-sub">Instruments widgets</div>
+        <div class="views-widgets" id="views-widgets-instruments" data-view="instruments">
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="speed" checked /><span class="track"></span> Speed</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="heading" checked /><span class="track"></span> Heading</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="depth" checked /><span class="track"></span> Depth</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="anchor" checked /><span class="track"></span> Dist→Anchor</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="battery" checked /><span class="track"></span> Battery</label>
+        </div>
+        <div class="ctx-sub">Helm strip widgets</div>
+        <div class="views-widgets" id="views-widgets-helm" data-view="helm">
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="speed" checked /><span class="track"></span> Speed</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="heading" checked /><span class="track"></span> Heading</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="depth" checked /><span class="track"></span> Depth</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="anchor" /><span class="track"></span> Dist→Anchor</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="battery" /><span class="track"></span> Battery</label>
+        </div>
+      </details>
+
+      </section><!-- /display -->
+
+      <!-- Map & charts (the time-series "Charts" card lives under Data & system) -->
+      <section class="cm-panel hidden" data-cat="map">
 
       <details class="card" id="markers-card">
         <summary>Map markers <span id="marker-state" class="badge"></span></summary>
@@ -888,12 +1016,6 @@
         </div>
         <input type="file" id="depth-import-file" accept=".csv,.xyz,.txt,.geojson,.json" class="hidden" />
         <div id="depth-import-status" class="hint"></div>
-      </details>
-
-      <details class="card" id="charts-card">
-        <summary>Charts</summary>
-        <button id="charts-clear" class="btn-ghost">Clear</button>
-        <div id="charts"></div>
       </details>
 
       <!-- Offline maps (#52): pre-download tiles into IndexedDB so the map works
@@ -936,7 +1058,10 @@
         <div id="offline-charts-list"></div>
       </details>
 
-      <div class="drawer-section">Fishing</div>
+      </section><!-- /map -->
+
+      <!-- Fishing -->
+      <section class="cm-panel hidden" data-cat="fishing">
 
       <details class="card" id="catch-card">
         <summary>Catch logger <span id="catch-card-state" class="badge"></span></summary>
@@ -982,7 +1107,10 @@
         <ol id="trips-list" class="trips-list"></ol>
       </details>
 
-      <div class="drawer-section">Safety</div>
+      </section><!-- /fishing -->
+
+      <!-- Safety -->
+      <section class="cm-panel hidden" data-cat="safety">
 
       <details class="card" id="safety-card">
         <summary>Safety &amp; power <span id="safety-card-state" class="badge"></span></summary>
@@ -1031,7 +1159,10 @@
         <button id="batt-test-send" class="btn-ghost wide">Apply test SOC</button>
       </details>
 
-      <div class="drawer-section">Devices</div>
+      </section><!-- /safety -->
+
+      <!-- Devices -->
+      <section class="cm-panel hidden" data-cat="devices">
 
       <!-- Hardware / device config. Lazy-loads GET /api/config/devices on first
            open (devices.js). Hidden gracefully if that endpoint 404s. -->
@@ -1110,11 +1241,14 @@
         </div>
       </details>
 
-      <div class="drawer-section">Data &amp; diagnostics</div>
+      </section><!-- /devices -->
+
+      <!-- Data & system -->
+      <section class="cm-panel hidden" data-cat="data">
 
       <button id="logs-open" class="btn-ghost wide" title="View the application log">📜 View logs</button>
 
-      <details class="card">
+      <details class="card" id="livedata-card">
         <summary>Live data</summary>
         <div class="row"><span>Mode</span><b id="r-mode">—</b></div>
         <div class="row"><span>Heading</span><b id="r-heading">—</b></div>
@@ -1134,6 +1268,14 @@
           <span class="health-age-chip"><span class="hac-lbl">DEPTH</span><span class="hac-val" id="health-age-depth">—</span></span>
           <span class="health-age-chip"><span class="hac-lbl">IMU</span><span class="hac-val" id="health-age-imu">—</span></span>
         </div>
+      </details>
+
+      <!-- Time-series graphs (uPlot) — renamed from "Charts" to end the
+           nautical-chart name collision; moved here from Map & charts. -->
+      <details class="card" id="charts-card">
+        <summary>Time-series graphs</summary>
+        <button id="charts-clear" class="btn-ghost">Clear</button>
+        <div id="charts"></div>
       </details>
 
       <details class="card" id="debug-card">
@@ -1196,7 +1338,10 @@
         <div id="backup-rs-status" class="hint"></div>
       </details>
 
-      <div class="drawer-section">Simulator</div>
+      </section><!-- /data -->
+
+      <!-- Simulator -->
+      <section class="cm-panel hidden" data-cat="sim">
 
       <!-- Simulator-only: revealed only when telemetry.sim_enabled is true. -->
       <details class="card sim-only hidden" id="sim-card">
@@ -1239,7 +1384,12 @@
         </div>
         <div id="teleport-status" class="hint"></div>
       </details>
-    </div>
+
+      </section><!-- /sim -->
+
+      </div><!-- /cm-panels -->
+      </div><!-- /cm-body -->
+    </div><!-- /cm-modal -->
   </aside>
 
   <!-- Select-boat dialog (#96): lists preset boats as cards; each "Select"
@@ -1554,6 +1704,7 @@
   <script src="/static/controls.js"></script>
   <script src="/static/route.js"></script>
   <script src="/static/settings.js"></script>
+  <script src="/static/menu.js"></script>
   <script src="/static/charts.js"></script>
   <script src="/static/remote.js"></script>
   <script src="/static/markers.js"></script>
@@ -1581,5 +1732,6 @@
   <script src="/static/measure.js"></script>
   <script src="/static/mobile.js"></script>
   <script src="/static/wakelock.js"></script>
+  <script src="/static/views.js"></script>
 </body>
 </html>
