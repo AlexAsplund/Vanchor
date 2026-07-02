@@ -451,8 +451,26 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     @app.post("/api/command")
     async def command(payload: dict) -> dict:
-        runtime.handle_command(payload)
+        # REST commands are un-gated (no helm/observer role) -> source "rest".
+        # Record the outcome in the audit ring (#26): accepted on success, error
+        # (with the message) if the handler raises. The original 500 behaviour is
+        # preserved by re-raising after recording.
+        ctype = payload.get("type") if isinstance(payload, dict) else None
+        try:
+            runtime.handle_command(payload)
+        except Exception as exc:
+            runtime.record_command(ctype, "rest", "error", detail=str(exc))
+            raise
+        runtime.record_command(ctype, "rest", "accepted")
         return {"ok": True}
+
+    @app.get("/api/audit")
+    async def audit(n: int = 50) -> dict:
+        """Recent command-audit entries (#26): who commanded what, and whether it
+        was accepted/denied/errored. Oldest first, newest last. Each entry is
+        ``{ts, type, source, outcome, detail?}`` where source is
+        helm|observer|rest. Pings are not recorded."""
+        return runtime.command_audit(n)
 
     @app.post("/api/restart")
     async def restart() -> dict:
@@ -1028,7 +1046,10 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 # messages (stop/take_helm/ping — the latter two handled above, so
                 # here only ``stop`` survives). Everything else is rejected and NOT
                 # forwarded to the controller. SAFETY FLOOR: ``stop`` always works.
+                # This client's role, tagged onto every audit entry (#26).
+                source = "helm" if websocket is _helm["ws"] else "observer"
                 if websocket is not _helm["ws"] and mtype not in _OBSERVER_ALLOWED:
+                    runtime.record_command(mtype, "observer", "denied")
                     reply = {
                         "type": "role_denied", "v": _PROTOCOL_V,
                         "error": "observer — take the helm to command",
@@ -1041,11 +1062,13 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                     runtime.handle_command(msg)
                 except Exception as exc:
                     logger.exception("bad command over websocket: %s", raw)
+                    runtime.record_command(mtype, source, "error", detail=str(exc))
                     if has_seq:
                         await websocket.send_text(json.dumps(
                             {"type": "nack", "v": _PROTOCOL_V, "seq": seq, "error": str(exc)}
                         ))
                 else:
+                    runtime.record_command(mtype, source, "accepted")
                     if has_seq:
                         await websocket.send_text(json.dumps(
                             {"type": "ack", "v": _PROTOCOL_V, "seq": seq}

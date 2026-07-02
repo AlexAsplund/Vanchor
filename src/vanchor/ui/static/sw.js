@@ -19,7 +19,7 @@
  */
 "use strict";
 
-const VERSION = "vanchor-shell-v53";
+const VERSION = "vanchor-shell-v54";
 const CACHE = VERSION;
 
 // The app shell. Kept in sync with index.html's <link>/<script> tags. "/" and
@@ -103,6 +103,7 @@ const SHELL = [
   "/static/teleport.js",
   "/static/alerts.js",
   "/static/logs.js",
+  "/static/audit.js",
   "/static/measure.js",
   "/static/mobile.js",
   "/static/wakelock.js",

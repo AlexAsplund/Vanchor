@@ -671,3 +671,77 @@ def test_ws_broadcast_seq_is_global_and_monotonic(client):
         f2 = _recv_until(ws, lambda m: m.get("type") == "telemetry" and "clients" in m)
         assert f1 is not None and f2 is not None
         assert f2["seq"] > f1["seq"]
+
+
+# ---- #26: command audit log ------------------------------------------------ #
+
+
+def test_audit_records_rest_command(client):
+    """A REST command is audited with source "rest" and outcome "accepted"."""
+    client.post("/api/command", json={"type": "anchor_hold", "radius_m": 5})
+    cmds = client.get("/api/audit").json()["commands"]
+    assert cmds, "audit should have at least one entry"
+    last = cmds[-1]  # newest last
+    assert last["type"] == "anchor_hold"
+    assert last["source"] == "rest"
+    assert last["outcome"] == "accepted"
+    assert isinstance(last["ts"], (int, float))
+
+
+def test_audit_records_ws_helm_accepted(client):
+    """A helm WS command is audited source "helm" / outcome "accepted"."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "heading_hold", "target_deg": 90, "seq": 3})
+        assert _recv_until(ws, lambda m: m.get("type") == "ack") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    hh = [c for c in cmds if c["type"] == "heading_hold"]
+    assert hh and hh[-1]["source"] == "helm" and hh[-1]["outcome"] == "accepted"
+
+
+def test_audit_records_observer_denied(client):
+    """An observer's rejected command is audited source "observer"/"denied"."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+            ws2.send_json({"type": "waypoint", "seq": 71})
+            assert _recv_until(ws2, lambda m: m.get("type") == "role_denied") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    denied = [c for c in cmds if c["type"] == "waypoint"]
+    assert denied and denied[-1]["source"] == "observer"
+    assert denied[-1]["outcome"] == "denied"
+
+
+def test_audit_records_ws_error(client):
+    """A handler exception (seq'd) is audited with outcome "error" + detail."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        # set_gps_offset without coords raises KeyError in the handler -> nack.
+        ws.send_json({"type": "set_gps_offset", "seq": 5})
+        assert _recv_until(ws, lambda m: m.get("type") == "nack") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    err = [c for c in cmds if c["type"] == "set_gps_offset"]
+    assert err and err[-1]["outcome"] == "error" and err[-1].get("detail")
+
+
+def test_audit_does_not_record_ping(client):
+    """Pings must never appear in the audit (only real commands are logged)."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "ping"})
+        assert _recv_until(ws, lambda m: m.get("type") == "pong") is not None
+        ws.send_json({"type": "anchor_hold", "radius_m": 4, "seq": 8})
+        assert _recv_until(ws, lambda m: m.get("type") == "ack") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    assert all(c["type"] != "ping" for c in cmds)
+    assert any(c["type"] == "anchor_hold" for c in cmds)
+
+
+def test_audit_n_param_limits_returned(client):
+    """?n caps how many entries are returned (most recent)."""
+    for i in range(6):
+        client.post("/api/command", json={"type": "anchor_hold", "radius_m": i + 1})
+    cmds = client.get("/api/audit?n=3").json()["commands"]
+    assert len(cmds) == 3  # only the 3 most recent

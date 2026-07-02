@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import contextlib
 import logging
 import math
@@ -250,6 +251,15 @@ class Runtime:
         # already captures every ``vanchor.*`` line. We deliberately do NOT add a
         # second handler on the ``vanchor`` logger here -- doing so recorded each
         # line twice in a debug session (review finding L3).
+
+        # Command audit ring (#26): a bounded, in-app record of every command the
+        # runtime was asked to run, tagged with WHO sent it (helm/observer/rest)
+        # and the OUTCOME (accepted/denied/error). Recorded from the command entry
+        # points in ui/server.py (the WS handler + REST /api/command), NOT from
+        # handle_command itself -- only the entry points know the source/role.
+        # Surfaced at GET /api/audit for the in-app audit view; oldest first,
+        # newest last (chronological). Pings are never recorded.
+        self._command_audit: collections.deque = collections.deque(maxlen=200)
 
         self.state = NavigationState()
         self.state.anchor_radius_m = cfg.control.anchor_radius_m
@@ -1043,6 +1053,38 @@ class Runtime:
 
     def stop_replay(self) -> None:
         self.replay.stop()
+
+    # ------------------------------------------------------------------ #
+    # Command audit log (#26)
+    # ------------------------------------------------------------------ #
+    def record_command(
+        self, ctype: object, source: str, outcome: str, detail: str | None = None
+    ) -> None:
+        """Append one command to the bounded audit ring (#26).
+
+        ``source`` is "helm"|"observer"|"rest"; ``outcome`` is
+        "accepted"|"denied"|"error" (+ an optional short ``detail`` on error).
+        Called from the command entry points (WS handler + REST /api/command).
+        Pings (and typeless messages) are never recorded so the audit stays a
+        log of real commands. Uses the wall clock so the timestamp is displayable.
+        """
+        if ctype in (None, "", "ping"):
+            return
+        entry = {
+            "ts": self._now_fn(),
+            "type": str(ctype),
+            "source": source,
+            "outcome": outcome,
+        }
+        if detail:
+            entry["detail"] = str(detail)[:200]
+        self._command_audit.append(entry)
+
+    def command_audit(self, n: int = 50) -> dict:
+        """Return the most recent ``n`` audited commands, oldest first / newest
+        last. ``n`` is clamped to [1, 200] (the ring size)."""
+        n = max(1, min(int(n), 200))
+        return {"commands": list(self._command_audit)[-n:]}
 
     def handle_command(self, command: dict) -> None:
         ctype = command.get("type")

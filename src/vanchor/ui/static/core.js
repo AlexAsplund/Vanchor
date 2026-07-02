@@ -283,6 +283,11 @@ VA.connect = function () {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => {
     setConn("connected", "connected");
+    // Offline-first command queue (#26): the link is back, so replay commands
+    // buffered while it was down (dropping any past their TTL) and re-send once
+    // any command that was sent-but-unacked when the socket dropped.
+    _flushQueue();
+    _resendUnacked();
     // Application-level heartbeat: send a ping every 2 s so the server's
     // _last_client_seen advances while the socket is live.  This ensures the
     // link-loss failsafe fires within link_loss_timeout_s of a true half-open
@@ -295,6 +300,9 @@ VA.connect = function () {
   ws.onclose = () => {
     clearInterval(_pingInterval);
     _pingInterval = null;
+    // Snapshot sent-but-unacked commands so they can be re-sent once on the next
+    // connect (#26, rule c) — before their ack timers expire.
+    _markSentForResend();
     setConn("disconnected", "reconnecting…");
     setTimeout(VA.connect, 1000);
   };
@@ -321,22 +329,126 @@ VA.connect = function () {
   };
 };
 
-// Send a command (WS up; falls back to POST /api/command if the socket is down).
+// ---- offline-first command queue + per-command state machine (#26) -------
+// Every VA.send() command moves through an explicit state machine:
+//   queued    — the WS is not open; the command is buffered CLIENT-SIDE
+//               (not POSTed) until the link comes back.
+//   sent      — written to the WS, awaiting the server's {ack}/{nack}.
+//   confirmed — {ack} received (the server ran it).
+//   failed    — {nack}, a 3 s ack timeout, or it expired while queued.
+// `VA.commandLog` is a bounded list of recent commands with their state +
+// timestamps; `VA.onCommandState(fn)` fires on every transition.
+//
+// SAFETY RULES on reconnect (see _flushQueue / _resendUnacked):
+//  (a) `stop` is NEVER queued — VA.sendCritical dual-paths it immediately over
+//      WS + POST (unchanged below), so a STOP can never sit in a buffer.
+//  (b) a command that sat QUEUED (never sent) longer than QUEUE_TTL_MS is NOT
+//      auto-replayed — it is marked failed("expired"). This stops a stale
+//      motor-engage tapped during an outage from firing minutes later.
+//  (c) a command that was SENT but unacked when the link dropped MAY be re-sent
+//      ONCE on reconnect to obtain confirmation. VA.send carries idempotent
+//      mode/setpoint commands (e.g. heading_hold, anchor_hold, cruise), which
+//      are safe to repeat; a genuinely non-idempotent action must not rely on
+//      this path.
+const QUEUE_TTL_MS = 5000;   // rule (b): max age a queued command may be replayed
+const MAX_CMD_LOG = 50;
+VA.commandLog = [];          // bounded list of recent commands (with state)
+const _cmdQueue = [];        // entries in "queued" state awaiting a live socket
+const _resend = [];          // rule (c): sent-but-unacked entries to retry once
+const cmdStateListeners = [];
+// Subscribe to command-state transitions: fn(entry, VA.commandLog).
+VA.onCommandState = function (fn) { cmdStateListeners.push(fn); };
+function _emitCmdState(entry) {
+  for (const fn of cmdStateListeners) {
+    try { fn(entry, VA.commandLog); } catch (e) { /* ignore */ }
+  }
+}
+function _logCmd(entry) {
+  VA.commandLog.push(entry);
+  while (VA.commandLog.length > MAX_CMD_LOG) VA.commandLog.shift();
+}
+function _setCmdState(entry, state, extra) {
+  entry.state = state;
+  entry.tState = Date.now();
+  if (extra) Object.assign(entry, extra);
+  _emitCmdState(entry);
+}
+// Write an entry to the (open) WS and register its ack/nack handler. Clears any
+// prior pending for this seq first so a stale 3 s timer from a previous attempt
+// (a resend re-uses the same seq) can't delete the fresh pending entry.
+function _sendEntry(entry) {
+  _clearPending(entry.seq);
+  _registerPending(entry.seq, (ok, error) => {
+    if (ok) _setCmdState(entry, "confirmed", { tConfirmed: Date.now() });
+    else _setCmdState(entry, "failed", { error: error || "failed" });
+  });
+  try {
+    ws.send(JSON.stringify(Object.assign({}, entry.cmd, { seq: entry.seq })));
+    _setCmdState(entry, "sent", { tSent: Date.now() });
+  } catch (e) {
+    _clearPending(entry.seq);
+    _setCmdState(entry, "failed", { error: "send error" });
+    VA.logLine("command send failed: " + e);
+  }
+}
+// Reconnect: flush queued commands, dropping any that outlived QUEUE_TTL_MS.
+function _flushQueue() {
+  if (!_cmdQueue.length) return;
+  const now = Date.now();
+  const pending = _cmdQueue.splice(0, _cmdQueue.length);
+  for (const entry of pending) {
+    if (now - (entry.tQueued || entry.tCreated) > QUEUE_TTL_MS) {
+      _setCmdState(entry, "failed", { error: "expired" });   // rule (b)
+      VA.logLine("queued command expired (not replayed): " + (entry.type || "?"));
+    } else if (ws && ws.readyState === 1) {
+      _sendEntry(entry);
+    } else {
+      _cmdQueue.push(entry);   // socket died again mid-flush; keep it buffered
+    }
+  }
+}
+// Link dropped: snapshot the SENT-but-unacked commands so they can be re-sent
+// once on reconnect (rule c). Called from ws.onclose before their ack timers
+// expire; their state may transition to failed(timeout) meanwhile — the resend
+// still fires and re-drives them to confirmed.
+function _markSentForResend() {
+  for (const e of VA.commandLog) {
+    if (e.state === "sent" && (e.resends || 0) < 1 && _resend.indexOf(e) === -1) {
+      _resend.push(e);
+    }
+  }
+}
+// Reconnect: re-send each sent-but-unacked command exactly once (rule c).
+function _resendUnacked() {
+  const items = _resend.splice(0, _resend.length);
+  for (const entry of items) {
+    if (ws && ws.readyState === 1) {
+      entry.resends = (entry.resends || 0) + 1;
+      VA.logLine("re-sending unacked command (idempotent): " + (entry.type || "?"));
+      _sendEntry(entry);
+    }
+  }
+}
+
+// Send a command. When the WS is open it goes straight to "sent" and is ack'd;
+// when the socket is down it is QUEUED client-side (state machine + safety rules
+// above) rather than POSTed, so an offline tap is replayed on reconnect (subject
+// to the TTL) instead of silently lost. Returns the command's seq.
 VA.send = function (cmd) {
   VA.logLine("» " + JSON.stringify(cmd));
   const seq = ++_sendSeq;
-  const msg = Object.assign({}, cmd, { seq });
+  const entry = {
+    seq, type: cmd && cmd.type, cmd, state: "new",
+    tCreated: Date.now(), resends: 0,
+  };
+  _logCmd(entry);
   if (ws && ws.readyState === 1) {
-    // Only the WS path is ack'd by the server; register a pending entry so the
-    // ack/nack resolves it (or it times out after 3 s and logs).
-    _registerPending(seq);
-    ws.send(JSON.stringify(msg));
+    _sendEntry(entry);
   } else {
-    fetch("/api/command", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cmd),
-    }).catch((e) => VA.logLine("command POST failed: " + e));
+    entry.tQueued = Date.now();
+    _cmdQueue.push(entry);
+    _setCmdState(entry, "queued", { tQueued: entry.tQueued });
+    VA.logLine("command queued (offline): " + ((cmd && cmd.type) || "?"));
   }
   return seq;
 };
