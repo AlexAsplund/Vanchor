@@ -754,6 +754,21 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 status_code=400,
             )
 
+    # -- UI preferences KV (browser-as-cache mechanism, #23) ------------- #
+    @app.get("/api/prefs")
+    async def get_prefs() -> dict:
+        """The persisted UI-preferences dict (HUD layout, basemap, ...).
+
+        The client renders from its own localStorage for instant paint; this is
+        the durable copy so a reinstall / another device sees the same prefs."""
+        return runtime.prefs.get()
+
+    @app.put("/api/prefs")
+    async def put_prefs(payload: dict) -> dict:
+        """Shallow-merge a JSON patch into the persisted prefs (atomic write).
+        Returns the merged dict."""
+        return runtime.prefs.merge(payload if isinstance(payload, dict) else {})
+
     # -- Versioned backup / restore -------------------------------------- #
     @app.post("/api/backup")
     async def backup_create(payload: dict | None = None):

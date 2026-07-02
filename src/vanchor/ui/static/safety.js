@@ -152,6 +152,13 @@
   let minDepth = 0;
   let fixFailsafe = false;   // loss-of-fix failsafe; OFF by default
   const nogoLayer = (map && L) ? L.layerGroup() : null;
+  // #23 server-persisted safety geometry: the SERVER is the source of truth,
+  // localStorage is only a cache / offline fallback. Once we've seen the
+  // server's safety_geometry we ADOPT it (never blindly re-send our stale
+  // local copy). ``migrated`` guards a one-time local->server push used only
+  // when the server has no geometry yet but this client does.
+  let serverGeomSeen = false;
+  let migrated = false;
 
   function loadZones() {
     try { const raw = localStorage.getItem(NOGO_KEY); if (raw) { const a = JSON.parse(raw); if (Array.isArray(a)) zones = a.filter((z) => Array.isArray(z) && z.length >= 3); } }
@@ -162,6 +169,66 @@
   }
   function saveZones() { try { localStorage.setItem(NOGO_KEY, JSON.stringify(zones)); } catch (e) { /* ignore */ } }
   function sendZones() { send({ type: "set_nogo_zones", zones: zones }); }
+
+  // ---- #23 server-geometry adoption (echo-loop-safe) -----------------
+  // Value-equality on zone rings so adopting the server's geometry does NOT
+  // trigger a redraw or (crucially) a re-send of an identical copy -- that is
+  // what would otherwise create an echo loop (server -> client -> server -> ...).
+  function zonesEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      const r1 = a[i], r2 = b[i];
+      if (!Array.isArray(r1) || !Array.isArray(r2) || r1.length !== r2.length) return false;
+      for (let j = 0; j < r1.length; j++) {
+        if (Math.abs(r1[j][0] - r2[j][0]) > 1e-9 || Math.abs(r1[j][1] - r2[j][1]) > 1e-9) return false;
+      }
+    }
+    return true;
+  }
+  function serverHasGeometry(g) {
+    return (Array.isArray(g.nogo_zones) && g.nogo_zones.length > 0)
+      || (Number.isFinite(g.min_depth_m) && g.min_depth_m > 0)
+      || g.fix_failsafe_enabled === true;
+  }
+  // Adopt the server's geometry as the local truth. Purely a local update +
+  // cache write: it NEVER calls send(), so it cannot echo back to the server.
+  function adoptServerGeometry(g) {
+    const sz = Array.isArray(g.nogo_zones)
+      ? g.nogo_zones.filter((z) => Array.isArray(z) && z.length >= 3) : [];
+    if (!zonesEqual(sz, zones)) {
+      zones = sz.map((r) => r.map((p) => [p[0], p[1]]));
+      saveZones();
+      redrawZones();
+    }
+    if (Number.isFinite(g.min_depth_m) && g.min_depth_m !== minDepth) {
+      minDepth = g.min_depth_m;
+      try { localStorage.setItem(MINDEPTH_KEY, String(minDepth)); } catch (e) { /* ignore */ }
+      applyMinDepthUI();
+    }
+    const ff = g.fix_failsafe_enabled === true;
+    if (ff !== fixFailsafe) {
+      fixFailsafe = ff;
+      try { localStorage.setItem(FAILSAFE_KEY, ff ? "1" : "0"); } catch (e) { /* ignore */ }
+      applyFailsafeUI();
+    }
+  }
+  // Called on every telemetry frame carrying a safety_geometry block.
+  function onServerGeometry(g) {
+    if (!g || typeof g !== "object") return;
+    serverGeomSeen = true;
+    if (serverHasGeometry(g)) {
+      // Server owns geometry -> adopt it. localStorage is now just a cache.
+      adoptServerGeometry(g);
+    } else if (!migrated && (zones.length || minDepth > 0 || fixFailsafe)) {
+      // One-time migration: the server has NO geometry yet but this client has
+      // a local copy -> push it up once so the server becomes the source.
+      if (zones.length) sendZones();
+      if (minDepth > 0) send({ type: "set_min_depth", min_depth_m: minDepth });
+      if (fixFailsafe) send({ type: "set_fix_failsafe", enabled: true });
+    }
+    // Never migrate again once a geometry frame has been processed.
+    migrated = true;
+  }
 
   function redrawZones() {
     if (!nogoLayer) return;
@@ -349,6 +416,10 @@
     renderMob(t);
     renderLink(t);
     renderBanners(t);
+    // #23: adopt the SERVER's safety geometry (browser is a cache). The
+    // immediate snapshot on WS connect carries this, so a freshly-opened client
+    // paints the server's zones without waiting.
+    if (t && t.safety_geometry) onServerGeometry(t.safety_geometry);
   });
 
   // ======================================================================
@@ -371,9 +442,14 @@
     }
     setNogoVisible(nogoVisible);
   }
-  // Re-send persisted zones + min-depth once on load (after a short delay so the
-  // socket is up); the backend may have restarted and lost them.
+  // #23: geometry now lives on the SERVER and is delivered in telemetry
+  // (`safety_geometry`), which onServerGeometry() adopts / migrates. We no
+  // longer blindly re-send our local copy -- that would clobber server truth
+  // with a stale client and could echo-loop. This timer is only a FALLBACK for
+  // an OLD backend that never sends a safety_geometry block: if none has been
+  // seen ~1.5 s after load, push our local copy up once (legacy behaviour).
   setTimeout(() => {
+    if (serverGeomSeen) return;   // server owns geometry; don't clobber it
     if (zones.length) sendZones();
     if (minDepth > 0) send({ type: "set_min_depth", min_depth_m: minDepth });
     if (fixFailsafe) send({ type: "set_fix_failsafe", enabled: true });
@@ -383,5 +459,9 @@
     zones() { return zones.slice(); },
     minDepth() { return minDepth; },
     setNogoVisible, isNogoVisible() { return nogoVisible; },
+    // Exposed for tests / debugging: the #23 server-geometry adoption path and
+    // its echo-guard equality check.
+    onServerGeometry, zonesEqual, serverHasGeometry,
+    serverGeomSeen() { return serverGeomSeen; },
   };
 })();

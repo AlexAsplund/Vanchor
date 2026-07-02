@@ -391,6 +391,18 @@ class Runtime:
         if active is not None:
             self._apply_boat_specs(active["specs"])
 
+        # --- Server-persisted safety geometry (#23) ---------------------- #
+        # No-go zones / min-depth / fix-failsafe live on the SERVER now, not just
+        # the browser's localStorage. The governor is the live authority; this
+        # store is the persistence layer. Load + APPLY at startup so a Pi restart
+        # with NO client connected keeps the operator's zones/min-depth/failsafe.
+        from .core.prefs import PrefsStore, SafetyGeometryStore
+
+        self.safety_geometry = SafetyGeometryStore(cfg.data_dir)
+        self._apply_safety_geometry()
+        # Generic UI-preferences KV store (browser-as-cache mechanism).
+        self.prefs = PrefsStore(cfg.data_dir)
+
         # --- Lost-connection failsafe (#64) ------------------------------ #
         # Number of connected UI clients and the last time one was seen alive.
         self._ui_clients = 0
@@ -408,6 +420,31 @@ class Runtime:
         # supervisor never launches an overlapping save (finding M3): the save
         # is offloaded off the event loop and must not stack up.
         self._depth_save_in_flight = False
+
+    # ------------------------------------------------------------------ #
+    # Server-persisted safety geometry (#23)
+    # ------------------------------------------------------------------ #
+    def _apply_safety_geometry(self) -> None:
+        """Apply the persisted safety geometry to the live governor.
+
+        Called at startup (and after a restore) so no-go zones / min-depth /
+        fix-failsafe survive a restart with no client connected. Only values the
+        operator actually set are applied -- ``min_depth_m`` / ``fix_failsafe``
+        left as ``None`` in the store leave the config defaults standing."""
+        geo = self.safety_geometry
+        gov = self.controller.safety
+        if geo.nogo_zones:
+            gov.set_nogo_zones(
+                [[(float(p[0]), float(p[1])) for p in ring] for ring in geo.nogo_zones]
+            )
+        if geo.min_depth_m is not None:
+            gov.config.min_depth_m = geo.min_depth_m
+        if geo.fix_failsafe_enabled is not None:
+            gov.config.fix_failsafe_enabled = geo.fix_failsafe_enabled
+        logger.info(
+            "safety geometry applied: %d no-go zones, min_depth=%s, fix_failsafe=%s",
+            len(geo.nogo_zones), geo.min_depth_m, geo.fix_failsafe_enabled,
+        )
 
     # ------------------------------------------------------------------ #
     # Boat profile (Init-boat wizard)
@@ -631,6 +668,18 @@ class Runtime:
             self._depth_saved_n = len(self.depth_map.points)
         except Exception:  # pragma: no cover - defensive
             logger.exception("restore: reloading depth map failed")
+            restart_required = True
+
+        # Safety geometry (#23): rebuild the store from the restored safety.json
+        # and re-apply it to the live governor + refresh prefs.
+        try:
+            from .core.prefs import PrefsStore, SafetyGeometryStore
+
+            self.safety_geometry = SafetyGeometryStore(self.config.data_dir)
+            self._apply_safety_geometry()
+            self.prefs = PrefsStore(self.config.data_dir)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("restore: reloading safety geometry failed")
             restart_required = True
 
         # Device config: re-read the restored devices.json into the live config
@@ -1036,6 +1085,21 @@ class Runtime:
             self.trip_start(command.get("name"))
         elif ctype == "trip_stop":
             self.trip_stop()
+        elif ctype in ("set_nogo_zones", "set_min_depth", "set_fix_failsafe"):
+            # Safety geometry: update the live governor (controller) AND persist
+            # to the server-side store so it survives a restart (#23). The
+            # governor stays the authority; we mirror its resulting state (for
+            # min-depth/failsafe) and the raw command rings (for no-go zones,
+            # which the governor keeps only as prepared shapely polygons).
+            self.controller.handle_command(command)
+            if ctype == "set_nogo_zones":
+                self.safety_geometry.set_nogo_zones(command.get("zones", []))
+            elif ctype == "set_min_depth":
+                self.safety_geometry.set_min_depth(self.controller.safety.config.min_depth_m)
+            else:
+                self.safety_geometry.set_fix_failsafe(
+                    self.controller.safety.config.fix_failsafe_enabled
+                )
         else:
             self.controller.handle_command(command)
 
@@ -2016,6 +2080,18 @@ class Runtime:
 
         payload = self.state.to_dict()
         payload["safety"] = self.controller.safety_status.to_dict()
+        # Server-side safety geometry (#23) so the browser becomes a CACHE, not
+        # the source of truth: a freshly-opened client renders the SERVER's
+        # zones/min-depth/failsafe. Raw no-go rings come from the persistence
+        # store; min-depth + failsafe are read live off the governor (the
+        # authority). safety.js adopts these as truth and only pushes local ->
+        # server on an explicit edit or a one-time migration (no echo loop).
+        _gov = self.controller.safety.config
+        payload["safety_geometry"] = {
+            "nogo_zones": self.safety_geometry.nogo_zones,
+            "min_depth_m": _gov.min_depth_m,
+            "fix_failsafe_enabled": _gov.fix_failsafe_enabled,
+        }
         payload["health"] = self._health_snapshot()
         payload["battery"] = self.battery_snapshot()
         payload["link"] = {
