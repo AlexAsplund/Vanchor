@@ -2,7 +2,7 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## Unreleased
+## [1.3-alpha] — 2026-07-02
 
 - **ML anchor retrained** on the sign-faithful env (fixing the #34 follow-up):
   the shipped policy was trained on the old steering-sign-flipped env and was
@@ -17,6 +17,11 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   injected into `sw.js` at serve time — the PWA auto-refreshes exactly when
   assets change, with no manual `VERSION` bump and no needless re-download on a
   no-op restart.
+- **Mobile mode sheet**: selecting a mode expands the bottom sheet to full and
+  scrolls the mode rail out of view, so the mode's options are immediately
+  reachable; any "tap the map" action drops the sheet / switches to the chart.
+- **README**: a Hardware section + mermaid overview diagram, pointing at the
+  companion open-hardware carrier board (vanchor-pcb) as an easy optional build.
 
 ## [1.2-alpha] — 2026-07-02
 
