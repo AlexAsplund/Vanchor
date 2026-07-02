@@ -28,11 +28,26 @@ the boat's own Raspberry Pi.
 | | |
 |:---:|:---:|
 | ![Main view](docs/images/overview.png) | ![Depth mapping](docs/images/depth.png) |
-| **Main view** — boat, instrument HUD, mode controls, steering gauge | **Depth mapping** — colour-ramped grid with radiating coverage + isobath contours |
-| ![Settings](docs/images/settings.png) | ![Mobile mode](docs/images/mobile.png) |
-| **Settings** — every control, grouped into clear categories | **Mobile mode** — full-bleed map + bottom sheet for the phone at the helm |
+| **Main view** — boat, instrument HUD, mode dock, steering gauge | **Depth mapping** — colour-ramped grid with radiating coverage + isobath contours |
+| ![Menu](docs/images/settings.png) | ![Mobile](docs/images/mobile.png) |
+| **Menu** — a centred command menu: 8 large category tiles open big, thumb-friendly sub-panels | **Mobile** — full-bleed map + a draggable bottom sheet; picking a mode slides its options up |
 
-> All four are running on the **built-in simulator** — no hardware, no boat, just `vanchor` on a laptop.
+> All four run on the **built-in simulator** — no hardware, no boat, just `vanchor` on a laptop.
+
+### Views — specialised, URL-addressable layouts
+
+Reach any view at **`/view/<name>`** — deep-linkable and offline-capable. Each drops
+the chart and rearranges the same live widgets for a job at the helm; every view
+keeps an ever-present STOP.
+
+| | | |
+|:---:|:---:|:---:|
+| ![Helm](docs/images/view-helm.png) | ![Instruments](docs/images/view-instruments.png) | ![Manual](docs/images/view-manual.png) |
+| **Helm** (`/view/helm`) — big mode grid, quick actions, dominant STOP | **Instruments** (`/view/instruments`) — a large glance HUD | **Manual** (`/view/manual`) — big thrust + steering |
+
+An opt-in **Daylight** high-contrast theme keeps it readable in direct sun (dark stays default):
+
+![Daylight theme](docs/images/daylight.png)
 
 ### A few of the modes
 
