@@ -14,16 +14,18 @@ experiments and tuning sweeps are easy to express and reproduce.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 
 from ..controller.controller import Controller, Helm
 from ..controller.modes import AnchorConfig, DriftConfig, WaypointConfig
+from ..controller.safety import SafetyConfig
 from ..core.geo import haversine_m
 from ..core.models import BoatState, Environment, GeoPoint
 from ..core.pid import PID
 from ..core.state import NavigationState
 from ..nav.navigator import Navigator
 from ..sim.devices import SimCompass, SimGps
+from ..sim.fossen import FossenParams
 from ..sim.simulator import Simulator
 
 NAN = float("nan")
@@ -58,6 +60,26 @@ class Scenario:
     cruise_pid: PID | None = None
     drift_config: DriftConfig | None = None
     max_steer_angle_deg: float = 185.0
+
+    # --- Vectored / wide-azimuth station-keeping (#35) support ------------ #
+    # All OFF/None by default, so every existing scenario builds the exact same
+    # SIM boat + controller as before. Set these to let the analysis harness
+    # exercise and score the opt-in vectored spot-lock, which needs the motor's
+    # full mechanical swing (the default sim boat only swings +/-35 deg, so a
+    # Scenario otherwise cannot command a wide azimuth).
+    #
+    # ``sim_max_steer_angle_deg``: physical head swing (deg) the SIM boat's motor
+    # can rotate to. None keeps the model default (~35 deg). When set, the helm's
+    # autopilot band is re-scaled to its tuned 35 deg and the steering slew is
+    # held to a physical ~50 deg/s, exactly as the live app wires a wide head --
+    # so the +/-35 baseline is unchanged and only the vectored law reaches wider.
+    sim_max_steer_angle_deg: float | None = None
+    station_keep_vectored: bool = False        # enable the vectored anchor law
+    station_keep_azimuth_deg: float = 35.0     # vectored azimuth authority (deg)
+    # Sim thruster longitudinal arm (+ bow, - stern). None = model default (bow).
+    # Its sign drives the helm/anchor ``steer_sign`` (stern mounts steer/yaw the
+    # opposite way), so a stern-mount hold can be scored too.
+    thruster_x_m: float | None = None
 
 
 @dataclass
@@ -133,23 +155,67 @@ def _dispatch(runtime_state, sim: Simulator, controller: Controller, command: di
 
 def run_scenario(scenario: Scenario) -> SimLog:
     """Run a scenario deterministically and return its recorded :class:`SimLog`."""
+    # Wide-azimuth / vectored station-keeping (#35): when the scenario asks for a
+    # physical head swing, build the SIM boat with that swing (+ optional stern
+    # mount) and a matching helm/safety/anchor config -- mirroring how the live
+    # app (app.py) wires a wide head -- so the harness can score the vectored law
+    # against the +/-35 baseline. Left None, everything below is inert and the
+    # boat + controller are byte-identical to before.
+    sim_params: FossenParams | None = None
+    helm = Helm(scenario.helm_pid) if scenario.helm_pid else None
+    safety_config: SafetyConfig | None = None
+    anchor_config = scenario.anchor_config
+    state_max_steer = scenario.max_steer_angle_deg
+    if scenario.sim_max_steer_angle_deg is not None:
+        swing = scenario.sim_max_steer_angle_deg
+        x = scenario.thruster_x_m
+        sign = 1.0 if (x is None or x >= 0.0) else -1.0
+        fp_kwargs: dict = {"max_steer_angle_deg": swing}
+        if x is not None:
+            fp_kwargs["thruster_x_m"] = x
+        sim_params = FossenParams(**fp_kwargs)
+        # The controller must know the same physical swing the sim maps commands
+        # onto (the vectored law normalizes its azimuth by it).
+        state_max_steer = swing
+        # Keep the autopilot band at its tuned 35 deg and the slew at ~50 deg/s
+        # of PHYSICAL rotation even though the head can now swing far wider, and
+        # flip the steer sign for a stern mount.
+        helm = Helm(
+            scenario.helm_pid,
+            autopilot_steer_scale=35.0 / swing if swing > 0 else 1.0,
+            steer_sign=sign,
+        )
+        safety_config = SafetyConfig(
+            max_steer_slew_per_s=50.0 / swing if swing > 0 else 1.4
+        )
+        # Overlay the vectored knobs onto whatever anchor config the scenario set
+        # (the mount sign is mirrored so the physical azimuth survives the helm).
+        anchor_config = replace(
+            anchor_config or AnchorConfig(),
+            vectored=scenario.station_keep_vectored,
+            vector_azimuth_deg=scenario.station_keep_azimuth_deg,
+            steer_sign=sign,
+        )
+
     sim = Simulator(
         start=BoatState(point=scenario.start, heading_deg=0.0),
+        params=sim_params,
         environment=scenario.environment,
         model=scenario.model,
     )
     state = NavigationState()
-    state.max_steer_angle_deg = scenario.max_steer_angle_deg
+    state.max_steer_angle_deg = state_max_steer
     nav = Navigator(state, bus=None)
     controller = Controller(
         state,
         sim.motor,
         bus=None,
         tick_hz=scenario.control_hz,
-        helm=Helm(scenario.helm_pid) if scenario.helm_pid else None,
-        anchor_config=scenario.anchor_config,
+        helm=helm,
+        anchor_config=anchor_config,
         waypoint_config=scenario.waypoint_config,
         drift_config=scenario.drift_config,
+        safety_config=safety_config,
         cruise_pid=scenario.cruise_pid,
     )
     gps = SimGps(sim.truth, bus=None, update_hz=scenario.gps_hz)
