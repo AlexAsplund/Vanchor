@@ -214,15 +214,20 @@ def test_log_strips_depth_points_by_default(client):
         assert "depth_points" not in frame
 
 
-def test_log_full_includes_depth_points(client):
-    """With ?full=1, /api/log must return all fields including depth_points."""
+def test_log_full_returns_other_fields_but_not_depth_points(client):
+    """With ?full=1, /api/log returns the untrimmed frames -- but depth_points is
+    no longer among them: the telemetry ring strips that bulky array BEFORE
+    storing (the live layer keeps the authoritative copy; the WS full-frame path
+    still ships it). So even full=1 has the scalar fields but not depth_points."""
     client.get("/api/state")
     r = client.get("/api/log?n=10&full=1")
     assert r.status_code == 200
     frames = r.json()["telemetry"]
-    # depth_points should be present in at least one frame (recorder auto-fills
-    # on each telemetry() call).
-    assert any("depth_points" in f for f in frames)
+    assert frames, "expected at least one recorded frame"
+    # Scalar fields survive untrimmed...
+    assert any("depth_count" in f for f in frames)
+    # ...but the bulky depth_points array is never stored in the ring.
+    assert all("depth_points" not in f for f in frames)
 
 
 # ---- WS application-level heartbeat (ping/pong) ---------------------------- #

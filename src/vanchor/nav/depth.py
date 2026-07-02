@@ -47,6 +47,109 @@ def _json_loads(data):
 
 
 # --------------------------------------------------------------------------- #
+# Bounded incremental JSON-array reader (streaming migration / import)          #
+# --------------------------------------------------------------------------- #
+# The legacy chart JSON (259 MB) and a big uploaded FeatureCollection both hold
+# ONE giant array we want to walk element-by-element. Decoding the whole document
+# (``json.loads`` / ``text = fh.read()``) needs a transient peak of the whole
+# file as a Python ``str`` (+ boxed lists) -- ~600 MB / ~1.7 GB, which OOMs a
+# 512 MB device. Instead we read the file in fixed chunks into a small sliding
+# buffer, locate the target array, and ``JSONDecoder.raw_decode`` ONE element at
+# a time, refilling the buffer when an element straddles a chunk boundary and
+# compacting away consumed bytes so the buffer stays a few MB. Peak memory is
+# O(chunk_size + one element), independent of file size.
+
+_STREAM_CHUNK = 1 << 20  # 1 MiB read granularity for the sliding buffer.
+
+
+def _stream_json_array(fh, key: str | None, chunk_size: int = _STREAM_CHUNK):
+    """Yield the elements of a top-level JSON array from the text stream ``fh``.
+
+    * ``key`` given -> the array is the value of ``"<key>": [ ... ]`` (the array
+      is located by scanning for the ``"<key>"`` marker; safe here because the
+      target key names never appear inside the numeric feature data).
+    * ``key`` is ``None`` -> the document IS a bare top-level array ``[ ... ]``.
+
+    Only ONE element is materialised at a time. ``fh`` must support ``read(n)``
+    returning ``str`` (e.g. a text file, or ``io.TextIOWrapper(io.BytesIO(...))``).
+    """
+    dec = json.JSONDecoder()
+    buf = ""
+    eof = False
+
+    def refill() -> bool:
+        nonlocal buf, eof
+        if eof:
+            return False
+        piece = fh.read(chunk_size)
+        if not piece:
+            eof = True
+            return False
+        buf += piece
+        return True
+
+    # -- 1. Locate the opening '[' of the target array -------------------- #
+    if key is None:
+        while True:
+            pos = buf.find("[")
+            if pos >= 0:
+                break
+            if not refill():
+                return
+        idx = pos + 1
+    else:
+        marker = '"%s"' % key
+        while True:
+            pos = buf.find(marker)
+            if pos >= 0:
+                break
+            # Not in the current buffer. Compact the scanned head BEFORE pulling
+            # the next chunk (so the search buffer can't grow unbounded skimming a
+            # huge file), keeping a ``len(marker)-1`` tail so a marker straddling
+            # the compaction point is still found once the next chunk lands.
+            if len(buf) >= len(marker):
+                buf = buf[-(len(marker) - 1):]
+            if not refill():
+                return
+        br = buf.find("[", pos + len(marker))
+        while br < 0:
+            if not refill():
+                return
+            br = buf.find("[", pos + len(marker))
+        idx = br + 1
+
+    # Drop the located header so raw_decode indices stay small.
+    buf = buf[idx:]
+    idx = 0
+
+    # -- 2. Pull one element at a time ------------------------------------ #
+    while True:
+        # Skip whitespace and inter-element commas (raw_decode does NOT skip
+        # leading whitespace, so we must land exactly on a value start).
+        while idx < len(buf) and buf[idx] in " \t\r\n,":
+            idx += 1
+        if idx >= len(buf):
+            if refill():
+                continue
+            return                      # ran out mid-array (truncated) -> stop
+        if buf[idx] == "]":
+            return                      # array closed -> done
+        try:
+            obj, end = dec.raw_decode(buf, idx)
+        except json.JSONDecodeError:
+            # The element straddles the chunk boundary: pull more and retry.
+            if refill():
+                continue
+            return                      # incomplete at EOF -> stop
+        yield obj
+        idx = end
+        # Compact consumed bytes so the buffer stays ~O(chunk_size).
+        if idx >= chunk_size:
+            buf = buf[idx:]
+            idx = 0
+
+
+# --------------------------------------------------------------------------- #
 # Columnar store for the STATIC imported vector layers (contours, composition) #
 # --------------------------------------------------------------------------- #
 # The imported static chart is huge -- ~140k composition polygons + ~84k depth
@@ -316,60 +419,46 @@ class DepthMap:
         self.hardness = [(round(float(r[0]), 6), round(float(r[1]), 6), round(float(r[2]), 1))
                          for r in hard][-self.max_points:]
 
-    @staticmethod
-    def _iter_json_array(text: str, key: str):
-        """Yield the elements of the top-level array ``"<key>": [ ... ]`` from a
-        JSON chart document WITHOUT decoding the whole doc: locate the array, then
-        ``raw_decode`` one element at a time. Only one element is materialised at
-        once, so the peak is the text plus the growing target arrays -- bounded."""
-        marker = '"%s"' % key
-        ki = text.find(marker)
-        if ki < 0:
-            return
-        br = text.find("[", ki)
-        if br < 0:
-            return
-        dec = json.JSONDecoder()
-        idx, n = br + 1, len(text)
-        while idx < n:
-            while idx < n and text[idx] in " \t\r\n,":
-                idx += 1
-            if idx >= n or text[idx] == "]":
-                return
-            obj, idx = dec.raw_decode(text, idx)
-            yield obj
-
     def _migrate_json_chart(self, chart_path: str, npz_path: str) -> None:
-        """Parse a legacy depthchart.json into the columnar store with a bounded
-        peak (raw_decode feature-by-feature, no whole-doc json.loads) and write
-        the .npz. Peak stays ~text + arrays (well under ~600 MB for a 259 MB file)."""
-        with open(chart_path, "r", encoding="utf-8", errors="replace") as fh:
-            text = fh.read()
+        """Parse a legacy depthchart.json into the columnar store with a BOUNDED
+        peak and write the .npz.
+
+        The legacy file is a single JSON object
+        ``{"hardness": [...], "contours": [...], "composition": [...]}`` whose
+        values are each a huge array. We stream it with :func:`_stream_json_array`
+        -- read the file in fixed chunks, locate each target array, and
+        ``raw_decode`` ONE element at a time (compacting consumed bytes) -- so the
+        whole 259 MB document is never held as a Python ``str``. Peak stays at the
+        columnar arrays (~91 MB) plus a few-MB sliding buffer, NOT + 259 MB. One
+        pass per key (the file is re-opened + rescanned; the target key names
+        never appear inside the numeric feature data, so a plain scan is safe)."""
         hard: list[tuple[float, float, float]] = []
-        for el in self._iter_json_array(text, "hardness"):
-            if isinstance(el, (list, tuple)) and len(el) == 3:
-                try:
-                    hard.append((round(float(el[0]), 6), round(float(el[1]), 6),
-                                 round(float(el[2]), 1)))
-                except (TypeError, ValueError):
-                    continue
+        with open(chart_path, "r", encoding="utf-8", errors="replace") as fh:
+            for el in _stream_json_array(fh, "hardness"):
+                if isinstance(el, (list, tuple)) and len(el) == 3:
+                    try:
+                        hard.append((round(float(el[0]), 6), round(float(el[1]), 6),
+                                     round(float(el[2]), 1)))
+                    except (TypeError, ValueError):
+                        continue
         cont_b = _FeatureBuilder("d", "pts")
-        for el in self._iter_json_array(text, "contours"):
-            if not isinstance(el, dict):
-                continue
-            verts = [(p[0], p[1]) for p in (el.get("pts") or [])
-                     if isinstance(p, (list, tuple)) and len(p) >= 2]
-            if len(verts) >= 2:
-                cont_b.add(float(el.get("d", 0.0)), verts)
+        with open(chart_path, "r", encoding="utf-8", errors="replace") as fh:
+            for el in _stream_json_array(fh, "contours"):
+                if not isinstance(el, dict):
+                    continue
+                verts = [(p[0], p[1]) for p in (el.get("pts") or [])
+                         if isinstance(p, (list, tuple)) and len(p) >= 2]
+                if len(verts) >= 2:
+                    cont_b.add(float(el.get("d", 0.0)), verts)
         comp_b = _FeatureBuilder("pct", "ring")
-        for el in self._iter_json_array(text, "composition"):
-            if not isinstance(el, dict):
-                continue
-            verts = [(p[0], p[1]) for p in (el.get("ring") or [])
-                     if isinstance(p, (list, tuple)) and len(p) >= 2]
-            if len(verts) >= 3:
-                comp_b.add(float(el.get("pct", 0.0)), verts)
-        del text
+        with open(chart_path, "r", encoding="utf-8", errors="replace") as fh:
+            for el in _stream_json_array(fh, "composition"):
+                if not isinstance(el, dict):
+                    continue
+                verts = [(p[0], p[1]) for p in (el.get("ring") or [])
+                         if isinstance(p, (list, tuple)) and len(p) >= 2]
+                if len(verts) >= 3:
+                    comp_b.add(float(el.get("pct", 0.0)), verts)
         self.hardness = hard[-self.max_points:]
         self.contours = cont_b.build()
         self.composition = comp_b.build()
@@ -924,107 +1013,170 @@ def _iter_geojson_features(text: str):
             yield feat
 
 
-def _parse_geojson_features(text: str) -> dict:
-    """Walk a GeoJSON (FeatureCollection, single feature, or JSONL) ONCE, routing
-    by feature: Point/MultiPoint depths -> soundings, a ``hardness`` property ->
-    the hardness layer, LineString/MultiLineString -> contour polylines, and
-    Polygon/MultiPolygon with ``composition_pct`` -> filled composition polygons."""
-    feats = _iter_geojson_features(text)
-    soundings: list[tuple[float, float, float]] = []
-    hardness: list[tuple[float, float, float]] = []
-    # Contours/composition go straight into columnar builders so a huge import
-    # (the real 377k-line file is ~10M vertices) never materialises Python dict
-    # lists for every feature -- the peak stays bounded (float32 buffers).
-    contours = _FeatureBuilder("d", "pts")
-    composition = _FeatureBuilder("pct", "ring")
-
-    def depth_of(props: dict, coords: list) -> float | None:
-        for k in ("depth", "depth_m", "z", "d", "DEPTH", "Depth"):
-            if isinstance(props, dict) and k in props:
-                try:
-                    return float(props[k])
-                except (TypeError, ValueError):
-                    pass
-        if len(coords) >= 3:
+def _geojson_depth_of(props: dict, coords: list) -> float | None:
+    for k in ("depth", "depth_m", "z", "d", "DEPTH", "Depth"):
+        if isinstance(props, dict) and k in props:
             try:
-                return float(coords[2])
+                return float(props[k])
             except (TypeError, ValueError):
                 pass
-        return None
+    if len(coords) >= 3:
+        try:
+            return float(coords[2])
+        except (TypeError, ValueError):
+            pass
+    return None
 
-    for f in feats:
-        if not isinstance(f, dict):
+
+def _route_geojson_feature(f, soundings: list, hardness: list,
+                           contours: "_FeatureBuilder", composition: "_FeatureBuilder") -> None:
+    """Route ONE GeoJSON feature into the accumulators/builders.
+
+    Point/MultiPoint depths -> soundings, a ``hardness`` property -> the hardness
+    layer, LineString/MultiLineString -> contour polylines, Polygon/MultiPolygon
+    with ``composition_pct`` -> filled composition polygons. Shared verbatim by
+    the whole-text parse and the bounded streaming import so both apply identical
+    rounding / [lat, lon] order / skip rules (>=2 contour, >=3 ring vertices)."""
+    if not isinstance(f, dict):
+        return
+    geom = f.get("geometry", f)
+    props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
+    if not isinstance(geom, dict):
+        return
+    gtype = geom.get("type")
+    coords = geom.get("coordinates", [])
+    ring = [coords] if gtype == "Point" else (coords if gtype == "MultiPoint" else [])
+    for c in ring:
+        if not isinstance(c, (list, tuple)) or len(c) < 2:
             continue
-        geom = f.get("geometry", f)
-        props = f.get("properties") if isinstance(f.get("properties"), dict) else {}
-        if not isinstance(geom, dict):
-            continue
-        gtype = geom.get("type")
-        coords = geom.get("coordinates", [])
-        ring = [coords] if gtype == "Point" else (coords if gtype == "MultiPoint" else [])
-        for c in ring:
-            if not isinstance(c, (list, tuple)) or len(c) < 2:
-                continue
-            dep = depth_of(props, c)
-            if dep is not None:
-                try:
-                    p = _coerce(float(c[1]), float(c[0]), dep)
-                except (TypeError, ValueError):
-                    p = None
-                if p:
-                    soundings.append(p)
-            h = props.get("hardness")
-            if h is not None:
-                try:
-                    hp = _coerce(float(c[1]), float(c[0]), float(h))
-                except (TypeError, ValueError):
-                    hp = None
-                if hp:
-                    hardness.append(hp)
-        if gtype in ("LineString", "MultiLineString"):
-            dep = depth_of(props, [])
-            if dep is None:
-                continue
-            lines = [coords] if gtype == "LineString" else coords
-            for line in lines:
-                if not isinstance(line, (list, tuple)):
-                    continue
-                pts = []
-                for c in line:
-                    if isinstance(c, (list, tuple)) and len(c) >= 2:
-                        try:
-                            la, lo = float(c[1]), float(c[0])
-                        except (TypeError, ValueError):
-                            continue
-                        if -90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0:
-                            pts.append([round(la, 6), round(lo, 6)])
-                if len(pts) >= 2:
-                    contours.add(round(abs(dep), 1), pts)
-        if gtype in ("Polygon", "MultiPolygon"):
-            # Composition is a VECTOR POLYGON layer: keep the rings + pct and render filled. Do NOT
-            # rasterise/interpolate it -- that destroys the boundaries.
-            pct = props.get("composition_pct")
-            if pct is None:
-                continue
+        dep = _geojson_depth_of(props, c)
+        if dep is not None:
             try:
-                pctv = float(pct)
+                p = _coerce(float(c[1]), float(c[0]), dep)
             except (TypeError, ValueError):
+                p = None
+            if p:
+                soundings.append(p)
+        h = props.get("hardness")
+        if h is not None:
+            try:
+                hp = _coerce(float(c[1]), float(c[0]), float(h))
+            except (TypeError, ValueError):
+                hp = None
+            if hp:
+                hardness.append(hp)
+    if gtype in ("LineString", "MultiLineString"):
+        dep = _geojson_depth_of(props, [])
+        if dep is None:
+            return
+        lines = [coords] if gtype == "LineString" else coords
+        for line in lines:
+            if not isinstance(line, (list, tuple)):
                 continue
-            polys = [coords] if gtype == "Polygon" else coords
-            for poly in polys:
-                if not isinstance(poly, (list, tuple)) or not poly:
-                    continue
-                ring = []                                  # exterior ring
-                for c in poly[0] if isinstance(poly[0], (list, tuple)) else []:
-                    if not isinstance(c, (list, tuple)) or len(c) < 2:
-                        continue
+            pts = []
+            for c in line:
+                if isinstance(c, (list, tuple)) and len(c) >= 2:
                     try:
                         la, lo = float(c[1]), float(c[0])
                     except (TypeError, ValueError):
                         continue
                     if -90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0:
-                        ring.append([round(la, 6), round(lo, 6)])
-                if len(ring) >= 3:
-                    composition.add(round(pctv, 1), ring)
+                        pts.append([round(la, 6), round(lo, 6)])
+            if len(pts) >= 2:
+                contours.add(round(abs(dep), 1), pts)
+    if gtype in ("Polygon", "MultiPolygon"):
+        # Composition is a VECTOR POLYGON layer: keep the rings + pct and render filled. Do NOT
+        # rasterise/interpolate it -- that destroys the boundaries.
+        pct = props.get("composition_pct")
+        if pct is None:
+            return
+        try:
+            pctv = float(pct)
+        except (TypeError, ValueError):
+            return
+        polys = [coords] if gtype == "Polygon" else coords
+        for poly in polys:
+            if not isinstance(poly, (list, tuple)) or not poly:
+                continue
+            ring = []                                  # exterior ring
+            for c in poly[0] if isinstance(poly[0], (list, tuple)) else []:
+                if not isinstance(c, (list, tuple)) or len(c) < 2:
+                    continue
+                try:
+                    la, lo = float(c[1]), float(c[0])
+                except (TypeError, ValueError):
+                    continue
+                if -90.0 <= la <= 90.0 and -180.0 <= lo <= 180.0:
+                    ring.append([round(la, 6), round(lo, 6)])
+            if len(ring) >= 3:
+                composition.add(round(pctv, 1), ring)
+
+
+def _parse_geojson_features(text: str) -> dict:
+    """Walk a GeoJSON (FeatureCollection, single feature, or JSONL) ONCE, routing
+    each feature via :func:`_route_geojson_feature` into soundings / hardness and
+    columnar contour / composition builders (so a huge import never materialises
+    Python dict lists for every feature -- the peak stays bounded)."""
+    soundings: list[tuple[float, float, float]] = []
+    hardness: list[tuple[float, float, float]] = []
+    contours = _FeatureBuilder("d", "pts")
+    composition = _FeatureBuilder("pct", "ring")
+    for f in _iter_geojson_features(text):
+        _route_geojson_feature(f, soundings, hardness, contours, composition)
+    return {"soundings": soundings, "hardness": hardness,
+            "contours": contours.build(), "composition": composition.build()}
+
+
+def _iter_features_streaming(fh, chunk_size: int = _STREAM_CHUNK):
+    """Yield GeoJSON feature dicts from a SEEKABLE text stream ``fh`` holding a
+    FeatureCollection object, a bare feature array, or JSONL -- WITHOUT decoding
+    the whole document at once. Format is sniffed from a small prefix:
+
+    * ``{ ... "features": [ ... ] ... }`` (FeatureCollection) -> stream the
+      ``features`` array element-by-element (:func:`_stream_json_array`).
+    * ``[ ... ]`` (bare array) -> stream the array element-by-element.
+    * otherwise -> JSONL / NDJSON: one JSON value per line (bounded per-line).
+
+    ``fh`` must support ``seek`` + ``read`` + line iteration (a real file, or
+    ``io.TextIOWrapper(io.BytesIO(...))``)."""
+    fh.seek(0)
+    probe = fh.read(4096)
+    stripped = probe.lstrip()
+    fh.seek(0)
+    if not stripped:
+        return
+    if stripped[0] == "{" and ('"features"' in probe or '"FeatureCollection"' in probe):
+        yield from _stream_json_array(fh, "features", chunk_size)
+        return
+    if stripped[0] == "[":
+        yield from _stream_json_array(fh, None, chunk_size)
+        return
+    # JSONL / NDJSON fallback (one Feature per line -- cmapper's export format).
+    for line in fh:
+        line = line.strip()
+        if not line or line[0] not in "{[":
+            continue
+        try:
+            feat = _json_loads(line)
+        except ValueError:
+            continue
+        if isinstance(feat, dict) and feat.get("type") == "FeatureCollection":
+            yield from (feat.get("features") or [])
+        else:
+            yield feat
+
+
+def stream_parse_depth_features(fh) -> dict:
+    """Bounded streaming counterpart of :func:`parse_depth_features` for a large
+    GeoJSON/JSONL CHART upload: consume the seekable text stream ``fh`` feature-
+    by-feature into columnar builders, never building the full Python-dict list.
+    Returns the same ``{"soundings", "hardness", "contours", "composition"}``
+    shape. Peak memory is O(chunk + one feature) + the columnar arrays."""
+    soundings: list[tuple[float, float, float]] = []
+    hardness: list[tuple[float, float, float]] = []
+    contours = _FeatureBuilder("d", "pts")
+    composition = _FeatureBuilder("pct", "ring")
+    for f in _iter_features_streaming(fh):
+        _route_geojson_feature(f, soundings, hardness, contours, composition)
     return {"soundings": soundings, "hardness": hardness,
             "contours": contours.build(), "composition": composition.build()}

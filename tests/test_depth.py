@@ -252,3 +252,125 @@ def test_columnar_store_is_compact():
     cf = ColumnarFeatures.from_arrays(coords, offsets, vals, "pct", "ring")
     assert len(cf) == nfeat
     assert cf.nbytes < 60 * 1024 * 1024, f"{cf.nbytes} bytes"
+
+
+# ---- bounded streaming JSON reader (migration + import) ---------------------
+
+import io as _io
+
+from vanchor.nav.depth import (  # noqa: E402
+    _iter_features_streaming,
+    _stream_json_array,
+    stream_parse_depth_features,
+)
+
+
+def test_stream_json_array_handles_boundaries_nesting_whitespace():
+    """The bounded reader must pull elements split across chunk boundaries, cope
+    with nested brackets inside a feature dict, whitespace/commas between
+    elements, and the array-closing ']'. A tiny chunk_size forces many refills so
+    every element straddles a boundary."""
+    doc = ('{"hardness": [], "contours":  [\n'
+           '   {"d": 15.0, "pts": [[59.0, 18.0], [59.01, 18.0]]}  ,\n'
+           '   {"d": 7.0, "pts": [[60.0, 20.0], [60.0, 20.01], [60.01, 20.0]]}\n'
+           '  ] , "composition": []}')
+    for cs in (1, 2, 5, 13, 100000):
+        els = list(_stream_json_array(_io.StringIO(doc), "contours", chunk_size=cs))
+        assert len(els) == 2, cs
+        assert els[0]["d"] == 15.0 and len(els[0]["pts"]) == 2, cs
+        assert els[1]["d"] == 7.0 and len(els[1]["pts"]) == 3, cs
+    # Missing key -> no elements, no error.
+    assert list(_stream_json_array(_io.StringIO(doc), "soundings")) == []
+    # Bare top-level array (key=None).
+    assert list(_stream_json_array(_io.StringIO("  [ 1, 2 ,3 ]"), None)) == [1, 2, 3]
+
+
+def test_stream_migration_matches_reference_json_loads(tmp_path):
+    """Streaming migration output is byte-identical (float32 tolerance) to a
+    reference parse via whole-document json.loads, on a small fixture object --
+    same rounding, [lat, lon] order, and <2/<3-vertex skip rules."""
+    fixture = {
+        "hardness": [[59.729343, 12.317056, 18.0], [59.7, 12.3, 108.0]],
+        "contours": [
+            {"d": 15.0, "pts": [[59.0, 18.0], [59.01, 18.0], [59.02, 18.01]]},
+            {"d": 3.0, "pts": [[59.5, 18.5]]},               # <2 verts -> skipped
+            {"d": 7.0, "pts": [[60.0, 20.0], [60.0, 20.01]]},
+        ],
+        "composition": [
+            {"pct": 75.0, "ring": [[59.0, 18.0], [59.0, 18.01], [59.01, 18.01], [59.0, 18.0]]},
+            {"pct": 10.0, "ring": [[59.0, 18.0], [59.0, 18.01]]},   # <3 verts -> skipped
+        ],
+    }
+    chart_json = str(tmp_path / "depthchart.json")
+    with open(chart_json, "w") as fh:
+        _json.dump(fixture, fh)
+
+    dm = DepthMap()
+    dm._migrate_json_chart(chart_json, str(tmp_path / "depthchart.npz"))
+
+    # Reference: the same feature-routing/skip rules applied via json.loads.
+    ref = _json.loads(_json.dumps(fixture))
+    assert dm.hardness == [(59.729343, 12.317056, 18.0), (59.7, 12.3, 108.0)]
+    assert len(dm.contours) == 2 and len(dm.composition) == 1   # skips applied
+    got_c = dm.contours_in()
+    assert [c["d"] for c in got_c] == [15.0, 7.0]
+    assert _flat(got_c[0]["pts"]) == pytest.approx(
+        _flat(ref["contours"][0]["pts"]), abs=1e-4)
+    assert _flat(got_c[1]["pts"]) == pytest.approx(
+        _flat(ref["contours"][2]["pts"]), abs=1e-4)
+    got_p = dm.composition_in()
+    assert got_p[0]["pct"] == 75.0
+    assert _flat(got_p[0]["ring"]) == pytest.approx(
+        _flat(ref["composition"][0]["ring"]), abs=1e-4)
+
+
+def test_migration_memory_peak_is_bounded(tmp_path):
+    """A synthetic ~1M-vertex legacy object migrates with a Python-side
+    tracemalloc peak WELL under 150 MB (the old whole-file read held the 259 MB
+    file as a str + dict lists -> ~600 MB). tracemalloc measures Python allocs,
+    not RSS, but a bounded Python peak is the meaningful streaming signal."""
+    import tracemalloc
+
+    chart_json = str(tmp_path / "big.json")
+    nfeat, per = 10_000, 100          # 1,000,000 vertices
+    with open(chart_json, "w") as fh:  # written incrementally so the WRITE isn't the peak
+        fh.write('{"hardness": [], "contours": [')
+        for i in range(nfeat):
+            if i:
+                fh.write(",")
+            pts = ",".join("[59.%06d,18.%06d]" % (j, j) for j in range(per))
+            fh.write('{"d":15.0,"pts":[%s]}' % pts)
+        fh.write('], "composition": []}')
+
+    dm = DepthMap()
+    tracemalloc.start()
+    dm._migrate_json_chart(chart_json, str(tmp_path / "big.npz"))
+    _cur, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert len(dm.contours) == nfeat
+    assert peak < 150 * 1024 * 1024, f"migration Python peak {peak / 1e6:.1f} MB"
+
+
+def test_stream_import_matches_whole_text_parse():
+    """The streaming feature reader routes a FeatureCollection object, a JSONL
+    stream, and a bare feature array identically to the whole-text parser."""
+    fc = _SAMPLE_FC                                   # FeatureCollection bytes
+    ref = parse_depth_features("chart.geojson", fc)
+    got = stream_parse_depth_features(_io.TextIOWrapper(_io.BytesIO(fc), encoding="utf-8"))
+    assert got["soundings"] == ref["soundings"]
+    assert got["hardness"] == ref["hardness"]
+    assert len(got["contours"]) == len(ref["contours"]) == 2
+    assert len(got["composition"]) == len(ref["composition"]) == 1
+
+    # JSONL (one Feature per line) with a blank + garbage line, tiny chunks.
+    jsonl = "\n".join([
+        '{"type":"Feature","properties":{"depth_m":35.0,"hardness":18},"geometry":{"type":"Point","coordinates":[12.317056,59.729343]}}',
+        "",
+        "not json",
+        '{"type":"Feature","properties":{"depth_m":10.0},"geometry":{"type":"LineString","coordinates":[[12.3,59.7],[12.3,59.71]]}}',
+    ]).encode()
+    feats = list(_iter_features_streaming(_io.TextIOWrapper(_io.BytesIO(jsonl), encoding="utf-8")))
+    assert len(feats) == 2                            # blank + garbage skipped
+    out = stream_parse_depth_features(_io.TextIOWrapper(_io.BytesIO(jsonl), encoding="utf-8"))
+    assert out["soundings"] == [(59.729343, 12.317056, 35.0)]
+    assert len(out["contours"]) == 1

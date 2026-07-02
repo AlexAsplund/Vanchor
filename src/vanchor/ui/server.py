@@ -38,6 +38,26 @@ _BULK_KEYS: frozenset[str] = frozenset({"depth_points"})
 _CONTOURS_DEFAULT_LIMIT: int = 5000
 _COMPOSITION_DEFAULT_LIMIT: int = 4000
 
+# A big /api/depth/{contours,composition} response materialises up to ``limit``
+# feature dicts (each a nested lat/lon list) from the columnar store; once the
+# response is serialised those transient dicts are freed by Python but glibc may
+# hold the arena rather than returning it to the OS. Above this many features we
+# ask glibc to release the freed arena so RSS drops back on a 512 MB device.
+_TRIM_FEATURE_THRESHOLD: int = 500
+
+
+def _malloc_trim_if_glibc() -> None:
+    """Best-effort return of freed heap arenas to the OS (glibc only).
+
+    Guarded for non-glibc platforms (musl / macOS): any failure to load libc or
+    call ``malloc_trim`` is swallowed. Call at most once per LARGE response."""
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # noqa: BLE001 - no libc / no malloc_trim -> no-op
+        pass
+
 
 def shape_frame(snapshot: dict, full: bool) -> dict:
     """Shape a telemetry snapshot for WebSocket broadcast.
@@ -120,7 +140,14 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         while True:
             try:
                 snapshot = runtime.telemetry()
-                runtime.recorder.record(snapshot)   # recorder keeps the COMPLETE frame
+                # The ring keeps ~600 frames for /api/log history; storing the
+                # bulky ``depth_points`` array (~28 KB each) in every frame would
+                # pin ~17 MB of stale soundings. Strip it before storing -- the
+                # live layer keeps the authoritative copy and the WS full-frame
+                # path below still ships depth_points off the fresh snapshot.
+                runtime.recorder.record(
+                    {k: v for k, v in snapshot.items() if k not in _BULK_KEYS}
+                )
                 # telemetry() is a pure snapshot now, so the broadcaster (the ~5 Hz
                 # heartbeat) drives depth-sounding accumulation -- keeping the
                 # original per-frame cadence -- and records the frame into the debug
@@ -547,6 +574,8 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             None, lambda: runtime.depth_contours(bbox=bbox, limit=clamp_limit)
         )
         result["truncated"] = result["count"] == clamp_limit
+        if result["count"] >= _TRIM_FEATURE_THRESHOLD:
+            _malloc_trim_if_glibc()
         return result
 
     @app.get("/api/depth/composition")
@@ -573,6 +602,8 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             None, lambda: runtime.depth_composition(bbox=bbox, limit=clamp_limit)
         )
         result["truncated"] = result["count"] == clamp_limit
+        if result["count"] >= _TRIM_FEATURE_THRESHOLD:
+            _malloc_trim_if_glibc()
         return result
 
     @app.get("/api/depth/water")

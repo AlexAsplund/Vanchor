@@ -1848,11 +1848,48 @@ class Runtime:
     def import_depth_map(self, filename: str, data: bytes, replace: bool = False) -> dict:
         """Import soundings from an uploaded open-format depth file (CSV/XYZ or
         GeoJSON). ``replace`` swaps the whole chart; otherwise the soundings are
-        merged in. Persists to ``depthmap.json`` so the import survives restarts."""
-        from .nav.depth import parse_depth_features
+        merged in. Persists to ``depthmap.json`` so the import survives restarts.
 
+        Memory: a large GeoJSON/JSONL CHART upload is spilled to a temp file, the
+        in-RAM HTTP body is freed, and the file is parsed with the BOUNDED
+        streaming reader (columnar builders, one feature at a time) -- so the
+        parse never adds a second full decoded-string copy + all-feature dict
+        lists on top of the body. NOTE: the uploaded ``data`` bytes are inherently
+        resident (FastAPI reads the whole HTTP body before this runs), so the UI
+        upload's transient peak is bounded by the body size itself (~= the file);
+        for a 512 MB device the on-device MIGRATION / offline .npz path (which
+        never holds the body in RAM) is the fully-bounded route -- see
+        ``DepthMap._migrate_json_chart``. Small CSV/XYZ soundings stay on the
+        in-memory path (they're tiny)."""
+        from .nav.depth import (ColumnarFeatures, parse_depth_features,
+                                stream_parse_depth_features)
+
+        name = (filename or "").lower()
+        head = data[:64].lstrip()[:1] if data else b""   # peek a prefix, not the whole body
+        is_geojson = name.endswith((".geojson", ".json", ".geojsonl", ".ndjson", ".jsonl")) \
+            or head in (b"{", b"[")
         try:
-            parsed = parse_depth_features(filename, data)
+            if is_geojson:
+                import tempfile
+
+                tmp = tempfile.NamedTemporaryFile(
+                    mode="wb", suffix=".chartupload",
+                    dir=self.config.data_dir, delete=False)
+                tmp_name = tmp.name
+                try:
+                    tmp.write(data)
+                    tmp.flush()
+                    tmp.close()
+                    del data                    # free the HTTP body ASAP
+                    with open(tmp_name, "r", encoding="utf-8", errors="replace") as fh:
+                        parsed = stream_parse_depth_features(fh)
+                finally:
+                    try:
+                        os.remove(tmp_name)
+                    except OSError:             # pragma: no cover - defensive
+                        pass
+            else:
+                parsed = parse_depth_features(filename, data)
         except Exception as exc:  # noqa: BLE001 - any parse error -> clean message
             logger.warning("depth import parse failed: %s", exc)
             return {"ok": False, "error": f"could not parse the file: {exc}", "imported": 0}
@@ -1867,8 +1904,13 @@ class Runtime:
         if replace:
             dm.points = []
             dm.hardness = []
-            dm.contours = []
-            dm.composition = []
+            # Reset the vector layers to EMPTY COLUMNAR stores (not plain lists):
+            # ``extend`` then concatenates the parsed columnar arrays in place, so
+            # a large replace-import stays bounded (a plain-list ``extend`` would
+            # iterate the columnar result back into a full dict list -- the ~1.7 GB
+            # shape this store exists to avoid).
+            dm.contours = ColumnarFeatures.empty("d", "pts")
+            dm.composition = ColumnarFeatures.empty("pct", "ring")
             dm._last = None
         dm.points.extend(pts)
         dm.hardness.extend(hard)
