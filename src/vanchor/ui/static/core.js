@@ -203,6 +203,32 @@ function _stopConfirmed(t) {
   return t.mode === "manual" && Number.isFinite(thr) && Math.abs(thr) < 0.05;
 }
 
+// ---- multi-client roles (#24) --------------------------------------------
+// The server designates one connected client the HELM; the rest are OBSERVERS.
+// A `{type:"role"}` message arrives on connect and on every role change with
+// this client's role plus the shared presence scalars (clients/helm_present).
+// STOP always works regardless of role (server-enforced safety floor).
+VA.role = "observer";        // "helm" | "observer" — until the first role frame
+VA.helmPresent = false;      // is ANY client currently the helm?
+VA.clientCount = 1;          // number of connected clients
+VA.isHelm = function () { return VA.role === "helm"; };
+// Ask the server to transfer the helm to this client (cooperative, no auth).
+VA.takeHelm = function () {
+  if (ws && ws.readyState === 1) ws.send('{"type":"take_helm"}');
+};
+const roleListeners = [];
+// Subscribe to role/presence changes: fn({role, helmPresent, clients}).
+VA.onRole = function (fn) { roleListeners.push(fn); };
+function dispatchRole(m) {
+  VA.role = m.role === "helm" ? "helm" : "observer";
+  VA.helmPresent = !!m.helm_present;
+  if (Number.isFinite(m.clients)) VA.clientCount = m.clients;
+  const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount };
+  for (const fn of roleListeners) {
+    try { fn(info); } catch (err) { VA.logLine("role handler error: " + err); }
+  }
+}
+
 // ---- render-subscriber registry ------------------------------------------
 const subscribers = [];
 VA.onTelemetry = function (fn) { subscribers.push(fn); };
@@ -210,6 +236,24 @@ VA.onTelemetry = function (fn) { subscribers.push(fn); };
 function dispatch(t) {
   VA.last = t;
   VA.simEnabled = !!t.sim_enabled;
+  // Shared presence scalars ride the high-rate broadcast frame (#24) — keep the
+  // live count/helm-present fresh between the (rarer) role messages. Role itself
+  // is NOT in telemetry; it only changes via a `{type:"role"}` message.
+  if ("clients" in t || "helm_present" in t) {
+    let changed = false;
+    if (Number.isFinite(t.clients) && t.clients !== VA.clientCount) {
+      VA.clientCount = t.clients; changed = true;
+    }
+    if ("helm_present" in t && !!t.helm_present !== VA.helmPresent) {
+      VA.helmPresent = !!t.helm_present; changed = true;
+    }
+    if (changed) {
+      const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount };
+      for (const fn of roleListeners) {
+        try { fn(info); } catch (err) { VA.logLine("role handler error: " + err); }
+      }
+    }
+  }
   // Fresh frame: clear any staleness banner and confirm pending critical cmds.
   _lastFrameMs = Date.now();
   _banner(STALE_BANNER_ID, { show: false });
@@ -267,6 +311,11 @@ VA.connect = function () {
       case "pong": return;                       // heartbeat reply; not telemetry
       case "ack":  _resolvePending(t.seq, true); return;
       case "nack": _resolvePending(t.seq, false, t.error); return;
+      case "role": dispatchRole(t); return;      // multi-client role/presence (#24)
+      case "role_denied":                        // command rejected: not the helm
+        VA.logLine("⛔ " + (t.error || "observer — take the helm to command"));
+        if (t.seq != null) _resolvePending(t.seq, false, t.error);
+        return;
       default:     dispatch(t); return;          // "telemetry" or legacy no-type
     }
   };

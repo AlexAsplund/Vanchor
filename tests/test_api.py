@@ -132,12 +132,16 @@ def test_websocket_streams_and_accepts_commands(client):
         first = ws.receive_json()
         assert "mode" in first
         ws.send_json({"type": "anchor_hold", "radius_m": 6})
-        # The next snapshot the server pushes should reflect the new mode.
+        # The next snapshot the server pushes should reflect the new mode. A
+        # `{type:"role"}` message (no "mode") now interleaves on connect, so read
+        # via .get() and keep scanning.
+        msg = None
         for _ in range(20):
-            msg = ws.receive_json()
-            if msg["mode"] == "anchor_hold":
+            frame = ws.receive_json()
+            if frame.get("mode") == "anchor_hold":
+                msg = frame
                 break
-        assert msg["mode"] == "anchor_hold"
+        assert msg is not None and msg["mode"] == "anchor_hold"
 
 
 # ---- #21: versioned WS envelope + command acks ----------------------------- #
@@ -161,9 +165,12 @@ def test_ws_telemetry_carries_envelope(client):
         assert first["seq"] == 0
         # Flat telemetry fields are still present (backward compatible).
         assert "mode" in first and "motor" in first
-        second = ws.receive_json()
-        assert second["type"] == "telemetry"
-        assert second["seq"] > first["seq"]  # monotonic per-connection
+        # The next telemetry frame is now a shared BROADCAST frame with a GLOBAL
+        # monotonic seq (#24 serialize-once), not a per-connection one. A role
+        # message may interleave first, so scan to the next telemetry frame.
+        second = _recv_until(ws, lambda m: m.get("type") == "telemetry")
+        assert second is not None
+        assert second["seq"] > first["seq"]  # monotonic (global broadcast seq)
 
 
 def test_ws_command_with_seq_gets_ack(client):
@@ -289,10 +296,17 @@ def test_broadcaster_continues_after_client_disconnect(client):
             ws_bad.receive_json()
 
         # ws_bad is now closed.  The broadcaster should discard it and keep
-        # sending to ws_good.
-        for _ in range(10):
+        # sending telemetry to ws_good. Role/presence messages (no "mode") now
+        # interleave as ws_bad connects/disconnects, so filter to telemetry.
+        got = 0
+        for _ in range(40):
             msg = ws_good.receive_json()
-            assert "mode" in msg
+            if msg.get("type") == "telemetry":
+                assert "mode" in msg
+                got += 1
+            if got >= 5:
+                break
+        assert got >= 5
 
 
 # ---- Fix 4: /api/log strips bulk fields by default ------------------------- #
@@ -518,3 +532,142 @@ def test_depth_composition_limit_clamped(runtime_client):
     data = r.json()
     assert data["count"] == 500
     assert data["truncated"] is False
+
+
+# ---- #24: multi-client roles (helm vs observer) ---------------------------- #
+
+
+def _role_msg(ws, tries=60):
+    """Receive frames until a ``{type:"role"}`` message arrives; return it."""
+    return _recv_until(ws, lambda m: m.get("type") == "role", tries=tries)
+
+
+def _role_matching(ws, want, tries=60):
+    """Receive frames until a role message with ``role == want`` arrives."""
+    return _recv_until(
+        ws, lambda m: m.get("type") == "role" and m.get("role") == want, tries=tries
+    )
+
+
+def test_ws_first_client_helm_second_observer(client):
+    """First WS client is designated helm; the second is an observer (#24)."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()  # snapshot
+        role1 = _role_msg(ws1)
+        assert role1 is not None and role1["role"] == "helm"
+        assert role1["v"] == 1
+
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()  # snapshot
+            role2 = _role_msg(ws2)
+            assert role2 is not None and role2["role"] == "observer"
+            assert role2["helm_present"] is True
+            assert role2["clients"] == 2
+
+
+def test_ws_observer_command_denied_mode_unchanged(client):
+    """An observer's mode-changing command is role_denied and NOT forwarded."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+            ws2.send_json({"type": "heading_hold", "target_deg": 90, "seq": 31})
+            denied = _recv_until(ws2, lambda m: m.get("type") == "role_denied")
+            assert denied is not None
+            assert denied["seq"] == 31
+            assert "take the helm" in denied["error"]
+    # The controller never saw the command: mode stayed manual.
+    assert client.get("/api/state").json()["mode"] == "manual"
+
+
+def test_ws_observer_stop_is_honored(client):
+    """SAFETY FLOOR: an observer's STOP is always honored (mode→manual, thrust 0)."""
+    # Put the boat in a non-manual mode first (REST is un-gated setup).
+    client.post("/api/command", json={"type": "heading_hold", "target_deg": 90})
+    assert client.get("/api/state").json()["mode"] == "heading_hold"
+
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+            ws2.send_json({"type": "stop", "seq": 42})
+            reply = _recv_until(
+                ws2, lambda m: m.get("type") in ("ack", "role_denied")
+            )
+            assert reply is not None and reply["type"] == "ack"
+            assert reply["seq"] == 42
+
+    # Stop took effect.
+    state = client.get("/api/state").json()
+    assert state["mode"] == "manual"
+    assert abs(float(state["motor"]["thrust"])) < 0.05
+
+
+def test_ws_take_helm_transfers_and_demotes(client):
+    """take_helm from the observer makes it helm and demotes the first client."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        assert _role_matching(ws1, "helm") is not None
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+
+            ws2.send_json({"type": "take_helm"})
+            # ws2 becomes helm; ws1 is demoted to observer.
+            assert _role_matching(ws2, "helm") is not None
+            assert _role_matching(ws1, "observer") is not None
+
+            # ws1 (now observer) commands are denied.
+            ws1.send_json({"type": "heading_hold", "target_deg": 45, "seq": 51})
+            denied = _recv_until(ws1, lambda m: m.get("type") == "role_denied")
+            assert denied is not None and denied["seq"] == 51
+    assert client.get("/api/state").json()["mode"] == "manual"
+
+
+def test_ws_helm_disconnect_promotes_observer(client):
+    """When the helm disconnects, the oldest remaining client is auto-promoted."""
+    ws1cm = client.websocket_connect("/ws")
+    ws1 = ws1cm.__enter__()
+    ws1.receive_json()
+    assert _role_matching(ws1, "helm") is not None
+
+    ws2cm = client.websocket_connect("/ws")
+    ws2 = ws2cm.__enter__()
+    ws2.receive_json()
+    assert _role_matching(ws2, "observer") is not None
+
+    # Drop the helm (ws1). ws2 must be promoted to helm.
+    ws1cm.__exit__(None, None, None)
+    try:
+        promoted = _role_matching(ws2, "helm")
+        assert promoted is not None
+        assert promoted["helm_present"] is True
+        assert promoted["clients"] == 1
+    finally:
+        ws2cm.__exit__(None, None, None)
+
+
+def test_ws_broadcast_frame_carries_presence(client):
+    """The high-rate broadcast telemetry frame carries clients/helm_present (#24)."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # connect snapshot (per-connection envelope, no presence)
+        frame = _recv_until(
+            ws, lambda m: m.get("type") == "telemetry" and "clients" in m
+        )
+        assert frame is not None
+        assert frame["clients"] >= 1
+        assert frame["helm_present"] is True
+        # Presence scalars are shared, but per-client role is NOT in telemetry.
+        assert "role" not in frame
+
+
+def test_ws_broadcast_seq_is_global_and_monotonic(client):
+    """Serialize-once (#24): broadcast frames share a GLOBAL monotonic seq."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # snapshot at its own per-connection seq (0)
+        f1 = _recv_until(ws, lambda m: m.get("type") == "telemetry" and "clients" in m)
+        f2 = _recv_until(ws, lambda m: m.get("type") == "telemetry" and "clients" in m)
+        assert f1 is not None and f2 is not None
+        assert f2["seq"] > f1["seq"]
