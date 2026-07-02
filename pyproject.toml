@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vanchor-ng"
-version = "1.0.0a0"
+version = "1.1.0a0"
 description = "Software-first GPS anchoring / autopilot for cheap trolling motors (modern rewrite)"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -49,6 +49,13 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
 timeout = 120
+# Browser end-to-end tests (Playwright) are opt-in: they launch a server + a
+# real Chromium and are slow, so the default suite excludes them. Run them with
+# `pytest -m e2e` (the browser-e2e CI job does this).
+addopts = "-m 'not e2e'"
+markers = [
+    "e2e: browser end-to-end tests (Playwright); opt-in, run with -m e2e",
+]
 
 [tool.ruff]
 line-length = 100

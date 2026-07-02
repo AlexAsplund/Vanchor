@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 import time
+from dataclasses import dataclass
 
 from ..core import events
 from ..core.events import EventBus
@@ -34,6 +35,7 @@ from ..core.pid import PID
 from ..core.state import NavigationState
 from ..hardware.interfaces import MotorController
 from ..nav.track import TrackRecorder
+from .estimator import EstimatorConfig, WindCurrentEstimator
 from .modes import (
     AnchorConfig,
     AnchorHoldMode,
@@ -75,11 +77,106 @@ _CRUISING_MODES = frozenset(
 # Boat-relative jog directions -> heading offset (degrees).
 _JOG_OFFSETS = {"forward": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
 
+# Modes that actively station-keep on ``state.anchor`` (they refresh
+# ``state.distance_to_anchor_m`` every tick) -- the spot-lock quality metric is
+# accumulated only while one of these is holding, so PID anchor-hold and the
+# learned anchor_ml can be compared on the same yardstick.
+_SPOTLOCK_MODES = frozenset({ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML})
+
 
 # Below this |thrust| the trolling motor has no meaningful steering authority
 # (a prop that isn't turning can't vector the boat), so we stop moving the
 # steering actuator to avoid jittering / straining the servo for no effect.
 STEER_EPS = 0.03
+
+
+@dataclass
+class GainSchedule:
+    """SOG-keyed multiplier on the helm's steering (proportional) gain (#31).
+
+    A single steerable thruster vectors the boat with its prop wash, so steering
+    AUTHORITY scales with thrust / boat speed. That makes one fixed heading ``kp``
+    brittle across the speed range: slow => weak authority => the loop wants MORE
+    gain; fast => strong authority => the same gain oscillates => wants LESS gain.
+    So the physically-correct schedule has ``mult_lo >= mult_hi`` (more gain when
+    slow, verified against how thrust-scaled steering authority works here -- see
+    ``STEER_EPS`` above, where a barely-turning prop has no authority at all).
+
+    ``multiplier(sog)`` is a linear interpolation between ``mult_lo`` (at/below
+    ``sog_lo_kn``) and ``mult_hi`` (at/above ``sog_hi_kn``), held flat outside
+    that band and clamped to ``[mult_min, mult_max]``. The default (all
+    multipliers 1.0) is NEUTRAL: it returns exactly 1.0 for every SOG, so an
+    unconfigured schedule leaves the tuned gain untouched.
+    """
+
+    sog_lo_kn: float = 0.3
+    sog_hi_kn: float = 2.0
+    mult_lo: float = 1.0
+    mult_hi: float = 1.0
+    mult_min: float = 0.1
+    mult_max: float = 5.0
+
+    def multiplier(self, sog_knots: float) -> float:
+        lo, hi = self.sog_lo_kn, self.sog_hi_kn
+        if hi <= lo or sog_knots <= lo:
+            m = self.mult_lo
+        elif sog_knots >= hi:
+            m = self.mult_hi
+        else:
+            frac = (sog_knots - lo) / (hi - lo)
+            m = self.mult_lo + frac * (self.mult_hi - self.mult_lo)
+        return max(self.mult_min, min(self.mult_max, m))
+
+    @property
+    def is_neutral(self) -> bool:
+        """True when the schedule leaves the base gain unchanged everywhere."""
+        return self.mult_lo == 1.0 and self.mult_hi == 1.0
+
+
+class SpotLockQuality:
+    """Rolling spot-lock quality metric (#34): RMS radial error (m) and % of
+    time within the anchor radius, over an exponentially-weighted trailing
+    window of ``window_s`` seconds.
+
+    Mode-agnostic: it is fed ``state.distance_to_anchor_m`` each control tick
+    while ANY anchor mode is holding, so users can compare the PID hold and the
+    learned hold on identical numbers. Cheap by construction -- two rolling
+    accumulators (EMA of the squared error and of the in-radius indicator),
+    no stored history. The first sample seeds the accumulators directly so the
+    early readout tracks the truth instead of being diluted by a zero seed.
+    """
+
+    def __init__(self, window_s: float = 60.0) -> None:
+        self.window_s = window_s
+        self.reset()
+
+    def reset(self) -> None:
+        self._sq_m2 = 0.0     # EMA of (radial error)^2
+        self._in = 0.0        # EMA of the in-radius indicator (0/1)
+        self.elapsed_s = 0.0  # holding time accumulated (caps at window_s)
+        self._seeded = False
+
+    def update(self, distance_m: float, radius_m: float, dt: float) -> None:
+        if dt <= 0.0:
+            return
+        inside = 1.0 if distance_m <= radius_m else 0.0
+        if not self._seeded:
+            self._sq_m2 = distance_m * distance_m
+            self._in = inside
+            self._seeded = True
+        else:
+            alpha = dt / (self.window_s + dt)
+            self._sq_m2 += (distance_m * distance_m - self._sq_m2) * alpha
+            self._in += (inside - self._in) * alpha
+        self.elapsed_s = min(self.elapsed_s + dt, self.window_s)
+
+    @property
+    def rms_m(self) -> float:
+        return math.sqrt(max(0.0, self._sq_m2))
+
+    @property
+    def pct_in_radius(self) -> float:
+        return 100.0 * min(1.0, max(0.0, self._in))
 
 
 class Helm:
@@ -91,8 +188,19 @@ class Helm:
 
     def __init__(self, pid: PID | None = None, steer_tau: float = 0.6,
                  autopilot_steer_scale: float = 1.0, steer_sign: float = 1.0,
-                 thrust_yaw_ff: float = 0.0) -> None:
+                 thrust_yaw_ff: float = 0.0,
+                 gain_schedule: "GainSchedule | None" = None) -> None:
         self.pid = pid or PID(kp=0.035, ki=0.0, kd=0.012, output_min=-1.0, output_max=1.0)
+        # Optional SOG-keyed schedule on the steering (proportional) gain (#31).
+        # ``None`` (the default) leaves ``pid.kp`` as-is; a neutral schedule
+        # (multiplier 1.0 everywhere) is numerically identical to that. The base
+        # gain remains ``pid.kp`` -- the schedule only scales it transiently while
+        # computing each tick's proportional term, so external code (auto-tune,
+        # per-boat gains) keeps reading/writing ``pid.kp`` as the base.
+        self.gain_schedule = gain_schedule
+        # Last effective steering gain actually used (base * schedule multiplier),
+        # exposed for telemetry/tests. Seeded from the base gain.
+        self.kp_eff = self.pid.kp
         # First-order low-pass time constant (s) on the steering command. The
         # raw PID output chases ~1deg compass noise; without smoothing the motor
         # would slew back and forth constantly. ~0.6 s removes that jitter with
@@ -149,7 +257,7 @@ class Helm:
         else:
             # Positive error => target is to starboard => steer right (positive).
             error = angle_difference(state.heading_deg, setpoint.target_heading)
-            raw = self.pid.update_error(error, dt)
+            raw = self._pid_update_scheduled(error, state.sog_knots, dt)
             # A single steerable thruster reverses its steering authority when
             # the prop runs in reverse, so flip the command to stay stable.
             if setpoint.thrust < 0:
@@ -170,6 +278,27 @@ class Helm:
         steering = (self._filtered * self.autopilot_steer_scale + ff) * self.steer_sign
         return MotorCommand(thrust=setpoint.thrust, steering=steering).clamped()
 
+    def _pid_update_scheduled(self, error: float, sog_knots: float, dt: float) -> float:
+        """Run the heading PID with an SOG-scheduled proportional gain (#31).
+
+        ``kp_eff = pid.kp * schedule.multiplier(sog)`` is applied for THIS update
+        only, then ``pid.kp`` is restored to its base value -- so the schedule
+        scales the effective steering gain without permanently mutating the tuned
+        base (auto-tune / per-boat gains keep owning ``pid.kp``). With no schedule
+        (or a neutral one) ``kp_eff == pid.kp`` and this is identical to a plain
+        ``pid.update_error`` call.
+        """
+        if self.gain_schedule is None:
+            self.kp_eff = self.pid.kp
+            return self.pid.update_error(error, dt)
+        base = self.pid.kp
+        self.kp_eff = base * self.gain_schedule.multiplier(sog_knots)
+        self.pid.kp = self.kp_eff
+        try:
+            return self.pid.update_error(error, dt)
+        finally:
+            self.pid.kp = base
+
 
 class Controller:
     def __init__(
@@ -188,6 +317,7 @@ class Controller:
         orbit_config: OrbitConfig | None = None,
         trolling_config: TrollingConfig | None = None,
         safety_config: SafetyConfig | None = None,
+        estimator_config: EstimatorConfig | None = None,
         cruise_pid: PID | None = None,
         jog_increment_m: float = 1.5,
         track_min_distance_m: float = 5.0,
@@ -202,6 +332,21 @@ class Controller:
         # mono_fn, which is what the navigator stamps receive-times with).
         self._mono_fn = mono_fn
         self.helm = helm or Helm()
+
+        # Persistent wind/current (drift) estimator: ONE instance, fed every
+        # control tick in EVERY mode, so the environmental drift estimate is
+        # always warm. It NEVER resets on a mode change -- so Spot-Lock, waypoint
+        # crab feed-forward and drift mode all engage already knowing the set,
+        # instead of relearning it. Its estimate is published onto ``state`` for
+        # any mode (and the HUD) to read.
+        if estimator_config is None:
+            # Keep the estimator's thrust-decoupling boat speed in step with the
+            # boat spec app.py configured on the anchor config, so it doesn't need
+            # its own tuning path.
+            estimator_config = EstimatorConfig()
+            if anchor_config is not None:
+                estimator_config.boat_max_speed_mps = anchor_config.boat_max_speed_mps
+        self.estimator = WindCurrentEstimator(estimator_config)
 
         # Cruise Control: an optional SOG (speed-over-ground) PID that takes over
         # the throttle of guided "underway" modes when a target speed is set.
@@ -240,13 +385,22 @@ class Controller:
         }
         # Learned spot-lock (optional): registered only if the shipped tiny-NN
         # model loads, so a missing/invalid model never breaks startup -- the
-        # mode simply isn't offered.
+        # mode simply isn't offered. It mirrors the helm's steer_sign (thruster
+        # mount polarity) so it stays mount-aware; app._apply_boat_specs keeps
+        # both in sync when the boat profile changes.
         try:
             from .anchor_ml import AnchorMLMode
 
-            self.modes[ControlModeName.ANCHOR_ML] = AnchorMLMode()
+            self.modes[ControlModeName.ANCHOR_ML] = AnchorMLMode(
+                steer_sign=self.helm.steer_sign
+            )
         except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
             logger.warning("anchor_ml mode unavailable: %s", exc)
+        # Spot-lock quality metric (#34): rolling RMS radial error + % time in
+        # radius while an anchor mode is holding. Reset whenever the anchor mark
+        # changes; paused when not station-keeping.
+        self.spotlock = SpotLockQuality(window_s=60.0)
+        self._spotlock_anchor: GeoPoint | None = None
         self.safety = SafetyGovernor(safety_config)
         self.safety_status = SafetyStatus()
         self._last_fix_seq = state.fix_seq
@@ -262,6 +416,11 @@ class Controller:
     # Core control logic (synchronous, deterministic)
     # ------------------------------------------------------------------ #
     def control_tick(self, dt: float) -> MotorCommand:
+        # Update the persistent drift estimate FIRST, so the active mode sees a
+        # fresh ``state.est_drift_*`` this tick. It decouples our own propulsion
+        # using the PREVIOUS tick's applied command (state.motor_command), exactly
+        # as the old mode-local estimator did.
+        self.estimator.update(self.state, dt)
         mode = self.modes[self.state.mode]
         setpoint = mode.update(self.state, dt)
         setpoint = self._apply_cruise(setpoint, dt)
@@ -288,6 +447,10 @@ class Controller:
         self.state.motor_command = command
         self.motor.apply(command)
 
+        # Spot-lock quality (#34): accumulate while an anchor mode is holding
+        # (the mode refreshed state.distance_to_anchor_m just above).
+        self._update_spotlock(dt)
+
         # Breadcrumb the boat's path if a track recording is in progress.
         self.track.maybe_record(self.state.position)
 
@@ -305,6 +468,36 @@ class Controller:
             else:
                 self.handle_command({"type": "stop"})
         return command
+
+    def _update_spotlock(self, dt: float) -> None:
+        """Feed the spot-lock quality tracker (#34) from the shared state.
+
+        Accumulates only while an anchor mode is actively holding a mark (both
+        the PID hold and the learned hold, so they are directly comparable);
+        RESETS when the anchor is cleared or moved (a jog / a new drop starts a
+        fresh measurement); PAUSES (keeps the last numbers) when the boat is in
+        another mode with an anchor still set -- distance_to_anchor_m goes stale
+        there and must not pollute the metric.
+        """
+        st = self.state
+        if st.anchor is None:
+            if self._spotlock_anchor is not None:
+                self.spotlock.reset()
+                self._spotlock_anchor = None
+                st.spotlock_rms_m = 0.0
+                st.spotlock_pct_in_radius = 0.0
+                st.spotlock_holding_s = 0.0
+            return
+        if st.mode not in _SPOTLOCK_MODES or st.position is None:
+            return  # paused: anchor set but not actively station-keeping
+        if st.anchor != self._spotlock_anchor:
+            self.spotlock.reset()
+            self._spotlock_anchor = st.anchor
+        self.spotlock.update(st.distance_to_anchor_m, st.anchor_radius_m, dt)
+        st.spotlock_rms_m = self.spotlock.rms_m
+        st.spotlock_pct_in_radius = self.spotlock.pct_in_radius
+        st.spotlock_window_s = self.spotlock.window_s
+        st.spotlock_holding_s = self.spotlock.elapsed_s
 
     def _sensor_ages(self) -> tuple[float | None, float | None]:
         """(heading_age_s, depth_age_s) since each input was last ingested, or
@@ -378,6 +571,11 @@ class Controller:
             self.helm.reset()
             last = self.state.motor_command
             self.safety.reset(thrust=last.thrust, steering=last.steering)
+            # Vectored station-keeping telemetry (#35) is written only by the
+            # anchor hold while it runs; clear it so it can't go stale in
+            # another mode. The hold re-asserts it on its first tick.
+            self.state.stationkeep_vectored = False
+            self.state.stationkeep_azimuth_deg = 0.0
         self.modes[mode].activate(self.state)
 
     # ------------------------------------------------------------------ #
@@ -400,6 +598,12 @@ class Controller:
                     self.state.anchor = self.state.position
                 if "radius_m" in command:
                     self.state.anchor_radius_m = float(command["radius_m"])
+                # Optional per-drop opt-in/out of vectored station-keeping (#35);
+                # absent = keep the configured setting.
+                if "vectored" in command:
+                    hold = self.modes[ControlModeName.ANCHOR_HOLD]
+                    if hasattr(hold, "config"):
+                        hold.config.vectored = bool(command["vectored"])
                 # Record the heading at the moment of dropping (for display); the boat
                 # holds this passively once on station (no active heading slew).
                 self.state.anchor_heading = self.state.heading_deg

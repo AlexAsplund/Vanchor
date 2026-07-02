@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from ..core.geo import (
     angle_difference,
     cross_track,
+    destination_point,
     haversine_m,
     initial_bearing,
     knots_to_mps,
@@ -33,6 +34,7 @@ from ..core.models import (
 )
 from ..core.pid import PID
 from ..core.state import NavigationState
+from .estimator import crab_offset_deg
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -99,11 +101,21 @@ class DriftMode(ControlMode):
         self.pid = PID(
             kp=self.config.kp, ki=self.config.ki, kd=0.0, output_min=-1.0, output_max=1.0
         )
+        # The real environmental drift AXIS from the shared estimator (compass deg
+        # the set pushes toward), exposed for telemetry/UI and available as the
+        # natural "let it ride" heading. None until the estimator has settled.
+        self.drift_axis_deg: float | None = None
 
     def activate(self, state: NavigationState) -> None:
         self.pid.reset()
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
+        # Surface the real drift axis learned by the persistent estimator. The
+        # signed-speed regulation below still holds the operator-chosen
+        # ``target_heading`` axis; the estimated axis tells the UI which way the
+        # set actually runs (and is the axis a future "ride the drift" toggle
+        # would hand to target_heading).
+        self.drift_axis_deg = state.est_drift_dir if state.est_drift_settled else None
         self.pid.setpoint = state.drift_target_knots
         # Regulate the SIGNED speed ALONG the held drift heading, not the
         # unsigned speed-over-ground. With the held heading transverse to the
@@ -168,6 +180,41 @@ class AnchorConfig:
     drift_tau_s: float = 10.0
     drift_min_mps: float = 0.05  # below this, no significant drift to point into
 
+    # --- Vectored / azimuth station-keeping (#35) ------------------------- #
+    # OPT-IN: exploit the motor's wide (~360 deg) rotation while holding a spot.
+    # Instead of steering within the autopilot's narrow band and re-orienting the
+    # hull toward every disturbance, the mode computes the ground-frame thrust
+    # direction needed to null the position error + estimated drift and rotates
+    # the motor AZIMUTH toward it (a direct ManualSetpoint, so the helm's
+    # autopilot steering cap does not apply). OFF by default: ``vectored=False``
+    # (and an azimuth authority equal to today's 35 deg) keeps the classic PD
+    # behaviour bit-for-bit.
+    #
+    # PHYSICS (kept honest against the Fossen model): a deflected thrust makes a
+    # sway force AND a yaw moment (sway force x mount lever arm), so pure lateral
+    # translation without yaw is impossible. The law therefore MANAGES the
+    # induced yaw instead of pretending it away: the azimuth is recomputed from
+    # the LIVE heading every tick, so as the induced yaw swings a bow-mounted
+    # hull toward the thrust direction (the coupling is self-aligning for a bow
+    # mount: starboard thrust yaws the bow to starboard), the commanded
+    # deflection decays toward zero and the boat settles bow-into-the-set --
+    # a blended hull-yaw + azimuth strategy with bounded heading, not a spin.
+    # Deflection is clamped to ``vector_azimuth_deg``; when the wanted direction
+    # is outside the clamp, thrust is scaled by the misalignment cosine and the
+    # (clamped) deflection's induced yaw walks the hull around to close the gap.
+    vectored: bool = False
+    # Max motor azimuth (deg off the bow) station-keeping may command. Also
+    # capped by the physical ``state.max_steer_angle_deg``. 35 = today's band.
+    vector_azimuth_deg: float = 35.0
+    # Low-pass time constant (s) on the ground-frame demand vector so GPS noise
+    # near the mark doesn't slew the steering head (frame-rate independent EMA).
+    vector_tau_s: float = 1.0
+    # Thruster-mount steering polarity (+1 bow, -1 stern), mirroring the helm's
+    # steer_sign. The vectored law computes a PHYSICAL deflection; the helm then
+    # multiplies ManualSetpoint steering by its own steer_sign, so we pre-apply
+    # the same sign here to cancel it and keep the physical azimuth intact.
+    steer_sign: float = 1.0
+
 
 class AnchorHoldMode(ControlMode):
     """Virtual anchor ("Spot-Lock"): hold position with reverse thrust + braking.
@@ -184,6 +231,12 @@ class AnchorHoldMode(ControlMode):
     cannot actively hold an arbitrary heading while sitting still (steering needs
     thrust, which moves it off station). So this holds *position* and lets the
     heading settle, exactly like a real GPS trolling motor.
+
+    With ``config.vectored`` (opt-in, #35) the hold instead runs the vectored /
+    azimuth law (see :class:`AnchorConfig`): thrust is pointed at the ground-frame
+    direction that nulls position error + estimated drift, using up to
+    ``vector_azimuth_deg`` of the motor's rotation instead of the autopilot's
+    narrow band, with the thrust-induced yaw managed by live re-aiming.
     """
 
     name = ControlModeName.ANCHOR_HOLD
@@ -193,38 +246,26 @@ class AnchorHoldMode(ControlMode):
         self._reverse = False  # hysteresis on the forward/reverse decision
         self._recovering = False  # hysteresis on the recover/station decision
         self._filt: GeoPoint | None = None  # EMA-filtered perceived position
-        self._drift_e = 0.0  # estimated drift velocity (world east, m/s)
-        self._drift_n = 0.0  # estimated drift velocity (world north, m/s)
+        # Vectored station-keeping (#35) internals + telemetry.
+        self._vec_e = 0.0  # low-passed ground-frame demand vector (east)
+        self._vec_n = 0.0  # (north)
+        self._vec_seeded = False
+        self._vec_steer_hold = 0.0  # last steering command (held while idling)
+        self.commanded_azimuth_deg = 0.0  # exposed for telemetry
 
     def activate(self, state: NavigationState) -> None:
         self._reverse = False
         self._recovering = False
         self._filt = None
-        self._drift_e = 0.0
-        self._drift_n = 0.0
-
-    def _update_drift(self, state: NavigationState, state_dt: float) -> None:
-        """Estimate the environmental drift velocity (world frame) by subtracting
-        our own propulsion from the observed GPS velocity, low-passed."""
-        fix = state.fix
-        if fix is None:
-            return
-        v = knots_to_mps(fix.sog_knots)
-        cog = math.radians(fix.cog_deg)
-        v_e, v_n = v * math.sin(cog), v * math.cos(cog)
-        # Our thrust roughly produces thrust*max_speed along the boat heading.
-        h = math.radians(state.heading_deg)
-        thr = state.motor_command.thrust
-        int_e = thr * self.config.boat_max_speed_mps * math.sin(h)
-        int_n = thr * self.config.boat_max_speed_mps * math.cos(h)
-        # dt-scaled EMA weight so the smoothing time constant is fixed at
-        # drift_tau_s regardless of the control rate.
-        dt = max(1e-3, state_dt)
-        a = dt / (self.config.drift_tau_s + dt)
-        self._drift_e += a * ((v_e - int_e) - self._drift_e)
-        self._drift_n += a * ((v_n - int_n) - self._drift_n)
-        state.est_drift_mps = math.hypot(self._drift_e, self._drift_n)
-        state.est_drift_dir = math.degrees(math.atan2(self._drift_e, self._drift_n)) % 360.0
+        self._vec_e = 0.0
+        self._vec_n = 0.0
+        self._vec_seeded = False
+        self._vec_steer_hold = 0.0
+        self.commanded_azimuth_deg = 0.0
+        # NOTE: the environmental-drift estimate is NOT reset here. It now lives in
+        # the persistent, controller-owned WindCurrentEstimator (published on
+        # ``state.est_drift_*``), so Spot-Lock engages already knowing the set
+        # instead of relearning it over ~10 s on every activation.
 
     def _filtered_position(self, raw: GeoPoint) -> GeoPoint:
         a = self.config.pos_filter_alpha
@@ -258,7 +299,12 @@ class AnchorHoldMode(ControlMode):
         cfg = self.config
         radius = state.anchor_radius_m
 
-        self._update_drift(state, dt)
+        # Vectored / azimuth station-keeping (#35): opt-in alternative law that
+        # exploits the motor's wide rotation. Default (False) falls through to
+        # the classic PD hold below, unchanged.
+        state.stationkeep_vectored = cfg.vectored
+        if cfg.vectored:
+            return self._vectored_update(state, distance, bearing, dt)
 
         # Recover (actively re-point at the mark) only when pushed clearly out of
         # the radius; resume station-keeping once back well inside. The
@@ -291,13 +337,15 @@ class AnchorHoldMode(ControlMode):
             )
 
         # --- Station-keeping inside the radius --------------------------- #
-        drift_mag = math.hypot(self._drift_e, self._drift_n)
-        if cfg.feedforward and drift_mag >= cfg.drift_min_mps:
+        # Drift comes from the shared, persistent estimator (state.est_drift_*),
+        # already warm on activation -- no mode-local relearn.
+        drift_mag = state.est_drift_mps
+        if cfg.feedforward and drift_mag >= cfg.drift_min_mps and state.est_drift_settled:
             # Predictive: point the bow *into* the drift and hold a steady
             # counter-thrust (feed-forward), so the boat sits still against
-            # wind/current instead of drifting out and darting back. The bow
-            # axis is the direction opposing the drift.
-            held = math.degrees(math.atan2(-self._drift_e, -self._drift_n)) % 360.0
+            # wind/current instead of drifting out and darting back. The bow axis
+            # opposes the drift direction (which points where the drift pushes).
+            held = normalize_deg(state.est_drift_dir + 180.0)
             feed_forward = cfg.feedforward_gain * drift_mag / cfg.boat_max_speed_mps
         else:
             # No significant drift learned yet: hold the current heading.
@@ -316,6 +364,117 @@ class AnchorHoldMode(ControlMode):
             # Nothing to do: idle (no thrust => no yaw => heading held).
             return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
         return GuidedSetpoint(target_heading=held, thrust=thrust)
+
+    # -- Vectored / azimuth station-keeping (#35) -------------------------- #
+    def _vectored_update(
+        self, state: NavigationState, distance: float, bearing: float, dt: float
+    ) -> Setpoint:
+        """Hold the spot by aiming the motor AZIMUTH at the ground-frame thrust
+        direction that nulls position error + drift, instead of clamping to the
+        autopilot's narrow band and re-orienting the hull first.
+
+        Law (all terms are normalized-thrust fractions in the ground frame):
+
+          demand = kp * (deadbanded error toward the anchor)
+                   - kd * (GPS ground velocity)                (brake any motion)
+                   - ff_gain/boat_max_speed * est_drift        (push against the set)
+
+        The demand vector is low-passed (``vector_tau_s``), converted to a
+        body-frame azimuth off the live heading, and commanded directly via a
+        :class:`ManualSetpoint` (so the helm's autopilot steering cap does not
+        apply) up to ``vector_azimuth_deg`` of deflection.
+
+        INDUCED-YAW MANAGEMENT: a deflected thrust also yaws the boat (Fossen:
+        N = x_mount * Fy). For a bow mount this coupling is self-aligning --
+        thrust deflected to starboard yaws the bow to starboard, i.e. TOWARD the
+        thrust direction -- so recomputing the azimuth from the live heading
+        every tick makes the commanded deflection decay as the hull comes
+        around; the boat converges to bow-into-the-set with a small residual
+        azimuth (bounded heading, no spin). When the wanted direction is nearly
+        astern the law flips to reverse thrust (with hysteresis) rather than
+        swinging the hull; when it falls outside the azimuth clamp, thrust is
+        scaled by the misalignment cosine (floored so enough prop wash remains
+        for the induced yaw to close the gap).
+        """
+        cfg = self.config
+
+        # Ground-frame demand: position spring (deadbanded, so GPS noise at the
+        # mark doesn't fidget the head) + velocity brake + drift feed-forward.
+        err = max(0.0, distance - cfg.idle_deadband_m)
+        b = math.radians(bearing)
+        de = cfg.kp * err * math.sin(b)
+        dn = cfg.kp * err * math.cos(b)
+        fix = state.fix
+        if fix is not None:
+            v = knots_to_mps(fix.sog_knots)
+            c = math.radians(fix.cog_deg)
+            de -= cfg.kd * v * math.sin(c)
+            dn -= cfg.kd * v * math.cos(c)
+        if state.est_drift_settled and state.est_drift_mps >= cfg.drift_min_mps:
+            k = cfg.feedforward_gain / max(cfg.boat_max_speed_mps, 0.05)
+            de -= k * state.est_drift_east
+            dn -= k * state.est_drift_north
+
+        # Frame-rate-independent low-pass; the first sample seeds directly so
+        # engagement isn't diluted by a zero seed.
+        if not self._vec_seeded:
+            self._vec_e, self._vec_n = de, dn
+            self._vec_seeded = True
+        elif cfg.vector_tau_s > 0.0:
+            a = dt / (cfg.vector_tau_s + dt)
+            self._vec_e += (de - self._vec_e) * a
+            self._vec_n += (dn - self._vec_n) * a
+        else:
+            self._vec_e, self._vec_n = de, dn
+
+        magnitude = math.hypot(self._vec_e, self._vec_n)
+        if magnitude < 0.02:
+            # Nothing worth doing: idle. No thrust => no force, no yaw -- the
+            # heading is held passively; keep the head where it is (no servo
+            # work) and report no active azimuth demand.
+            state.stationkeep_azimuth_deg = self.commanded_azimuth_deg
+            return ManualSetpoint(0.0, self._vec_steer_hold)
+
+        # Wanted ground-frame push direction -> body-frame angle off the bow.
+        push_dir = math.degrees(math.atan2(self._vec_e, self._vec_n))
+        beta = angle_difference(state.heading_deg, push_dir)
+
+        # Forward / reverse with hysteresis: nearly astern -> push with reverse
+        # thrust (motor azimuth stays small) instead of swinging the hull 180.
+        if abs(beta) > 110.0:
+            self._reverse = True
+        elif abs(beta) < 70.0:
+            self._reverse = False
+
+        # Azimuth authority: the configured station-keeping arc, never beyond
+        # the head's physical range.
+        max_ang = state.max_steer_angle_deg if state.max_steer_angle_deg > 0 else 35.0
+        authority = min(cfg.vector_azimuth_deg, max_ang)
+
+        # Reverse thrust pushes opposite the motor axis: to push toward ``beta``
+        # point the motor at beta-180 and run the prop astern.
+        delta = angle_difference(180.0, beta) if self._reverse else beta
+        delta_cmd = _clamp(delta, -authority, authority)
+
+        # Misalignment between the achievable (clamped) push direction and the
+        # wanted one: scale thrust by its cosine -- but keep a floor, because
+        # the clamped deflection's *induced yaw* is exactly what walks the hull
+        # around to close the gap, and that yaw needs prop wash to exist.
+        misalign = min(90.0, abs(delta - delta_cmd))
+        align = max(0.25, math.cos(math.radians(misalign)))
+        thrust = _clamp(magnitude, 0.0, cfg.max_thrust) * align
+        if self._reverse:
+            thrust = -thrust
+
+        # Command the PHYSICAL azimuth. ManualSetpoint steering is multiplied by
+        # the helm's steer_sign, so pre-apply the mirrored mount sign to cancel.
+        steering = _clamp(delta_cmd / max_ang, -1.0, 1.0) * (
+            1.0 if cfg.steer_sign >= 0 else -1.0
+        )
+        self._vec_steer_hold = steering
+        self.commanded_azimuth_deg = delta_cmd
+        state.stationkeep_azimuth_deg = delta_cmd
+        return ManualSetpoint(thrust=thrust, steering=steering)
 
 
 def maneuver_to_bearing(
@@ -374,6 +533,13 @@ class WaypointConfig:
     reverse_efficiency: float = 0.6
     turn_rate_dps: float = 18.0
     boat_speed_mps: float = 1.6
+    # Crab-angle feed-forward: bias the commanded heading upwind/upstream by the
+    # crab angle needed to hold the GROUND track against the estimated beam drift
+    # (from the shared WindCurrentEstimator). It ADDS to the cross-track feedback
+    # rather than replacing it, and only engages once the estimate is settled --
+    # otherwise the boat falls back to pure XTE feedback. Bounded to keep it safe.
+    crab_feedforward: bool = True
+    max_crab_deg: float = 25.0
 
 
 class WaypointMode(ControlMode):
@@ -500,8 +666,23 @@ class WaypointMode(ControlMode):
             -self.config.max_xte_correction_deg,
             min(self.config.max_xte_correction_deg, self.config.xte_gain * xte.distance_m),
         )
+        # Crab feed-forward: point the bow into the estimated beam drift so the
+        # ground track (not just the heading) holds. It ADDS to the XTE feedback
+        # -- the feedback still corrects residual error and short-term gusts, the
+        # feed-forward removes the steady bias the feedback would otherwise have to
+        # chase (especially at low speed, where xte_gain saturates). Falls back to
+        # pure feedback until the estimate is settled.
+        crab = 0.0
+        if self.config.crab_feedforward and state.est_drift_settled:
+            crab = crab_offset_deg(
+                bearing,
+                state.est_drift_east,
+                state.est_drift_north,
+                self.config.throttle * self.config.boat_speed_mps,
+                max_crab_deg=self.config.max_crab_deg,
+            )
         # Positive xte => boat is right of track => steer left => reduce heading.
-        heading = normalize_deg(bearing - correction)
+        heading = normalize_deg(bearing - correction + crab)
         return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
 
 
@@ -873,33 +1054,182 @@ class OrbitMode(ControlMode):
 @dataclass
 class TrollingConfig:
     throttle: float = 0.4
+    # Cross-track steering onto each virtual corridor leg: degrees of heading
+    # correction per metre of cross-track error, capped. Same knobs (and units)
+    # as WaypointMode -- the corridor is tracked exactly like a route.
+    xte_gain: float = 3.0
+    max_xte_correction_deg: float = 60.0
+    # A virtual corridor waypoint is "reached" within this radius. Arrival also
+    # fires on sailing abeam past the leg's perpendicular (see WaypointMode), so a
+    # boat that rounds a peak short of the radius still advances.
+    arrival_radius_m: float = 3.0
+    # Crab-angle feed-forward against the estimated beam drift (reuses the shared
+    # WindCurrentEstimator), exactly like WaypointMode -- points the bow into the
+    # set so the GROUND track (not just the heading) holds. Falls back to pure XTE
+    # feedback until the estimate settles.
+    crab_feedforward: bool = True
+    max_crab_deg: float = 25.0
+    boat_speed_mps: float = 1.6
+    # Virtual waypoints kept buffered AHEAD of the boat. The buffer rolls forward
+    # (pop the reached point, append the next) so memory stays bounded no matter
+    # how long the pattern runs.
+    lookahead_points: int = 4
 
 
 class TrollingMode(ControlMode):
-    """S-curve trolling weave.
+    """Ground-track S-curve trolling.
 
-    Adds a sinusoidal heading offset ``amplitude_deg * sin(2*pi*t/period_s)``
-    around a base heading (the heading when engaged, unless one is given) while
-    driving forward at the set speed -- the lazy S-pattern used to cover water
-    and vary lure action when trolling. ``phase`` (radians) is exposed for
-    telemetry.
+    Traces a fixed-width lawnmower-S over the GROUND by following a *corridor of
+    virtual waypoints* laid +/- amplitude either side of a straight base course,
+    instead of weaving the target HEADING. Because it tracks ground positions
+    with cross-track correction (plus crab feed-forward), wind/current no longer
+    shear the S downstream and the swath width stays constant regardless of boat
+    speed -- the whole point of the ground-track variant over the old heading
+    weave (which sheared with the set and whose swath scaled with speed).
+
+    The virtual waypoints sit at the sine peaks/troughs of the S: point ``k`` is
+    at along-course distance ``(2k+1) * wavelength/4`` from the anchor point,
+    offset ``amplitude`` metres to alternating sides. Following that zig-zag with
+    the XTE helm produces a smooth, fixed-width S over the ground. The buffer is a
+    small rolling window (``lookahead_points``): reaching a point pops it and
+    appends the next, so the pattern advances indefinitely in bounded memory.
+
+    PARAM SEMANTICS CHANGE (from the old heading weave): the stored
+    ``state.trolling_amplitude_deg`` is now the lateral half-width of the S in
+    METRES, and ``state.trolling_period_s`` is the longitudinal wavelength (one
+    full S cycle along the base course) in METRES. ``state.trolling_base_heading``
+    is the centreline bearing (unchanged -- defaults to the heading when engaged).
+    The command/state field names are kept so the controller wiring and the UI
+    telemetry (which read those fields, and ``phase``) keep working unchanged.
+
+    ``phase`` (radians, derived from the boat's along-course progress) is still
+    exposed for the UI weave indicator.
     """
 
     name = ControlModeName.TROLLING
 
     def __init__(self, config: TrollingConfig | None = None) -> None:
         self.config = config or TrollingConfig()
-        self._t = 0.0
-        self.phase = 0.0  # exposed for telemetry
+        self._base: GeoPoint | None = None   # anchor point of the base course
+        self._bearing = 0.0                  # centreline bearing (deg)
+        self._amplitude_m = 0.0              # lateral half-width (m)
+        self._wavelength_m = 1.0             # longitudinal wavelength (m)
+        self._pending: list[GeoPoint] = []   # bounded rolling buffer of targets
+        self._next_k = 0                     # index of the next point to generate
+        self._leg_start: GeoPoint | None = None
+        self.phase = 0.0                     # exposed for telemetry
 
     def activate(self, state: NavigationState) -> None:
-        self._t = 0.0
+        self._base = None
+        self._pending = []
+        self._next_k = 0
+        self._leg_start = None
         self.phase = 0.0
+        if state.position is not None:
+            self._establish(state)
+
+    def _establish(self, state: NavigationState) -> None:
+        """Anchor the base course at the current position/heading and fill the
+        look-ahead buffer. Called on activation, or lazily on the first update
+        that has a fix (if the mode was engaged before one arrived)."""
+        self._base = state.position
+        self._bearing = normalize_deg(state.trolling_base_heading)
+        # Reinterpret the stored params as METRES (see the class docstring).
+        self._amplitude_m = max(0.0, state.trolling_amplitude_deg)
+        self._wavelength_m = max(1.0, state.trolling_period_s)
+        self._next_k = 0
+        self._leg_start = self._base
+        self._pending = []
+        for _ in range(max(1, self.config.lookahead_points)):
+            self._pending.append(self._make_point(self._next_k))
+            self._next_k += 1
+
+    def _make_point(self, k: int) -> GeoPoint:
+        """The k-th virtual corridor waypoint -- a sine peak/trough of the S laid
+        along the base course, offset to alternating sides (starboard first)."""
+        assert self._base is not None
+        along = (2 * k + 1) * (self._wavelength_m / 4.0)
+        tip = destination_point(self._base, along, self._bearing)  # on centreline
+        if self._amplitude_m <= 0.0:
+            return tip  # degenerate: a straight base course
+        side = 90.0 if (k % 2 == 0) else -90.0
+        return destination_point(
+            tip, self._amplitude_m, normalize_deg(self._bearing + side)
+        )
+
+    def _advance(self) -> None:
+        """Consume the reached target and roll the buffer forward one point,
+        keeping ``_pending`` at a constant length (bounded memory)."""
+        self._leg_start = self._pending.pop(0)
+        self._pending.append(self._make_point(self._next_k))
+        self._next_k += 1
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
-        self._t += dt
-        period = max(0.1, state.trolling_period_s)
-        self.phase = (2.0 * math.pi * self._t / period) % (2.0 * math.pi)
-        offset = state.trolling_amplitude_deg * math.sin(self.phase)
-        heading = normalize_deg(state.trolling_base_heading + offset)
-        return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
+        pos = state.position
+        if pos is None:
+            return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
+        if self._base is None:
+            self._establish(state)
+
+        cfg = self.config
+        leg_start = self._leg_start or self._base
+        target = self._pending[0]
+        distance = haversine_m(pos, target)
+
+        # Arrival: within the radius, or having sailed abeam past the leg's
+        # perpendicular (same rule WaypointMode uses). Consume any stacked points
+        # in one tick so a short wavelength doesn't stall one point per tick.
+        for _ in range(len(self._pending)):
+            arrived = distance <= cfg.arrival_radius_m
+            if not arrived:
+                leg_len = haversine_m(leg_start, target)
+                if leg_len > 0.0:
+                    brg_leg = initial_bearing(leg_start, target)
+                    brg_pos = initial_bearing(leg_start, pos)
+                    d_from_start = haversine_m(leg_start, pos)
+                    along = d_from_start * math.cos(
+                        math.radians(angle_difference(brg_leg, brg_pos))
+                    )
+                    xte_m = abs(cross_track(leg_start, target, pos).distance_m)
+                    if along >= leg_len and xte_m <= 3.0 * cfg.arrival_radius_m:
+                        arrived = True
+            if not arrived:
+                break
+            self._advance()
+            leg_start = self._leg_start
+            target = self._pending[0]
+            distance = haversine_m(pos, target)
+
+        state.distance_to_waypoint_m = distance
+        bearing = initial_bearing(pos, target)
+        xte = cross_track(leg_start, target, pos)
+        state.cross_track_m = xte.distance_m
+        state.bearing_to_dest = bearing
+
+        # Along-course progress -> phase for the UI weave indicator.
+        d_base = haversine_m(self._base, pos)
+        brg_base = initial_bearing(self._base, pos)
+        along_course = d_base * math.cos(
+            math.radians(angle_difference(self._bearing, brg_base))
+        )
+        self.phase = (2.0 * math.pi * along_course / self._wavelength_m) % (2.0 * math.pi)
+
+        correction = _clamp(
+            cfg.xte_gain * xte.distance_m,
+            -cfg.max_xte_correction_deg,
+            cfg.max_xte_correction_deg,
+        )
+        # Crab feed-forward: bias the bow into the estimated beam drift so the
+        # ground track holds against the set (adds to the XTE feedback).
+        crab = 0.0
+        if cfg.crab_feedforward and state.est_drift_settled:
+            crab = crab_offset_deg(
+                bearing,
+                state.est_drift_east,
+                state.est_drift_north,
+                cfg.throttle * cfg.boat_speed_mps,
+                max_crab_deg=cfg.max_crab_deg,
+            )
+        # Positive xte => boat right of track => steer left => reduce heading.
+        heading = normalize_deg(bearing - correction + crab)
+        return GuidedSetpoint(target_heading=heading, thrust=cfg.throttle)

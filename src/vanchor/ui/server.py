@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vanchor.ui")
 STATIC_DIR = Path(__file__).parent / "static"
 
+# WebSocket envelope protocol version (#21). Every server->client message carries
+# a top-level ``type`` and ``v``; telemetry frames additionally carry ``seq``
+# (monotonic per-connection) and ``ts`` (server epoch seconds), alongside the
+# existing flat telemetry fields (additive — old subscribers are unaffected).
+_PROTOCOL_V = 1
+
 # Keys that are large array payloads; stripped from /api/log frames by default
 # to keep the response lightweight (depth_points is ~28 KB per frame).
 _BULK_KEYS: frozenset[str] = frozenset({"depth_points"})
@@ -69,6 +75,11 @@ def shape_frame(snapshot: dict, full: bool) -> dict:
     * ``waypoints`` -- omitted entirely (absent, not null/empty; a concurrent
       client guard mirrors this contract: waypoints is only applied when the
       key is present in the frame).
+    * ``safety_geometry`` -- omitted entirely (the full no-go polygons change
+      rarely, so they ride only the ~1 Hz full frames, not every 5 Hz frame).
+      The client (``safety.js`` ``onServerGeometry``) treats an ABSENT key as
+      "no change / retain current", exactly like ``waypoints`` -- so a decimated
+      frame missing the key must NOT be read as "server has no geometry".
     * ``track`` -- present but with only its scalar keys (``recording``,
       ``count``, etc.); the ``points`` array is dropped so the UI updates the
       breadcrumb count readout every frame but redraws the trail only on full
@@ -78,12 +89,50 @@ def shape_frame(snapshot: dict, full: bool) -> dict:
         return snapshot
     out: dict = {}
     for k, v in snapshot.items():
-        if k in ("depth_points", "waypoints"):
+        if k in ("depth_points", "waypoints", "safety_geometry"):
             continue
         if k == "track" and isinstance(v, dict):
             out[k] = {sk: sv for sk, sv in v.items() if sk != "points"}
         else:
             out[k] = v
+    return out
+
+
+def _telemetry_envelope(frame: dict, ws: "WebSocket", ts: float | None = None) -> dict:
+    """Wrap a telemetry ``frame`` in the versioned WS envelope (#21).
+
+    Adds ``type``/``v``/``seq``/``ts`` ALONGSIDE the existing flat fields (a
+    shallow copy so the shared snapshot the broadcaster records isn't mutated).
+    ``seq`` is a monotonic per-connection counter stashed on the socket object.
+    """
+    seq = getattr(ws, "_va_seq", 0)
+    ws._va_seq = seq + 1  # type: ignore[attr-defined]
+    out = dict(frame)
+    out["type"] = "telemetry"
+    out["v"] = _PROTOCOL_V
+    out["seq"] = seq
+    out["ts"] = time.time() if ts is None else ts
+    return out
+
+
+def _broadcast_envelope(
+    frame: dict, seq: int, ts: float, n_clients: int, helm_present: bool
+) -> dict:
+    """Wrap a telemetry ``frame`` for the shared high-rate BROADCAST (#21, #24).
+
+    Unlike ``_telemetry_envelope`` (per-connection, used only for the connect-time
+    snapshot), this frame is IDENTICAL for every client: a GLOBAL monotonic
+    broadcast ``seq``, and the shared presence scalars ``clients``/``helm_present``
+    (same for all clients). Per-client role is NOT carried here — it's a separate
+    ``{type:"role"}`` message. Serialised once per tick and sent to every client.
+    """
+    out = dict(frame)
+    out["type"] = "telemetry"
+    out["v"] = _PROTOCOL_V
+    out["seq"] = seq
+    out["ts"] = ts
+    out["clients"] = n_clients
+    out["helm_present"] = helm_present
     return out
 
 
@@ -141,6 +190,52 @@ def _is_allowed_host(hostname: str, extra: frozenset[str]) -> bool:
 
 def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     clients: set[WebSocket] = set()
+    # Multi-client roles (#24). ``client_order`` preserves connection order so
+    # helm succession promotes the OLDEST remaining client. ``_helm["ws"]`` is
+    # the current helm socket (or None). This is cooperative single-user
+    # coordination, NOT access control — the SAFETY FLOOR is that ``stop`` always
+    # works from any client regardless of role.
+    client_order: list[WebSocket] = []
+    _helm: dict[str, WebSocket | None] = {"ws": None}
+
+    # Boat-affecting commands are HELM-ONLY. Observers may only send the
+    # allow-listed control/safety messages: ``stop`` (STOP always works),
+    # ``take_helm`` (claim the helm) and ``ping`` (heartbeat). Everything else
+    # from a non-helm client is rejected with ``role_denied`` and NOT forwarded.
+    _OBSERVER_ALLOWED: frozenset[str] = frozenset({"stop", "take_helm", "ping"})
+
+    def _presence() -> tuple[int, bool]:
+        """Shared scalars broadcast to every client: (client count, helm present)."""
+        return len(clients), _helm["ws"] is not None
+
+    async def _send_role(ws: WebSocket) -> None:
+        """Send ``ws`` its current role plus the shared presence scalars."""
+        n, present = _presence()
+        role = "helm" if ws is _helm["ws"] else "observer"
+        msg = json.dumps({
+            "type": "role", "v": _PROTOCOL_V, "role": role,
+            "clients": n, "helm_present": present,
+        })
+        # Per-client timeout mirrors the broadcaster: one wedged socket must not
+        # stall a connect/disconnect. Best-effort — a client that won't drain
+        # within 2 s is discarded rather than blocking the role update.
+        try:
+            await asyncio.wait_for(ws.send_text(msg), timeout=2.0)
+        except Exception:  # noqa: BLE001 - drop a dead/wedged socket
+            clients.discard(ws)
+
+    async def _broadcast_roles() -> None:
+        """Re-send role+presence to every connected client (on any role change)."""
+        for ws in list(clients):
+            await _send_role(ws)
+
+    def _promote_next_helm() -> None:
+        """Promote the oldest remaining connected client to helm (or None)."""
+        for ws in client_order:
+            if ws in clients:
+                _helm["ws"] = ws
+                return
+        _helm["ws"] = None
 
     # Hosts accepted in the Host header beyond the built-in rules (IP literals,
     # localhost, *.local).  Read at app-creation time so tests can override via
@@ -154,6 +249,7 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     async def broadcaster() -> None:
         period = 1.0 / telemetry_hz
         frame_n = 0
+        broadcast_seq = 0
         while True:
             try:
                 snapshot = runtime.telemetry()
@@ -177,19 +273,29 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                     )
                 if clients:
                     frame_n += 1
+                    broadcast_seq += 1
                     # Full frames (every 5th, ~1 Hz) carry depth_points, waypoints and
                     # track.points.  Non-full frames strip those bulky arrays so the
                     # high-rate 5 Hz WS stream stays lean.  /api/state always returns
                     # the complete snapshot; shape_frame only applies to the broadcaster.
                     out = shape_frame(snapshot, full=(frame_n % 5 == 1))
-                    message = json.dumps(out)
+                    ts = time.time()
+
+                    # #24/#21: the broadcast frame is now IDENTICAL for every client
+                    # (shared presence scalars + a GLOBAL monotonic broadcast seq),
+                    # so build + json.dumps it ONCE per tick and send the same string
+                    # to everyone (was a per-client envelope + dumps).
+                    n_clients, helm_present = _presence()
+                    msg = json.dumps(
+                        _broadcast_envelope(out, broadcast_seq, ts, n_clients, helm_present)
+                    )
 
                     # Send to all clients concurrently so one stalled client
                     # doesn't delay telemetry for others.  Per-client timeout
                     # evicts connections that won't drain within 2 s.
-                    async def _send(ws: WebSocket, msg: str = message) -> None:
+                    async def _send(ws: WebSocket, m: str = msg) -> None:
                         try:
-                            await asyncio.wait_for(ws.send_text(msg), timeout=2.0)
+                            await asyncio.wait_for(ws.send_text(m), timeout=2.0)
                         except Exception:
                             clients.discard(ws)
 
@@ -354,8 +460,26 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     @app.post("/api/command")
     async def command(payload: dict) -> dict:
-        runtime.handle_command(payload)
+        # REST commands are un-gated (no helm/observer role) -> source "rest".
+        # Record the outcome in the audit ring (#26): accepted on success, error
+        # (with the message) if the handler raises. The original 500 behaviour is
+        # preserved by re-raising after recording.
+        ctype = payload.get("type") if isinstance(payload, dict) else None
+        try:
+            runtime.handle_command(payload)
+        except Exception as exc:
+            runtime.record_command(ctype, "rest", "error", detail=str(exc))
+            raise
+        runtime.record_command(ctype, "rest", "accepted")
         return {"ok": True}
+
+    @app.get("/api/audit")
+    async def audit(n: int = 50) -> dict:
+        """Recent command-audit entries (#26): who commanded what, and whether it
+        was accepted/denied/errored. Oldest first, newest last. Each entry is
+        ``{ts, type, source, outcome, detail?}`` where source is
+        helm|observer|rest. Pings are not recorded."""
+        return runtime.command_audit(n)
 
     @app.post("/api/restart")
     async def restart() -> dict:
@@ -729,6 +853,21 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 status_code=400,
             )
 
+    # -- UI preferences KV (browser-as-cache mechanism, #23) ------------- #
+    @app.get("/api/prefs")
+    async def get_prefs() -> dict:
+        """The persisted UI-preferences dict (HUD layout, basemap, ...).
+
+        The client renders from its own localStorage for instant paint; this is
+        the durable copy so a reinstall / another device sees the same prefs."""
+        return runtime.prefs.get()
+
+    @app.put("/api/prefs")
+    async def put_prefs(payload: dict) -> dict:
+        """Shallow-merge a JSON patch into the persisted prefs (atomic write).
+        Returns the merged dict."""
+        return runtime.prefs.merge(payload if isinstance(payload, dict) else {})
+
     # -- Versioned backup / restore -------------------------------------- #
     @app.post("/api/backup")
     async def backup_create(payload: dict | None = None):
@@ -870,11 +1009,21 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             await websocket.close(code=1008)  # 1008 = Policy Violation
             return
         clients.add(websocket)
+        client_order.append(websocket)
+        # First client to connect becomes helm; later clients are observers (#24).
+        # Connecting is PASSIVE — it never commands the boat or changes its mode.
+        if _helm["ws"] is None:
+            _helm["ws"] = websocket
         # Mark the link alive for the lost-connection failsafe (#64).
         runtime.client_connected()
         try:
             # Send an immediate snapshot so the UI paints without waiting.
-            await websocket.send_text(json.dumps(runtime.telemetry()))
+            await websocket.send_text(
+                json.dumps(_telemetry_envelope(runtime.telemetry(), websocket))
+            )
+            # Tell every client its role + the new presence counts (a fresh
+            # connection changes clients/helm_present for everyone).
+            await _broadcast_roles()
             while True:
                 raw = await websocket.receive_text()
                 runtime.client_activity()
@@ -883,20 +1032,69 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 except Exception:
                     logger.exception("bad command over websocket: %s", raw)
                     continue
-                if msg.get("type") == "ping":
+                mtype = msg.get("type")
+                if mtype == "ping":
                     # Application-level heartbeat: liveness already updated above.
                     # Do NOT forward to the controller (it would log "unknown command").
-                    await websocket.send_text('{"type":"pong"}')
+                    await websocket.send_text(
+                        json.dumps({"type": "pong", "v": _PROTOCOL_V})
+                    )
+                    continue
+                if mtype == "take_helm":
+                    # Cooperative helm transfer (#24): claim the helm, demoting the
+                    # previous holder. Allowed from ANY client (single-user boat).
+                    _helm["ws"] = websocket
+                    await _broadcast_roles()
+                    continue
+                # Optional command ack (#21): a command carrying a ``seq`` gets a
+                # positive {ack} on success or {nack,error} on a handler exception.
+                # Bare commands (no seq) behave exactly as before (no reply).
+                seq = msg.get("seq")
+                has_seq = isinstance(seq, int) and not isinstance(seq, bool)
+                # Role gating (#24): a NON-helm client may only send allow-listed
+                # messages (stop/take_helm/ping — the latter two handled above, so
+                # here only ``stop`` survives). Everything else is rejected and NOT
+                # forwarded to the controller. SAFETY FLOOR: ``stop`` always works.
+                # This client's role, tagged onto every audit entry (#26).
+                source = "helm" if websocket is _helm["ws"] else "observer"
+                if websocket is not _helm["ws"] and mtype not in _OBSERVER_ALLOWED:
+                    runtime.record_command(mtype, "observer", "denied")
+                    reply = {
+                        "type": "role_denied", "v": _PROTOCOL_V,
+                        "error": "observer — take the helm to command",
+                    }
+                    if has_seq:
+                        reply["seq"] = seq
+                    await websocket.send_text(json.dumps(reply))
                     continue
                 try:
                     runtime.handle_command(msg)
-                except Exception:
+                except Exception as exc:
                     logger.exception("bad command over websocket: %s", raw)
+                    runtime.record_command(mtype, source, "error", detail=str(exc))
+                    if has_seq:
+                        await websocket.send_text(json.dumps(
+                            {"type": "nack", "v": _PROTOCOL_V, "seq": seq, "error": str(exc)}
+                        ))
+                else:
+                    runtime.record_command(mtype, source, "accepted")
+                    if has_seq:
+                        await websocket.send_text(json.dumps(
+                            {"type": "ack", "v": _PROTOCOL_V, "seq": seq}
+                        ))
         except WebSocketDisconnect:
             pass
         finally:
             clients.discard(websocket)
+            if websocket in client_order:
+                client_order.remove(websocket)
+            # If the helm dropped, auto-promote the oldest remaining client (#24).
+            if _helm["ws"] is websocket:
+                _promote_next_helm()
             runtime.client_disconnected()
+            # Tell the survivors the new roles + presence counts.
+            with contextlib.suppress(Exception):
+                await _broadcast_roles()
 
     class _NoCacheStatic(StaticFiles):
         """Static assets with ``Cache-Control: no-cache`` so browsers + the

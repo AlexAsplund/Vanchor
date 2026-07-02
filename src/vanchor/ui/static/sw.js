@@ -19,7 +19,7 @@
  */
 "use strict";
 
-const VERSION = "vanchor-shell-v51";
+const VERSION = "vanchor-shell-v54";
 const CACHE = VERSION;
 
 // The app shell. Kept in sync with index.html's <link>/<script> tags. "/" and
@@ -69,6 +69,7 @@ const SHELL = [
   "/static/map-depth.js",
   "/static/hudframe.js",
   "/static/hud.js",
+  "/static/roles.js",
   "/static/steering.js",
   "/static/wizard.js",
   "/static/boat.js",
@@ -102,8 +103,10 @@ const SHELL = [
   "/static/teleport.js",
   "/static/alerts.js",
   "/static/logs.js",
+  "/static/audit.js",
   "/static/measure.js",
   "/static/mobile.js",
+  "/static/wakelock.js",
 ];
 
 // Map-tile hosts handled by offline.js's IndexedDB cache — the SW must not

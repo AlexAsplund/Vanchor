@@ -132,12 +132,92 @@ def test_websocket_streams_and_accepts_commands(client):
         first = ws.receive_json()
         assert "mode" in first
         ws.send_json({"type": "anchor_hold", "radius_m": 6})
-        # The next snapshot the server pushes should reflect the new mode.
+        # The next snapshot the server pushes should reflect the new mode. A
+        # `{type:"role"}` message (no "mode") now interleaves on connect, so read
+        # via .get() and keep scanning.
+        msg = None
         for _ in range(20):
-            msg = ws.receive_json()
-            if msg["mode"] == "anchor_hold":
+            frame = ws.receive_json()
+            if frame.get("mode") == "anchor_hold":
+                msg = frame
                 break
-        assert msg["mode"] == "anchor_hold"
+        assert msg is not None and msg["mode"] == "anchor_hold"
+
+
+# ---- #21: versioned WS envelope + command acks ----------------------------- #
+
+def _recv_until(ws, pred, tries=40):
+    """Receive frames until ``pred(msg)`` is truthy; return that msg (or None)."""
+    for _ in range(tries):
+        msg = ws.receive_json()
+        if pred(msg):
+            return msg
+    return None
+
+
+def test_ws_telemetry_carries_envelope(client):
+    """Telemetry frames gain type/v/seq/ts alongside the flat fields (#21)."""
+    with client.websocket_connect("/ws") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "telemetry"
+        assert first["v"] == 1
+        assert "ts" in first and isinstance(first["ts"], (int, float))
+        assert first["seq"] == 0
+        # Flat telemetry fields are still present (backward compatible).
+        assert "mode" in first and "motor" in first
+        # The next telemetry frame is now a shared BROADCAST frame with a GLOBAL
+        # monotonic seq (#24 serialize-once), not a per-connection one. A role
+        # message may interleave first, so scan to the next telemetry frame.
+        second = _recv_until(ws, lambda m: m.get("type") == "telemetry")
+        assert second is not None
+        assert second["seq"] > first["seq"]  # monotonic (global broadcast seq)
+
+
+def test_ws_command_with_seq_gets_ack(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # consume initial snapshot
+        ws.send_json({"type": "anchor_hold", "radius_m": 6, "seq": 7})
+        ack = _recv_until(ws, lambda m: m.get("type") == "ack")
+        assert ack is not None
+        assert ack == {"type": "ack", "v": 1, "seq": 7}
+
+
+def test_ws_bare_command_gets_no_ack(client):
+    """A command without a seq behaves exactly as before: no ack/nack reply."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "anchor_hold", "radius_m": 6})  # no seq
+        # Every following frame within a window must be plain telemetry.
+        for _ in range(15):
+            m = ws.receive_json()
+            assert m.get("type") not in ("ack", "nack")
+
+
+def test_ws_failing_command_with_seq_gets_nack(client):
+    """A handler exception on a seq'd command replies nack with the error."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        # set_gps_offset without true_lat/true_lon raises KeyError in the handler.
+        ws.send_json({"type": "set_gps_offset", "seq": 9})
+        nack = _recv_until(ws, lambda m: m.get("type") == "nack")
+        assert nack is not None
+        assert nack["type"] == "nack" and nack["v"] == 1 and nack["seq"] == 9
+        assert isinstance(nack["error"], str) and nack["error"]
+
+
+def test_ws_ping_pong_carries_version(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "ping"})
+        pong = _recv_until(ws, lambda m: m.get("type") == "pong")
+        assert pong == {"type": "pong", "v": 1}
+
+
+def test_state_snapshot_has_no_envelope_keys(client):
+    """The envelope is WS-only; /api/state stays a pure snapshot."""
+    data = client.get("/api/state").json()
+    for k in ("type", "v", "seq", "ts"):
+        assert k not in data
 
 
 # ---- Fix 2: DNS-rebinding / host validation -------------------------------- #
@@ -216,10 +296,17 @@ def test_broadcaster_continues_after_client_disconnect(client):
             ws_bad.receive_json()
 
         # ws_bad is now closed.  The broadcaster should discard it and keep
-        # sending to ws_good.
-        for _ in range(10):
+        # sending telemetry to ws_good. Role/presence messages (no "mode") now
+        # interleave as ws_bad connects/disconnects, so filter to telemetry.
+        got = 0
+        for _ in range(40):
             msg = ws_good.receive_json()
-            assert "mode" in msg
+            if msg.get("type") == "telemetry":
+                assert "mode" in msg
+                got += 1
+            if got >= 5:
+                break
+        assert got >= 5
 
 
 # ---- Fix 4: /api/log strips bulk fields by default ------------------------- #
@@ -314,6 +401,8 @@ def test_shape_frame_full_returns_complete_snapshot():
         "mode": "manual",
         "depth_points": [[59.0, 18.0, 5.0]],
         "waypoints": [{"lat": 59.0, "lon": 18.0, "name": "wp1", "heading": 0.0}],
+        "safety_geometry": {"nogo_zones": [[[59.0, 18.0], [59.1, 18.0], [59.1, 18.1]]],
+                            "min_depth_m": 1.0, "fix_failsafe_enabled": True},
         "track": {"recording": False, "count": 3, "points": [[59.0, 18.0], [59.001, 18.0]]},
         "depth_count": 1,
     }
@@ -321,6 +410,7 @@ def test_shape_frame_full_returns_complete_snapshot():
     assert out is snap or out == snap
     assert "waypoints" in out
     assert "depth_points" in out
+    assert "safety_geometry" in out          # full frames carry the no-go polygons
     assert "points" in out["track"]
     assert out["track"]["count"] == 3
 
@@ -331,12 +421,15 @@ def test_shape_frame_non_full_strips_bulky_arrays():
         "mode": "anchor_hold",
         "depth_points": [[59.0, 18.0, 5.0]],
         "waypoints": [{"lat": 59.0, "lon": 18.0, "name": "wp1", "heading": 0.0}],
+        "safety_geometry": {"nogo_zones": [[[59.0, 18.0], [59.1, 18.0], [59.1, 18.1]]],
+                            "min_depth_m": 1.0, "fix_failsafe_enabled": True},
         "track": {"recording": True, "count": 7, "points": [[59.0, 18.0]]},
         "depth_count": 42,
     }
     out = shape_frame(snap, full=False)
     assert "depth_points" not in out         # omitted
     assert "waypoints" not in out            # absent (not null/empty)
+    assert "safety_geometry" not in out      # absent (rides ~1 Hz full frames only)
     assert "track" in out
     assert "points" not in out["track"]      # array stripped
     assert out["track"]["recording"] is True
@@ -360,6 +453,33 @@ def test_shape_frame_non_full_tolerates_missing_waypoints():
     out = shape_frame(snap, full=False)
     assert "waypoints" not in out
     assert "track" in out and "points" not in out["track"]
+
+
+def test_shape_frame_safety_geometry_only_on_full_frames():
+    """F5: safety_geometry (the full no-go polygons) rides ONLY the ~1 Hz full
+    frames, not every 5 Hz frame.
+
+    Client-side contract (safety.js): the telemetry handler calls
+    ``onServerGeometry`` ONLY when the frame CARRIES ``safety_geometry``
+    (``if (t && t.safety_geometry)``), exactly like the waypoints guard. So a
+    decimated (non-full) frame that OMITS the key is a no-op — the client
+    RETAINS its current geometry and does NOT re-run adoption/migration. An
+    absent key therefore means "no change", never "server has no geometry"
+    (which would wrongly re-migrate/clobber the client's zones). The connect
+    snapshot is a FULL frame, so ``serverGeomSeen`` is still set on connect.
+    """
+    geom = {"nogo_zones": [[[59.0, 18.0], [59.1, 18.0], [59.1, 18.1]]],
+            "min_depth_m": 1.0, "fix_failsafe_enabled": True}
+    snap = {"mode": "manual", "depth_count": 0, "safety_geometry": geom}
+
+    # Full frame: geometry present and unchanged.
+    full = shape_frame(snap, full=True)
+    assert full.get("safety_geometry") == geom
+
+    # Non-full frame: key entirely ABSENT (not null/empty) so the client's
+    # `if (t.safety_geometry)` guard skips adoption and retains current zones.
+    decimated = shape_frame(snap, full=False)
+    assert "safety_geometry" not in decimated
 
 
 # ---- Fix 1: depth overlay endpoints: limit param + truncated flag ----------
@@ -445,3 +565,216 @@ def test_depth_composition_limit_clamped(runtime_client):
     data = r.json()
     assert data["count"] == 500
     assert data["truncated"] is False
+
+
+# ---- #24: multi-client roles (helm vs observer) ---------------------------- #
+
+
+def _role_msg(ws, tries=60):
+    """Receive frames until a ``{type:"role"}`` message arrives; return it."""
+    return _recv_until(ws, lambda m: m.get("type") == "role", tries=tries)
+
+
+def _role_matching(ws, want, tries=60):
+    """Receive frames until a role message with ``role == want`` arrives."""
+    return _recv_until(
+        ws, lambda m: m.get("type") == "role" and m.get("role") == want, tries=tries
+    )
+
+
+def test_ws_first_client_helm_second_observer(client):
+    """First WS client is designated helm; the second is an observer (#24)."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()  # snapshot
+        role1 = _role_msg(ws1)
+        assert role1 is not None and role1["role"] == "helm"
+        assert role1["v"] == 1
+
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()  # snapshot
+            role2 = _role_msg(ws2)
+            assert role2 is not None and role2["role"] == "observer"
+            assert role2["helm_present"] is True
+            assert role2["clients"] == 2
+
+
+def test_ws_observer_command_denied_mode_unchanged(client):
+    """An observer's mode-changing command is role_denied and NOT forwarded."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+            ws2.send_json({"type": "heading_hold", "target_deg": 90, "seq": 31})
+            denied = _recv_until(ws2, lambda m: m.get("type") == "role_denied")
+            assert denied is not None
+            assert denied["seq"] == 31
+            assert "take the helm" in denied["error"]
+    # The controller never saw the command: mode stayed manual.
+    assert client.get("/api/state").json()["mode"] == "manual"
+
+
+def test_ws_observer_stop_is_honored(client):
+    """SAFETY FLOOR: an observer's STOP is always honored (mode→manual, thrust 0)."""
+    # Put the boat in a non-manual mode first (REST is un-gated setup).
+    client.post("/api/command", json={"type": "heading_hold", "target_deg": 90})
+    assert client.get("/api/state").json()["mode"] == "heading_hold"
+
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+            ws2.send_json({"type": "stop", "seq": 42})
+            reply = _recv_until(
+                ws2, lambda m: m.get("type") in ("ack", "role_denied")
+            )
+            assert reply is not None and reply["type"] == "ack"
+            assert reply["seq"] == 42
+
+    # Stop took effect.
+    state = client.get("/api/state").json()
+    assert state["mode"] == "manual"
+    assert abs(float(state["motor"]["thrust"])) < 0.05
+
+
+def test_ws_take_helm_transfers_and_demotes(client):
+    """take_helm from the observer makes it helm and demotes the first client."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        assert _role_matching(ws1, "helm") is not None
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+
+            ws2.send_json({"type": "take_helm"})
+            # ws2 becomes helm; ws1 is demoted to observer.
+            assert _role_matching(ws2, "helm") is not None
+            assert _role_matching(ws1, "observer") is not None
+
+            # ws1 (now observer) commands are denied.
+            ws1.send_json({"type": "heading_hold", "target_deg": 45, "seq": 51})
+            denied = _recv_until(ws1, lambda m: m.get("type") == "role_denied")
+            assert denied is not None and denied["seq"] == 51
+    assert client.get("/api/state").json()["mode"] == "manual"
+
+
+def test_ws_helm_disconnect_promotes_observer(client):
+    """When the helm disconnects, the oldest remaining client is auto-promoted."""
+    ws1cm = client.websocket_connect("/ws")
+    ws1 = ws1cm.__enter__()
+    ws1.receive_json()
+    assert _role_matching(ws1, "helm") is not None
+
+    ws2cm = client.websocket_connect("/ws")
+    ws2 = ws2cm.__enter__()
+    ws2.receive_json()
+    assert _role_matching(ws2, "observer") is not None
+
+    # Drop the helm (ws1). ws2 must be promoted to helm.
+    ws1cm.__exit__(None, None, None)
+    try:
+        promoted = _role_matching(ws2, "helm")
+        assert promoted is not None
+        assert promoted["helm_present"] is True
+        assert promoted["clients"] == 1
+    finally:
+        ws2cm.__exit__(None, None, None)
+
+
+def test_ws_broadcast_frame_carries_presence(client):
+    """The high-rate broadcast telemetry frame carries clients/helm_present (#24)."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # connect snapshot (per-connection envelope, no presence)
+        frame = _recv_until(
+            ws, lambda m: m.get("type") == "telemetry" and "clients" in m
+        )
+        assert frame is not None
+        assert frame["clients"] >= 1
+        assert frame["helm_present"] is True
+        # Presence scalars are shared, but per-client role is NOT in telemetry.
+        assert "role" not in frame
+
+
+def test_ws_broadcast_seq_is_global_and_monotonic(client):
+    """Serialize-once (#24): broadcast frames share a GLOBAL monotonic seq."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # snapshot at its own per-connection seq (0)
+        f1 = _recv_until(ws, lambda m: m.get("type") == "telemetry" and "clients" in m)
+        f2 = _recv_until(ws, lambda m: m.get("type") == "telemetry" and "clients" in m)
+        assert f1 is not None and f2 is not None
+        assert f2["seq"] > f1["seq"]
+
+
+# ---- #26: command audit log ------------------------------------------------ #
+
+
+def test_audit_records_rest_command(client):
+    """A REST command is audited with source "rest" and outcome "accepted"."""
+    client.post("/api/command", json={"type": "anchor_hold", "radius_m": 5})
+    cmds = client.get("/api/audit").json()["commands"]
+    assert cmds, "audit should have at least one entry"
+    last = cmds[-1]  # newest last
+    assert last["type"] == "anchor_hold"
+    assert last["source"] == "rest"
+    assert last["outcome"] == "accepted"
+    assert isinstance(last["ts"], (int, float))
+
+
+def test_audit_records_ws_helm_accepted(client):
+    """A helm WS command is audited source "helm" / outcome "accepted"."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "heading_hold", "target_deg": 90, "seq": 3})
+        assert _recv_until(ws, lambda m: m.get("type") == "ack") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    hh = [c for c in cmds if c["type"] == "heading_hold"]
+    assert hh and hh[-1]["source"] == "helm" and hh[-1]["outcome"] == "accepted"
+
+
+def test_audit_records_observer_denied(client):
+    """An observer's rejected command is audited source "observer"/"denied"."""
+    with client.websocket_connect("/ws") as ws1:
+        ws1.receive_json()
+        with client.websocket_connect("/ws") as ws2:
+            ws2.receive_json()
+            assert _role_matching(ws2, "observer") is not None
+            ws2.send_json({"type": "waypoint", "seq": 71})
+            assert _recv_until(ws2, lambda m: m.get("type") == "role_denied") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    denied = [c for c in cmds if c["type"] == "waypoint"]
+    assert denied and denied[-1]["source"] == "observer"
+    assert denied[-1]["outcome"] == "denied"
+
+
+def test_audit_records_ws_error(client):
+    """A handler exception (seq'd) is audited with outcome "error" + detail."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        # set_gps_offset without coords raises KeyError in the handler -> nack.
+        ws.send_json({"type": "set_gps_offset", "seq": 5})
+        assert _recv_until(ws, lambda m: m.get("type") == "nack") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    err = [c for c in cmds if c["type"] == "set_gps_offset"]
+    assert err and err[-1]["outcome"] == "error" and err[-1].get("detail")
+
+
+def test_audit_does_not_record_ping(client):
+    """Pings must never appear in the audit (only real commands are logged)."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "ping"})
+        assert _recv_until(ws, lambda m: m.get("type") == "pong") is not None
+        ws.send_json({"type": "anchor_hold", "radius_m": 4, "seq": 8})
+        assert _recv_until(ws, lambda m: m.get("type") == "ack") is not None
+    cmds = client.get("/api/audit").json()["commands"]
+    assert all(c["type"] != "ping" for c in cmds)
+    assert any(c["type"] == "anchor_hold" for c in cmds)
+
+
+def test_audit_n_param_limits_returned(client):
+    """?n caps how many entries are returned (most recent)."""
+    for i in range(6):
+        client.post("/api/command", json={"type": "anchor_hold", "radius_m": i + 1})
+    cmds = client.get("/api/audit?n=3").json()["commands"]
+    assert len(cmds) == 3  # only the 3 most recent

@@ -175,21 +175,22 @@ def test_drift_brakes_when_too_fast_along_heading():
 def test_anchor_drift_ema_is_frame_rate_independent():
     # The drift-estimate EMA time constant must be fixed in SECONDS, not per tick:
     # stepping the same total time in one big dt vs. many small dt should land on
-    # nearly the same estimate. (A fixed per-tick weight would diverge.)
-    anchor = HERE
-    boat = destination_point(anchor, 10.0, 0.0)
+    # nearly the same estimate. (A fixed per-tick weight would diverge.) The drift
+    # estimator is now the shared, persistent WindCurrentEstimator (promoted out of
+    # AnchorHoldMode), so this frame-rate-independence property is tested directly
+    # against it rather than via the mode's private (now removed) EMA.
+    from vanchor.controller.estimator import WindCurrentEstimator
+
+    boat = destination_point(HERE, 10.0, 0.0)
 
     def run(dt: float, steps: int) -> float:
         state = _state_at(boat, heading=0.0)
-        state.anchor = anchor
-        state.anchor_radius_m = 5.0
-        # A steady eastward set/drift the estimator should learn.
+        # A steady eastward set/drift the estimator should learn (no own thrust).
         state.fix = GpsFix(point=boat, sog_knots=1.0, cog_deg=90.0)
         state.sog_knots = 1.0
-        mode = AnchorHoldMode()  # default config (drift_tau_s = 10 s)
-        mode.activate(state)
+        est = WindCurrentEstimator()  # default config (tau_s = 10 s)
         for _ in range(steps):
-            mode.update(state, dt)
+            est.update(state, dt)
         return state.est_drift_mps
 
     coarse = run(dt=0.5, steps=20)   # 10 s total

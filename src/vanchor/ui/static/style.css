@@ -529,6 +529,18 @@ body.hud-fade-text .catch-fab::after {
 .mode-stop { color: var(--stop); }
 .mode-remote.active { border-color: var(--accent); }
 
+/* Observer affordance (#24): when THIS client is not the helm, visually DIM
+   command controls as a hint that the server will gate them (the server is the
+   authority — controls stay functional). This is a HINT ONLY: opacity, never
+   pointer-events/disabled, so it can never stop a control from working.
+   The SAFETY-CRITICAL emergency STOP controls (.sheet-stop, .prs-stop,
+   .rbtn-stop, .mode-stop) are EXCLUDED so they remain fully visible and tappable
+   for every client at all times — STOP always works, regardless of role. */
+body.va-observer button:not(.sheet-stop):not(.prs-stop):not(.rbtn-stop):not(.mode-stop),
+body.va-observer input[type="range"] {
+  opacity: 0.5;
+}
+
 /* contextual panels: only the active one is shown */
 .dock-panels { display: flex; flex-direction: column; gap: 10px; }
 .ctx-panel { display: none; flex-direction: column; gap: 8px;

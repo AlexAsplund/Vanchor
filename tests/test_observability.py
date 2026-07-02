@@ -120,6 +120,41 @@ def test_setup_logging_idempotent():
     assert root.level == logging.INFO  # falls back
 
 
+def test_command_audit_ring_bounded_and_ignores_ping(tmp_path):
+    """Runtime's command-audit ring (#26) is bounded, chronological, and never
+    records pings."""
+    from vanchor.app import Runtime
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+
+    # Pings + typeless messages are dropped.
+    rt.record_command("ping", "helm", "accepted")
+    rt.record_command(None, "rest", "accepted")
+    rt.record_command("", "rest", "accepted")
+    assert rt.command_audit()["commands"] == []
+
+    # Record more than the ring size (200); it evicts the oldest.
+    for i in range(250):
+        rt.record_command("heading_hold", "rest", "accepted", detail=str(i))
+    all_cmds = rt.command_audit(1000)["commands"]
+    assert len(all_cmds) == 200  # bounded
+    # Oldest first, newest last: the last entry is the most recently recorded.
+    assert all_cmds[-1]["detail"] == "249"
+    assert all_cmds[0]["detail"] == "50"  # 250 recorded, first 50 evicted
+
+    # n clamps to the requested window (most recent).
+    assert len(rt.command_audit(5)["commands"]) == 5
+    assert rt.command_audit(5)["commands"][-1]["detail"] == "249"
+
+    # Entry shape.
+    entry = all_cmds[-1]
+    assert set(entry) >= {"ts", "type", "source", "outcome"}
+    assert entry["source"] == "rest" and entry["outcome"] == "accepted"
+
+
 def test_decision_log():
     dl = DecisionLog(ring_size=3)
     dl.record("anchor set", distance=2.5, mode="ANCHOR_HOLD")

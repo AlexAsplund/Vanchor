@@ -314,6 +314,28 @@ def tune(job_name: str, *, max_evals: int = 80) -> TuningResult:
     )
 
 
+def gains_block_from_tuning(job: str, params: dict) -> dict:
+    """Map a tuning job's tuned params onto a boat-profile gains-block fragment.
+
+    The fragment carries ONLY the section the job tuned (heading / anchor /
+    cruise / drift), in the same shape :meth:`Runtime.current_gains` uses, so it
+    can be merged into a boat profile's saved gains. An unknown job returns
+    ``{}``. This is a pure mapping helper -- the tuner's own outputs
+    (:class:`TuningResult` / :func:`format_result`) are unchanged.
+    """
+    if job == "heading":
+        return {"heading": {"kp": float(params["heading_kp"]),
+                            "kd": float(params["heading_kd"])}}
+    if job == "cruise":
+        return {"cruise": {"kp": float(params["kp"]), "ki": float(params["ki"])}}
+    if job == "drift":
+        return {"drift": {"kp": float(params["kp"]), "ki": float(params["ki"])}}
+    if job == "anchor":
+        return {"anchor": {"kp": float(params["kp"]), "kd": float(params["kd"]),
+                           "idle_deadband_m": float(params["idle_deadband_m"])}}
+    return {}
+
+
 def format_result(r: TuningResult) -> str:
     lines = [f"=== Auto-tune: {r.job} ===", f"evaluations: {r.evals}"]
     improve = (

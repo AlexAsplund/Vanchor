@@ -587,14 +587,14 @@
 
       <!-- TROLLING PATTERN (#59) — weave around the current heading. -->
       <div class="ctx-panel" id="ctx-trolling" data-for="trolling">
-        <div class="hint">Weave back and forth around your current heading to cover water while trolling.</div>
+        <div class="hint">Trace a fixed-width S over the ground to cover water while trolling — the swath width holds regardless of wind, current or speed.</div>
         <div class="slider-row">
-          <label>Amplitude <output id="troll-amp-val">20</output>°</label>
-          <input type="range" id="troll-amp" min="5" max="60" step="1" value="20" />
+          <label>Amplitude <output id="troll-amp-val">10</output> m</label>
+          <input type="range" id="troll-amp" min="2" max="30" step="1" value="10" />
         </div>
         <div class="slider-row">
-          <label>Period <output id="troll-period-val">30</output> s</label>
-          <input type="range" id="troll-period" min="5" max="120" step="1" value="30" />
+          <label>Wavelength <output id="troll-period-val">20</output> m</label>
+          <input type="range" id="troll-period" min="5" max="60" step="1" value="20" />
         </div>
         <div class="slider-row">
           <label>Speed <output id="troll-speed-val">2.0</output> kn</label>
@@ -1158,6 +1158,20 @@
         <pre id="log" class="log"></pre>
       </details>
 
+      <!-- Command audit (#26): the client-side command queue (queued/sent/
+           confirmed/failed) plus, when online, the server's audit of what was
+           commanded and whether it was accepted/denied. See audit.js. -->
+      <details class="card" id="audit-card">
+        <summary>Command audit <span id="audit-badge" class="badge"></span></summary>
+        <div class="hint">Recent commands and their state. Queued commands are buffered while offline and replayed on reconnect (STOP is never queued).</div>
+        <div class="ctx-sub">This device</div>
+        <ol id="audit-local" class="debug-sessions"></ol>
+        <div id="audit-local-empty" class="hint">No commands yet.</div>
+        <div class="ctx-sub">Server (all clients)</div>
+        <ol id="audit-server" class="debug-sessions"></ol>
+        <div id="audit-server-empty" class="hint">—</div>
+      </details>
+
       <!-- Backup & restore. Download bundles all "vanchor-" localStorage into a
            server-built ZIP; Restore uploads one back and reloads (backup.js).
            Needs the matching /api/backup + /api/restore backend. -->
@@ -1529,6 +1543,7 @@
   <script src="/static/map-depth.js"></script>
   <script src="/static/hudframe.js"></script>
   <script src="/static/hud.js"></script>
+  <script src="/static/roles.js"></script>
   <script src="/static/steering.js"></script>
   <script src="/static/motorplace.js"></script>
   <script src="/static/wizard.js"></script>
@@ -1560,9 +1575,11 @@
   <script src="/static/work-area.js"></script>
   <script src="/static/alerts.js"></script>
   <script src="/static/logs.js"></script>
+  <script src="/static/audit.js"></script>
   <script src="/static/safety.js"></script>
   <script src="/static/health.js"></script>
   <script src="/static/measure.js"></script>
   <script src="/static/mobile.js"></script>
+  <script src="/static/wakelock.js"></script>
 </body>
 </html>

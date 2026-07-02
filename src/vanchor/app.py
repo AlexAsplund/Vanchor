@@ -17,14 +17,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import contextlib
+import json
 import logging
 import math
 import os
 import time
 
 from .controller.calibration import CalibrationRunner
-from .controller.controller import Controller, Helm
+from .controller.controller import Controller, GainSchedule, Helm
 from .controller.modes import AnchorConfig, DriftConfig, FollowApbConfig, WaypointConfig
 from .controller.safety import SafetyConfig
 from .core import events, observability
@@ -251,6 +253,15 @@ class Runtime:
         # second handler on the ``vanchor`` logger here -- doing so recorded each
         # line twice in a debug session (review finding L3).
 
+        # Command audit ring (#26): a bounded, in-app record of every command the
+        # runtime was asked to run, tagged with WHO sent it (helm/observer/rest)
+        # and the OUTCOME (accepted/denied/error). Recorded from the command entry
+        # points in ui/server.py (the WS handler + REST /api/command), NOT from
+        # handle_command itself -- only the entry points know the source/role.
+        # Surfaced at GET /api/audit for the in-app audit view; oldest first,
+        # newest last (chronological). Pings are never recorded.
+        self._command_audit: collections.deque = collections.deque(maxlen=200)
+
         self.state = NavigationState()
         self.state.anchor_radius_m = cfg.control.anchor_radius_m
         self.state.max_steer_angle_deg = cfg.boat.max_steer_angle_deg
@@ -321,12 +332,30 @@ class Runtime:
                 steer_sign=1.0 if cfg.boat.thruster_x_m() >= 0 else -1.0,
                 # Pre-cancel the yaw a laterally-offset motor makes under thrust.
                 thrust_yaw_ff=_thrust_yaw_ff_norm(cfg),
+                # SOG-keyed steering-gain schedule (#31). Neutral by default
+                # (both multipliers 1.0) so the tuned gain is unchanged until a
+                # non-flat schedule is configured (per config or a boat profile).
+                gain_schedule=GainSchedule(
+                    sog_lo_kn=cfg.control.steer_gain_sog_lo_kn,
+                    sog_hi_kn=cfg.control.steer_gain_sog_hi_kn,
+                    mult_lo=cfg.control.steer_gain_mult_lo,
+                    mult_hi=cfg.control.steer_gain_mult_hi,
+                    mult_min=cfg.control.steer_gain_mult_min,
+                    mult_max=cfg.control.steer_gain_mult_max,
+                ),
             ),
             anchor_config=AnchorConfig(
                 kp=cfg.control.anchor_kp,
                 kd=cfg.control.anchor_kd,
                 idle_deadband_m=cfg.control.anchor_idle_deadband_m,
                 boat_max_speed_mps=cfg.boat.max_speed_mps,
+                # Vectored / azimuth station-keeping (#35): opt-in wide-azimuth
+                # spot lock. Defaults (False + 35 deg) keep behaviour unchanged.
+                vectored=cfg.control.station_keep_vectored,
+                vector_azimuth_deg=cfg.control.station_keep_azimuth_deg,
+                # Mirror the helm's mount polarity so the vectored law's physical
+                # azimuth survives the helm's steer_sign flip.
+                steer_sign=1.0 if cfg.boat.thruster_x_m() >= 0 else -1.0,
             ),
             waypoint_config=WaypointConfig(
                 arrival_radius_m=cfg.control.waypoint_arrival_m,
@@ -391,6 +420,29 @@ class Runtime:
         if active is not None:
             self._apply_boat_specs(active["specs"])
 
+        # --- Per-boat saved gain profiles (#31) -------------------------- #
+        # Controller gains (helm/anchor/cruise/drift PIDs + the steering-gain
+        # schedule) that a boat profile can carry, persisted in a sidecar
+        # ``<data_dir>/boat_gains.json`` keyed by profile id. Kept separate from
+        # boats.json so the boat-profile store stays a pure spec bundle; applied
+        # on top of the profile's specs whenever a profile becomes active. A
+        # profile with no saved gains leaves the current/default gains standing.
+        self._boat_gains_path = os.path.join(cfg.data_dir, "boat_gains.json")
+        self._boat_gains: dict = self._load_boat_gains()
+        self._apply_active_boat_gains()
+
+        # --- Server-persisted safety geometry (#23) ---------------------- #
+        # No-go zones / min-depth / fix-failsafe live on the SERVER now, not just
+        # the browser's localStorage. The governor is the live authority; this
+        # store is the persistence layer. Load + APPLY at startup so a Pi restart
+        # with NO client connected keeps the operator's zones/min-depth/failsafe.
+        from .core.prefs import PrefsStore, SafetyGeometryStore
+
+        self.safety_geometry = SafetyGeometryStore(cfg.data_dir)
+        self._apply_safety_geometry()
+        # Generic UI-preferences KV store (browser-as-cache mechanism).
+        self.prefs = PrefsStore(cfg.data_dir)
+
         # --- Lost-connection failsafe (#64) ------------------------------ #
         # Number of connected UI clients and the last time one was seen alive.
         self._ui_clients = 0
@@ -408,6 +460,31 @@ class Runtime:
         # supervisor never launches an overlapping save (finding M3): the save
         # is offloaded off the event loop and must not stack up.
         self._depth_save_in_flight = False
+
+    # ------------------------------------------------------------------ #
+    # Server-persisted safety geometry (#23)
+    # ------------------------------------------------------------------ #
+    def _apply_safety_geometry(self) -> None:
+        """Apply the persisted safety geometry to the live governor.
+
+        Called at startup (and after a restore) so no-go zones / min-depth /
+        fix-failsafe survive a restart with no client connected. Only values the
+        operator actually set are applied -- ``min_depth_m`` / ``fix_failsafe``
+        left as ``None`` in the store leave the config defaults standing."""
+        geo = self.safety_geometry
+        gov = self.controller.safety
+        if geo.nogo_zones:
+            gov.set_nogo_zones(
+                [[(float(p[0]), float(p[1])) for p in ring] for ring in geo.nogo_zones]
+            )
+        if geo.min_depth_m is not None:
+            gov.config.min_depth_m = geo.min_depth_m
+        if geo.fix_failsafe_enabled is not None:
+            gov.config.fix_failsafe_enabled = geo.fix_failsafe_enabled
+        logger.info(
+            "safety geometry applied: %d no-go zones, min_depth=%s, fix_failsafe=%s",
+            len(geo.nogo_zones), geo.min_depth_m, geo.fix_failsafe_enabled,
+        )
 
     # ------------------------------------------------------------------ #
     # Boat profile (Init-boat wizard)
@@ -476,13 +553,22 @@ class Runtime:
         # boat -- keep the helm's sign in step so switching profiles never leaves
         # the autopilot steering backwards.
         self.controller.helm.steer_sign = 1.0 if b.thruster_x_m() >= 0 else -1.0
+        # The learned spot-lock mirrors the mount sign too (the Helm still owns
+        # the actual command flip; the mode uses this for mount awareness +
+        # telemetry) -- keep it in step on every profile change.
+        ml = self.controller.modes.get(ControlModeName.ANCHOR_ML)
+        if ml is not None and hasattr(ml, "steer_sign"):
+            ml.steer_sign = self.controller.helm.steer_sign
         # Lateral-offset thrust-yaw feed-forward follows the geometry/trim live so
         # changing the offset (or the calibrated trim) updates compensation now.
         self.controller.helm.thrust_yaw_ff = _thrust_yaw_ff_norm(self.config)
-        # Anchor mode caps thrust by the boat's top speed; keep it in step.
+        # Anchor mode caps thrust by the boat's top speed; keep it in step. The
+        # vectored station-keeping law (#35) also mirrors the mount polarity so
+        # a profile switch can't leave its azimuth mirrored.
         anchor = self.controller.modes.get(ControlModeName.ANCHOR_HOLD)
         if anchor is not None and hasattr(anchor, "config"):
             anchor.config.boat_max_speed_mps = b.max_speed_mps
+            anchor.config.steer_sign = self.controller.helm.steer_sign
         # Waypoint mode's forward/reverse decision needs the boat's measured
         # speed, reverse efficiency, and turn rate.
         wp = self.controller.modes.get(ControlModeName.WAYPOINT)
@@ -555,6 +641,7 @@ class Runtime:
             active = self.boats.active()
             if active is not None:
                 self._apply_boat_specs(active["specs"])
+            self._apply_active_boat_gains()
         return self.boats.get(profile_id)
 
     def boat_profiles_activate(self, profile_id: str) -> dict | None:
@@ -565,6 +652,8 @@ class Runtime:
         active = self.boats.active()
         if active is not None:
             self._apply_boat_specs(active["specs"])
+        # Apply this profile's saved gains on top of its specs (else keep current).
+        self._apply_active_boat_gains()
         logger.info("activated boat profile %s", profile_id)
         return self.boat_profile()
 
@@ -576,7 +665,134 @@ class Runtime:
         active = self.boats.active()
         if active is not None:
             self._apply_boat_specs(active["specs"])
+        self._apply_active_boat_gains()
         return True
+
+    # ------------------------------------------------------------------ #
+    # Per-boat saved gain profiles (#31)
+    # ------------------------------------------------------------------ #
+    def _load_boat_gains(self) -> dict:
+        """Read the per-profile gains sidecar (``boat_gains.json``); ``{}`` when
+        absent or unreadable, so a missing/corrupt file never breaks startup."""
+        try:
+            with open(self._boat_gains_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_boat_gains_file(self) -> None:
+        """Persist the per-profile gains map atomically."""
+        os.makedirs(self.config.data_dir, exist_ok=True)
+        tmp = self._boat_gains_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self._boat_gains, fh, indent=2)
+        os.replace(tmp, self._boat_gains_path)
+
+    def current_gains(self) -> dict:
+        """Snapshot the live controller gains as a gains block (the shape stored
+        per boat profile). Covers the helm heading PID, anchor/cruise/drift gains
+        and the steering-gain schedule."""
+        c = self.controller
+        block: dict = {
+            "heading": {
+                "kp": c.helm.pid.kp,
+                "ki": c.helm.pid.ki,
+                "kd": c.helm.pid.kd,
+            },
+            "cruise": {"kp": c.cruise_pid.kp, "ki": c.cruise_pid.ki},
+        }
+        anchor = c.modes.get(ControlModeName.ANCHOR_HOLD)
+        if anchor is not None and hasattr(anchor, "config"):
+            block["anchor"] = {
+                "kp": anchor.config.kp,
+                "kd": anchor.config.kd,
+                "idle_deadband_m": anchor.config.idle_deadband_m,
+            }
+        drift = c.modes.get(ControlModeName.DRIFT)
+        if drift is not None and hasattr(drift, "pid"):
+            block["drift"] = {"kp": drift.pid.kp, "ki": drift.pid.ki}
+        sched = c.helm.gain_schedule
+        if sched is not None:
+            block["steer_schedule"] = {
+                "sog_lo_kn": sched.sog_lo_kn,
+                "sog_hi_kn": sched.sog_hi_kn,
+                "mult_lo": sched.mult_lo,
+                "mult_hi": sched.mult_hi,
+                "mult_min": sched.mult_min,
+                "mult_max": sched.mult_max,
+            }
+        return block
+
+    def _apply_gains_block(self, gains: dict) -> None:
+        """Apply a (partial) gains block to the live controllers. Missing
+        sections/fields are left untouched, so a profile can carry just the gains
+        it cares about."""
+        if not isinstance(gains, dict):
+            return
+        c = self.controller
+        h = gains.get("heading")
+        if isinstance(h, dict):
+            for attr in ("kp", "ki", "kd"):
+                if h.get(attr) is not None:
+                    setattr(c.helm.pid, attr, float(h[attr]))
+            c.helm.pid.reset()
+        a = gains.get("anchor")
+        anchor = c.modes.get(ControlModeName.ANCHOR_HOLD)
+        if isinstance(a, dict) and anchor is not None and hasattr(anchor, "config"):
+            for attr in ("kp", "kd", "idle_deadband_m"):
+                if a.get(attr) is not None:
+                    setattr(anchor.config, attr, float(a[attr]))
+        cr = gains.get("cruise")
+        if isinstance(cr, dict):
+            for attr in ("kp", "ki"):
+                if cr.get(attr) is not None:
+                    setattr(c.cruise_pid, attr, float(cr[attr]))
+            c.cruise_pid.reset()
+        dr = gains.get("drift")
+        drift = c.modes.get(ControlModeName.DRIFT)
+        if isinstance(dr, dict) and drift is not None and hasattr(drift, "pid"):
+            for attr in ("kp", "ki"):
+                if dr.get(attr) is not None:
+                    setattr(drift.pid, attr, float(dr[attr]))
+            drift.pid.reset()
+        s = gains.get("steer_schedule")
+        sched = c.helm.gain_schedule
+        if isinstance(s, dict) and sched is not None:
+            for attr in ("sog_lo_kn", "sog_hi_kn", "mult_lo", "mult_hi",
+                         "mult_min", "mult_max"):
+                if s.get(attr) is not None:
+                    setattr(sched, attr, float(s[attr]))
+        logger.info("applied boat gains: %s", gains)
+
+    def _apply_active_boat_gains(self) -> None:
+        """Apply the active profile's saved gains (if any) to the controllers."""
+        if getattr(self, "boats", None) is None:
+            return
+        gains = self._boat_gains.get(self.boats.active_id)
+        if gains:
+            self._apply_gains_block(gains)
+
+    def save_boat_gains(self, profile_id: str | None = None) -> dict:
+        """Persist the CURRENTLY-applied controller gains into a boat profile
+        (defaults to the active one), closing the "persist applied gains back to
+        a config file" debt. Returns the saved gains block."""
+        if getattr(self, "boats", None) is None:
+            return {}
+        pid = profile_id or self.boats.active_id
+        block = self.current_gains()
+        self._boat_gains[pid] = block
+        self._save_boat_gains_file()
+        logger.info("saved applied gains into boat profile %s", pid)
+        return block
+
+    def boat_gains(self, profile_id: str | None = None) -> dict:
+        """Return the saved gains block for a profile (active one by default), or
+        ``{}`` if that profile carries none."""
+        pid = profile_id or (
+            self.boats.active_id if getattr(self, "boats", None) is not None else ""
+        )
+        return dict(self._boat_gains.get(pid, {}))
 
     # ------------------------------------------------------------------ #
     # Versioned backup / restore of all persistent state
@@ -620,6 +836,9 @@ class Runtime:
             active = self.boats.active()
             if active is not None:
                 self._apply_boat_specs(active["specs"])
+            # Per-boat gains (#31) live in a sidecar; reload + re-apply too.
+            self._boat_gains = self._load_boat_gains()
+            self._apply_active_boat_gains()
         except Exception:  # pragma: no cover - defensive
             logger.exception("restore: reloading boat profiles failed")
             restart_required = True
@@ -631,6 +850,18 @@ class Runtime:
             self._depth_saved_n = len(self.depth_map.points)
         except Exception:  # pragma: no cover - defensive
             logger.exception("restore: reloading depth map failed")
+            restart_required = True
+
+        # Safety geometry (#23): rebuild the store from the restored safety.json
+        # and re-apply it to the live governor + refresh prefs.
+        try:
+            from .core.prefs import PrefsStore, SafetyGeometryStore
+
+            self.safety_geometry = SafetyGeometryStore(self.config.data_dir)
+            self._apply_safety_geometry()
+            self.prefs = PrefsStore(self.config.data_dir)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("restore: reloading safety geometry failed")
             restart_required = True
 
         # Device config: re-read the restored devices.json into the live config
@@ -995,6 +1226,38 @@ class Runtime:
     def stop_replay(self) -> None:
         self.replay.stop()
 
+    # ------------------------------------------------------------------ #
+    # Command audit log (#26)
+    # ------------------------------------------------------------------ #
+    def record_command(
+        self, ctype: object, source: str, outcome: str, detail: str | None = None
+    ) -> None:
+        """Append one command to the bounded audit ring (#26).
+
+        ``source`` is "helm"|"observer"|"rest"; ``outcome`` is
+        "accepted"|"denied"|"error" (+ an optional short ``detail`` on error).
+        Called from the command entry points (WS handler + REST /api/command).
+        Pings (and typeless messages) are never recorded so the audit stays a
+        log of real commands. Uses the wall clock so the timestamp is displayable.
+        """
+        if ctype in (None, "", "ping"):
+            return
+        entry = {
+            "ts": self._now_fn(),
+            "type": str(ctype),
+            "source": source,
+            "outcome": outcome,
+        }
+        if detail:
+            entry["detail"] = str(detail)[:200]
+        self._command_audit.append(entry)
+
+    def command_audit(self, n: int = 50) -> dict:
+        """Return the most recent ``n`` audited commands, oldest first / newest
+        last. ``n`` is clamped to [1, 200] (the ring size)."""
+        n = max(1, min(int(n), 200))
+        return {"commands": list(self._command_audit)[-n:]}
+
     def handle_command(self, command: dict) -> None:
         ctype = command.get("type")
         if self.debug.active and ctype not in (None,):
@@ -1036,6 +1299,21 @@ class Runtime:
             self.trip_start(command.get("name"))
         elif ctype == "trip_stop":
             self.trip_stop()
+        elif ctype in ("set_nogo_zones", "set_min_depth", "set_fix_failsafe"):
+            # Safety geometry: update the live governor (controller) AND persist
+            # to the server-side store so it survives a restart (#23). The
+            # governor stays the authority; we mirror its resulting state (for
+            # min-depth/failsafe) and the raw command rings (for no-go zones,
+            # which the governor keeps only as prepared shapely polygons).
+            self.controller.handle_command(command)
+            if ctype == "set_nogo_zones":
+                self.safety_geometry.set_nogo_zones(command.get("zones", []))
+            elif ctype == "set_min_depth":
+                self.safety_geometry.set_min_depth(self.controller.safety.config.min_depth_m)
+            else:
+                self.safety_geometry.set_fix_failsafe(
+                    self.controller.safety.config.fix_failsafe_enabled
+                )
         else:
             self.controller.handle_command(command)
 
@@ -1364,13 +1642,20 @@ class Runtime:
     # Smart "Take me here" water routing (task #43)
     # ------------------------------------------------------------------ #
     def plan_route(
-        self, dest_lat: float, dest_lon: float, mode: str = "fastest", offset_m: float = 25.0
+        self, dest_lat: float, dest_lon: float, mode: str = "fastest",
+        offset_m: float = 25.0, depth_aware: bool = True,
     ) -> dict:
         """Plan a water-only route from the boat's current position.
 
         Synchronous and CPU/IO-heavy (Overpass fetch + shapely/networkx); the UI
         endpoint calls it in an executor. Returns the API contract dict. Does NOT
         start navigation.
+
+        When ``depth_aware`` is set (default) and a ``min_depth_m`` safety
+        threshold is configured, imported depth data (contours + soundings) is
+        turned into a shallow no-go mask so the route proactively goes AROUND
+        shoals instead of relying on the reactive shallow-stop. Falls back
+        transparently to plain routing when there is no depth data.
         """
         from .nav import routing, water
 
@@ -1407,6 +1692,22 @@ class Runtime:
             except OSError as exc:  # pragma: no cover - disk failure
                 logger.warning("water cache store failed: %s", exc)
 
+        # Depth-aware routing: build a shallow no-go mask from imported depth
+        # (contours + soundings) so routes avoid shoals by default. Cheap and
+        # bounded (bbox-windowed, capped); yields None when no depth data exists,
+        # in which case routing is byte-identical to before.
+        avoid_shallow_ll = None
+        min_depth_m = self.config.safety.min_depth_m
+        if depth_aware and min_depth_m and min_depth_m > 0.0:
+            try:
+                # bbox is (south, west, north, east); depth windowing wants
+                # (west, south, east, north).
+                s, w, n, e = bbox
+                avoid_shallow_ll = self.depth_map.shallow_polygons((w, s, e, n), min_depth_m)
+            except Exception as exc:  # pragma: no cover - defensive; never block a plan
+                logger.warning("shallow mask build failed: %s", exc)
+                avoid_shallow_ll = None
+
         result = routing.plan_route(
             start_lat=start_lat,
             start_lon=start_lon,
@@ -1416,6 +1717,7 @@ class Runtime:
             mode=mode,
             shoreline_offset_m=offset_m,
             cancelled=lambda: self._route_plan_cancelled,
+            avoid_shallow_ll=avoid_shallow_ll,
         )
         return {
             "ok": result.ok,
@@ -1722,8 +2024,14 @@ class Runtime:
         self.simulator.set_weather_base()
         logger.info("applied weather preset %r", preset_id)
 
-    def apply_tuned_gains(self, job: str, params: dict) -> None:
-        """Apply auto-tuned gains to the live controller (used by /api/tune)."""
+    def apply_tuned_gains(self, job: str, params: dict, *, persist: bool = False) -> None:
+        """Apply auto-tuned gains to the live controller (used by /api/tune).
+
+        With ``persist=True`` the tuned gains are ALSO written into the active
+        boat profile's saved gains (``boat_gains.json``), closing the "persist
+        applied gains back to a config file" debt. It defaults to ``False`` so
+        the existing ``POST /api/tune`` behaviour (live-apply only) is unchanged.
+        """
         from .core.models import ControlModeName
 
         c = self.controller
@@ -1746,6 +2054,25 @@ class Runtime:
             cfg.kd = float(params["kd"])
             cfg.idle_deadband_m = float(params["idle_deadband_m"])
         logger.info("applied tuned %s gains live: %s", job, params)
+        if persist:
+            self._persist_tuned_gains(job, params)
+
+    def _persist_tuned_gains(self, job: str, params: dict) -> None:
+        """Merge an auto-tuned job's gains into the active boat profile's saved
+        gains (only the section that job tuned) and persist them."""
+        if getattr(self, "boats", None) is None:
+            return
+        from .analysis.tuning import gains_block_from_tuning
+
+        frag = gains_block_from_tuning(job, params)
+        if not frag:
+            return
+        pid = self.boats.active_id
+        block = dict(self._boat_gains.get(pid, {}))
+        block.update(frag)  # replace only the tuned section(s)
+        self._boat_gains[pid] = block
+        self._save_boat_gains_file()
+        logger.info("persisted tuned %s gains into boat profile %s", job, pid)
 
     # ------------------------------------------------------------------ #
     # Depth-map gridding (server-side averaging for the depth overlay)
@@ -2016,6 +2343,18 @@ class Runtime:
 
         payload = self.state.to_dict()
         payload["safety"] = self.controller.safety_status.to_dict()
+        # Server-side safety geometry (#23) so the browser becomes a CACHE, not
+        # the source of truth: a freshly-opened client renders the SERVER's
+        # zones/min-depth/failsafe. Raw no-go rings come from the persistence
+        # store; min-depth + failsafe are read live off the governor (the
+        # authority). safety.js adopts these as truth and only pushes local ->
+        # server on an explicit edit or a one-time migration (no echo loop).
+        _gov = self.controller.safety.config
+        payload["safety_geometry"] = {
+            "nogo_zones": self.safety_geometry.nogo_zones,
+            "min_depth_m": _gov.min_depth_m,
+            "fix_failsafe_enabled": _gov.fix_failsafe_enabled,
+        }
         payload["health"] = self._health_snapshot()
         payload["battery"] = self.battery_snapshot()
         payload["link"] = {
@@ -2120,6 +2459,20 @@ class Runtime:
             "period_s": round(self.state.trolling_period_s, 1),
             "phase": round(trolling_mode.phase, 3),
         }
+        # Learned spot-lock (#34): the live residual-decay guardrail + polarity
+        # bookkeeping, so a degraded hybrid falling back to its PID floor is
+        # visible (spotlock_quality itself is in state.to_dict()).
+        ml_mode = ctrl.modes.get(ControlModeName.ANCHOR_ML)
+        if ml_mode is not None:
+            payload["anchor_ml"] = {
+                "residual_scale": round(ml_mode.residual_scale, 3),
+                "residual_scale_effective": round(
+                    ml_mode.residual_scale_effective, 3
+                ),
+                "guard_hold_ratio": round(ml_mode.guard_hold_ratio, 3),
+                "steer_sign": ml_mode.steer_sign,
+                "policy_steer_sign": ml_mode.policy_steer_sign,
+            }
         payload["nav"] = {
             "paused": self.controller.suspended is not None,
             "suspended_mode": (

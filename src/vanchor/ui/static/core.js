@@ -163,11 +163,70 @@ setInterval(() => {
 // doesn't reflect the stop within ~1.5 s, a red banner stays up until a frame
 // confirms it.
 let _criticalSeq = 0;
-let _critical = null;  // { id, confirm }
+let _critical = null;  // { id, confirm, seq }
+
+// ---- versioned WS envelope + command acks (#21) --------------------------
+// Every server->client message carries a top-level `type` and `v`. Commands we
+// send may carry an incrementing `seq`; the server replies {ack}/{nack} which
+// resolves a pending entry here. Telemetry frames keep their flat shape (see
+// dispatch) so the ~30 modules reading t.mode/t.sog directly are unaffected.
+const _CLIENT_PROTOCOL_V = 1;
+let _vWarned = false;
+let _sendSeq = 0;
+const _pending = new Map();  // seq -> { onResult, timer }
+
+function _clearPending(seq) {
+  const p = _pending.get(seq);
+  if (p) { clearTimeout(p.timer); _pending.delete(seq); }
+}
+// Register a command awaiting an ack/nack. `onResult(ok, error)` fires on the
+// reply; a 3 s timeout drops it and logs (acks themselves are NOT logged, to
+// keep the NMEA console clean).
+function _registerPending(seq, onResult) {
+  const timer = setTimeout(() => {
+    _pending.delete(seq);
+    VA.logLine("command #" + seq + " not acked within 3s");
+    if (onResult) try { onResult(false, "timeout"); } catch (e) { /* ignore */ }
+  }, 3000);
+  _pending.set(seq, { onResult, timer });
+}
+function _resolvePending(seq, ok, error) {
+  const p = _pending.get(seq);
+  if (!p) return;
+  _pending.delete(seq);
+  clearTimeout(p.timer);
+  if (p.onResult) try { p.onResult(ok, error); } catch (e) { /* ignore */ }
+}
 function _stopConfirmed(t) {
   if (!t) return false;
   const thr = t.motor ? Number(t.motor.thrust) : NaN;
   return t.mode === "manual" && Number.isFinite(thr) && Math.abs(thr) < 0.05;
+}
+
+// ---- multi-client roles (#24) --------------------------------------------
+// The server designates one connected client the HELM; the rest are OBSERVERS.
+// A `{type:"role"}` message arrives on connect and on every role change with
+// this client's role plus the shared presence scalars (clients/helm_present).
+// STOP always works regardless of role (server-enforced safety floor).
+VA.role = "observer";        // "helm" | "observer" — until the first role frame
+VA.helmPresent = false;      // is ANY client currently the helm?
+VA.clientCount = 1;          // number of connected clients
+VA.isHelm = function () { return VA.role === "helm"; };
+// Ask the server to transfer the helm to this client (cooperative, no auth).
+VA.takeHelm = function () {
+  if (ws && ws.readyState === 1) ws.send('{"type":"take_helm"}');
+};
+const roleListeners = [];
+// Subscribe to role/presence changes: fn({role, helmPresent, clients}).
+VA.onRole = function (fn) { roleListeners.push(fn); };
+function dispatchRole(m) {
+  VA.role = m.role === "helm" ? "helm" : "observer";
+  VA.helmPresent = !!m.helm_present;
+  if (Number.isFinite(m.clients)) VA.clientCount = m.clients;
+  const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount };
+  for (const fn of roleListeners) {
+    try { fn(info); } catch (err) { VA.logLine("role handler error: " + err); }
+  }
 }
 
 // ---- render-subscriber registry ------------------------------------------
@@ -177,10 +236,31 @@ VA.onTelemetry = function (fn) { subscribers.push(fn); };
 function dispatch(t) {
   VA.last = t;
   VA.simEnabled = !!t.sim_enabled;
+  // Shared presence scalars ride the high-rate broadcast frame (#24) — keep the
+  // live count/helm-present fresh between the (rarer) role messages. Role itself
+  // is NOT in telemetry; it only changes via a `{type:"role"}` message.
+  if ("clients" in t || "helm_present" in t) {
+    let changed = false;
+    if (Number.isFinite(t.clients) && t.clients !== VA.clientCount) {
+      VA.clientCount = t.clients; changed = true;
+    }
+    if ("helm_present" in t && !!t.helm_present !== VA.helmPresent) {
+      VA.helmPresent = !!t.helm_present; changed = true;
+    }
+    if (changed) {
+      const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount };
+      for (const fn of roleListeners) {
+        try { fn(info); } catch (err) { VA.logLine("role handler error: " + err); }
+      }
+    }
+  }
   // Fresh frame: clear any staleness banner and confirm pending critical cmds.
   _lastFrameMs = Date.now();
   _banner(STALE_BANNER_ID, { show: false });
   if (_critical && _critical.confirm(t)) {
+    // Telemetry-frame confirmation arrived first; drop the pending ack watcher
+    // so it doesn't later log a spurious "not acked" for a command that worked.
+    if (_critical.seq != null) _clearPending(_critical.seq);
     _critical = null;
     _banner(STOP_BANNER_ID, { show: false });
   }
@@ -203,6 +283,11 @@ VA.connect = function () {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => {
     setConn("connected", "connected");
+    // Offline-first command queue (#26): the link is back, so replay commands
+    // buffered while it was down (dropping any past their TTL) and re-send once
+    // any command that was sent-but-unacked when the socket dropped.
+    _flushQueue();
+    _resendUnacked();
     // Application-level heartbeat: send a ping every 2 s so the server's
     // _last_client_seen advances while the socket is live.  This ensures the
     // link-loss failsafe fires within link_loss_timeout_s of a true half-open
@@ -215,6 +300,9 @@ VA.connect = function () {
   ws.onclose = () => {
     clearInterval(_pingInterval);
     _pingInterval = null;
+    // Snapshot sent-but-unacked commands so they can be re-sent once on the next
+    // connect (#26, rule c) — before their ack timers expire.
+    _markSentForResend();
     setConn("disconnected", "reconnecting…");
     setTimeout(VA.connect, 1000);
   };
@@ -222,20 +310,175 @@ VA.connect = function () {
   ws.onmessage = (ev) => {
     let t;
     try { t = JSON.parse(ev.data); } catch (err) { VA.logLine("bad telemetry: " + err); return; }
-    if (t.type === "pong") return;  // heartbeat reply; not a telemetry frame
-    dispatch(t);
+    if (typeof t.v === "number" && t.v !== _CLIENT_PROTOCOL_V && !_vWarned) {
+      _vWarned = true;
+      console.warn("vanchor: WS protocol version mismatch — client " +
+        _CLIENT_PROTOCOL_V + ", server " + t.v);
+    }
+    switch (t.type) {
+      case "pong": return;                       // heartbeat reply; not telemetry
+      case "ack":  _resolvePending(t.seq, true); return;
+      case "nack": _resolvePending(t.seq, false, t.error); return;
+      case "role": dispatchRole(t); return;      // multi-client role/presence (#24)
+      case "role_denied":                        // command rejected: not the helm
+        VA.logLine("⛔ " + (t.error || "observer — take the helm to command"));
+        if (t.seq != null) _resolvePending(t.seq, false, t.error);
+        return;
+      default:     dispatch(t); return;          // "telemetry" or legacy no-type
+    }
   };
 };
 
-// Send a command (WS up; falls back to POST /api/command if the socket is down).
+// ---- offline-first command queue + per-command state machine (#26) -------
+// Every VA.send() command moves through an explicit state machine:
+//   queued    — the WS is not open; the command is buffered CLIENT-SIDE
+//               (not POSTed) until the link comes back.
+//   sent      — written to the WS, awaiting the server's {ack}/{nack}.
+//   confirmed — {ack} received (the server ran it).
+//   failed    — {nack}, a 3 s ack timeout, or it expired while queued.
+// `VA.commandLog` is a bounded list of recent commands with their state +
+// timestamps; `VA.onCommandState(fn)` fires on every transition.
+//
+// SAFETY RULES on reconnect (see _flushQueue / _resendUnacked):
+//  (a) `stop` is NEVER queued — VA.sendCritical dual-paths it immediately over
+//      WS + POST (unchanged below), so a STOP can never sit in a buffer.
+//  (b) a command that sat QUEUED (never sent) longer than QUEUE_TTL_MS is NOT
+//      auto-replayed — it is marked failed("expired"). This stops a stale
+//      motor-engage tapped during an outage from firing minutes later.
+//  (c) a command that was SENT but unacked when the link dropped MAY be re-sent
+//      ONCE on reconnect to obtain confirmation — but ONLY if it is an
+//      idempotent mode/setpoint command (e.g. heading_hold, anchor_hold,
+//      cruise) AND the outage was shorter than RESEND_TTL_MS. Motor-engaging
+//      direct-drive commands (`manual`, `jog` — see _NO_RESEND_TYPES) are
+//      NEVER resent, and any resend whose outage outlived RESEND_TTL_MS is
+//      dropped, so a stale drive command can't fire after the server failsafe
+//      has already STOPped the unattended boat.
+const QUEUE_TTL_MS = 5000;   // rule (b): max age a queued command may be replayed
+const RESEND_TTL_MS = QUEUE_TTL_MS;  // rule (c): max outage age before a resend is dropped
+// SAFETY FLOOR — command types that DIRECTLY ENGAGE THE MOTOR must NEVER be
+// resent on reconnect. They are one-shot direct-drive commands, not the
+// idempotent mode/setpoint commands the resend path was meant for. Replaying a
+// stale `manual {thrust:0.8}` after the link dropped (and the SERVER failsafe
+// already issued STOP for the unattended boat) would lurch the boat forward
+// unattended. STOP (sendCritical) is unaffected — it dual-paths immediately.
+const _NO_RESEND_TYPES = new Set(["manual", "jog"]);
+const MAX_CMD_LOG = 50;
+VA.commandLog = [];          // bounded list of recent commands (with state)
+const _cmdQueue = [];        // entries in "queued" state awaiting a live socket
+const _resend = [];          // rule (c): sent-but-unacked entries to retry once
+const cmdStateListeners = [];
+// Subscribe to command-state transitions: fn(entry, VA.commandLog).
+VA.onCommandState = function (fn) { cmdStateListeners.push(fn); };
+function _emitCmdState(entry) {
+  for (const fn of cmdStateListeners) {
+    try { fn(entry, VA.commandLog); } catch (e) { /* ignore */ }
+  }
+}
+function _logCmd(entry) {
+  VA.commandLog.push(entry);
+  while (VA.commandLog.length > MAX_CMD_LOG) VA.commandLog.shift();
+}
+function _setCmdState(entry, state, extra) {
+  entry.state = state;
+  entry.tState = Date.now();
+  if (extra) Object.assign(entry, extra);
+  _emitCmdState(entry);
+}
+// Write an entry to the (open) WS and register its ack/nack handler. Clears any
+// prior pending for this seq first so a stale 3 s timer from a previous attempt
+// (a resend re-uses the same seq) can't delete the fresh pending entry.
+function _sendEntry(entry) {
+  _clearPending(entry.seq);
+  _registerPending(entry.seq, (ok, error) => {
+    if (ok) _setCmdState(entry, "confirmed", { tConfirmed: Date.now() });
+    else _setCmdState(entry, "failed", { error: error || "failed" });
+  });
+  try {
+    ws.send(JSON.stringify(Object.assign({}, entry.cmd, { seq: entry.seq })));
+    _setCmdState(entry, "sent", { tSent: Date.now() });
+  } catch (e) {
+    _clearPending(entry.seq);
+    _setCmdState(entry, "failed", { error: "send error" });
+    VA.logLine("command send failed: " + e);
+  }
+}
+// Reconnect: flush queued commands, dropping any that outlived QUEUE_TTL_MS.
+function _flushQueue() {
+  if (!_cmdQueue.length) return;
+  const now = Date.now();
+  const pending = _cmdQueue.splice(0, _cmdQueue.length);
+  for (const entry of pending) {
+    if (now - (entry.tQueued || entry.tCreated) > QUEUE_TTL_MS) {
+      _setCmdState(entry, "failed", { error: "expired" });   // rule (b)
+      VA.logLine("queued command expired (not replayed): " + (entry.type || "?"));
+    } else if (ws && ws.readyState === 1) {
+      _sendEntry(entry);
+    } else {
+      _cmdQueue.push(entry);   // socket died again mid-flush; keep it buffered
+    }
+  }
+}
+// Link dropped: snapshot the SENT-but-unacked commands so they can be re-sent
+// once on reconnect (rule c). Called from ws.onclose before their ack timers
+// expire; their state may transition to failed(timeout) meanwhile — the resend
+// still fires and re-drives them to confirmed.
+function _markSentForResend() {
+  const now = Date.now();
+  for (const e of VA.commandLog) {
+    if (e.state !== "sent" || (e.resends || 0) >= 1 || _resend.indexOf(e) !== -1) {
+      continue;
+    }
+    // SAFETY FLOOR: never resend a motor-engaging (direct-drive) command.
+    if (_NO_RESEND_TYPES.has(e.type)) {
+      VA.logLine("not queuing motor-engage command for resend: " + (e.type || "?"));
+      continue;
+    }
+    // Stamp the moment the link dropped so a long outage (long enough for the
+    // server failsafe to STOP the boat) drops the resend instead of replaying it.
+    e.tResendMarked = now;
+    _resend.push(e);
+  }
+}
+// Reconnect: re-send each sent-but-unacked command exactly once (rule c),
+// dropping any whose outage outlived RESEND_TTL_MS (a stale command must not
+// fire after the server failsafe has already acted on the lost link).
+function _resendUnacked() {
+  const now = Date.now();
+  const items = _resend.splice(0, _resend.length);
+  for (const entry of items) {
+    if (now - (entry.tResendMarked || entry.tSent || entry.tCreated) > RESEND_TTL_MS) {
+      VA.logLine("stale unacked command dropped (not resent): " + (entry.type || "?"));
+      continue;
+    }
+    if (ws && ws.readyState === 1) {
+      entry.resends = (entry.resends || 0) + 1;
+      VA.logLine("re-sending unacked command (idempotent): " + (entry.type || "?"));
+      _sendEntry(entry);
+    }
+  }
+}
+
+// Send a command. When the WS is open it goes straight to "sent" and is ack'd;
+// when the socket is down it is QUEUED client-side (state machine + safety rules
+// above) rather than POSTed, so an offline tap is replayed on reconnect (subject
+// to the TTL) instead of silently lost. Returns the command's seq.
 VA.send = function (cmd) {
   VA.logLine("» " + JSON.stringify(cmd));
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(cmd));
-  else fetch("/api/command", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cmd),
-  }).catch((e) => VA.logLine("command POST failed: " + e));
+  const seq = ++_sendSeq;
+  const entry = {
+    seq, type: cmd && cmd.type, cmd, state: "new",
+    tCreated: Date.now(), resends: 0,
+  };
+  _logCmd(entry);
+  if (ws && ws.readyState === 1) {
+    _sendEntry(entry);
+  } else {
+    entry.tQueued = Date.now();
+    _cmdQueue.push(entry);
+    _setCmdState(entry, "queued", { tQueued: entry.tQueued });
+    VA.logLine("command queued (offline): " + ((cmd && cmd.type) || "?"));
+  }
+  return seq;
 };
 
 // Send a SAFETY-CRITICAL command (STOP). Fires over the WS AND POSTs to
@@ -245,16 +488,35 @@ VA.send = function (cmd) {
 // defaults to "mode is manual and thrust ~0" (what a stop produces).
 VA.sendCritical = function (cmd, confirmFn) {
   VA.logLine("»! " + JSON.stringify(cmd));
-  try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(cmd)); }
-  catch (e) { VA.logLine("critical WS send failed: " + e); }
+  const seq = ++_sendSeq;
+  const msg = Object.assign({}, cmd, { seq });
+  const id = ++_criticalSeq;
+  _critical = { id, confirm: confirmFn || _stopConfirmed, seq };
+  // Fire over the WS AND POST simultaneously — both best-effort so a dead socket
+  // can't swallow the STOP.
+  let sentWs = false;
+  try {
+    if (ws && ws.readyState === 1) { ws.send(JSON.stringify(msg)); sentWs = true; }
+  } catch (e) { VA.logLine("critical WS send failed: " + e); }
+  // Prefer the ACK as positive confirmation: clear the red banner the instant
+  // the server acks, without waiting for a telemetry frame. The telemetry-frame
+  // check (mode manual & thrust~0) in dispatch() remains as the fallback, so
+  // STOP is confirmed by whichever arrives first.
+  if (sentWs) {
+    _registerPending(seq, (ok) => {
+      if (ok && _critical && _critical.id === id) {
+        _critical = null;
+        _banner(STOP_BANNER_ID, { show: false });
+      }
+    });
+  }
   fetch("/api/command", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cmd),
   }).catch((e) => VA.logLine("critical command POST failed: " + e));
-  const id = ++_criticalSeq;
-  _critical = { id, confirm: confirmFn || _stopConfirmed };
   setTimeout(() => {
+    // Only alarms if NEITHER the ack nor a confirming telemetry frame arrived.
     if (_critical && _critical.id === id) {
       _banner(STOP_BANNER_ID, {
         show: true, bg: "#c81e1e",
