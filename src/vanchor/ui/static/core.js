@@ -163,7 +163,40 @@ setInterval(() => {
 // doesn't reflect the stop within ~1.5 s, a red banner stays up until a frame
 // confirms it.
 let _criticalSeq = 0;
-let _critical = null;  // { id, confirm }
+let _critical = null;  // { id, confirm, seq }
+
+// ---- versioned WS envelope + command acks (#21) --------------------------
+// Every server->client message carries a top-level `type` and `v`. Commands we
+// send may carry an incrementing `seq`; the server replies {ack}/{nack} which
+// resolves a pending entry here. Telemetry frames keep their flat shape (see
+// dispatch) so the ~30 modules reading t.mode/t.sog directly are unaffected.
+const _CLIENT_PROTOCOL_V = 1;
+let _vWarned = false;
+let _sendSeq = 0;
+const _pending = new Map();  // seq -> { onResult, timer }
+
+function _clearPending(seq) {
+  const p = _pending.get(seq);
+  if (p) { clearTimeout(p.timer); _pending.delete(seq); }
+}
+// Register a command awaiting an ack/nack. `onResult(ok, error)` fires on the
+// reply; a 3 s timeout drops it and logs (acks themselves are NOT logged, to
+// keep the NMEA console clean).
+function _registerPending(seq, onResult) {
+  const timer = setTimeout(() => {
+    _pending.delete(seq);
+    VA.logLine("command #" + seq + " not acked within 3s");
+    if (onResult) try { onResult(false, "timeout"); } catch (e) { /* ignore */ }
+  }, 3000);
+  _pending.set(seq, { onResult, timer });
+}
+function _resolvePending(seq, ok, error) {
+  const p = _pending.get(seq);
+  if (!p) return;
+  _pending.delete(seq);
+  clearTimeout(p.timer);
+  if (p.onResult) try { p.onResult(ok, error); } catch (e) { /* ignore */ }
+}
 function _stopConfirmed(t) {
   if (!t) return false;
   const thr = t.motor ? Number(t.motor.thrust) : NaN;
@@ -181,6 +214,9 @@ function dispatch(t) {
   _lastFrameMs = Date.now();
   _banner(STALE_BANNER_ID, { show: false });
   if (_critical && _critical.confirm(t)) {
+    // Telemetry-frame confirmation arrived first; drop the pending ack watcher
+    // so it doesn't later log a spurious "not acked" for a command that worked.
+    if (_critical.seq != null) _clearPending(_critical.seq);
     _critical = null;
     _banner(STOP_BANNER_ID, { show: false });
   }
@@ -222,20 +258,38 @@ VA.connect = function () {
   ws.onmessage = (ev) => {
     let t;
     try { t = JSON.parse(ev.data); } catch (err) { VA.logLine("bad telemetry: " + err); return; }
-    if (t.type === "pong") return;  // heartbeat reply; not a telemetry frame
-    dispatch(t);
+    if (typeof t.v === "number" && t.v !== _CLIENT_PROTOCOL_V && !_vWarned) {
+      _vWarned = true;
+      console.warn("vanchor: WS protocol version mismatch — client " +
+        _CLIENT_PROTOCOL_V + ", server " + t.v);
+    }
+    switch (t.type) {
+      case "pong": return;                       // heartbeat reply; not telemetry
+      case "ack":  _resolvePending(t.seq, true); return;
+      case "nack": _resolvePending(t.seq, false, t.error); return;
+      default:     dispatch(t); return;          // "telemetry" or legacy no-type
+    }
   };
 };
 
 // Send a command (WS up; falls back to POST /api/command if the socket is down).
 VA.send = function (cmd) {
   VA.logLine("» " + JSON.stringify(cmd));
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(cmd));
-  else fetch("/api/command", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cmd),
-  }).catch((e) => VA.logLine("command POST failed: " + e));
+  const seq = ++_sendSeq;
+  const msg = Object.assign({}, cmd, { seq });
+  if (ws && ws.readyState === 1) {
+    // Only the WS path is ack'd by the server; register a pending entry so the
+    // ack/nack resolves it (or it times out after 3 s and logs).
+    _registerPending(seq);
+    ws.send(JSON.stringify(msg));
+  } else {
+    fetch("/api/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cmd),
+    }).catch((e) => VA.logLine("command POST failed: " + e));
+  }
+  return seq;
 };
 
 // Send a SAFETY-CRITICAL command (STOP). Fires over the WS AND POSTs to
@@ -245,16 +299,35 @@ VA.send = function (cmd) {
 // defaults to "mode is manual and thrust ~0" (what a stop produces).
 VA.sendCritical = function (cmd, confirmFn) {
   VA.logLine("»! " + JSON.stringify(cmd));
-  try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(cmd)); }
-  catch (e) { VA.logLine("critical WS send failed: " + e); }
+  const seq = ++_sendSeq;
+  const msg = Object.assign({}, cmd, { seq });
+  const id = ++_criticalSeq;
+  _critical = { id, confirm: confirmFn || _stopConfirmed, seq };
+  // Fire over the WS AND POST simultaneously — both best-effort so a dead socket
+  // can't swallow the STOP.
+  let sentWs = false;
+  try {
+    if (ws && ws.readyState === 1) { ws.send(JSON.stringify(msg)); sentWs = true; }
+  } catch (e) { VA.logLine("critical WS send failed: " + e); }
+  // Prefer the ACK as positive confirmation: clear the red banner the instant
+  // the server acks, without waiting for a telemetry frame. The telemetry-frame
+  // check (mode manual & thrust~0) in dispatch() remains as the fallback, so
+  // STOP is confirmed by whichever arrives first.
+  if (sentWs) {
+    _registerPending(seq, (ok) => {
+      if (ok && _critical && _critical.id === id) {
+        _critical = null;
+        _banner(STOP_BANNER_ID, { show: false });
+      }
+    });
+  }
   fetch("/api/command", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cmd),
   }).catch((e) => VA.logLine("critical command POST failed: " + e));
-  const id = ++_criticalSeq;
-  _critical = { id, confirm: confirmFn || _stopConfirmed };
   setTimeout(() => {
+    // Only alarms if NEITHER the ack nor a confirming telemetry frame arrived.
     if (_critical && _critical.id === id) {
       _banner(STOP_BANNER_ID, {
         show: true, bg: "#c81e1e",

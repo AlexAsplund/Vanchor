@@ -140,6 +140,79 @@ def test_websocket_streams_and_accepts_commands(client):
         assert msg["mode"] == "anchor_hold"
 
 
+# ---- #21: versioned WS envelope + command acks ----------------------------- #
+
+def _recv_until(ws, pred, tries=40):
+    """Receive frames until ``pred(msg)`` is truthy; return that msg (or None)."""
+    for _ in range(tries):
+        msg = ws.receive_json()
+        if pred(msg):
+            return msg
+    return None
+
+
+def test_ws_telemetry_carries_envelope(client):
+    """Telemetry frames gain type/v/seq/ts alongside the flat fields (#21)."""
+    with client.websocket_connect("/ws") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "telemetry"
+        assert first["v"] == 1
+        assert "ts" in first and isinstance(first["ts"], (int, float))
+        assert first["seq"] == 0
+        # Flat telemetry fields are still present (backward compatible).
+        assert "mode" in first and "motor" in first
+        second = ws.receive_json()
+        assert second["type"] == "telemetry"
+        assert second["seq"] > first["seq"]  # monotonic per-connection
+
+
+def test_ws_command_with_seq_gets_ack(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # consume initial snapshot
+        ws.send_json({"type": "anchor_hold", "radius_m": 6, "seq": 7})
+        ack = _recv_until(ws, lambda m: m.get("type") == "ack")
+        assert ack is not None
+        assert ack == {"type": "ack", "v": 1, "seq": 7}
+
+
+def test_ws_bare_command_gets_no_ack(client):
+    """A command without a seq behaves exactly as before: no ack/nack reply."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "anchor_hold", "radius_m": 6})  # no seq
+        # Every following frame within a window must be plain telemetry.
+        for _ in range(15):
+            m = ws.receive_json()
+            assert m.get("type") not in ("ack", "nack")
+
+
+def test_ws_failing_command_with_seq_gets_nack(client):
+    """A handler exception on a seq'd command replies nack with the error."""
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        # set_gps_offset without true_lat/true_lon raises KeyError in the handler.
+        ws.send_json({"type": "set_gps_offset", "seq": 9})
+        nack = _recv_until(ws, lambda m: m.get("type") == "nack")
+        assert nack is not None
+        assert nack["type"] == "nack" and nack["v"] == 1 and nack["seq"] == 9
+        assert isinstance(nack["error"], str) and nack["error"]
+
+
+def test_ws_ping_pong_carries_version(client):
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "ping"})
+        pong = _recv_until(ws, lambda m: m.get("type") == "pong")
+        assert pong == {"type": "pong", "v": 1}
+
+
+def test_state_snapshot_has_no_envelope_keys(client):
+    """The envelope is WS-only; /api/state stays a pure snapshot."""
+    data = client.get("/api/state").json()
+    for k in ("type", "v", "seq", "ts"):
+        assert k not in data
+
+
 # ---- Fix 2: DNS-rebinding / host validation -------------------------------- #
 
 def test_host_check_rejects_dns_rebinding_domain(client):

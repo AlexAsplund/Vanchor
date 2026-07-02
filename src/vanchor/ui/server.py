@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("vanchor.ui")
 STATIC_DIR = Path(__file__).parent / "static"
 
+# WebSocket envelope protocol version (#21). Every server->client message carries
+# a top-level ``type`` and ``v``; telemetry frames additionally carry ``seq``
+# (monotonic per-connection) and ``ts`` (server epoch seconds), alongside the
+# existing flat telemetry fields (additive — old subscribers are unaffected).
+_PROTOCOL_V = 1
+
 # Keys that are large array payloads; stripped from /api/log frames by default
 # to keep the response lightweight (depth_points is ~28 KB per frame).
 _BULK_KEYS: frozenset[str] = frozenset({"depth_points"})
@@ -84,6 +90,23 @@ def shape_frame(snapshot: dict, full: bool) -> dict:
             out[k] = {sk: sv for sk, sv in v.items() if sk != "points"}
         else:
             out[k] = v
+    return out
+
+
+def _telemetry_envelope(frame: dict, ws: "WebSocket", ts: float | None = None) -> dict:
+    """Wrap a telemetry ``frame`` in the versioned WS envelope (#21).
+
+    Adds ``type``/``v``/``seq``/``ts`` ALONGSIDE the existing flat fields (a
+    shallow copy so the shared snapshot the broadcaster records isn't mutated).
+    ``seq`` is a monotonic per-connection counter stashed on the socket object.
+    """
+    seq = getattr(ws, "_va_seq", 0)
+    ws._va_seq = seq + 1  # type: ignore[attr-defined]
+    out = dict(frame)
+    out["type"] = "telemetry"
+    out["v"] = _PROTOCOL_V
+    out["seq"] = seq
+    out["ts"] = time.time() if ts is None else ts
     return out
 
 
@@ -182,13 +205,15 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                     # high-rate 5 Hz WS stream stays lean.  /api/state always returns
                     # the complete snapshot; shape_frame only applies to the broadcaster.
                     out = shape_frame(snapshot, full=(frame_n % 5 == 1))
-                    message = json.dumps(out)
+                    ts = time.time()
 
                     # Send to all clients concurrently so one stalled client
                     # doesn't delay telemetry for others.  Per-client timeout
-                    # evicts connections that won't drain within 2 s.
-                    async def _send(ws: WebSocket, msg: str = message) -> None:
+                    # evicts connections that won't drain within 2 s.  Each client
+                    # gets its own envelope so ``seq`` is monotonic per-connection.
+                    async def _send(ws: WebSocket, base: dict = out, when: float = ts) -> None:
                         try:
+                            msg = json.dumps(_telemetry_envelope(base, ws, when))
                             await asyncio.wait_for(ws.send_text(msg), timeout=2.0)
                         except Exception:
                             clients.discard(ws)
@@ -874,7 +899,9 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         runtime.client_connected()
         try:
             # Send an immediate snapshot so the UI paints without waiting.
-            await websocket.send_text(json.dumps(runtime.telemetry()))
+            await websocket.send_text(
+                json.dumps(_telemetry_envelope(runtime.telemetry(), websocket))
+            )
             while True:
                 raw = await websocket.receive_text()
                 runtime.client_activity()
@@ -886,12 +913,28 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 if msg.get("type") == "ping":
                     # Application-level heartbeat: liveness already updated above.
                     # Do NOT forward to the controller (it would log "unknown command").
-                    await websocket.send_text('{"type":"pong"}')
+                    await websocket.send_text(
+                        json.dumps({"type": "pong", "v": _PROTOCOL_V})
+                    )
                     continue
+                # Optional command ack (#21): a command carrying a ``seq`` gets a
+                # positive {ack} on success or {nack,error} on a handler exception.
+                # Bare commands (no seq) behave exactly as before (no reply).
+                seq = msg.get("seq")
+                has_seq = isinstance(seq, int) and not isinstance(seq, bool)
                 try:
                     runtime.handle_command(msg)
-                except Exception:
+                except Exception as exc:
                     logger.exception("bad command over websocket: %s", raw)
+                    if has_seq:
+                        await websocket.send_text(json.dumps(
+                            {"type": "nack", "v": _PROTOCOL_V, "seq": seq, "error": str(exc)}
+                        ))
+                else:
+                    if has_seq:
+                        await websocket.send_text(json.dumps(
+                            {"type": "ack", "v": _PROTOCOL_V, "seq": seq}
+                        ))
         except WebSocketDisconnect:
             pass
         finally:
