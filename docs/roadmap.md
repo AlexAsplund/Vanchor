@@ -81,44 +81,50 @@ STOP always works.
 20. Always-on low-rate black-box ring recording with pre-trigger dump on any
     alarm; record applied-vs-desired motor commands.
 
-### Phase 3 — UI/API maturity
+### Phase 3 — UI/API maturity ✅ (complete)
 
-21. Versioned WS envelope (`{v, type, seq, ts}`) with server acks; dual-path
-    (WS+POST) STOP that verifies the next telemetry frame and escalates
-    visually if unconfirmed within ~1 s.
-22. (partial) ✅ Telemetry-age watchdog overlay ("DATA STALE (Ns old) — link may
-    be down" banner in `core.js`); Screen Wake Lock while a motor mode is active
-    not yet implemented.
-23. Server-persisted safety geometry (no-go zones, min-depth) and UI prefs —
-    the browser as cache, not the source of truth.
-24. Multi-client model: helm vs observer roles, "another helm is connected",
-    no boot-time disruption.
-25. Playwright reconnect/STOP regression in CI; repair `uitest.py`.
-26. Command audit log surfaced in-app; offline-first command queue with
-    queued/sent/confirmed states.
+21. ✅ Versioned WS envelope (`{v, type, seq, ts}`) with server `{ack}`/`{nack}`;
+    dual-path (WS+POST) STOP that confirms on the ack OR the next telemetry
+    frame and shows a red banner if neither arrives in ~1.5 s.
+22. ✅ Telemetry-age watchdog overlay ("DATA STALE") + Screen Wake Lock while a
+    motor mode is active (`wakelock.js`; no-op without a secure context, i.e.
+    plain-HTTP LAN — needs HTTPS on the Pi to actually hold the screen).
+23. ✅ Server-persisted safety geometry (`safety.json`: no-go zones / min-depth /
+    fix-failsafe, applied at Runtime init) + generic `/api/prefs` store; the
+    browser adopts server geometry as truth with an echo guard.
+24. ✅ Multi-client helm/observer roles, auto-promote on helm disconnect,
+    cooperative `take_helm`; observer commands `role_denied` but STOP always
+    works; no boot-time disruption. (Broadcast frame now serialized once.)
+25. ✅ Playwright reconnect/STOP regression (opt-in `e2e` marker + `browser-e2e`
+    CI job); repaired `uitest.py` (21/21, self-launching).
+26. ✅ In-app command audit log (`/api/audit`, helm/observer/rest source) +
+    offline-first command queue (queued/sent/confirmed/failed; STOP never
+    queued; stale queued commands expire, never auto-replay).
 
-### Phase 4 — Nav & control quality
+### Phase 4 — Nav & control quality ✅ (27–35 complete)
 
-27. Shared wind/current estimator as a persistent service (promoted out of
-    AnchorHoldMode, fed continuously incl. IMU) → crab-angle feedforward on
-    waypoint legs, a real drift axis for Drift mode, spot-lock that engages
-    already knowing the environment.
-28. Drift mode on signed along-axis speed; dt-scaled estimator alphas.
-29. Water-clip survey routes + concave-cell decomposition; use the clipped
-    island ring; waypoint passed-the-perpendicular arrival check.
-30. Depth-aware routing: cost the visibility graph with the depth grid /
-    imported contours — proactive shallow avoidance instead of reactive stop.
-31. Adaptive helm gain scheduling keyed on SOG; per-boat saved gain
-    profiles.
-32. Ground-track trolling (S-curve as a corridor of virtual waypoints, fixed
-    swath under current).
-33. Visibility-graph speedup (tangent-vertex filtering or lazy A*) for
-    Pi-class planning.
-34. ML anchor v2: stern-mount/steer-sign training variants, runtime
-    residual-decay guardrail when underperforming the PID base, offline
-    fine-tuning from recorded real-water sessions; spot-lock quality metric
-    (RMS error, % in radius) in telemetry.
-35. Vectored/azimuth station-keeping exploiting the motor's full rotation.
+27. ✅ Shared `WindCurrentEstimator` promoted to a persistent Controller service
+    (fed every tick, never reset on mode change) → waypoint crab feedforward
+    (mean |XTE| 10.7 m → 0.47 m on a beam set), spot-lock preloaded with the
+    drift, Drift mode drift axis.
+28. ✅ Drift mode on signed along-axis speed; dt-scaled estimator alphas.
+29. ✅ Water-clip survey routes + concave-leg boundary routing (pragmatic vs full
+    cell decomposition); clipped island ring; waypoint passed-the-perpendicular
+    arrival check.
+30. ✅ Depth-aware routing: `DepthMap.shallow_polygons()` (contours+soundings)
+    hard-subtracted from navigable water with a soft-penalty band and a
+    trap-safe fallback — proactive shoal avoidance, on by default.
+31. ✅ Adaptive helm gain scheduling keyed on SOG (more gain when slow); per-boat
+    saved gain profiles (`boat_gains.json`); tuner can persist tuned gains.
+32. ✅ Ground-track trolling (bounded rolling corridor of virtual waypoints;
+    ~constant swath under beam current instead of shearing).
+33. ✅ Visibility-graph speedup: lazy A* + reflex-vertex filtering, ~8× fewer
+    `covers()` tests (216k → 27k), routes provably identical to an eager oracle.
+34. ✅ ML anchor v2: mount/steer-sign correctness, runtime residual-decay
+    guardrail (never worse than the PID base), spot-lock quality metric
+    (RMS error / % in radius) in telemetry, offline fine-tune script.
+35. ✅ Vectored/azimuth station-keeping (opt-in): pushes against the set using
+    the full rotation; beam-set RMS 3.29 m → 1.29 m; default off = baseline.
 
 ### Phase 5 — Simulation & testing depth
 
