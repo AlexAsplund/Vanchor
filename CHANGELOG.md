@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **ML anchor retrained** on the sign-faithful env (fixing the #34 follow-up):
+  the shipped policy was trained on the old steering-sign-flipped env and was
+  actually *worse* than PID (71.8% vs 75.6% time-in-radius) at 3× the motor
+  energy, with a broken stern mount (61.5%). The retrained `anchor_policy.json`
+  is at parity with PID (75.0%), holds a tighter mean distance, uses **3–4×
+  less motor energy**, and recovers the stern mount (61.5% → 74.1%).
+- **Vectored/azimuth station-keeping** validated on the stern mount (a clear
+  win, not just bow) and exposed as a "Vectored thrust (full rotation)" toggle
+  in the Anchor panel; the analysis runner can now score it.
 - Service-worker cache version is now a **content hash of the static shell**,
   injected into `sw.js` at serve time — the PWA auto-refreshes exactly when
   assets change, with no manual `VERSION` bump and no needless re-download on a
