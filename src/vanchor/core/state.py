@@ -122,6 +122,14 @@ class NavigationState:
     # normalized steering command to a real azimuth for display/telemetry.
     max_steer_angle_deg: float = 35.0
 
+    # --- Vectored / azimuth station-keeping (#35) -------------------------- #
+    # True while the anchor hold is running the opt-in vectored (wide-azimuth)
+    # law; the commanded motor azimuth (deg off the bow, signed, + = starboard)
+    # it is currently demanding. Written by AnchorHoldMode each tick it holds;
+    # reset by the controller on a mode change.
+    stationkeep_vectored: bool = False
+    stationkeep_azimuth_deg: float = 0.0
+
     # --- Spot-lock quality metric (#34) ----------------------------------- #
     # Rolling holding-quality numbers, updated by the controller every tick an
     # anchor mode (PID anchor_hold OR learned anchor_ml) is station-keeping:
@@ -209,6 +217,10 @@ class NavigationState:
                 ),
             },
             "distance_to_anchor_m": round(self.distance_to_anchor_m, 2),
+            "stationkeep": {
+                "vectored": self.stationkeep_vectored,
+                "azimuth_deg": round(self.stationkeep_azimuth_deg, 1),
+            },
             "spotlock_quality": {
                 "rms_m": round(self.spotlock_rms_m, 2),
                 "pct_in_radius": round(self.spotlock_pct_in_radius, 1),

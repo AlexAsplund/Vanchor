@@ -571,6 +571,11 @@ class Controller:
             self.helm.reset()
             last = self.state.motor_command
             self.safety.reset(thrust=last.thrust, steering=last.steering)
+            # Vectored station-keeping telemetry (#35) is written only by the
+            # anchor hold while it runs; clear it so it can't go stale in
+            # another mode. The hold re-asserts it on its first tick.
+            self.state.stationkeep_vectored = False
+            self.state.stationkeep_azimuth_deg = 0.0
         self.modes[mode].activate(self.state)
 
     # ------------------------------------------------------------------ #
@@ -593,6 +598,12 @@ class Controller:
                     self.state.anchor = self.state.position
                 if "radius_m" in command:
                     self.state.anchor_radius_m = float(command["radius_m"])
+                # Optional per-drop opt-in/out of vectored station-keeping (#35);
+                # absent = keep the configured setting.
+                if "vectored" in command:
+                    hold = self.modes[ControlModeName.ANCHOR_HOLD]
+                    if hasattr(hold, "config"):
+                        hold.config.vectored = bool(command["vectored"])
                 # Record the heading at the moment of dropping (for display); the boat
                 # holds this passively once on station (no active heading slew).
                 self.state.anchor_heading = self.state.heading_deg

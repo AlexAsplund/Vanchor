@@ -349,6 +349,13 @@ class Runtime:
                 kd=cfg.control.anchor_kd,
                 idle_deadband_m=cfg.control.anchor_idle_deadband_m,
                 boat_max_speed_mps=cfg.boat.max_speed_mps,
+                # Vectored / azimuth station-keeping (#35): opt-in wide-azimuth
+                # spot lock. Defaults (False + 35 deg) keep behaviour unchanged.
+                vectored=cfg.control.station_keep_vectored,
+                vector_azimuth_deg=cfg.control.station_keep_azimuth_deg,
+                # Mirror the helm's mount polarity so the vectored law's physical
+                # azimuth survives the helm's steer_sign flip.
+                steer_sign=1.0 if cfg.boat.thruster_x_m() >= 0 else -1.0,
             ),
             waypoint_config=WaypointConfig(
                 arrival_radius_m=cfg.control.waypoint_arrival_m,
@@ -555,10 +562,13 @@ class Runtime:
         # Lateral-offset thrust-yaw feed-forward follows the geometry/trim live so
         # changing the offset (or the calibrated trim) updates compensation now.
         self.controller.helm.thrust_yaw_ff = _thrust_yaw_ff_norm(self.config)
-        # Anchor mode caps thrust by the boat's top speed; keep it in step.
+        # Anchor mode caps thrust by the boat's top speed; keep it in step. The
+        # vectored station-keeping law (#35) also mirrors the mount polarity so
+        # a profile switch can't leave its azimuth mirrored.
         anchor = self.controller.modes.get(ControlModeName.ANCHOR_HOLD)
         if anchor is not None and hasattr(anchor, "config"):
             anchor.config.boat_max_speed_mps = b.max_speed_mps
+            anchor.config.steer_sign = self.controller.helm.steer_sign
         # Waypoint mode's forward/reverse decision needs the boat's measured
         # speed, reverse efficiency, and turn rate.
         wp = self.controller.modes.get(ControlModeName.WAYPOINT)

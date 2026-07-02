@@ -225,6 +225,18 @@ class ControlConfig:
     anchor_radius_m: float = 5.0
     anchor_idle_deadband_m: float = 0.8  # idle within this band of the mark (no hunting)
 
+    # --- Vectored / azimuth station-keeping (roadmap #35) ----------------- #
+    # OPT-IN: while holding a spot, let the motor's azimuth sweep up to
+    # ``station_keep_azimuth_deg`` off the bow (instead of the autopilot's
+    # ±autopilot_steer_deg band) so it can push directly against the set rather
+    # than re-orienting the hull first. Applies ONLY to the anchor-hold
+    # station-keeping path -- heading-hold/waypoint/etc. keep the normal
+    # autopilot authority. Defaults (False + 35 deg) preserve today's behaviour
+    # exactly. When enabling, ~110-120 deg is a sensible authority: it covers a
+    # beam set directly and, combined with reverse thrust, most of the circle.
+    station_keep_vectored: bool = False
+    station_keep_azimuth_deg: float = 35.0
+
     waypoint_throttle: float = 0.6
     waypoint_arrival_m: float = 5.0
     waypoint_xte_gain: float = 2.0
@@ -719,6 +731,11 @@ control:
   anchor_kd: 0.6              # braking thrust per (m/s) closing speed (enables reverse)
   anchor_radius_m: 5.0
   anchor_idle_deadband_m: 0.8 # idle within this band of the mark (avoids GPS-noise hunting)
+  # Vectored / azimuth station-keeping (#35): opt-in. While spot-locked, swing the
+  # motor azimuth up to station_keep_azimuth_deg off the bow (beyond the autopilot's
+  # band) to push straight against the set. Off by default; only affects anchor hold.
+  station_keep_vectored: false
+  station_keep_azimuth_deg: 35.0  # try 110-120 when enabling
   waypoint_throttle: 0.6
   waypoint_arrival_m: 5.0
   waypoint_xte_gain: 2.0

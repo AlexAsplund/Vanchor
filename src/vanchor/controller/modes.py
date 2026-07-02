@@ -180,6 +180,41 @@ class AnchorConfig:
     drift_tau_s: float = 10.0
     drift_min_mps: float = 0.05  # below this, no significant drift to point into
 
+    # --- Vectored / azimuth station-keeping (#35) ------------------------- #
+    # OPT-IN: exploit the motor's wide (~360 deg) rotation while holding a spot.
+    # Instead of steering within the autopilot's narrow band and re-orienting the
+    # hull toward every disturbance, the mode computes the ground-frame thrust
+    # direction needed to null the position error + estimated drift and rotates
+    # the motor AZIMUTH toward it (a direct ManualSetpoint, so the helm's
+    # autopilot steering cap does not apply). OFF by default: ``vectored=False``
+    # (and an azimuth authority equal to today's 35 deg) keeps the classic PD
+    # behaviour bit-for-bit.
+    #
+    # PHYSICS (kept honest against the Fossen model): a deflected thrust makes a
+    # sway force AND a yaw moment (sway force x mount lever arm), so pure lateral
+    # translation without yaw is impossible. The law therefore MANAGES the
+    # induced yaw instead of pretending it away: the azimuth is recomputed from
+    # the LIVE heading every tick, so as the induced yaw swings a bow-mounted
+    # hull toward the thrust direction (the coupling is self-aligning for a bow
+    # mount: starboard thrust yaws the bow to starboard), the commanded
+    # deflection decays toward zero and the boat settles bow-into-the-set --
+    # a blended hull-yaw + azimuth strategy with bounded heading, not a spin.
+    # Deflection is clamped to ``vector_azimuth_deg``; when the wanted direction
+    # is outside the clamp, thrust is scaled by the misalignment cosine and the
+    # (clamped) deflection's induced yaw walks the hull around to close the gap.
+    vectored: bool = False
+    # Max motor azimuth (deg off the bow) station-keeping may command. Also
+    # capped by the physical ``state.max_steer_angle_deg``. 35 = today's band.
+    vector_azimuth_deg: float = 35.0
+    # Low-pass time constant (s) on the ground-frame demand vector so GPS noise
+    # near the mark doesn't slew the steering head (frame-rate independent EMA).
+    vector_tau_s: float = 1.0
+    # Thruster-mount steering polarity (+1 bow, -1 stern), mirroring the helm's
+    # steer_sign. The vectored law computes a PHYSICAL deflection; the helm then
+    # multiplies ManualSetpoint steering by its own steer_sign, so we pre-apply
+    # the same sign here to cancel it and keep the physical azimuth intact.
+    steer_sign: float = 1.0
+
 
 class AnchorHoldMode(ControlMode):
     """Virtual anchor ("Spot-Lock"): hold position with reverse thrust + braking.
@@ -196,6 +231,12 @@ class AnchorHoldMode(ControlMode):
     cannot actively hold an arbitrary heading while sitting still (steering needs
     thrust, which moves it off station). So this holds *position* and lets the
     heading settle, exactly like a real GPS trolling motor.
+
+    With ``config.vectored`` (opt-in, #35) the hold instead runs the vectored /
+    azimuth law (see :class:`AnchorConfig`): thrust is pointed at the ground-frame
+    direction that nulls position error + estimated drift, using up to
+    ``vector_azimuth_deg`` of the motor's rotation instead of the autopilot's
+    narrow band, with the thrust-induced yaw managed by live re-aiming.
     """
 
     name = ControlModeName.ANCHOR_HOLD
@@ -205,11 +246,22 @@ class AnchorHoldMode(ControlMode):
         self._reverse = False  # hysteresis on the forward/reverse decision
         self._recovering = False  # hysteresis on the recover/station decision
         self._filt: GeoPoint | None = None  # EMA-filtered perceived position
+        # Vectored station-keeping (#35) internals + telemetry.
+        self._vec_e = 0.0  # low-passed ground-frame demand vector (east)
+        self._vec_n = 0.0  # (north)
+        self._vec_seeded = False
+        self._vec_steer_hold = 0.0  # last steering command (held while idling)
+        self.commanded_azimuth_deg = 0.0  # exposed for telemetry
 
     def activate(self, state: NavigationState) -> None:
         self._reverse = False
         self._recovering = False
         self._filt = None
+        self._vec_e = 0.0
+        self._vec_n = 0.0
+        self._vec_seeded = False
+        self._vec_steer_hold = 0.0
+        self.commanded_azimuth_deg = 0.0
         # NOTE: the environmental-drift estimate is NOT reset here. It now lives in
         # the persistent, controller-owned WindCurrentEstimator (published on
         # ``state.est_drift_*``), so Spot-Lock engages already knowing the set
@@ -246,6 +298,13 @@ class AnchorHoldMode(ControlMode):
         state.bearing_to_dest = bearing
         cfg = self.config
         radius = state.anchor_radius_m
+
+        # Vectored / azimuth station-keeping (#35): opt-in alternative law that
+        # exploits the motor's wide rotation. Default (False) falls through to
+        # the classic PD hold below, unchanged.
+        state.stationkeep_vectored = cfg.vectored
+        if cfg.vectored:
+            return self._vectored_update(state, distance, bearing, dt)
 
         # Recover (actively re-point at the mark) only when pushed clearly out of
         # the radius; resume station-keeping once back well inside. The
@@ -305,6 +364,117 @@ class AnchorHoldMode(ControlMode):
             # Nothing to do: idle (no thrust => no yaw => heading held).
             return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
         return GuidedSetpoint(target_heading=held, thrust=thrust)
+
+    # -- Vectored / azimuth station-keeping (#35) -------------------------- #
+    def _vectored_update(
+        self, state: NavigationState, distance: float, bearing: float, dt: float
+    ) -> Setpoint:
+        """Hold the spot by aiming the motor AZIMUTH at the ground-frame thrust
+        direction that nulls position error + drift, instead of clamping to the
+        autopilot's narrow band and re-orienting the hull first.
+
+        Law (all terms are normalized-thrust fractions in the ground frame):
+
+          demand = kp * (deadbanded error toward the anchor)
+                   - kd * (GPS ground velocity)                (brake any motion)
+                   - ff_gain/boat_max_speed * est_drift        (push against the set)
+
+        The demand vector is low-passed (``vector_tau_s``), converted to a
+        body-frame azimuth off the live heading, and commanded directly via a
+        :class:`ManualSetpoint` (so the helm's autopilot steering cap does not
+        apply) up to ``vector_azimuth_deg`` of deflection.
+
+        INDUCED-YAW MANAGEMENT: a deflected thrust also yaws the boat (Fossen:
+        N = x_mount * Fy). For a bow mount this coupling is self-aligning --
+        thrust deflected to starboard yaws the bow to starboard, i.e. TOWARD the
+        thrust direction -- so recomputing the azimuth from the live heading
+        every tick makes the commanded deflection decay as the hull comes
+        around; the boat converges to bow-into-the-set with a small residual
+        azimuth (bounded heading, no spin). When the wanted direction is nearly
+        astern the law flips to reverse thrust (with hysteresis) rather than
+        swinging the hull; when it falls outside the azimuth clamp, thrust is
+        scaled by the misalignment cosine (floored so enough prop wash remains
+        for the induced yaw to close the gap).
+        """
+        cfg = self.config
+
+        # Ground-frame demand: position spring (deadbanded, so GPS noise at the
+        # mark doesn't fidget the head) + velocity brake + drift feed-forward.
+        err = max(0.0, distance - cfg.idle_deadband_m)
+        b = math.radians(bearing)
+        de = cfg.kp * err * math.sin(b)
+        dn = cfg.kp * err * math.cos(b)
+        fix = state.fix
+        if fix is not None:
+            v = knots_to_mps(fix.sog_knots)
+            c = math.radians(fix.cog_deg)
+            de -= cfg.kd * v * math.sin(c)
+            dn -= cfg.kd * v * math.cos(c)
+        if state.est_drift_settled and state.est_drift_mps >= cfg.drift_min_mps:
+            k = cfg.feedforward_gain / max(cfg.boat_max_speed_mps, 0.05)
+            de -= k * state.est_drift_east
+            dn -= k * state.est_drift_north
+
+        # Frame-rate-independent low-pass; the first sample seeds directly so
+        # engagement isn't diluted by a zero seed.
+        if not self._vec_seeded:
+            self._vec_e, self._vec_n = de, dn
+            self._vec_seeded = True
+        elif cfg.vector_tau_s > 0.0:
+            a = dt / (cfg.vector_tau_s + dt)
+            self._vec_e += (de - self._vec_e) * a
+            self._vec_n += (dn - self._vec_n) * a
+        else:
+            self._vec_e, self._vec_n = de, dn
+
+        magnitude = math.hypot(self._vec_e, self._vec_n)
+        if magnitude < 0.02:
+            # Nothing worth doing: idle. No thrust => no force, no yaw -- the
+            # heading is held passively; keep the head where it is (no servo
+            # work) and report no active azimuth demand.
+            state.stationkeep_azimuth_deg = self.commanded_azimuth_deg
+            return ManualSetpoint(0.0, self._vec_steer_hold)
+
+        # Wanted ground-frame push direction -> body-frame angle off the bow.
+        push_dir = math.degrees(math.atan2(self._vec_e, self._vec_n))
+        beta = angle_difference(state.heading_deg, push_dir)
+
+        # Forward / reverse with hysteresis: nearly astern -> push with reverse
+        # thrust (motor azimuth stays small) instead of swinging the hull 180.
+        if abs(beta) > 110.0:
+            self._reverse = True
+        elif abs(beta) < 70.0:
+            self._reverse = False
+
+        # Azimuth authority: the configured station-keeping arc, never beyond
+        # the head's physical range.
+        max_ang = state.max_steer_angle_deg if state.max_steer_angle_deg > 0 else 35.0
+        authority = min(cfg.vector_azimuth_deg, max_ang)
+
+        # Reverse thrust pushes opposite the motor axis: to push toward ``beta``
+        # point the motor at beta-180 and run the prop astern.
+        delta = angle_difference(180.0, beta) if self._reverse else beta
+        delta_cmd = _clamp(delta, -authority, authority)
+
+        # Misalignment between the achievable (clamped) push direction and the
+        # wanted one: scale thrust by its cosine -- but keep a floor, because
+        # the clamped deflection's *induced yaw* is exactly what walks the hull
+        # around to close the gap, and that yaw needs prop wash to exist.
+        misalign = min(90.0, abs(delta - delta_cmd))
+        align = max(0.25, math.cos(math.radians(misalign)))
+        thrust = _clamp(magnitude, 0.0, cfg.max_thrust) * align
+        if self._reverse:
+            thrust = -thrust
+
+        # Command the PHYSICAL azimuth. ManualSetpoint steering is multiplied by
+        # the helm's steer_sign, so pre-apply the mirrored mount sign to cancel.
+        steering = _clamp(delta_cmd / max_ang, -1.0, 1.0) * (
+            1.0 if cfg.steer_sign >= 0 else -1.0
+        )
+        self._vec_steer_hold = steering
+        self.commanded_azimuth_deg = delta_cmd
+        state.stationkeep_azimuth_deg = delta_cmd
+        return ManualSetpoint(thrust=thrust, steering=steering)
 
 
 def maneuver_to_bearing(
