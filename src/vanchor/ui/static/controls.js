@@ -79,12 +79,16 @@
   const arSlider = $("ar");
   const holdHdgBox = $("hold-hdg");
   const smartBox = $("anchor-smart");
+  const vectoredBox = $("anchor-vectored");
   function applyAnchor(redrop) {
     // "Smart" -> the learned NN station-keeper (anchor_ml); the backend falls
     // back to the PID anchor_hold automatically if the model isn't loaded.
+    // "Vectored" -> the PID station-keeper drives the motor through its full
+    // rotation (a backend anchor_hold flag; ignored by anchor_ml).
     const smart = smartBox && smartBox.checked;
     const cmd = { type: smart ? "anchor_ml" : "anchor_hold",
-                  radius_m: parseFloat(arSlider.value), hold_heading: holdHdgBox.checked };
+                  radius_m: parseFloat(arSlider.value), hold_heading: holdHdgBox.checked,
+                  vectored: !!(vectoredBox && vectoredBox.checked) };
     const last = VA.map.getLastAnchor();
     if (!redrop && last) cmd.anchor = { lat: last.lat, lon: last.lon };
     send(cmd);
@@ -93,6 +97,7 @@
   arSlider.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   holdHdgBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   if (smartBox) smartBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
+  if (vectoredBox) vectoredBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   // Explicit engage control only — the rail button just opens this panel, so
   // selecting Anchor no longer drops the anchor and engages station-keeping on
   // a single tap; the user presses "Drop anchor" (#anchor-go) to engage.

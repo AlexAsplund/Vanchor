@@ -49,6 +49,7 @@ START = GeoPoint(59.66275, 13.32247)
 MAX_STEER_DEG = 180.0          # full mechanical swing (matches app default)
 AUTOPILOT_DEG = 35.0           # the band the autopilot limits itself to
 RADIUS_M = 5.0
+STERN_X_M = -1.7               # stern mount: thruster arm AFT of the CG (< 0)
 
 
 # --------------------------------------------------------------------------- #
@@ -64,16 +65,23 @@ def _run_hold(
     current_dir: float = 90.0,
     wind: float = 0.0,
     wind_dir: float = 90.0,
+    thruster_x_m: float = 1.7,
+    helm_steer_sign: float = 1.0,
 ):
     """Drop a spot-lock at t=2 s in a steady set and record the whole run.
 
     Wired like the app: the sim boat maps steering [-1,1] onto the FULL
     +/-180 deg head, the helm scales guided steering to 35/180 (the autopilot
     band), and the governor slews the head at the physical 50 deg/s.
+
+    ``thruster_x_m`` (+ bow / - stern) picks the SIM mount; ``helm_steer_sign``
+    (and the AnchorConfig ``steer_sign``) mirror it so a stern boat (which
+    steers/yaws the opposite way) can be exercised. The defaults (bow arm 1.7,
+    steer_sign +1) reproduce today's bow harness bit-for-bit.
     """
     sim = Simulator(
         start=BoatState(point=START, heading_deg=0.0),
-        params=FossenParams(max_steer_angle_deg=MAX_STEER_DEG),
+        params=FossenParams(max_steer_angle_deg=MAX_STEER_DEG, thruster_x_m=thruster_x_m),
         environment=Environment(
             current_speed=current, current_dir=current_dir,
             wind_speed=wind, wind_dir=wind_dir,
@@ -87,7 +95,10 @@ def _run_hold(
         state,
         sim.motor,
         bus=None,
-        helm=Helm(autopilot_steer_scale=AUTOPILOT_DEG / MAX_STEER_DEG),
+        helm=Helm(
+            autopilot_steer_scale=AUTOPILOT_DEG / MAX_STEER_DEG,
+            steer_sign=helm_steer_sign,
+        ),
         anchor_config=AnchorConfig(
             vectored=vectored, vector_azimuth_deg=azimuth_deg, steer_sign=steer_sign
         ),
@@ -234,6 +245,152 @@ def test_vectored_calm_water_idles_like_baseline():
     assert vec["rms_m"] <= base["rms_m"] + 0.1
     assert vec["max_steer_deg"] <= base["max_steer_deg"] + 1e-6
     assert abs(vec_rec[-1][3]) < 0.05  # ends idling, not thrusting
+
+
+# --------------------------------------------------------------------------- #
+# Stern-mount validation (#35 follow-up)
+# --------------------------------------------------------------------------- #
+# Only the BOW mount was sim-verified in #35. A stern mount (thruster_x_m < 0)
+# FLIPS the sign of the thrust-induced yaw (Fossen N = thruster_x_m * Fy): the
+# same physical azimuth that walks a BOW hull bow-into-the-set instead walks a
+# STERN hull stern-into-the-set. The thrust DIRECTION is unchanged (the mount
+# steer_sign pre-cancels the helm flip, so the boat still pushes against the
+# set); only which END weathervanes into the set flips. These tests confirm the
+# flipped coupling stays BOUNDED (no spin-out) and holds AT LEAST AS WELL as the
+# +/-35 baseline for the SAME stern boat.
+@lru_cache(maxsize=8)
+def _cached_stern_run(vectored: bool, current: float, azimuth_deg: float = 120.0):
+    return _run_hold(
+        vectored=vectored, current=current, azimuth_deg=azimuth_deg,
+        steer_sign=-1.0, helm_steer_sign=-1.0, thruster_x_m=STERN_X_M,
+    )
+
+
+@pytest.mark.parametrize("current", [0.35, 0.5])
+def test_vectored_stern_is_stable_no_spinout(current):
+    # The flipped (stern) yaw coupling must not wind up / spin: the hull swings
+    # to point stern-into-the-set (~90 deg here) but total unwrapped rotation
+    # stays well under a full turn, and it stays on station.
+    rec, _, _ = _cached_stern_run(True, current)
+    m = _hold_metrics(rec)
+    assert m["max_abs_rot_deg"] < 270.0
+    assert m["pct_in_radius"] >= 95.0
+    assert m["max_dist_m"] < RADIUS_M
+
+
+@pytest.mark.parametrize("current", [0.35, 0.5])
+def test_vectored_stern_beats_baseline(current):
+    # Same stern boat, same beam set: vectored vs the +/-35 baseline. Measured
+    # (deterministic): baseline RMS ~4.0-4.4 m / max excursion ~6 m; vectored
+    # RMS ~1.6-1.9 m / max ~2 m -- a decisive win. Assert the honest, margined
+    # claim.
+    base_rec, base_state, _ = _cached_stern_run(False, current)
+    vec_rec, vec_state, _ = _cached_stern_run(True, current)
+    base = _hold_metrics(base_rec)
+    vec = _hold_metrics(vec_rec)
+    assert vec["rms_m"] < 0.6 * base["rms_m"]
+    assert vec["max_dist_m"] < base["max_dist_m"]
+    assert vec["pct_in_radius"] >= base["pct_in_radius"]
+    # Same story on the shared #34 SpotLockQuality metric (perceived distance).
+    assert vec_state.spotlock_rms_m < base_state.spotlock_rms_m
+    assert vec_state.spotlock_pct_in_radius >= base_state.spotlock_pct_in_radius
+
+
+def test_vectored_stern_uses_the_wider_azimuth():
+    # A stern hold must also reach beyond the 35 deg autopilot band (measured
+    # peak ~110 deg with 120 authority) and flag the vectored telemetry.
+    rec, state, _ = _cached_stern_run(True, 0.35)
+    m = _hold_metrics(rec)
+    assert m["max_steer_deg"] > AUTOPILOT_DEG + 10.0
+    assert m["max_steer_deg"] <= 120.0 + 1e-6
+    assert state.stationkeep_vectored is True
+
+
+def test_vectored_stern_settles_stern_into_the_set():
+    # The self-aligning-yaw FLIP made concrete: where a BOW hull settles
+    # bow-into-the-set (bow ~270 deg, into a set running east), the STERN hull
+    # settles STERN-into-the-set -- bow pointing DOWNSTREAM (~90 deg) -- the
+    # mirror-image equilibrium. And it is SETTLED, not spinning.
+    stern_rec, _, _ = _cached_stern_run(True, 0.35)
+    bow_rec, _, _ = _cached_run(True, 0.35)
+    stern_final = stern_rec[-1][2]
+    bow_final = bow_rec[-1][2]
+    # Bow points downstream (set dir 90 deg) for the stern mount; opposite for bow.
+    assert abs(angle_difference(stern_final, 90.0)) < 35.0
+    assert abs(angle_difference(bow_final, 270.0)) < 35.0
+    assert abs(angle_difference(stern_final, bow_final)) > 120.0
+    # Settled: negligible net rotation over the last 30 s (no slow spin).
+    late = [r for r in stern_rec if r[0] >= stern_rec[-1][0] - 30.0]
+    net = sum(angle_difference(a[2], b[2]) for a, b in zip(late, late[1:]))
+    assert abs(net) < 15.0
+
+
+def test_vectored_stern_pushes_thrust_against_the_set():
+    # Aim check for a stern mount, through the FULL helm pipeline: boat on the
+    # mark, bow north, drift pushing EAST. Despite the stern helm flipping
+    # steering polarity, the mount pre-cancel keeps the PHYSICAL thrust aimed
+    # WEST -- straight against the set -- from the very first tick.
+    state = _stationary_state(heading=0.0)
+    state.est_drift_settled = True
+    state.est_drift_mps = 0.3
+    state.est_drift_dir = 90.0
+    state.est_drift_east = 0.3
+    state.est_drift_north = 0.0
+    mode = AnchorHoldMode(
+        AnchorConfig(vectored=True, vector_azimuth_deg=120.0, steer_sign=-1.0)
+    )
+    mode.activate(state)
+    sp = mode.update(state, 0.2)
+    cmd = Helm(steer_sign=-1.0).compute(sp, state, 0.2)
+    assert cmd.thrust != 0.0
+    azimuth = cmd.steering * MAX_STEER_DEG  # physical motor angle off the bow
+    # Reverse thrust pushes opposite the motor axis.
+    push = state.heading_deg + azimuth + (180.0 if cmd.thrust < 0 else 0.0)
+    # Push opposes the set (drift dir 90 deg -> ground-frame push ~270 deg).
+    assert abs(angle_difference(push, 270.0)) < 5.0
+
+
+# --------------------------------------------------------------------------- #
+# Analysis-runner support for the wide azimuth (#35 follow-up, concern (b))
+# --------------------------------------------------------------------------- #
+def test_analysis_runner_scores_vectored_vs_baseline():
+    # The analysis harness builds its sim boat with the model-default 35 deg
+    # swing, so a Scenario could not exercise the wide azimuth. The new opt-in
+    # scenario flags give it the full swing + the vectored law, for BOTH mounts,
+    # so vectored vs baseline can be scored end-to-end through run_scenario.
+    from vanchor.analysis.metrics import anchor_metrics
+    from vanchor.analysis.runner import Command, Scenario, run_scenario
+
+    def hold(*, vectored: bool, thruster_x_m: float):
+        scen = Scenario(
+            name="sk", start=START, model="fossen", duration_s=200.0,
+            environment=Environment(current_speed=0.35, current_dir=90.0),
+            commands=[Command(2.0, {"type": "anchor_hold", "radius_m": RADIUS_M})],
+            sim_max_steer_angle_deg=MAX_STEER_DEG,
+            station_keep_vectored=vectored,
+            station_keep_azimuth_deg=120.0,
+            thruster_x_m=thruster_x_m,
+        )
+        return anchor_metrics(run_scenario(scen).tail(120.0))
+
+    for x in (1.7, STERN_X_M):  # bow and stern
+        base = hold(vectored=False, thruster_x_m=x)
+        vec = hold(vectored=True, thruster_x_m=x)
+        assert vec.steady_rms_m < base.steady_rms_m
+        assert vec.within_radius_pct >= base.within_radius_pct
+
+
+def test_analysis_runner_defaults_leave_boat_unchanged():
+    # The new fields must default OFF so every existing scenario/experiment
+    # builds the exact same boat + controller as before (no wide swing, bow
+    # mount, classic PD hold).
+    from vanchor.analysis.runner import Scenario
+
+    s = Scenario(name="d")
+    assert s.sim_max_steer_angle_deg is None
+    assert s.station_keep_vectored is False
+    assert s.station_keep_azimuth_deg == 35.0
+    assert s.thruster_x_m is None
 
 
 # --------------------------------------------------------------------------- #

@@ -86,8 +86,12 @@ class AnchorMLMode:
     idle-at-rest guarantee; the tiny net (trained on the real deployment sensor
     pipeline) adds a correction that tightens the hold. Bounded by construction,
     so the worst case is just the PID. Produces a ManualSetpoint, holds
-    ``state.anchor``. (Eval: residual lifts the PID base from ~66% to ~80% within
-    the watch circle on the deployment pipeline, while staying idle-at-rest safe.)
+    ``state.anchor``. (Eval on the sign-faithful deployment pipeline: at rough
+    parity with the PID base on time-in-radius (~75% vs 75.6%) but holds a
+    *tighter* mean distance at **3-4x less motor energy** -- and recovers the
+    stern mount, which the pre-retrain policy held at only 61.5% vs PID's 77%.
+    The runtime residual-decay guardrail floors it to the PID base if it ever
+    underperforms, so worst-case is still just the PID.)
 
     **Steering polarity / thruster mount (v2).** The mode emits its command in
     the *helm frame*: positive steering always turns the boat to starboard,
