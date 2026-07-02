@@ -14,6 +14,13 @@ clean 10 Hz ground truth) drive off in the field:
     that the clean-feedback training produced.
 
 history=1 still gives a single frame; history>1 stacks frames for memory.
+
+v6: the env applies the runtime Helm's mount-polarity flip (``steer_sign``: +1
+bow, -1 stern) to the physical steering command, so stern-mount scenarios train
+in the same normalised "helm frame" the deployed hybrid executes in (the policy
+and PID base always see +steering = starboard). Policies retrained on this env
+therefore generalise across mounts; the model JSON records ``steer_sign`` so the
+runtime knows the trained convention.
 """
 
 from __future__ import annotations
@@ -72,6 +79,15 @@ class AnchorEnv:
                          self.anchor.lon + de / (_M_PER_DEG * coslat))
         params = FossenParams(mass=s["mass"], hull_tracking=s["hull_tracking"],
                               thruster_x_m=s["thruster_x_m"], max_thrust_n=s["max_thrust_n"])
+        # Mirror the runtime Helm's mount-polarity normalisation (v6): at
+        # deployment the Helm multiplies the WHOLE mode command by steer_sign
+        # (+1 bow, -1 stern) before it reaches the motor, so the policy always
+        # acts in the normalised "helm frame" (+steering = starboard) regardless
+        # of the mount. Apply the identical flip here so stern-mount scenarios
+        # train the SAME polarity the runtime will execute -- without this a
+        # stern scenario inverts the PID base + residual steering relative to
+        # the deployed pipeline (the v5 sign bug).
+        self._steer_sign = 1.0 if s["thruster_x_m"] >= 0 else -1.0
         self.boat = FossenBoat(BoatState(point=start, heading_deg=s["heading"]), params)
         self.boat._nu[:] = [s["u0"], s["v0"], 0.0]
         self.base_env = Environment(
@@ -143,7 +159,10 @@ class AnchorEnv:
         th = float(np.clip(pid_th + self.residual_scale * float(residual[0]), -1.0, 1.0))
         st = float(np.clip(pid_st + self.residual_scale * float(residual[1]), -1.0, 1.0))
         dth, dst = th - self._prev[0], st - self._prev[1]
-        cmd = MotorCommand(thrust=th, steering=st)
+        # The physical steering deflection carries the Helm's mount sign (see
+        # reset); the OBSERVATION (_prev) keeps the helm-frame command, exactly
+        # as the deployed mode sees its own pre-Helm setpoint.
+        cmd = MotorCommand(thrust=th, steering=st * self._steer_sign)
         n_sub = max(1, round(self.dt / self.physics_dt))
         pdt = self.dt / n_sub
         self._prev_p_heading = self._p_heading

@@ -45,6 +45,12 @@ RADIUS = 5.0        # watch-circle radius (m)
 K_TRAIN = 10        # scenarios scored per candidate per generation (v2: lower variance)
 K_VALID = 64        # held-out validation scenarios
 
+# Steering-polarity convention this training pipeline produces (recorded into
+# every saved policy JSON so the runtime can map the residual correctly): the
+# env normalises all mounts into the helm frame (+steering = starboard), i.e.
+# the bow/raw convention -> +1. See env.py ``_steer_sign``.
+POLICY_META = {"steer_sign": 1.0}
+
 
 def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
     obs = env.reset(scenario)
@@ -170,11 +176,11 @@ def main():
                       f"within {mt['within_pct']:5.1f}% | mean_dist {mt['mean_dist_m']:4.2f}m | "
                       f"energy {mt['energy']:.3f} | {rate:.1f} gen/s", flush=True)
                 TinyPolicy(sizes=sizes, params=theta).save(
-                    os.path.join(CKPT_DIR, "latest_policy.json"))
+                    os.path.join(CKPT_DIR, "latest_policy.json"), meta=POLICY_META)
                 if mt["val_return"] > best_val:
                     best_val = mt["val_return"]
                     TinyPolicy(sizes=sizes, params=theta).save(
-                        os.path.join(CKPT_DIR, "best_policy.json"))
+                        os.path.join(CKPT_DIR, "best_policy.json"), meta=POLICY_META)
                 np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
                          gen=gen + 1, best_val=best_val, adam_t=adam_t)
     except KeyboardInterrupt:

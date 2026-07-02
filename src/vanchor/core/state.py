@@ -122,6 +122,16 @@ class NavigationState:
     # normalized steering command to a real azimuth for display/telemetry.
     max_steer_angle_deg: float = 35.0
 
+    # --- Spot-lock quality metric (#34) ----------------------------------- #
+    # Rolling holding-quality numbers, updated by the controller every tick an
+    # anchor mode (PID anchor_hold OR learned anchor_ml) is station-keeping:
+    # RMS radial error and % of time within the anchor radius over a trailing
+    # ~window_s. Reset when the mark is cleared/moved; frozen while paused.
+    spotlock_rms_m: float = 0.0
+    spotlock_pct_in_radius: float = 0.0
+    spotlock_window_s: float = 60.0
+    spotlock_holding_s: float = 0.0  # holding time accumulated (caps at window)
+
     # Diagnostics surfaced to the UI so a human can see *why* the controller
     # is doing what it is doing.
     distance_to_anchor_m: float = 0.0
@@ -199,6 +209,12 @@ class NavigationState:
                 ),
             },
             "distance_to_anchor_m": round(self.distance_to_anchor_m, 2),
+            "spotlock_quality": {
+                "rms_m": round(self.spotlock_rms_m, 2),
+                "pct_in_radius": round(self.spotlock_pct_in_radius, 1),
+                "window_s": self.spotlock_window_s,
+                "holding_s": round(self.spotlock_holding_s, 1),
+            },
             "distance_to_waypoint_m": round(self.distance_to_waypoint_m, 2),
             "cross_track_m": round(self.cross_track_m, 2),
             "bearing_to_dest": round(self.bearing_to_dest, 2),

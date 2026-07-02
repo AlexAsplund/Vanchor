@@ -77,6 +77,12 @@ _CRUISING_MODES = frozenset(
 # Boat-relative jog directions -> heading offset (degrees).
 _JOG_OFFSETS = {"forward": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
 
+# Modes that actively station-keep on ``state.anchor`` (they refresh
+# ``state.distance_to_anchor_m`` every tick) -- the spot-lock quality metric is
+# accumulated only while one of these is holding, so PID anchor-hold and the
+# learned anchor_ml can be compared on the same yardstick.
+_SPOTLOCK_MODES = frozenset({ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML})
+
 
 # Below this |thrust| the trolling motor has no meaningful steering authority
 # (a prop that isn't turning can't vector the boat), so we stop moving the
@@ -125,6 +131,52 @@ class GainSchedule:
     def is_neutral(self) -> bool:
         """True when the schedule leaves the base gain unchanged everywhere."""
         return self.mult_lo == 1.0 and self.mult_hi == 1.0
+
+
+class SpotLockQuality:
+    """Rolling spot-lock quality metric (#34): RMS radial error (m) and % of
+    time within the anchor radius, over an exponentially-weighted trailing
+    window of ``window_s`` seconds.
+
+    Mode-agnostic: it is fed ``state.distance_to_anchor_m`` each control tick
+    while ANY anchor mode is holding, so users can compare the PID hold and the
+    learned hold on identical numbers. Cheap by construction -- two rolling
+    accumulators (EMA of the squared error and of the in-radius indicator),
+    no stored history. The first sample seeds the accumulators directly so the
+    early readout tracks the truth instead of being diluted by a zero seed.
+    """
+
+    def __init__(self, window_s: float = 60.0) -> None:
+        self.window_s = window_s
+        self.reset()
+
+    def reset(self) -> None:
+        self._sq_m2 = 0.0     # EMA of (radial error)^2
+        self._in = 0.0        # EMA of the in-radius indicator (0/1)
+        self.elapsed_s = 0.0  # holding time accumulated (caps at window_s)
+        self._seeded = False
+
+    def update(self, distance_m: float, radius_m: float, dt: float) -> None:
+        if dt <= 0.0:
+            return
+        inside = 1.0 if distance_m <= radius_m else 0.0
+        if not self._seeded:
+            self._sq_m2 = distance_m * distance_m
+            self._in = inside
+            self._seeded = True
+        else:
+            alpha = dt / (self.window_s + dt)
+            self._sq_m2 += (distance_m * distance_m - self._sq_m2) * alpha
+            self._in += (inside - self._in) * alpha
+        self.elapsed_s = min(self.elapsed_s + dt, self.window_s)
+
+    @property
+    def rms_m(self) -> float:
+        return math.sqrt(max(0.0, self._sq_m2))
+
+    @property
+    def pct_in_radius(self) -> float:
+        return 100.0 * min(1.0, max(0.0, self._in))
 
 
 class Helm:
@@ -333,13 +385,22 @@ class Controller:
         }
         # Learned spot-lock (optional): registered only if the shipped tiny-NN
         # model loads, so a missing/invalid model never breaks startup -- the
-        # mode simply isn't offered.
+        # mode simply isn't offered. It mirrors the helm's steer_sign (thruster
+        # mount polarity) so it stays mount-aware; app._apply_boat_specs keeps
+        # both in sync when the boat profile changes.
         try:
             from .anchor_ml import AnchorMLMode
 
-            self.modes[ControlModeName.ANCHOR_ML] = AnchorMLMode()
+            self.modes[ControlModeName.ANCHOR_ML] = AnchorMLMode(
+                steer_sign=self.helm.steer_sign
+            )
         except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
             logger.warning("anchor_ml mode unavailable: %s", exc)
+        # Spot-lock quality metric (#34): rolling RMS radial error + % time in
+        # radius while an anchor mode is holding. Reset whenever the anchor mark
+        # changes; paused when not station-keeping.
+        self.spotlock = SpotLockQuality(window_s=60.0)
+        self._spotlock_anchor: GeoPoint | None = None
         self.safety = SafetyGovernor(safety_config)
         self.safety_status = SafetyStatus()
         self._last_fix_seq = state.fix_seq
@@ -386,6 +447,10 @@ class Controller:
         self.state.motor_command = command
         self.motor.apply(command)
 
+        # Spot-lock quality (#34): accumulate while an anchor mode is holding
+        # (the mode refreshed state.distance_to_anchor_m just above).
+        self._update_spotlock(dt)
+
         # Breadcrumb the boat's path if a track recording is in progress.
         self.track.maybe_record(self.state.position)
 
@@ -403,6 +468,36 @@ class Controller:
             else:
                 self.handle_command({"type": "stop"})
         return command
+
+    def _update_spotlock(self, dt: float) -> None:
+        """Feed the spot-lock quality tracker (#34) from the shared state.
+
+        Accumulates only while an anchor mode is actively holding a mark (both
+        the PID hold and the learned hold, so they are directly comparable);
+        RESETS when the anchor is cleared or moved (a jog / a new drop starts a
+        fresh measurement); PAUSES (keeps the last numbers) when the boat is in
+        another mode with an anchor still set -- distance_to_anchor_m goes stale
+        there and must not pollute the metric.
+        """
+        st = self.state
+        if st.anchor is None:
+            if self._spotlock_anchor is not None:
+                self.spotlock.reset()
+                self._spotlock_anchor = None
+                st.spotlock_rms_m = 0.0
+                st.spotlock_pct_in_radius = 0.0
+                st.spotlock_holding_s = 0.0
+            return
+        if st.mode not in _SPOTLOCK_MODES or st.position is None:
+            return  # paused: anchor set but not actively station-keeping
+        if st.anchor != self._spotlock_anchor:
+            self.spotlock.reset()
+            self._spotlock_anchor = st.anchor
+        self.spotlock.update(st.distance_to_anchor_m, st.anchor_radius_m, dt)
+        st.spotlock_rms_m = self.spotlock.rms_m
+        st.spotlock_pct_in_radius = self.spotlock.pct_in_radius
+        st.spotlock_window_s = self.spotlock.window_s
+        st.spotlock_holding_s = self.spotlock.elapsed_s
 
     def _sensor_ages(self) -> tuple[float | None, float | None]:
         """(heading_age_s, depth_age_s) since each input was last ingested, or

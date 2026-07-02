@@ -14,6 +14,10 @@ import math
 
 import numpy as np
 
+# Thruster mounts covered by training: bow (60%), stern (20%), center (20%) --
+# see sample_scenario. The env normalises the steering polarity per mount the
+# same way the runtime Helm does (env.py ``_steer_sign``), so a stern scenario
+# exercises the same helm-frame control law the deployed boat runs.
 _MOUNTS = {"bow": 1.7, "stern": -1.7, "center": 0.0}
 
 

@@ -54,11 +54,13 @@ class TinyPolicy:
                 x = np.tanh(x)
         return np.tanh(x)  # [thrust, steering] in [-1, 1]
 
-    def save(self, path: str) -> None:
-        json.dump(
-            {"sizes": list(self.sizes), "params": self._theta.tolist()},
-            open(path, "w"),
-        )
+    def save(self, path: str, meta: dict | None = None) -> None:
+        """Serialise to JSON. ``meta`` adds extra metadata keys (e.g. the
+        ``steer_sign`` polarity convention the runtime reads); ``sizes`` and
+        ``params`` always win over colliding meta keys."""
+        d = dict(meta or {})
+        d.update({"sizes": list(self.sizes), "params": self._theta.tolist()})
+        json.dump(d, open(path, "w"))
 
     @classmethod
     def load(cls, path: str) -> "TinyPolicy":
