@@ -40,6 +40,10 @@ computer crash. It's just one convenient way to build the helm, not a
 requirement — and nothing here is needed to *try* Vanchor-NG, which is
 [sim-first](#sim-first).
 
+> ⚠️ **The vanchor-pcb board is in its prototype stage** — under active
+> development, not yet built and validated on the water. Treat the design as a
+> work in progress: review it yourself before ordering or wiring anything.
+
 A typical build wired that way:
 
 ```mermaid
