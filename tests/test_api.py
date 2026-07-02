@@ -168,6 +168,27 @@ def test_host_check_allows_ip_with_port(client):
     assert r.status_code == 200
 
 
+def test_host_check_allows_bare_hostname(client):
+    """A bare single-label LAN machine name (no dot) can't be a public domain."""
+    r = client.get("/api/state", headers={"Host": "spark-11a6:8000"})
+    assert r.status_code == 200
+
+
+def test_host_check_allows_private_lan_suffixes(client):
+    """Router/mDNS private zones (.lan/.home/.internal/.localdomain) are LAN-only."""
+    for host in ("spark-11a6.local.lan", "pilot.home", "boat.internal",
+                 "helm.localdomain"):
+        r = client.get("/api/state", headers={"Host": host})
+        assert r.status_code == 200, f"{host} should be allowed"
+
+
+def test_host_check_still_rejects_public_fqdn(client):
+    """Broadening to LAN names must not accept a public domain (rebinding)."""
+    for host in ("evil.com", "attacker.example.org", "vanchor.io"):
+        r = client.get("/api/state", headers={"Host": host})
+        assert r.status_code == 400, f"{host} must be rejected"
+
+
 def test_host_check_allows_env_var_name(tmp_path, monkeypatch):
     """A hostname explicitly listed in VANCHOR_ALLOWED_HOSTS must be accepted."""
     monkeypatch.setenv("VANCHOR_ALLOWED_HOSTS", "testserver,mypilot.home")

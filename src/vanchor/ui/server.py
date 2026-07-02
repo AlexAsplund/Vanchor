@@ -98,17 +98,30 @@ def _extract_hostname(host: str) -> str:
     return host.rsplit(":", 1)[0] if ":" in host else host
 
 
+# Hostname suffixes that only exist on a private LAN and can never be a public
+# domain an attacker controls -- so accepting them keeps DNS-rebinding
+# protection intact (the attack needs a *public* name resolving to the LAN IP).
+# Covers the common router/mDNS conventions: .local (mDNS/Bonjour), and the
+# private zones routers hand out (.lan, .home, .internal, .localdomain).
+_PRIVATE_HOST_SUFFIXES: tuple[str, ...] = (
+    ".local", ".lan", ".home", ".internal", ".localdomain",
+)
+
+
 def _is_allowed_host(hostname: str, extra: frozenset[str]) -> bool:
     """Return True when ``hostname`` is an acceptable value for the Host header.
 
     Allowed classes:
     * Any IP literal (v4 or v6) -- direct-IP access from the boat LAN.
     * ``localhost`` -- loopback development / SSH-tunnel access.
-    * Any name ending in ``.local`` -- mDNS names on the boat LAN.
+    * A bare single-label hostname (no dot, e.g. ``vanchor``, ``spark-11a6``) --
+      cannot be a public domain, so it's a LAN machine name.
+    * Any name under a private-LAN suffix (``.local`` mDNS, ``.lan``, ``.home``,
+      ``.internal``, ``.localdomain``) -- the names routers assign on a LAN.
     * Any name listed in the ``extra`` set (populated from ``VANCHOR_ALLOWED_HOSTS``).
 
-    Everything else (e.g. an attacker-controlled domain used for DNS rebinding)
-    is rejected.
+    Everything else (a public FQDN like ``evil.com`` pointed at the LAN IP for a
+    DNS-rebinding attack) is rejected.
     """
     if not hostname:
         return False
@@ -117,7 +130,11 @@ def _is_allowed_host(hostname: str, extra: frozenset[str]) -> bool:
         return True
     except ValueError:
         pass
-    if hostname == "localhost" or hostname.endswith(".local"):
+    if hostname == "localhost":
+        return True
+    if "." not in hostname:  # bare LAN machine name, cannot be a public domain
+        return True
+    if hostname.endswith(_PRIVATE_HOST_SUFFIXES):
         return True
     return hostname in extra
 
