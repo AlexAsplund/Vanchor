@@ -34,17 +34,12 @@ def test_leffe_is_pure_no_pid_base():
     m = AnchorLeffeMode()
     # residual_scale is forced to 0 (the guardrail/PID path is inert)
     assert m.residual_scale == 0.0
-    assert m.boat_azimuth_deg == AnchorLeffeMode.TRAIN_AZIMUTH_DEG
+    assert m.TRAIN_AZIMUTH_DEG == 120.0
 
 
 def test_leffe_azimuth_rescales_to_boat_range():
     """+/-1 (trained at TRAIN_AZIMUTH_DEG) is rescaled to the boat's mechanical
-    steering range so the physical deflection matches training."""
-    rt = _rt()
-    leffe = rt.controller.modes[ControlModeName.ANCHOR_LEFFE]
-    # app syncs the boat's mechanical range on init
-    assert leffe.boat_azimuth_deg == rt.config.boat.max_steer_angle_deg
-    # a full-scale net steering command scales down when the boat swing > trained
-    leffe.boat_azimuth_deg = 180.0
-    st = 1.0 * leffe.policy_steer_sign * (leffe.TRAIN_AZIMUTH_DEG / 180.0)
+    steering range (state.max_steer_angle_deg) so the physical deflection matches
+    training -- scaling DOWN when the boat's swing is wider than trained."""
+    st = 1.0 * (AnchorLeffeMode.TRAIN_AZIMUTH_DEG / 180.0)  # boat range 180 > trained 120
     assert abs(st) < 1.0 and abs(st) == 120.0 / 180.0

@@ -74,6 +74,11 @@ def test_hybrid_command_stays_near_the_pid_base():
     the robust base -- the worst case is just the PID."""
     m = AnchorMLMode()
     st = NavigationState()
+    # Evaluate the residual bound in the policy's own (trained) steering frame:
+    # set the boat range to the trained azimuth so the deploy-time rescale is
+    # identity. On the real 180° boat the rescale only shrinks steering further
+    # (0.67x), so the command stays at least this close to the PID base.
+    st.max_steer_angle_deg = m.train_azimuth_deg or st.max_steer_angle_deg
     st.fix = GpsFix(point=GeoPoint(59.001, 18.001), sog_knots=0.4, cog_deg=90.0)
     st.anchor = GeoPoint(59.0, 18.0)
     st.heading_deg = 20.0

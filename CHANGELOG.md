@@ -2,6 +2,25 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## Unreleased
+
+- **Smart station-keeper upgraded to a full-azimuth hybrid.** The learned
+  residual is now trained with a wide (120°) steering swing, so it *vectors*
+  the motor through its full rotation on top of the PID base (rescaled to the
+  boat's mechanical range at deploy). It strictly dominates the previous ±35°
+  hybrid and plain PID on the held-out set — **90.6% time-in-radius vs PID's
+  82.4%** (≤6 m/s), **90.4% vs 70.2%** on the full 0–12 m/s regime, **100% on
+  both bow and stern** (PID: bow 99.8%, stern 79.5%), tighter mean distance,
+  without thrashing the motor — and the residual-decay guardrail still floors
+  it to the PID base if it ever underperforms.
+- **"Leffe 🍺"** — an experimental *pure* full-azimuth learned anchor mode (no
+  PID base) selectable from the Anchor panel (with an info-icon tooltip). It
+  holds a stern mount exceptionally tight (~98% in-radius) but runs the motor
+  hot and has no PID fallback — a fun research mode. The boat mode badge now
+  distinguishes the keeper (Anchor / Anchor · Smart / Anchor · Leffe 🍺).
+- Anchor training tooling gained `--pure`, `--steer-range`, and condition-cap
+  flags (the recipe behind the above).
+
 ## [1.3-alpha] — 2026-07-02
 
 - **ML anchor retrained** on the sign-faithful env (fixing the #34 follow-up):

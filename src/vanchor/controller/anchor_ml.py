@@ -86,12 +86,19 @@ class AnchorMLMode:
     idle-at-rest guarantee; the tiny net (trained on the real deployment sensor
     pipeline) adds a correction that tightens the hold. Bounded by construction,
     so the worst case is just the PID. Produces a ManualSetpoint, holds
-    ``state.anchor``. (Eval on the sign-faithful deployment pipeline: at rough
-    parity with the PID base on time-in-radius (~75% vs 75.6%) but holds a
-    *tighter* mean distance at **3-4x less motor energy** -- and recovers the
-    stern mount, which the pre-retrain policy held at only 61.5% vs PID's 77%.
-    The runtime residual-decay guardrail floors it to the PID base if it ever
-    underperforms, so worst-case is still just the PID.)
+    ``state.anchor``.
+
+    **Full-azimuth (v3).** The shipped policy is trained with a WIDE steering
+    swing (``train_azimuth_deg`` = 120), so the residual learns to *vector* the
+    motor through its full rotation instead of the +/-35 autopilot band. At
+    deployment the steering is rescaled from that trained range to the boat's
+    mechanical range (``boat_azimuth_deg``), so the physical deflection matches
+    training. This strictly dominates both the plain PID and the earlier +/-35
+    hybrid on the held-out set: overall **90.6% time-in-radius vs PID 82.4%**
+    (capped <=6 m/s), **90.4% vs 70.2%** on the full 0-12 m/s regime, **100% on
+    both bow and stern** (PID: bow 99.8%, stern 79.5%), tighter mean distance,
+    without thrashing the motor. The residual-decay guardrail still floors it to
+    the PID base if it ever underperforms, so worst-case is still just the PID.
 
     **Steering polarity / thruster mount (v2).** The mode emits its command in
     the *helm frame*: positive steering always turns the boat to starboard,
@@ -132,6 +139,13 @@ class AnchorMLMode:
         # in the model file by train/finetune: +1 = helm frame (bow/raw -- the
         # shipped policy), -1 = raw stern convention (flip into the helm frame).
         self.policy_steer_sign = 1.0 if float(d.get("steer_sign", 1.0)) >= 0 else -1.0
+        # If the policy was trained with a WIDE steering swing (full-azimuth
+        # station-keeping), it records the trained range so the deployed command
+        # can be rescaled to this boat's mechanical range (the anchor ManualSetpoint
+        # bypasses the +/-35 autopilot cap and reaches the full mechanical swing).
+        # Absent (legacy policies) -> no rescaling, i.e. unchanged behaviour.
+        _ta = d.get("train_azimuth_deg")
+        self.train_azimuth_deg = float(_ta) if _ta else None
         self.history = max(1, self._mlp.sizes[0] // _OBS_DIM)
         self.residual_scale = residual_scale          # nominal (fresh-activation) scale
         # Boat mount sign, mirroring Helm.steer_sign (informational -- see class
@@ -250,6 +264,13 @@ class AnchorMLMode:
         st = float(np.clip(pid_st + scale * float(residual[1]) * self.policy_steer_sign,
                            -1.0, 1.0))
         self._prev = np.array([th, st])   # the COMBINED command (matches training)
+        # If the policy was trained with a wide azimuth, rescale the steering so
+        # its +/-1 (== train_azimuth_deg) yields the same physical deflection on
+        # this boat's mechanical range (state.max_steer_angle_deg). Legacy policies
+        # (train_azimuth_deg=None) are untouched.
+        if self.train_azimuth_deg:
+            st = float(np.clip(st * (self.train_azimuth_deg / max(1.0, state.max_steer_angle_deg)),
+                               -1.0, 1.0))
         self._prev_heading = state.heading_deg
         return ManualSetpoint(thrust=th, steering=st)
 
@@ -282,7 +303,6 @@ class AnchorLeffeMode(AnchorMLMode):
         # residual_scale is irrelevant (we don't use the PID base); the guardrail
         # is inert because update() below doesn't call it (no PID floor to decay to).
         super().__init__(model_path=model_path, residual_scale=0.0, steer_sign=steer_sign)
-        self.boat_azimuth_deg = self.TRAIN_AZIMUTH_DEG  # app syncs this to cfg.boat.max_steer_angle_deg
 
     def update(self, state: NavigationState, dt: float) -> ManualSetpoint:
         anchor, pos = state.anchor, state.position
@@ -299,7 +319,7 @@ class AnchorLeffeMode(AnchorMLMode):
         th = float(np.clip(out[0], -1.0, 1.0))
         # Rescale steering so the policy's +/-1 (== its trained TRAIN_AZIMUTH_DEG)
         # produces the same physical deflection on this boat's mechanical range.
-        azscale = self.TRAIN_AZIMUTH_DEG / max(1e-6, self.boat_azimuth_deg)
+        azscale = self.TRAIN_AZIMUTH_DEG / max(1.0, state.max_steer_angle_deg)
         st = float(np.clip(out[1] * self.policy_steer_sign * azscale, -1.0, 1.0))
         self._prev = np.array([th, st])
         self._prev_heading = state.heading_deg

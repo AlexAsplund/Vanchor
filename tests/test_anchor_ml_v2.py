@@ -91,7 +91,11 @@ def _rig_stern_boat(h: Harness) -> None:
     flip the physics lever arm AND the helm's steer_sign (+ the mode mirror)."""
     from vanchor.sim.fossen import FossenParams
 
-    h.sim.boat.params = FossenParams(thruster_x_m=-1.7)
+    # Full mechanical steering swing, like the real deployment (config default
+    # 180°, the wide worm-gear servo) -- the shipped full-azimuth Smart policy is
+    # trained for and rescaled to that range.
+    h.sim.boat.params = FossenParams(thruster_x_m=-1.7, max_steer_angle_deg=180.0)
+    h.state.max_steer_angle_deg = 180.0
     rebuild = getattr(h.sim.boat, "_build_matrices", None)
     if callable(rebuild):
         rebuild()
