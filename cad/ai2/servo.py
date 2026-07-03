@@ -1,26 +1,34 @@
 """
-Steering servo v3 — robust watertight 2:1 worm-gear actuator with
+Steering servo v3 — robust watertight 1:1 worm-gear actuator with
 hall-indexed absolute feedback.
 
-Clean-sheet redesign (PETG-first) around the 5840-31ZY worm gearmotor,
-AS5600 encoder and the 25.4 mm trolling-motor shaft, optimised for
-robustness and torque rather than size:
+Clean-sheet redesign (PETG-first) around the 5840-31ZY worm gearmotor
+(20 rpm high-torque variant), AS5600 encoder and the 25.4 mm
+trolling-motor shaft:
 
-  * 2:1 drive (pinion z16 / ring z32, module 2, PA 22.5deg, 16 mm face)
-    -> ~2x motor torque at the output, ~13 MPa tooth stress at stall.
-  * Full-360deg absolute WITHOUT a third 1:1 sense gear: the AS5600 sits
-    on the pinion (2 turns per output rev, 0.044deg effective) and a
-    hall switch under the ring gear fires once per OUTPUT revolution.
-    Firmware: azimuth = as5600/2 + k*180deg, k resolved/validated at
-    every index crossing -> easy zeroing, self-healing drift check.
-  * Sealing system proven in v2, unchanged in principle: hollow output
-    hub running in two TC 35x47x7 rotary lip seals, flat TPU gasket,
-    blind heat-set bosses (no fastener reaches the interior), motor
-    clamped by nest+strap (no shell penetrations), PG7 gland, blind
-    vent + grease pilots, plus a new press-on splash cap over the lid
-    bore.
-  * Robust shell: 3 mm walls, 4 mm floor, 7.5 mm lid, O10 bosses,
-    full-length 8 mm transom-mount flanges with slotted holes.
+  * 1:1 drive (z24/z24, module 2, PA 22.5deg, 16 mm face). The 20 rpm
+    5840 variant already delivers several times the needed torque, so a
+    reduction would only halve steering speed AND concentrate more
+    tooth force on a smaller pinion. 1:1 keeps 120 deg/s at the shaft
+    and the larger pinion radius keeps stall tooth stress ~35 MPa -
+    the printed gears remain the designed fuse against a hard jam.
+  * Absolute full-360deg: AS5600 on the pinion reads output azimuth
+    directly (1:1). A hall switch (TO-92 in a lid boss) over an index
+    magnet in the pinion top face fires once per revolution: a physical
+    zero reference independent of gear meshing at assembly, plus a
+    drift/slip self-check every rev. Firmware:
+    azimuth = as5600 + stored_offset; re-validate at each index pulse.
+  * Sealing: hollow output hub running in two TC 35x47x7 rotary lip
+    seals; lid sealed by a FORM-IN-PLACE neutral-cure silicone bead in
+    a shallow rim channel (no printed TPU gasket); blind heat-set
+    bosses (no fastener reaches the interior); motor clamped by
+    nest+strap (no shell penetrations); PG7 gland; blind vent + grease
+    pilots; press-on splash cap over the lid bore.
+  * Plastic-optimised shell: 2 mm walls / 2.8 mm floor (waterproofing
+    comes from an epoxy/paint coat, rigidity from the box shape + the
+    motor itself), 6.5 mm lid only where the seal pocket needs it,
+    O8 bosses. No hold-down flanges: the housing is retained by the
+    user's transom-mount design.
 
 Toolchain: build123d + bd_warehouse (aarch64; CadQuery unavailable).
 Run:  .venv/bin/python cad/ai2/servo.py   -> STL + STEP in cad/ai2/out/
@@ -47,11 +55,11 @@ class P:
     shaft_clear: float = 0.3       # coupler bore clearance (clamped closed)
     hub_bore_clear: float = 1.0    # hub tube runs free around the shaft
 
-    # --- gears: 2:1 reduction, indexed absolute feedback ---
+    # --- gears: 1:1, AS5600 reads output azimuth directly ---
     module: float = 2.0
-    teeth_p: int = 16              # pinion (AS5600 axis)
-    teeth_r: int = 32              # output ring on the hub
-    pressure_angle: float = 22.5   # no undercut at z16, stubbier teeth
+    teeth_p: int = 24              # pinion (AS5600 axis)
+    teeth_r: int = 24              # output gear on the hub
+    pressure_angle: float = 22.5   # stubby strong teeth
     gear_t: float = 16.0           # face width
     backlash_cd: float = 0.25
 
@@ -85,43 +93,42 @@ class P:
     enc_board_t: float = 1.6
     enc_chip_h: float = 0.9
 
-    # --- hall index (on ring underside) ---
-    idx_magnet_d: float = 4.0      # axial O4x2 in the ring web
+    # --- hall index (magnet in pinion top face, sensor in a lid boss) ---
+    idx_magnet_d: float = 4.0      # axial O4x2
     idx_magnet_h: float = 2.0
-    idx_r: float = 26.5            # orbit radius (solid web, clears boss)
+    idx_r: float = 17.5            # orbit radius on the pinion (inside root)
     idx_gap: float = 1.2           # magnet face to sensor face
     idx_body: float = 5.2          # TO-92 pocket width (4.6 body + fit)
     idx_body_t: float = 3.4        # TO-92 pocket thickness
 
-    # --- housing (robust) ---
-    wall: float = 3.0
-    floor_t: float = 4.0
-    lid_t: float = 7.5
-    rim_flange: float = 1.5
+    # --- housing (original-gauge walls: epoxy/paint handles porosity,
+    # the motor + box shape handle rigidity) ---
+    wall: float = 2.0
+    floor_t: float = 2.8
+    lid_t: float = 6.5
+    rim_flange: float = 2.2
     corner_r: float = 4.0
     gap_gear_wall: float = 2.5
     wire_bay: float = 13.0
     gland_hole_d: float = 12.2     # PG7
     pilot_d: float = 5.5           # blind vent + grease pilots
-    flange_t: float = 8.0          # transom-mount flange
-    flange_w: float = 14.0
-    flange_slot: float = 6.5       # slot width (M6 clearance), 12 long
-    flange_slot_ys: tuple = (0.0, 110.0)
 
-    # --- gasket ---
-    gasket_t: float = 2.0
-    gasket_squeeze: float = 0.5
+    # --- form-in-place silicone gasket (neutral-cure bead in a rim channel) ---
+    groove_w: float = 2.4          # retention channel width in the rim
+    groove_d: float = 0.8          # channel depth
+    groove_inset: float = 0.7      # channel inner edge from the outer face
 
     # --- fasteners ---
     insert_hole_d: float = 4.0
     insert_hole_h: float = 8.0
     m3_clear: float = 3.4
     m3_cb_d: float = 6.5
-    boss_d: float = 10.0
+    boss_d: float = 8.0
     m4_clear: float = 4.3
     m4_head_d: float = 8.2
     m4_nut_af: float = 7.3
     m4_nut_t: float = 3.6
+    # boss_d 8: O4 insert pocket + 2 mm wall - enough for M3 insert torque
 
     # --- coupler / drive hex / splash cap ---
     hex_af: float = 30.3
@@ -175,7 +182,7 @@ class P:
     @property
     def hub_z1(self):         return self.land_z1 + self.hex_h
     @property
-    def h_int(self):          return 70.0
+    def h_int(self):          return 64.6
     @property
     def inner_w(self):        return self.ring_od + 2 * self.gap_gear_wall
     @property
@@ -191,7 +198,7 @@ class P:
     @property
     def y_max(self):          return self.can_y1 + self.wire_bay
     @property
-    def lid_z0(self):         return self.h_int + self.gasket_t - self.gasket_squeeze
+    def lid_z0(self):         return self.h_int  # lid seats on the rim (FIPG)
     @property
     def lid_z1(self):         return self.lid_z0 + self.lid_t
     @property
@@ -199,11 +206,11 @@ class P:
     @property
     def screw_x(self):        return self.half_w - (self.boss_d / 2 - 0.3)
     @property
-    def screw_ys(self):       return [self.y_min + 4.7, 40.0, 78.0, 115.0, self.y_max - 4.7]
-    @property
-    def idx_tower_top(self):  return self.gear_z0 - self.idx_magnet_h - self.idx_gap + 1.2
+    def screw_ys(self):       return [self.y_min + 4.7, 24.0, 70.0, 102.0, self.y_max - 4.7]
     @property
     def pin_boss_z1(self):    return self.gear_z1 + 4  # pinion magnet boss top
+    @property
+    def hall_face_z(self):    return self.gear_z1 + self.idx_gap  # sensor face
 
 
 p = P()
@@ -212,13 +219,14 @@ p = P()
 assert p.mot_y0 > p.boss_or + 1.0, "gearbox nose hits the floor seal boss"
 assert p.top_pocket_z1 < p.lid_z1 - 1.5, "seal pocket roof too thin"
 assert p.hex_af / math.cos(math.radians(30)) <= p.seal_land_d + 0.05
-assert p.idx_r + p.idx_magnet_d / 2 < p.pd_r / 2 - p.module * 1.25 - 0.5, \
-    "index magnet orbit must stay in the solid ring web"
-assert p.idx_r - p.idx_magnet_d / 2 > p.boss_or - 2.5, "index orbit under boss wall"
-assert math.hypot(p.screw_x, p.screw_ys[1]) > p.ring_od / 2 + p.boss_d / 2 + 0.5, \
-    "first mid screw boss inside the ring gear sweep"
+assert p.idx_r + p.idx_magnet_d / 2 < p.pd_p / 2 - p.module * 1.25 - 0.4, \
+    "index magnet orbit must stay inside the pinion root circle"
+for _ys in p.screw_ys:
+    assert math.hypot(p.screw_x, _ys) > p.ring_od / 2 + p.boss_d / 2 + 0.4 and \
+        math.hypot(p.screw_x, _ys - p.cd) > p.ring_od / 2 + p.boss_d / 2 + 0.4, \
+        f"screw boss at y={_ys} inside a gear sweep"
 assert p.face_z + p.mot_shaft_len <= p.pin_boss_z1 - p.magnet_h - 1.0
-assert p.idx_tower_top < p.gear_z0 - 0.5, "hall tower hits the ring"
+assert p.hall_face_z > p.gear_z1 + 0.8, "hall boss touches the pinion"
 
 
 def _gear(teeth):
@@ -245,10 +253,6 @@ def hub_gear():
     hub -= Pos(0, 0, p.hub_z0 - 1) * Cylinder(
         p.hub_bore_d / 2, p.hub_z1 - p.hub_z0 + 2,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
-    # index magnet pocket, underside web, axial
-    hub -= Pos(p.idx_r, 0, p.gear_z0 - 0.1) * Cylinder(
-        p.idx_magnet_d / 2 + 0.1, p.idx_magnet_h + 0.3,
-        align=(Align.CENTER, Align.CENTER, Align.MIN))
     return hub
 
 
@@ -271,6 +275,10 @@ def pinion():
     part -= void - tongue
     part -= Pos(0, 0, p.pin_boss_z1 - p.magnet_h - 0.1) * Cylinder(
         p.magnet_d / 2 + 0.1, p.magnet_h + 0.2,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    # index magnet pocket in the top face (flush), same phase as output at 1:1
+    part -= Pos(p.idx_r, 0, p.gear_z1 - p.idx_magnet_h - 0.2) * Cylinder(
+        p.idx_magnet_d / 2 + 0.1, p.idx_magnet_h + 0.3,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
     part -= Pos(0, 14, p.gear_z0 + 7) * Rot(90, 0, 0) * Cylinder(1.3, 24)
     return part
@@ -356,6 +364,18 @@ def housing():
     fl_in = fillet(fl_in.edges().filter_by(Axis.Z), 0.6)
     part += flange - fl_in
 
+    # form-in-place gasket: shallow silicone retention channel in the rim,
+    # passing outboard of every screw hole (bead stays continuous over the
+    # boss tops)
+    og = Pos(0, yc) * Rectangle(p.inner_w + 2 * p.wall - 2 * p.groove_inset,
+                                L + 2 * p.wall - 2 * p.groove_inset)
+    og = fillet(og.vertices(), p.corner_r - 0.5)
+    ig = Pos(0, yc) * Rectangle(
+        p.inner_w + 2 * p.wall - 2 * (p.groove_inset + p.groove_w),
+        L + 2 * p.wall - 2 * (p.groove_inset + p.groove_w))
+    ig = fillet(ig.vertices(), max(0.5, p.corner_r - 0.5 - p.groove_w))
+    part -= Pos(0, 0, p.h_int - p.groove_d) * extrude(og - ig, p.groove_d + 1)
+
     # ---- floor seal boss ----
     part += Cylinder(p.boss_or, p.boss_rim_z,
                      align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -372,29 +392,18 @@ def housing():
         (p.shaft_d + 3.1) / 2, p.floor_t + 2,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
 
-    # ---- hall-index tower (ribbed, fused to the seal boss) ----
-    part += Pos(p.idx_r, 0, p.idx_tower_top / 2) * Cylinder(6, p.idx_tower_top)
-    part += Pos(p.idx_r + 5, 0, p.idx_tower_top / 2 - 4) * Box(
-        6, 8, p.idx_tower_top - 8)                     # outboard stiffening rib
-    part -= Pos(p.idx_r, 0, p.idx_tower_top - p.idx_body_t) * Box(
-        p.idx_body, p.idx_body, p.idx_body_t + 0.1,
-        align=(Align.CENTER, Align.CENTER, Align.MIN))         # TO-92 pocket
-    part -= Pos(p.idx_r + 4, 0, p.idx_tower_top - p.idx_body_t) * Box(
-        8, 3, p.idx_body_t + 0.1,
-        align=(Align.MIN, Align.CENTER, Align.MIN))            # lead notch
-
     # ---- motor nest ----
     hw = p.mot_box_w / 2 + p.mot_fit
     for s in (1, -1):
         part += Pos(s * (hw / 2 + 2), (p.mot_y0 + p.mot_y1) / 2, 1) * Box(
             hw - 4, p.mot_box_l - 1, 2)
-        part += Pos(s * (hw + 1.5), (p.mot_y0 + p.mot_y1) / 2,
-                    (p.face_z - 0.5) / 2) * Box(3, p.mot_box_l, p.face_z - 0.5)
-    front = Pos(0, p.mot_y0 - 1.5 - p.mot_fit, (p.face_z - 0.5) / 2) * Box(
-        2 * hw + 6, 3, p.face_z - 0.5)
-    rear = Pos(0, p.mot_y1 + 1.5 + p.mot_fit, (p.face_z - 0.5) / 2) * Box(
-        2 * hw + 6, 3, p.face_z - 0.5)
-    can_relief = Pos(0, p.mot_y1 + 1.5, p.can_axis_z) * Rot(90, 0, 0) * Cylinder(
+        part += Pos(s * (hw + 1.2), (p.mot_y0 + p.mot_y1) / 2,
+                    (p.face_z - 0.5) / 2) * Box(2.4, p.mot_box_l, p.face_z - 0.5)
+    front = Pos(0, p.mot_y0 - 1.2 - p.mot_fit, (p.face_z - 0.5) / 2) * Box(
+        2 * hw + 4.8, 2.4, p.face_z - 0.5)
+    rear = Pos(0, p.mot_y1 + 1.2 + p.mot_fit, (p.face_z - 0.5) / 2) * Box(
+        2 * hw + 4.8, 2.4, p.face_z - 0.5)
+    can_relief = Pos(0, p.mot_y1 + 1.2, p.can_axis_z) * Rot(90, 0, 0) * Cylinder(
         p.mot_can_d / 2 + 0.5, 24)
     part += front + (rear - can_relief)
 
@@ -405,7 +414,7 @@ def housing():
         p.mot_can_d / 2 + 0.1, 20)
     part += saddle
     for s in (1, -1):
-        part += Pos(s * (p.mot_can_d / 2 + 5), sad_y, 12) * Cylinder(5, 24)
+        part += Pos(s * (p.mot_can_d / 2 + 5), sad_y, 12) * Cylinder(4.5, 24)
         part -= Pos(s * (p.mot_can_d / 2 + 5), sad_y, 24 - p.insert_hole_h) * \
             Cylinder(p.insert_hole_d / 2, p.insert_hole_h + 0.1,
                      align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -428,19 +437,7 @@ def housing():
             Cylinder(p.pilot_d / 2, 1.6,
                      align=(Align.CENTER, Align.CENTER, Align.MIN))
 
-    # ---- transom-mount flanges (full-length rails, slotted) ----
-    # rails span z -floor_t .. -floor_t + flange_t, flush with the base
-    for s in (1, -1):
-        fx = s * (p.half_w + p.wall + p.flange_w / 2)
-        rail = Pos(fx, (p.y_min + p.y_max) / 2,
-                   -p.floor_t + p.flange_t / 2) * Box(
-            p.flange_w, L + 2 * p.wall, p.flange_t)
-        rail = fillet(rail.edges().filter_by(Axis.Z), 2.0)
-        for sy in p.flange_slot_ys:
-            rail -= Pos(fx, sy, -p.floor_t - 1) * extrude(
-                SlotCenterToCenter(12 - p.flange_slot, p.flange_slot,
-                                   rotation=90), p.flange_t + 2)
-        part += rail
+    # no hold-down flanges: the transom-mount design retains the housing
     return part
 
 
@@ -461,6 +458,18 @@ def lid():
     part -= Pos(0, 0, p.top_pocket_z1) * Cylinder(
         37.0 / 2, p.lid_z1 - p.top_pocket_z1 + 1,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
+    # hall-index boss over the pinion's magnet orbit (pocket opens down;
+    # prints upward in the lid's top-face-down orientation)
+    hall_y = p.cd + p.idx_r   # far side of the pinion, clear of the hub cone
+    part += Pos(0, hall_y, p.hall_face_z) * Cylinder(
+        6, p.lid_z0 - p.hall_face_z + 0.1,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part -= Pos(0, hall_y, p.hall_face_z - 0.1) * Box(
+        p.idx_body, p.idx_body, p.idx_body_t + 0.1,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))          # TO-92 pocket
+    part -= Pos(0, hall_y + 4, p.hall_face_z - 0.1) * Box(
+        3, 8, p.idx_body_t + 0.1,
+        align=(Align.CENTER, Align.MIN, Align.MIN))             # lead notch
     board_top = p.pin_boss_z1 + p.magnet_gap + p.enc_chip_h + p.enc_board_t
     for sx in (1, -1):
         for sy in (1, -1):
@@ -497,23 +506,6 @@ def strap():
     return block
 
 
-def gasket():
-    """Flat lid gasket (TPU print or neoprene template)."""
-    yc = (p.y_min + p.y_max) / 2
-    L = p.y_max - p.y_min
-    ring = Rectangle(p.inner_w + 2 * p.wall - 0.4, L + 2 * p.wall - 0.4)
-    ring = fillet(ring.vertices(), p.corner_r)
-    inner = Rectangle(p.inner_w - 2 * p.rim_flange, L - 2 * p.rim_flange)
-    inner = fillet(inner.vertices(), 0.6)
-    sk = Pos(0, yc) * (ring - inner)
-    pts = [(s * p.screw_x, ys) for ys in p.screw_ys for s in (1, -1)]
-    pts += [(0.0, p.y_max - 4.7)]  # no -Y end boss: ring gear sweeps there
-    for bx, by in pts:
-        sk += Pos(bx, by) * Circle(p.boss_d / 2 + 0.3)
-        sk -= Pos(bx, by) * Circle(p.m3_clear / 2)
-    return Pos(0, 0, p.h_int) * extrude(sk, p.gasket_t)
-
-
 # ============================================================
 # BUILD + EXPORT
 # ============================================================
@@ -525,7 +517,7 @@ def zero(part, flip=False):
 
 
 if __name__ == "__main__":
-    print(f"2:1 drive  CD {p.cd}  ring OD {p.ring_od}  pinion PD {p.pd_p}  "
+    print(f"{p.teeth_r}/{p.teeth_p} drive  CD {p.cd}  gear OD {p.ring_od}  "
           f"interior {p.inner_w:.0f} x {p.y_max - p.y_min:.0f} x {p.h_int:.0f}")
     parts = {
         "HubGear": (hub_gear(), True),
@@ -535,7 +527,6 @@ if __name__ == "__main__":
         "Housing": (housing(), False),
         "Lid": (lid(), True),
         "Strap": (strap(), True),
-        "GasketTPU": (gasket(), False),
     }
     os.makedirs(OUT, exist_ok=True)
     asm = []
