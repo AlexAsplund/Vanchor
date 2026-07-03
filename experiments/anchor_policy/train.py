@@ -51,6 +51,13 @@ K_VALID = 64        # held-out validation scenarios
 # the bow/raw convention -> +1. See env.py ``_steer_sign``.
 POLICY_META = {"steer_sign": 1.0}
 
+# EXPERIMENT globals (set in main before the Pool forks so workers inherit them).
+_PURE = False
+_STEER = None
+_WIND_CAP = None
+_CUR_CAP = None
+_GUST_CAP = None
+
 
 def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
     obs = env.reset(scenario)
@@ -72,7 +79,7 @@ def _score(args):
     """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation)."""
     theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP)
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
@@ -80,7 +87,7 @@ def _score(args):
 def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP)
     win, md, en, rr = [], [], [], []
     for sc in validation_batch(K_VALID):
         ret, dists, energy = _rollout(pol, env, sc)
@@ -117,9 +124,19 @@ def main():
     ap.add_argument("--history", type=int, default=1)    # v2: stacked obs frames
     ap.add_argument("--arate", type=float, default=0.0)   # v2: action-rate penalty
     ap.add_argument("--anticip", type=float, default=0.0)  # v6: anticipation (outward-drift) penalty
+    ap.add_argument("--pure", action="store_true")         # EXPERIMENT: command = net (no PID base)
+    ap.add_argument("--steer-range", type=float, default=None)  # EXPERIMENT: wide azimuth (deg)
+    ap.add_argument("--ckpt-dir", default=CKPT_DIR)
+    ap.add_argument("--wind-cap", type=float, default=None)     # EXPERIMENT: cap wind (m/s)
+    ap.add_argument("--current-cap", type=float, default=None)  # EXPERIMENT: cap current (m/s)
+    ap.add_argument("--gust-cap", type=float, default=None)     # EXPERIMENT: cap gust amplitude
     args = ap.parse_args()
+    global _PURE, _STEER, _WIND_CAP, _CUR_CAP, _GUST_CAP
+    _PURE, _STEER = args.pure, args.steer_range
+    _WIND_CAP, _CUR_CAP, _GUST_CAP = args.wind_cap, args.current_cap, args.gust_cap
 
-    os.makedirs(CKPT_DIR, exist_ok=True)
+    ckpt = args.ckpt_dir
+    os.makedirs(ckpt, exist_ok=True)
     rng = np.random.default_rng(0)
     sizes = (OBS_DIM * args.history,) + HIDDEN + (ACT_DIM,)
     proto = TinyPolicy(sizes=sizes, rng=rng)
@@ -129,7 +146,7 @@ def main():
     start_gen, best_val, adam_t = 0, -1e18, 0
     b1, b2, eps_a = 0.9, 0.999, 1e-8
 
-    state_path = os.path.join(CKPT_DIR, "state.npz")
+    state_path = os.path.join(ckpt, "state.npz")
     if os.path.exists(state_path) and not args.no_resume:
         st = np.load(state_path)
         theta, m_adam, v_adam = st["theta"], st["m"], st["v"]
@@ -139,7 +156,7 @@ def main():
     else:
         print(f"fresh start: {n} params, pop={args.pop}x2, workers={args.workers}, dt={args.dt}")
 
-    log_path = os.path.join(CKPT_DIR, "log.jsonl")
+    log_path = os.path.join(ckpt, "log.jsonl")
     pool = Pool(args.workers)
     t0 = time.time()
     try:
@@ -176,11 +193,11 @@ def main():
                       f"within {mt['within_pct']:5.1f}% | mean_dist {mt['mean_dist_m']:4.2f}m | "
                       f"energy {mt['energy']:.3f} | {rate:.1f} gen/s", flush=True)
                 TinyPolicy(sizes=sizes, params=theta).save(
-                    os.path.join(CKPT_DIR, "latest_policy.json"), meta=POLICY_META)
+                    os.path.join(ckpt, "latest_policy.json"), meta=POLICY_META)
                 if mt["val_return"] > best_val:
                     best_val = mt["val_return"]
                     TinyPolicy(sizes=sizes, params=theta).save(
-                        os.path.join(CKPT_DIR, "best_policy.json"), meta=POLICY_META)
+                        os.path.join(ckpt, "best_policy.json"), meta=POLICY_META)
                 np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
                          gen=gen + 1, best_val=best_val, adam_t=adam_t)
     except KeyboardInterrupt:

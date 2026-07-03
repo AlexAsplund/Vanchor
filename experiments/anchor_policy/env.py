@@ -47,7 +47,24 @@ class AnchorEnv:
                  history: int = 1, arate: float = 0.0, physics_dt: float = 0.05,
                  gps_hz: float = 5.0, compass_hz: float = 5.0,
                  gps_noise_m: float = 0.35, heading_noise_deg: float = 1.0,
-                 residual_scale: float = 0.3, anticip: float = 0.0):
+                 residual_scale: float = 0.3, anticip: float = 0.0,
+                 pure: bool = False, steer_range_deg: float | None = None,
+                 wind_cap: float | None = None, current_cap: float | None = None,
+                 gust_cap: float | None = None):
+        # EXPERIMENT: pure=True makes the net output the command DIRECTLY
+        # (command = clip(net), no PID base) -- a from-scratch learned controller
+        # rather than a PID refiner. steer_range_deg widens the boat's physical
+        # steering swing (default 35 deg) so a pure policy can learn to VECTOR
+        # thrust through the full rotation.
+        self.pure = bool(pure)
+        self.steer_range_deg = steer_range_deg
+        # EXPERIMENT: cap the environmental severity to the HOLDABLE regime so the
+        # policy trains on conditions a trolling motor can actually station-keep in
+        # (the un-holdable 12 m/s tail otherwise dominates the average). Applied to
+        # both the training and validation scenarios on reset.
+        self.wind_cap = wind_cap
+        self.current_cap = current_cap
+        self.gust_cap = gust_cap
         # anticip: extra reward (penalty) for letting the boat drift OUTWARD from
         # the anchor -- rewards arresting drift *before* it becomes position error,
         # i.e. anticipatory / feed-forward control rather than chase-after-the-fact.
@@ -77,8 +94,10 @@ class AnchorEnv:
         de = s["start_dist"] * math.sin(s["start_bearing"])
         start = GeoPoint(self.anchor.lat + dn / _M_PER_DEG,
                          self.anchor.lon + de / (_M_PER_DEG * coslat))
+        _extra = {"max_steer_angle_deg": self.steer_range_deg} if self.steer_range_deg else {}
         params = FossenParams(mass=s["mass"], hull_tracking=s["hull_tracking"],
-                              thruster_x_m=s["thruster_x_m"], max_thrust_n=s["max_thrust_n"])
+                              thruster_x_m=s["thruster_x_m"], max_thrust_n=s["max_thrust_n"],
+                              **_extra)
         # Mirror the runtime Helm's mount-polarity normalisation (v6): at
         # deployment the Helm multiplies the WHOLE mode command by steer_sign
         # (+1 bow, -1 stern) before it reaches the motor, so the policy always
@@ -90,10 +109,13 @@ class AnchorEnv:
         self._steer_sign = 1.0 if s["thruster_x_m"] >= 0 else -1.0
         self.boat = FossenBoat(BoatState(point=start, heading_deg=s["heading"]), params)
         self.boat._nu[:] = [s["u0"], s["v0"], 0.0]
+        _ws = min(s["wind_speed"], self.wind_cap) if self.wind_cap is not None else s["wind_speed"]
+        _cs = min(s["current_speed"], self.current_cap) if self.current_cap is not None else s["current_speed"]
+        _g = min(s["gust"], self.gust_cap) if self.gust_cap is not None else s["gust"]
         self.base_env = Environment(
-            current_speed=s["current_speed"], current_dir=s["current_dir"],
-            wind_speed=s["wind_speed"], wind_dir=s["wind_dir"],
-            gust_amplitude_mps=s["gust"], gust_tau_s=s["gust_tau"],
+            current_speed=_cs, current_dir=s["current_dir"],
+            wind_speed=_ws, wind_dir=s["wind_dir"],
+            gust_amplitude_mps=_g, gust_tau_s=s["gust_tau"],
             wind_variability=s["wind_var"], current_variability=s["cur_var"])
         self.env = dataclasses.replace(self.base_env)
         self._base_wind = self.base_env.wind_speed
@@ -155,9 +177,14 @@ class AnchorEnv:
         # v5: command = robust PID base (from the frame the policy acted on) + a
         # bounded learned residual.
         f = self._cur_frame
-        pid_th, pid_st = pid_base(f[0] * 10.0, f[1] * 10.0, f[2] * 1.5, f[3] * 1.5)
-        th = float(np.clip(pid_th + self.residual_scale * float(residual[0]), -1.0, 1.0))
-        st = float(np.clip(pid_st + self.residual_scale * float(residual[1]), -1.0, 1.0))
+        if self.pure:
+            # Pure learned controller: the net IS the command (no PID base).
+            th = float(np.clip(residual[0], -1.0, 1.0))
+            st = float(np.clip(residual[1], -1.0, 1.0))
+        else:
+            pid_th, pid_st = pid_base(f[0] * 10.0, f[1] * 10.0, f[2] * 1.5, f[3] * 1.5)
+            th = float(np.clip(pid_th + self.residual_scale * float(residual[0]), -1.0, 1.0))
+            st = float(np.clip(pid_st + self.residual_scale * float(residual[1]), -1.0, 1.0))
         dth, dst = th - self._prev[0], st - self._prev[1]
         # The physical steering deflection carries the Helm's mount sign (see
         # reset); the OBSERVATION (_prev) keeps the helm-frame command, exactly

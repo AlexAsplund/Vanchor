@@ -559,6 +559,15 @@ class Runtime:
         ml = self.controller.modes.get(ControlModeName.ANCHOR_ML)
         if ml is not None and hasattr(ml, "steer_sign"):
             ml.steer_sign = self.controller.helm.steer_sign
+        # "Leffe" (pure full-azimuth learned mode) mirrors the mount sign and, since
+        # it commands raw azimuth, is rescaled to this boat's mechanical steering
+        # range so the physical deflection matches how it was trained.
+        leffe = self.controller.modes.get(ControlModeName.ANCHOR_LEFFE)
+        if leffe is not None:
+            if hasattr(leffe, "steer_sign"):
+                leffe.steer_sign = self.controller.helm.steer_sign
+            if hasattr(leffe, "boat_azimuth_deg"):
+                leffe.boat_azimuth_deg = max(1.0, self.config.boat.max_steer_angle_deg)
         # Lateral-offset thrust-yaw feed-forward follows the geometry/trim live so
         # changing the offset (or the calibrated trim) updates compensation now.
         self.controller.helm.thrust_yaw_ff = _thrust_yaw_ff_norm(self.config)

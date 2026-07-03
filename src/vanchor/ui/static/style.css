@@ -2278,3 +2278,12 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   .view-chip { padding: 7px 6px; min-width: 30px; font-size: 14px; }
   body[data-view="helm"] #mode-rail { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Inline info icon (hover/focus tooltip via native title). */
+.info-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; font-size: 11px; cursor: help;
+  color: var(--accent); border: 1px solid var(--line-bright);
+  background: rgba(var(--accent-rgb), 0.08); vertical-align: middle; margin-left: 2px;
+}
+.info-dot:hover, .info-dot:focus { border-color: var(--accent); outline: none; }

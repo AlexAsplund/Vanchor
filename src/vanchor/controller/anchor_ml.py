@@ -252,3 +252,55 @@ class AnchorMLMode:
         self._prev = np.array([th, st])   # the COMBINED command (matches training)
         self._prev_heading = state.heading_deg
         return ManualSetpoint(thrust=th, steering=st)
+
+
+_LEFFE_PATH = os.path.join(os.path.dirname(__file__), "anchor_leffe.json")
+
+
+class AnchorLeffeMode(AnchorMLMode):
+    """"Leffe" -- a PURE learned station-keeper (EXPERIMENTAL).
+
+    Unlike :class:`AnchorMLMode` (a bounded residual over the PID base), Leffe's
+    command IS the net output directly -- no PID scaffold. It was trained from
+    scratch by Evolution Strategies with a WIDE steering swing, so it learns to
+    *vector* the motor through its full rotation. Findings from the held-out
+    comparison: it holds a **stern**-mounted motor exceptionally tight (~98% of
+    the time in the watch circle vs the PID's ~80%), but it runs the motor hot
+    (near-constant thrust -> thirstier on the battery) and is less refined than
+    the hybrid on bow/centre mounts -- and, being pure, it has **no PID
+    fallback**. A fun, opt-in research mode, not the safe default.
+
+    The policy was trained assuming ``+/-1 steering == +/-TRAIN_AZIMUTH_DEG``;
+    at runtime we rescale to the boat's actual mechanical steering range
+    (``boat_azimuth_deg``, synced from config by the app) so the physical
+    deflection matches training.
+    """
+
+    TRAIN_AZIMUTH_DEG = 120.0
+
+    def __init__(self, model_path: str = _LEFFE_PATH, steer_sign: float = 1.0) -> None:
+        # residual_scale is irrelevant (we don't use the PID base); the guardrail
+        # is inert because update() below doesn't call it (no PID floor to decay to).
+        super().__init__(model_path=model_path, residual_scale=0.0, steer_sign=steer_sign)
+        self.boat_azimuth_deg = self.TRAIN_AZIMUTH_DEG  # app syncs this to cfg.boat.max_steer_angle_deg
+
+    def update(self, state: NavigationState, dt: float) -> ManualSetpoint:
+        anchor, pos = state.anchor, state.position
+        if anchor is not None and pos is not None:
+            state.distance_to_anchor_m = haversine_m(pos, anchor)
+            state.bearing_to_dest = initial_bearing(pos, anchor)
+
+        frame = self._frame(state, dt)
+        if self._hist is None:
+            self._hist = deque([frame] * self.history, maxlen=self.history)
+        else:
+            self._hist.append(frame)
+        out = self._mlp.forward(np.concatenate(self._hist))
+        th = float(np.clip(out[0], -1.0, 1.0))
+        # Rescale steering so the policy's +/-1 (== its trained TRAIN_AZIMUTH_DEG)
+        # produces the same physical deflection on this boat's mechanical range.
+        azscale = self.TRAIN_AZIMUTH_DEG / max(1e-6, self.boat_azimuth_deg)
+        st = float(np.clip(out[1] * self.policy_steer_sign * azscale, -1.0, 1.0))
+        self._prev = np.array([th, st])
+        self._prev_heading = state.heading_deg
+        return ManualSetpoint(thrust=th, steering=st)

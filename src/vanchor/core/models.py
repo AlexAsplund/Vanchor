@@ -17,7 +17,8 @@ class ControlModeName(str, Enum):
 
     MANUAL = "manual"
     ANCHOR_HOLD = "anchor_hold"
-    ANCHOR_ML = "anchor_ml"  # learned (tiny-NN) station-keeper
+    ANCHOR_ML = "anchor_ml"  # learned (tiny-NN) station-keeper (hybrid: PID + residual)
+    ANCHOR_LEFFE = "anchor_leffe"  # "Leffe" -- pure learned, full-azimuth (experimental)
     HEADING_HOLD = "heading_hold"
     WAYPOINT = "waypoint"
     WORK_AREA = "work_area"  # visit spots, hold at each, advance (timed/manual)

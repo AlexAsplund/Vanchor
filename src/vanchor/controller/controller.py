@@ -81,7 +81,8 @@ _JOG_OFFSETS = {"forward": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
 # ``state.distance_to_anchor_m`` every tick) -- the spot-lock quality metric is
 # accumulated only while one of these is holding, so PID anchor-hold and the
 # learned anchor_ml can be compared on the same yardstick.
-_SPOTLOCK_MODES = frozenset({ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML})
+_SPOTLOCK_MODES = frozenset({ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML,
+                             ControlModeName.ANCHOR_LEFFE})
 
 
 # Below this |thrust| the trolling motor has no meaningful steering authority
@@ -396,6 +397,14 @@ class Controller:
             )
         except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
             logger.warning("anchor_ml mode unavailable: %s", exc)
+        try:
+            from .anchor_ml import AnchorLeffeMode
+
+            self.modes[ControlModeName.ANCHOR_LEFFE] = AnchorLeffeMode(
+                steer_sign=self.helm.steer_sign
+            )
+        except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
+            logger.warning("anchor_leffe (Leffe) mode unavailable: %s", exc)
         # Spot-lock quality metric (#34): rolling RMS radial error + % time in
         # radius while an anchor mode is holding. Reset whenever the anchor mark
         # changes; paused when not station-keeping.
@@ -623,6 +632,25 @@ class Controller:
                     ControlModeName.ANCHOR_ML
                     if ControlModeName.ANCHOR_ML in self.modes
                     else ControlModeName.ANCHOR_HOLD
+                )
+            elif ctype == "anchor_leffe":
+                # "Leffe": the pure full-azimuth learned station-keeper. Same
+                # mark-setting as anchor_hold; falls back to the hybrid, then PID,
+                # if the Leffe model isn't loaded.
+                anchor = command.get("anchor")
+                if anchor:
+                    self.state.anchor = GeoPoint(float(anchor["lat"]), float(anchor["lon"]))
+                elif self.state.position is not None:
+                    self.state.anchor = self.state.position
+                if "radius_m" in command:
+                    self.state.anchor_radius_m = float(command["radius_m"])
+                self.state.anchor_heading = self.state.heading_deg
+                self.set_mode(
+                    ControlModeName.ANCHOR_LEFFE
+                    if ControlModeName.ANCHOR_LEFFE in self.modes
+                    else (ControlModeName.ANCHOR_ML
+                          if ControlModeName.ANCHOR_ML in self.modes
+                          else ControlModeName.ANCHOR_HOLD)
                 )
             elif ctype == "heading_hold":
                 heading = command.get("heading")

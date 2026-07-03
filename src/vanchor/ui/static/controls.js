@@ -79,24 +79,34 @@
   const arSlider = $("ar");
   const holdHdgBox = $("hold-hdg");
   const smartBox = $("anchor-smart");
+  const leffeBox = $("anchor-leffe");
   const vectoredBox = $("anchor-vectored");
   function applyAnchor(redrop) {
-    // "Smart" -> the learned NN station-keeper (anchor_ml); the backend falls
-    // back to the PID anchor_hold automatically if the model isn't loaded.
-    // "Vectored" -> the PID station-keeper drives the motor through its full
-    // rotation (a backend anchor_hold flag; ignored by anchor_ml).
+    // Station-keeper choice: "Leffe" (pure full-azimuth learned) > "Smart"
+    // (hybrid learned) > PID anchor_hold. The backend falls back automatically
+    // if a model isn't loaded. "Vectored" drives the PID keeper through the full
+    // rotation (an anchor_hold flag; the learned modes vector on their own).
+    const leffe = leffeBox && leffeBox.checked;
     const smart = smartBox && smartBox.checked;
-    const cmd = { type: smart ? "anchor_ml" : "anchor_hold",
-                  radius_m: parseFloat(arSlider.value), hold_heading: holdHdgBox.checked,
+    const type = leffe ? "anchor_leffe" : (smart ? "anchor_ml" : "anchor_hold");
+    const cmd = { type, radius_m: parseFloat(arSlider.value),
+                  hold_heading: holdHdgBox.checked,
                   vectored: !!(vectoredBox && vectoredBox.checked) };
     const last = VA.map.getLastAnchor();
     if (!redrop && last) cmd.anchor = { lat: last.lat, lon: last.lon };
     send(cmd);
   }
+  // Leffe and Smart are alternative learned keepers -- only one at a time.
+  function pickKeeper(chosen) {
+    if (chosen === smartBox && smartBox.checked && leffeBox) leffeBox.checked = false;
+    if (chosen === leffeBox && leffeBox.checked && smartBox) smartBox.checked = false;
+    if (VA.map.getLastAnchor()) applyAnchor(false);
+  }
   bindSlider("ar", "ar-val");
   arSlider.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   holdHdgBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
-  if (smartBox) smartBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
+  if (smartBox) smartBox.addEventListener("change", () => pickKeeper(smartBox));
+  if (leffeBox) leffeBox.addEventListener("change", () => pickKeeper(leffeBox));
   if (vectoredBox) vectoredBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
   // Explicit engage control only — the rail button just opens this panel, so
   // selecting Anchor no longer drops the anchor and engages station-keeping on
@@ -159,9 +169,10 @@
     updateCruise(t.cruise);
     updateTrack(t.track);
     updateDrift(t);
-    // Keep the "Smart" toggle honest: reflect the live anchor mode.
-    if (smartBox && (t.mode === "anchor_ml" || t.mode === "anchor_hold")) {
-      smartBox.checked = t.mode === "anchor_ml";
+    // Keep the keeper toggles honest: reflect the live anchor mode.
+    if (t.mode === "anchor_ml" || t.mode === "anchor_hold" || t.mode === "anchor_leffe") {
+      if (smartBox) smartBox.checked = t.mode === "anchor_ml";
+      if (leffeBox) leffeBox.checked = t.mode === "anchor_leffe";
     }
   });
 })();

@@ -362,7 +362,8 @@ class SafetyGovernor:
         # at a spot (not while travelling between spots, when state.anchor is
         # stale and would otherwise false-trip the alarm).
         if state.anchor is not None and (
-            state.mode in (ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML)
+            state.mode in (ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML,
+                           ControlModeName.ANCHOR_LEFFE)
             or (state.mode == ControlModeName.WORK_AREA and state.work_holding)
         ):
             threshold = cfg.drag_alarm_factor * state.anchor_radius_m
