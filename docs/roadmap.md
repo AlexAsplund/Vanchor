@@ -180,6 +180,8 @@ numbers + training recipe in [`docs/anchor-ml.md`](anchor-ml.md).
 51. Frontend manifest/loader so `index.html` and `sw.js` shell lists can't
     drift (still no build step).
 52. Community pack registry + docs, once Phase 6's driver API is versioned.
+    Design sketch (packs, safety floor, registry, phasing) in
+    [`docs/community-plan.md`](community-plan.md).
 
 ## Engineering debt (carried over, still open)
 
