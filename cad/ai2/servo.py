@@ -61,7 +61,11 @@ class P:
     teeth_p: int = 24              # pinion (AS5600 axis)
     teeth_r: int = 24              # output gear on the hub
     pressure_angle: float = 22.5   # stubby strong teeth
-    gear_t: float = 16.0           # face width
+    gear_t: float = 16.0           # face width (pinion)
+    hub_overtravel: float = 2.0    # hub teeth are taller than the pinion so
+                                   # axial stack-up (hub rests -0.4, pinion
+                                   # press depth) never runs the pinion's
+                                   # teeth into the print cone's base rim
     backlash_cd: float = 0.4       # FDM teeth print fat
 
     # --- rotary lip seals: TC 35x47x7 ---
@@ -157,7 +161,10 @@ class P:
     @property
     def gear_z1(self):        return self.gear_z0 + self.gear_t
     @property
-    def cone_z1(self):        return self.gear_z1 + (self.ring_od - self.seal_land_d) / 2
+    def hub_gear_z1(self):    return self.gear_z1 + self.hub_overtravel
+    @property
+    def cone_z1(self):
+        return self.hub_gear_z1 + (self.ring_od - self.seal_land_d) / 2
     @property
     def land_r(self):         return self.seal_land_d / 2
     @property
@@ -237,11 +244,13 @@ def _gear(teeth):
 def hub_gear():
     """Output hub: seal land / ring gear z32 / 45deg print cone / seal land /
     drive hex. Index magnet pocket in the underside web. Prints hex-down."""
-    gear = Pos(0, 0, (p.gear_z0 + p.gear_z1) / 2) * _gear(p.teeth_r)
+    gear = SpurGear(p.module, p.teeth_r, p.pressure_angle,
+                    p.gear_t + p.hub_overtravel)
+    gear = Pos(0, 0, (p.gear_z0 + p.hub_gear_z1) / 2) * gear
     bot_land = Pos(0, 0, (p.hub_z0 + p.gear_z0) / 2) * Cylinder(
         p.land_r, p.gear_z0 - p.hub_z0)
-    cone = Pos(0, 0, p.gear_z1) * Cone(
-        p.ring_od / 2, p.land_r, p.cone_z1 - p.gear_z1,
+    cone = Pos(0, 0, p.hub_gear_z1) * Cone(
+        p.ring_od / 2, p.land_r, p.cone_z1 - p.hub_gear_z1,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
     top_land = Pos(0, 0, (p.cone_z1 + p.land_z1) / 2) * Cylinder(
         p.land_r, p.land_z1 - p.cone_z1)

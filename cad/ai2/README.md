@@ -119,7 +119,7 @@ visual references only.
 | `groove_w` / `groove_d` | 2.4 / 0.8 | silicone retention channel |
 | `enc_hole_pitch` | 18 | AS5600 board holes — **measure yours** |
 
-Envelope: 61 × 189 × 75 mm (+ coupler stack above the lid).
+Envelope: 61 × 189 × 77 mm (+ coupler stack above the lid).
 
 ## Renders
 
