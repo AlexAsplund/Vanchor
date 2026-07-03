@@ -126,6 +126,14 @@ STOP always works.
 35. ✅ Vectored/azimuth station-keeping (opt-in): pushes against the set using
     the full rotation; beam-set RMS 3.29 m → 1.29 m; default off = baseline.
 
+**Since 1.3-alpha (beyond 34/35):** the learned station-keeper was pushed well
+past the roadmap. The default **Smart** mode is now a full-azimuth hybrid
+(PID + learned residual, trained at a 120° swing, rescaled to the boat's range),
+which strictly dominates PID and the old ±35° hybrid — 90.6% in-radius vs PID's
+82.4% (≤6 m/s), 100% on both bow and stern, with the safety floor intact. A pure
+experimental mode, **Leffe 🍺**, is also selectable. Full writeup + held-out
+numbers + training recipe in [`docs/anchor-ml.md`](anchor-ml.md).
+
 ### Phase 5 — Simulation & testing depth
 
 36. (partial) ✅ `SimMotorController` opt-in actuation shaping implemented
