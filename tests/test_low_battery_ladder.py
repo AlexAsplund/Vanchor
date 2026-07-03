@@ -158,6 +158,9 @@ def test_runtime_ladder_sets_governor_cap_from_soc(tmp_path):
 
 def test_runtime_lowest_stage_hands_off_to_rtl(tmp_path):
     rt = _runtime(tmp_path)
+    # Autonomous RTL is opt-in (#7): the lowest stage only self-drives when the
+    # operator enabled auto_rtl.
+    rt.config.safety.auto_rtl = True
     calls = []
     rt._schedule_auto_rtl = lambda: calls.append(True)  # type: ignore[method-assign]
     rt.state.launch = GeoPoint(59.0, 18.0)
@@ -191,6 +194,23 @@ def test_runtime_handoff_without_launch_still_derates(tmp_path):
     # No launch point -> no RTL plan, but the lowest derate cap still holds.
     assert calls == []
     assert cap == pytest.approx(0.25)
+
+
+def test_lowest_stage_recommends_only_when_auto_rtl_off(tmp_path):
+    # #7: with auto_rtl off (the default), an empty battery must NOT self-drive
+    # RTL -- it raises the RTL recommendation/alarm instead. The derate cap still
+    # applies.
+    rt = _runtime(tmp_path)
+    assert rt.config.safety.auto_rtl is False
+    calls = []
+    rt._schedule_auto_rtl = lambda: calls.append(True)  # type: ignore[method-assign]
+    rt.state.launch = GeoPoint(59.0, 18.0)  # a launch point exists...
+
+    rt.simulator.battery.set_soc(5.0)  # below battery_rtl_soc_pct (10)
+    cap = rt.evaluate_battery_ladder()
+    assert calls == []  # ...but no autonomous RTL is engaged
+    assert rt.state.rtl_recommended is True  # recommendation raised instead
+    assert cap == pytest.approx(0.25)  # derate still holds
 
 
 def test_disabled_ladder_leaves_cap_full(tmp_path):

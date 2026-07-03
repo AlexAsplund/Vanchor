@@ -73,6 +73,38 @@ async def test_capability_object_publishes_and_reports_health():
     assert ctx.health() == {"ok": False, "detail": "sensor timeout"}
 
 
+async def test_capability_publish_refuses_control_topics():
+    # #43 safety guarantee: a driver/pack may publish READINGS through the
+    # capability object, but NEVER a control topic that could command motion or
+    # weaken a failsafe. A refused publish is dropped + logged, never forwarded.
+    bus = EventBus()
+    seen: dict[str, list] = {}
+
+    def _sub(topic: str) -> None:
+        seen[topic] = []
+        bus.subscribe(topic, lambda p, _t=topic: seen[_t].append(p))
+
+    for t in ("imu.in", "battery.health", "command", events.MOTOR_COMMAND, "stop"):
+        _sub(t)
+
+    ctx = registry.DriverContext(kind="battery", source="ina226", _bus=bus)
+
+    # Legitimate readings are forwarded.
+    await ctx.publish("imu.in", "sample")
+    await ctx.publish("battery.health", {"ok": True})
+    assert seen["imu.in"] == ["sample"]
+    assert seen["battery.health"] == [{"ok": True}]
+
+    # Control topics are refused and NEVER reach the bus (would command motion /
+    # disable a failsafe otherwise).
+    await ctx.publish("command", {"type": "manual", "thrust": 1.0})
+    await ctx.publish(events.MOTOR_COMMAND, "run")
+    await ctx.publish("stop", None)
+    assert seen["command"] == []
+    assert seen[events.MOTOR_COMMAND] == []
+    assert seen["stop"] == []
+
+
 def test_capability_object_motion_provider():
     ctx = registry.DriverContext(kind="compass", source="x", _motion=lambda: (123.0, 1.5))
     assert ctx.motion() == (123.0, 1.5)

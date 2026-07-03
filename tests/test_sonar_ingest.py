@@ -188,3 +188,49 @@ def test_ingest_uses_explicit_position_over_state():
     sounding = sonar.sounding_from_payload({"depth": 3.0})
     div = sonar.ingest(st, sounding, chart, position=GeoPoint(59.0, 18.0))
     assert div.alert is True
+
+
+# --------------------------------------------------------------------------- #
+# Runtime wiring (#45): the dead-code path is now driven by the running app.
+# --------------------------------------------------------------------------- #
+def test_runtime_wires_grounding_divergence_alert(tmp_path):
+    # The Runtime computes charted-vs-sounded divergence from its DepthMap and
+    # sets the state fields so the grounding alert can fire in telemetry. This
+    # exercises the previously-dead nav/sonar.py path through app.py.
+    from vanchor.app import Runtime
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+
+    pos = GeoPoint(59.0, 18.0)
+    # Chart says 20 m here but the sounder reads 2 m -> materially shallower than
+    # the chart = grounding-risk alert.
+    rt.depth_map.points = [(59.0, 18.0, 20.0)]
+    rt.state.depth_m = 2.0
+    rt._update_depth_divergence(pos)
+    assert rt.state.depth_divergence_alert is True
+    assert rt.state.sonar_depth_m == 2.0
+    assert rt.state.charted_depth_m == 20.0
+    assert rt.state.depth_divergence_m < 0.0
+
+    # Sounder agrees with the chart -> no alert.
+    rt.state.depth_m = 20.0
+    rt._update_depth_divergence(pos)
+    assert rt.state.depth_divergence_alert is False
+
+
+def test_runtime_divergence_noop_without_depth(tmp_path):
+    # No live depth (lost bottom lock -> 0.0) leaves any prior alert untouched.
+    from vanchor.app import Runtime
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    rt.depth_map.points = [(59.0, 18.0, 20.0)]
+    rt.state.depth_divergence_alert = True  # pre-existing
+    rt.state.depth_m = 0.0  # no bottom lock
+    rt._update_depth_divergence(GeoPoint(59.0, 18.0))
+    assert rt.state.depth_divergence_alert is True  # untouched

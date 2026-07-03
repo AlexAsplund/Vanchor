@@ -44,6 +44,22 @@ logger = logging.getLogger("vanchor.hardware.registry")
 # pack can declare the version it targets and we can refuse an incompatible one.
 DRIVER_API_VERSION = 1
 
+# --------------------------------------------------------------------------- #
+# Capability publish whitelist (#43 safety guarantee)
+# --------------------------------------------------------------------------- #
+# A driver/pack may publish ONLY reading/telemetry onto the bus through its
+# narrow capability object -- never a CONTROL topic that could command motion or
+# weaken a failsafe. ``DriverContext.publish`` therefore whitelists the safe
+# reading seams and refuses anything else (dropped + logged), so a driver can
+# never reach the controller's "command" topic (or the motor) through it.
+#
+# Named reading/telemetry topics a driver may publish to regardless of its kind.
+_READING_TOPICS = frozenset({"fixes", "soundings", "health"})
+# Control/actuation topics that must ALWAYS be refused, even if a driver's own
+# kind namespace would otherwise match (e.g. a "motor" driver + "motor.command").
+_CONTROL_TOPICS = frozenset({"command", "commands", "stop", "estop", "e_stop",
+                             events.MOTOR_COMMAND})
+
 BuildFn = Callable[[Any, Any], Any]            # legacy: (runtime, cfg) -> device
 ContextBuildFn = Callable[["DriverContext"], Any]  # #43: (ctx) -> device
 
@@ -129,11 +145,44 @@ class DriverContext:
         if self._bus is not None:
             await self._bus.publish(events.NMEA_IN, sentence)
 
+    def _is_reading_topic(self, topic: str) -> bool:
+        """True only for SAFE reading/telemetry topics a driver may publish (#43).
+
+        Allows the sensor input seams (``nmea.in`` / ``imu.in`` / any ``*.in``),
+        the driver's OWN kind namespace (e.g. ``battery.health``), and the named
+        reading topics (``fixes`` / ``soundings`` / ``health``). ALWAYS refuses a
+        control/actuation topic (``command`` / ``motor.command`` / ``stop`` / …)
+        so a driver or pack can never command motion or disable a failsafe
+        through the capability object -- even a driver whose kind name collides
+        with a control namespace."""
+        t = str(topic)
+        if t in _CONTROL_TOPICS or t == "command" or t.endswith(".command"):
+            return False
+        if t.endswith(".in"):
+            return True
+        if t.startswith(f"{self.kind}."):
+            return True
+        return t in _READING_TOPICS
+
     async def publish(self, topic: str, payload: Any) -> None:
-        """Publish ``payload`` on an event-bus ``topic`` (e.g. ``imu.in``). A
-        narrow escape hatch for readings that aren't NMEA."""
-        if self._bus is not None:
-            await self._bus.publish(topic, payload)
+        """Publish a READING on an event-bus ``topic`` (e.g. ``imu.in``). A narrow
+        escape hatch for readings that aren't NMEA.
+
+        Restricted to safe reading/telemetry topics (see :meth:`_is_reading_topic`):
+        an attempt to publish a CONTROL topic (``command`` / ``motor.command`` /
+        ``stop``) is REFUSED (dropped + logged), never forwarded to the bus -- so a
+        driver/pack can never command motion or weaken a failsafe through it (the
+        #43 capability guarantee)."""
+        if self._bus is None:
+            return
+        if not self._is_reading_topic(topic):
+            self.log.warning(
+                "driver %s/%s refused publish on control/unsafe topic %r "
+                "(capability object may publish readings only, #43)",
+                self.kind, self.source, topic,
+            )
+            return
+        await self._bus.publish(topic, payload)
 
     def report_health(self, ok: bool, detail: str = "") -> None:
         """Record the driver's health (surfaced to the UI/telemetry)."""

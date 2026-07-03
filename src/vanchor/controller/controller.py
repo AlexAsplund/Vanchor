@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from ..core import events
+from ..core.config import SafetyFloor
 from ..core.events import EventBus
 from ..core.geo import angle_difference, destination_point, normalize_deg
 from ..core.models import (
@@ -324,10 +325,20 @@ class Controller:
         jog_increment_m: float = 1.5,
         track_min_distance_m: float = 5.0,
         mono_fn=time.monotonic,
+        safety_floor: SafetyFloor | None = None,
     ) -> None:
         self.state = state
         self.motor = motor
         self.bus = bus
+        # Non-negotiable safety-floor lockout (#50), enforced HERE at the actual
+        # mutation site so a command delivered via the bus "command" topic (which
+        # reaches handle_command directly, bypassing Runtime.handle_command's
+        # check) still can't weaken a failsafe -- defense in depth. When one isn't
+        # injected, capture it from the startup safety_config so the floor is the
+        # config's values (a later tighten is allowed; a weakening is refused).
+        self.safety_floor = safety_floor or SafetyFloor.from_config(
+            safety_config or SafetyConfig()
+        )
         self.tick_hz = tick_hz
         # MONOTONIC clock seam for the sensor-staleness ages fed to the governor.
         # Injectable so it can be driven deterministically (matches Runtime's
@@ -793,12 +804,9 @@ class Controller:
                 )
                 logger.info("no-go zones set: %d", self.safety.nogo_zone_count)
             elif ctype == "set_min_depth":
-                self.safety.config.min_depth_m = float(command.get("min_depth_m", 0.0))
-                logger.info("min depth set: %.1f m", self.safety.config.min_depth_m)
+                self.set_min_depth(float(command.get("min_depth_m", 0.0)))
             elif ctype == "set_fix_failsafe":
-                self.safety.config.fix_failsafe_enabled = bool(command.get("enabled", False))
-                logger.info("loss-of-fix failsafe %s",
-                            "ON" if self.safety.config.fix_failsafe_enabled else "OFF")
+                self.set_fix_failsafe(bool(command.get("enabled", False)))
             elif ctype == "set_launch":
                 self._set_launch()
             elif ctype == "mob":
@@ -813,6 +821,28 @@ class Controller:
                 logger.warning("unknown command: %r", command)
         except (KeyError, ValueError, TypeError) as exc:
             logger.warning("handle_command %r: malformed payload: %s", ctype, exc)
+
+    # -- Safety-floor-guarded failsafe mutations (#50) ------------------- #
+    def set_min_depth(self, min_depth_m: float) -> None:
+        """Set the shallow-water auto-stop depth, clamped to the safety floor.
+
+        The floor (#50) refuses a value BELOW the startup min-depth (which would
+        weaken the stop); it can always be RAISED. Enforced here so a command
+        arriving over the bus "command" topic -- which reaches this method
+        directly, bypassing Runtime.handle_command -- still can't weaken it."""
+        allowed = self.safety_floor.enforce_min_depth(float(min_depth_m))
+        self.safety.config.min_depth_m = allowed
+        logger.info("min depth set: %.1f m", self.safety.config.min_depth_m)
+
+    def set_fix_failsafe(self, enabled: bool) -> None:
+        """Enable/disable the loss-of-fix failsafe, clamped to the safety floor.
+
+        The floor (#50) refuses DISABLING a failsafe that was locked ON at
+        startup. Enforced here so a bus-delivered command can't turn it off."""
+        allowed = self.safety_floor.enforce_fix_failsafe(bool(enabled))
+        self.safety.config.fix_failsafe_enabled = allowed
+        logger.info("loss-of-fix failsafe %s",
+                    "ON" if self.safety.config.fix_failsafe_enabled else "OFF")
 
     # -- Tier-1 features ------------------------------------------------- #
     def _jog(self, command: dict) -> None:

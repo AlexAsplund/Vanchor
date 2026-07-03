@@ -114,6 +114,42 @@ def test_cog_at_threshold_speed_engages():
     assert state.heading_deg == pytest.approx(123.0)
 
 
+def test_gga_only_stale_cog_does_not_refresh_heading():
+    """(#9) A GGA has no course/speed -- it forwards the previous fix's cog/sog.
+    If the boat has since stopped but only GGA keeps arriving, that stale sog must
+    NOT keep re-arming the COG fallback on a dead course. Only a fix with genuine
+    course/speed (RMC) may drive it."""
+    clock = [0.0]
+    state, nav = _nav(clock)
+    nav.handle_sentence(nmea.encode_hdt(90.0))
+    # While the compass is fresh, a real RMC seeds fix.cog/sog (270 @ 3 kn).
+    nav.handle_sentence(nmea.encode_rmc(_POS, sog_knots=3.0, cog_deg=270.0))
+    assert state.heading_from_cog is False  # compass still fresh
+    stamp_before = state.heading_received_mono
+    # Compass goes stale; the boat has actually stopped, but only GGA keeps
+    # arriving (same position). GGA forwards the last 270 @ 3 kn -> stale.
+    clock[0] = COMPASS_STALE_S + 1.0
+    nav.handle_sentence(nmea.encode_gga(_POS))
+    assert state.heading_from_cog is False           # not driven by a GGA
+    assert state.heading_deg == pytest.approx(90.0)  # last real compass held
+    # heading_received_mono NOT refreshed -> stays stale -> the governor coasts.
+    assert state.heading_received_mono == pytest.approx(stamp_before)
+
+
+def test_fresh_rmc_still_drives_cog_after_gga():
+    """(#9) The GGA guard must not disable the real fallback: a subsequent fresh
+    RMC with genuine SOG still adopts COG when the compass is stale."""
+    clock = [0.0]
+    state, nav = _nav(clock)
+    nav.handle_sentence(nmea.encode_hdt(90.0))
+    clock[0] = COMPASS_STALE_S + 1.0
+    nav.handle_sentence(nmea.encode_gga(_POS))       # ignored for COG
+    assert state.heading_from_cog is False
+    nav.handle_sentence(nmea.encode_rmc(_POS, sog_knots=3.0, cog_deg=270.0))
+    assert state.heading_from_cog is True
+    assert state.heading_deg == pytest.approx(270.0)
+
+
 def test_heading_from_cog_in_telemetry():
     """The flag is surfaced in to_dict so the UI/alarm can say 'using GPS course'."""
     state = NavigationState()

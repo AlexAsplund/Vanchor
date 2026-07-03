@@ -42,17 +42,25 @@ COMPASS_STALE_S = 3.0
 # variation), used to convert a MAGNETIC compass heading (HDM / uncorrected HDG,
 # reference="M") into the TRUE frame the whole control stack steers in. It is a
 # low-degree spherical-harmonic (World Magnetic Model-style) approximation: the
-# centered dipole plus quadrupole terms of IGRF-13, epoch 2020.0. That is enough
-# to place declination within a few degrees across the populated mid-latitudes
-# (hand-verified ~+5.9 deg for Stockholm vs. the ~+6.5 deg real value) while
-# staying dependency-free and fully unit-testable.
+# centered dipole plus quadrupole terms of IGRF-13, epoch 2020.0. Truncating to
+# degree 2 keeps it dependency-free and fully unit-testable, but it is only a
+# COARSE model: it captures the broad global trend (e.g. hand-verified ~+5.9 deg
+# for Stockholm vs. the ~+6.5 deg real value) yet drops the regional crustal
+# anomalies, so it can be ~10-13 deg off where the field is strongly anomalous
+# (e.g. the US west coast, parts of the Southern Ocean) and degrades further
+# toward the magnetic poles. Do NOT treat it as survey-grade.
+#
+# Because of that error budget, AUTO declination (``declination_deg=None``) is
+# OPT-IN and OFF by default: the navigator ships with a fixed 0.0 declination
+# (the simulator's true-heading world and true-emitting compasses are a no-op),
+# and a real magnetic compass should be given a measured local variation instead.
 #
 # Deliberately NOT a config knob this wave: the source is internal so heading
 # semantics stay in one place. Clear extension point -- ``magnetic_declination_deg``
-# is a pure ``(lat, lon) -> degrees`` function; swap it for a full-degree
+# is a pure ``(lat, lon) -> degrees`` function; swap it for the full-degree
 # WMM/IGRF evaluation (add the higher-degree Gauss coefficients + a Legendre
-# recursion), or wrap it to prefer a survey/plotter-supplied variation, without
-# touching a single call site.
+# recursion) for survey-grade accuracy, or wrap it to prefer a
+# survey/plotter-supplied variation, without touching a single call site.
 #
 # IGRF-13 Gauss coefficients (nT), epoch 2020.0, Schmidt semi-normalized.
 _IGRF_G: dict[tuple[int, int], float] = {
@@ -75,9 +83,14 @@ def magnetic_declination_deg(lat: float, lon: float) -> float:
 
     Returns degrees, East-positive: ``true = magnetic + declination``. Uses the
     low-degree (dipole + quadrupole) IGRF-13/2020 spherical-harmonic model
-    described in the module note above -- accurate to a few degrees over the
-    populated mid-latitudes and degrading toward the magnetic poles, where the
-    horizontal field vanishes and declination is inherently ill-conditioned.
+    described in the module note above. It is COARSE: it tracks the broad global
+    trend to within a few degrees over much of the mid-latitudes but omits
+    regional crustal anomalies, so it can be ~10-13 deg off in strongly anomalous
+    regions (e.g. the US west coast) and degrades further toward the magnetic
+    poles, where the horizontal field vanishes and declination is ill-conditioned.
+    Not survey-grade -- see the module note; prefer a measured local variation,
+    and swap in a full-degree WMM/IGRF evaluation for real accuracy. This is why
+    AUTO declination (``declination_deg=None``) is opt-in and off by default.
     """
     theta = math.radians(90.0 - lat)  # geocentric colatitude
     phi = math.radians(lon)
@@ -231,7 +244,9 @@ class Navigator:
             return point
         return GeoPoint(point.lat + self.gps_dlat, point.lon + self.gps_dlon)
 
-    def _maybe_cog_heading_fallback(self, fix: GpsFix) -> None:
+    def _maybe_cog_heading_fallback(
+        self, fix: GpsFix, *, has_fresh_course: bool
+    ) -> None:
         """Steer on GPS course-over-ground when the compass is stale but moving.
 
         Called after a fresh fix is ingested. A guided mode steers on
@@ -242,6 +257,13 @@ class Navigator:
         mode keeps steering instead of only coasting.
 
         Guards:
+        * Only fires for a fix that genuinely carries fresh course/speed
+          (``has_fresh_course`` -- an RMC/VTG fix). A GGA has no course/speed
+          fields, so a GGA-sourced fix carries the PREVIOUS fix's forwarded
+          ``cog``/``sog``; if the boat has actually stopped but only GGA is still
+          arriving, that stale sog can sit above the trust threshold forever and
+          keep refreshing the heading on a dead course. Never let a fix without
+          real course/speed drive the fallback.
         * Never fires until a real compass heading has been seen at least once
           (``compass_received_mono is None``) -- a boat that has never had a
           compass keeps its existing behaviour rather than getting a synthesised
@@ -252,6 +274,8 @@ class Navigator:
           noise, so below that speed we leave the heading stale and let the
           governor coast (the conservative, unchanged behaviour).
         """
+        if not has_fresh_course:
+            return  # GGA carries a stale forwarded cog/sog -- never trust it here
         compass_mono = self.state.compass_received_mono
         if compass_mono is None:
             return  # never had a compass; don't invent a heading
@@ -297,7 +321,9 @@ class Navigator:
                 self.state.fix_received_mono = self._mono_fn()
                 self.state.sog_knots = parsed.sog_knots
                 events_out.append((events.NAV_FIX, fix))
-                self._maybe_cog_heading_fallback(fix)
+                # RMC genuinely carries course/speed over ground -> may drive the
+                # COG heading fallback.
+                self._maybe_cog_heading_fallback(fix, has_fresh_course=True)
         elif isinstance(parsed, nmea.GGA):
             point = self._apply_offset(parsed.point)
             if parsed.fix_quality > 0 and self.guard.check_position(point):
@@ -317,8 +343,28 @@ class Navigator:
                 self.state.fix_seq += 1
                 self.state.fix_received_mono = self._mono_fn()
                 events_out.append((events.NAV_FIX, fix))
-                self._maybe_cog_heading_fallback(fix)
+                # GGA has no course/speed of its own -- the cog/sog above are
+                # forwarded from an earlier fix and may be stale (the boat may
+                # have since stopped), so it must NOT drive the COG fallback.
+                self._maybe_cog_heading_fallback(fix, has_fresh_course=False)
         elif isinstance(parsed, nmea.Heading):
+            # NOTE (#41 mag calibration wiring -- BLOCKED, no raw-mag pipeline):
+            # the stored hard/soft-iron calibration must be applied to a RAW
+            # magnetometer vector *before* the magnetic heading is derived. That
+            # correction now lives, tested, in
+            # controller.calibration.MagCalibration.heading_deg(raw). It cannot be
+            # applied here yet: this branch only ever receives an ALREADY-COMPUTED
+            # heading (the hwt901b driver fuses the AHRS yaw and emits HDT/HDM),
+            # and NavigationState carries no mag_x/y/z. To finish the wiring:
+            #   1. surface the raw magnetometer vector (state.mag_x/y/z or an
+            #      IMU-style sample) from the compass driver into the nav pipeline;
+            #   2. give the Navigator the loaded MagCalibration (from
+            #      MagCalibrationStore) and, when a raw vector is present, derive
+            #      the magnetic heading via cal.heading_deg(raw) instead of trusting
+            #      the driver's fused heading, then declination-correct as below.
+            # Until (1) exists the correction is a no-op no matter where it is
+            # called, so it stays out of the hot path rather than guessing a frame.
+            #
             # Normalise to TRUE heading before storing.
             # Sign convention: True = Magnetic + declination (East-positive).
             # HDT (reference="T") and fully-corrected HDG already carry a true

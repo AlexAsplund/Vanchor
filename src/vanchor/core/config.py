@@ -374,8 +374,12 @@ class SafetyFloor:
     min_depth_m: float = 0.0
 
     @classmethod
-    def from_config(cls, safety: "SafetyConfig") -> "SafetyFloor":
-        """Capture the floor from a (startup/base) :class:`SafetyConfig`."""
+    def from_config(cls, safety: Any) -> "SafetyFloor":
+        """Capture the floor from a (startup/base) safety config.
+
+        Duck-typed (reads via ``getattr`` with safe defaults) so it accepts
+        either the app :class:`SafetyConfig` or the controller/governor's own
+        ``SafetyConfig`` -- both expose ``fix_failsafe_enabled`` + ``min_depth_m``."""
         return cls(
             fix_failsafe_enabled=bool(getattr(safety, "fix_failsafe_enabled", True)),
             min_depth_m=float(getattr(safety, "min_depth_m", 0.0)),

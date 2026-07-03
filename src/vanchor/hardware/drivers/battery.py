@@ -271,7 +271,11 @@ class INA226BatteryMonitor(BatteryMonitor):
     def snapshot(self) -> dict:
         tte = self.time_to_empty_s
         return {
-            "soc_pct": round(self.soc_pct or 0.0, 1),
+            # SoC is UNKNOWN (None) until a real shunt read seeds it -- never
+            # report 0.0, which the #49 ladder would read as a critically-empty
+            # pack and force a startup derate + RTL. None makes the ladder's
+            # soc-is-None guard fire and apply no cap while uninitialized.
+            "soc_pct": None if self.soc_pct is None else round(self.soc_pct, 1),
             "voltage_v": round(self.voltage_v, 2),
             "current_a": round(self.current_a, 2),
             "draw_w": round(self.draw_w, 1),

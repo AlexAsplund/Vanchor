@@ -9,6 +9,7 @@ provider so no hardware is needed).
 from __future__ import annotations
 
 import asyncio
+import math
 
 import numpy as np
 import pytest
@@ -80,6 +81,59 @@ def test_fit_apply_matches_matrix_math():
     p = np.array([10.0, -4.0, 6.0])
     expected = np.asarray(cal.matrix) @ (p - np.asarray(cal.offset))
     assert np.allclose(cal.apply(p), expected)
+
+
+# --------------------------------------------------------------------------- #
+# Applied correction -> heading (#5): calibration must feed the heading path
+# --------------------------------------------------------------------------- #
+def test_stored_calibration_corrects_raw_vector_to_heading(tmp_path):
+    """(#5) The PERSISTED calibration, applied to a raw distorted magnetometer
+    vector, recovers the correct magnetic heading. This is the correction that
+    the #41 calibration was fitted for but was never actually applied to a raw
+    reading before a heading was derived."""
+    true_offset = np.array([12.0, -7.0, 5.0])
+    true_scale = np.array([1.0, 1.4, 0.8])  # diagonal soft iron
+    field = 48.0
+    capture = _distort(_sphere_points(300, seed=21), true_offset, true_scale, field)
+
+    store = MagCalibrationStore(str(tmp_path))
+    store.save(fit_hard_soft_iron(capture))
+    # Reload exactly what a restart would use, proving the *stored* cal is applied.
+    cal = MagCalibrationStore(str(tmp_path)).calibration
+    assert cal is not None
+
+    for heading in (0.0, 45.0, 90.0, 137.0, 250.0, 359.0):
+        rad = math.radians(heading)
+        # A true (undistorted) field at this heading in the sensor frame; the
+        # convention is heading = atan2(-y, x) -> u = (cos H, -sin H, 0).
+        u = np.array([math.cos(rad), -math.sin(rad), 0.0])
+        raw = true_offset + true_scale * (field * u)  # same distortion as capture
+        got = cal.heading_deg(raw)
+        err = abs(((got - heading + 180.0) % 360.0) - 180.0)
+        assert err < 1.0, (heading, got)
+
+
+def test_uncorrected_raw_vector_reads_wrong_heading():
+    """Sanity: WITHOUT applying the calibration the same raw vector reads a
+    materially wrong heading, so the correction is doing real work (this guards
+    against the correction silently becoming a no-op)."""
+    identity = MagCalibration(
+        offset=(0.0, 0.0, 0.0),
+        matrix=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        field_strength=1.0,
+        residual=0.0,
+        quality=1.0,
+        n_samples=0,
+    )
+    true_offset = np.array([12.0, -7.0, 5.0])
+    true_scale = np.array([1.0, 1.4, 0.8])
+    field = 48.0
+    heading = 90.0
+    rad = math.radians(heading)
+    u = np.array([math.cos(rad), -math.sin(rad), 0.0])
+    raw = true_offset + true_scale * (field * u)
+    err = abs(((identity.heading_deg(raw) - heading + 180.0) % 360.0) - 180.0)
+    assert err > 5.0  # the raw distorted vector is well off the true heading
 
 
 # --------------------------------------------------------------------------- #

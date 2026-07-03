@@ -178,6 +178,10 @@ def _build_battery_config(cfg: AppConfig):
         capacity_ah=b.capacity_ah,
         nominal_v=b.nominal_v,
         reserve_pct=b.reserve_pct,
+        # Pass the recent-draw smoothing time constant through so YAML tuning of
+        # the range/time-to-empty estimate actually takes effect (#10); without
+        # this the sim battery silently kept its default draw_tau_s.
+        draw_tau_s=b.draw_tau_s,
     )
 
 
@@ -409,6 +413,10 @@ class Runtime:
             jog_increment_m=cfg.control.jog_increment_m,
             track_min_distance_m=cfg.control.track_min_distance_m,
             mono_fn=self._mono_fn,
+            # Safety-floor lockout (#50) enforced at the controller's mutation
+            # site too, so a bus "command"-topic set_min_depth/set_fix_failsafe
+            # can't weaken a failsafe by bypassing Runtime.handle_command.
+            safety_floor=self.safety_floor,
         )
 
         if cfg.nmea_tcp.enabled:
@@ -1886,6 +1894,16 @@ class Runtime:
         if self._battery_rtl_engaged:
             return
         self._battery_rtl_engaged = True
+        # Recommend-only unless the operator opted into autonomous RTL (#7): with
+        # auto_rtl off the boat must NOT self-drive -- mirror evaluate_rtl_recommend
+        # and only raise the low-battery RTL recommendation for the UI/alarm. The
+        # progressive derate cap already applied above still stands.
+        if not self.config.safety.auto_rtl:
+            self.state.rtl_recommended = True
+            logger.warning(
+                "battery critically low (%.0f%%); recommending Return-to-Launch "
+                "(auto_rtl off -- not self-driving)", soc_pct)
+            return
         if self.state.launch is None:
             logger.warning(
                 "battery critically low (%.0f%%) but no launch point recorded; "
@@ -1959,7 +1977,34 @@ class Runtime:
             if self.simulator is not None
             else self.state.position
         )
+        # Sonar-vs-chart grounding-divergence alert (#45): compare the live
+        # sounder depth against the charted depth at the boat BEFORE this sounding
+        # is folded into the map (so the just-taken sample can't self-cancel the
+        # comparison), then set the divergence state fields for telemetry/UI.
+        self._update_depth_divergence(sounding_pos)
         self.depth_map.record(sounding_pos, self.state.depth_m)
+
+    def _update_depth_divergence(self, position: "GeoPoint | None" = None) -> None:
+        """Wire nav/sonar.py into the running app (#45): look up the charted depth
+        from the ``DepthMap`` at the boat's position, compare it against the
+        measured sounder depth (``state.depth_m``), and set the sonar/divergence
+        state fields (``sonar_depth_m`` / ``charted_depth_m`` /
+        ``depth_divergence_m`` / ``depth_divergence_alert``) so the shallow-side
+        grounding alert can fire in telemetry.
+
+        A clean no-op when there is no chart, no fix, or no live depth: a
+        non-positive depth (lost bottom lock) or a null/absent position leaves the
+        previous alert untouched rather than false-tripping."""
+        from .nav import sonar
+
+        state = self.state
+        pos = position if position is not None else state.position
+        depth = state.depth_m
+        if pos is None or pos.is_null() or depth is None or float(depth) <= 0.0:
+            return
+        sonar.ingest(
+            state, sonar.Sounding(depth_m=float(depth)), self.depth_map, position=pos
+        )
 
     async def _maybe_persist_depth(self) -> None:
         """Checkpoint newly-accumulated soundings to disk OFF the event loop

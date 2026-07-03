@@ -66,6 +66,27 @@ def test_ina226_seeds_soc_from_resting_voltage():
     assert empty.soc_pct == pytest.approx(0.0)
 
 
+def test_fresh_ina226_monitor_reports_soc_unknown_not_zero():
+    # #49 fix: before any successful shunt read the SoC is UNKNOWN (None), never
+    # 0.0 -- reporting 0.0 makes the low-battery ladder read a critically-empty
+    # pack and force a startup thrust derate + RTL.
+    mon = INA226BatteryMonitor(FakeShunt())
+    assert mon.soc_pct is None
+    assert mon.snapshot()["soc_pct"] is None
+
+
+def test_uninitialized_battery_applies_no_ladder_cap(tmp_path):
+    # An unread INA226 (soc None) must not be derated: the ladder's soc-is-None
+    # guard leaves the governor's thrust cap at 1.0.
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    rt.battery_monitor = INA226BatteryMonitor(FakeShunt())  # fresh, never read
+    assert rt.battery_snapshot()["soc_pct"] is None
+    assert rt.evaluate_battery_ladder() == pytest.approx(1.0)
+    assert rt.controller.safety.thrust_cap == pytest.approx(1.0)
+
+
 def test_ina226_coulomb_counts_soc_down_under_load():
     mon = INA226BatteryMonitor(
         FakeShunt(voltage_v=12.4, current_a=10.0),

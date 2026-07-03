@@ -453,6 +453,28 @@ class MagCalibration:
         v = w @ (np.asarray(sample, dtype=float) - o)
         return (float(v[0]), float(v[1]), float(v[2]))
 
+    def heading_deg(self, sample) -> float:
+        """Magnetic heading (deg, 0..360) of a raw ``(x, y, z)`` magnetometer
+        reading, AFTER the hard/soft-iron correction is applied.
+
+        This is the piece the raw-magnetometer heading path is missing (#41): a
+        stored calibration only helps if it is applied to the raw vector *before*
+        the heading is derived. It first maps the reading back onto the field
+        sphere with :meth:`apply` (removing the vessel's hard- and soft-iron
+        distortion), then takes the compass bearing of the corrected horizontal
+        components.
+
+        Convention: the sensor's body ``x`` axis points to the bow and ``y`` to
+        starboard, so the bearing of the (magnetic-north-pointing) field relative
+        to the bow is ``atan2(-y, x)`` -- i.e. as the boat turns to starboard the
+        field appears to rotate to port. Declination (magnetic -> true) is applied
+        separately downstream, exactly as for an HDM/HDG sentence. Tilt is not
+        compensated here (no accelerometer input); this assumes a roughly level
+        sensor, matching the rest of the current heading path.
+        """
+        cx, cy, _cz = self.apply(sample)
+        return math.degrees(math.atan2(-cy, cx)) % 360.0
+
     def to_dict(self) -> dict:
         return {
             "offset": [float(x) for x in self.offset],

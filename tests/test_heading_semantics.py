@@ -177,6 +177,18 @@ def test_auto_mode_uses_model_at_current_fix():
     assert state.heading_deg == pytest.approx((100.0 + expected) % 360, abs=0.1)
 
 
+def test_declination_docstring_is_accuracy_honest():
+    """(#8) The docstring must not overstate the low-degree model. It should own
+    the real error budget (anomaly regions, ~10-13 deg) and that AUTO is opt-in /
+    off by default, so an operator is not misled into trusting it as survey-grade."""
+    doc = (magnetic_declination_deg.__doc__ or "").lower()
+    assert "survey-grade" in doc  # explicitly disclaims survey accuracy
+    assert "anomal" in doc  # names the strong-anomaly failure mode
+    assert "opt-in" in doc and "off by default" in doc  # AUTO is not the default
+    # The honest magnitude of the error is stated somewhere in the doc.
+    assert "13" in doc
+
+
 def test_auto_mode_leaves_true_headings_alone():
     state = NavigationState()
     nav = Navigator(state, bus=None, declination_deg=None)

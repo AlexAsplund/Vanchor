@@ -94,6 +94,25 @@ def test_command_cannot_lower_locked_min_depth(tmp_path):
     assert rt.safety_geometry.min_depth_m == 2.0
 
 
+def test_bus_command_cannot_weaken_failsafe_at_controller(tmp_path):
+    # #50 defense in depth: a command delivered on the bus "command" topic reaches
+    # Controller.handle_command directly, bypassing Runtime.handle_command's floor
+    # check. The floor must ALSO be enforced at the controller's mutation site.
+    rt = _runtime(tmp_path, min_depth=2.0, failsafe=True)
+    gov = rt.controller.safety
+
+    # Disabling the loss-of-fix failsafe over the bus is refused.
+    rt.controller.handle_command({"type": "set_fix_failsafe", "enabled": False})
+    assert gov.config.fix_failsafe_enabled is True
+
+    # Lowering min-depth below the startup floor over the bus is refused...
+    rt.controller.handle_command({"type": "set_min_depth", "min_depth_m": 0.5})
+    assert gov.config.min_depth_m == 2.0
+    # ...but a tighten (safer) still applies.
+    rt.controller.handle_command({"type": "set_min_depth", "min_depth_m": 3.5})
+    assert gov.config.min_depth_m == 3.5
+
+
 def test_command_can_still_raise_min_depth(tmp_path):
     # Non-weakening edits (a SAFER limit) still hot-reload normally.
     rt = _runtime(tmp_path, min_depth=2.0)
