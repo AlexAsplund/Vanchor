@@ -1170,9 +1170,10 @@ class TrollingMode(ControlMode):
             return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
         if self._base is None:
             self._establish(state)
+        assert self._base is not None  # established above (idiom, cf. _make_point)
 
         cfg = self.config
-        leg_start = self._leg_start or self._base
+        leg_start: GeoPoint = self._leg_start or self._base
         target = self._pending[0]
         distance = haversine_m(pos, target)
 
@@ -1196,7 +1197,7 @@ class TrollingMode(ControlMode):
             if not arrived:
                 break
             self._advance()
-            leg_start = self._leg_start
+            leg_start = self._leg_start  # type: ignore[assignment]  # _advance() sets a non-None leg start
             target = self._pending[0]
             distance = haversine_m(pos, target)
 

@@ -297,7 +297,8 @@ class CalibrationRunner:
             if self._cancel:
                 break
             try:
-                result = await loop.run_in_executor(None, lambda j=job: tune(j, max_evals=24))
+                # ignore[misc]: mypy can't infer the default-arg lambda's type.
+                result = await loop.run_in_executor(None, lambda j=job: tune(j, max_evals=24))  # type: ignore[misc]
                 out[job] = result.tuned_params
             except Exception:
                 logger.exception("auto-tune %s failed", job)
@@ -472,8 +473,8 @@ class MagCalibration:
             if len(offset) != 3 or len(matrix) != 3 or any(len(r) != 3 for r in matrix):
                 return None
             cal = cls(
-                offset=offset,  # type: ignore[arg-type]
-                matrix=matrix,  # type: ignore[arg-type]
+                offset=offset,
+                matrix=matrix,  # type: ignore[arg-type]  # 3x3 validated by the len() guard above
                 field_strength=float(d.get("field_strength", 1.0)),
                 residual=float(d.get("residual", 0.0)),
                 quality=float(d.get("quality", 0.0)),
@@ -572,7 +573,8 @@ def fit_hard_soft_iron(samples) -> MagCalibration:
     quality = max(0.0, 1.0 - residual)
     return MagCalibration(
         offset=offset,
-        matrix=tuple(tuple(float(x) for x in row) for row in w),
+        # 3x3 by construction; mypy sees a variable-length tuple generator.
+        matrix=tuple(tuple(float(x) for x in row) for row in w),  # type: ignore[misc]
         field_strength=field,
         residual=residual,
         quality=quality,

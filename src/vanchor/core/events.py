@@ -48,8 +48,10 @@ class EventBus:
     async def publish(self, topic: str, payload: Any = None) -> None:
         for handler in list(self._handlers.get(topic, ())):
             await self._invoke(handler, payload)
-        for handler in list(self._wildcard):
-            await self._invoke_wild(handler, topic, payload)
+        # mypy narrows ``handler`` to ``Handler`` from the loop above; the
+        # wildcard handlers have a different (topic, payload) signature.
+        for handler in list(self._wildcard):  # type: ignore[assignment]
+            await self._invoke_wild(handler, topic, payload)  # type: ignore[arg-type]
 
     @staticmethod
     async def _invoke(handler: Handler, payload: Any) -> None:

@@ -69,6 +69,15 @@ markers = [
     "e2e: browser end-to-end tests (Playwright); opt-in, run with -m e2e",
 ]
 
+[tool.mypy]
+# Pragmatic (NOT --strict) type checking, currently scoped to the safety-
+# critical core/ + controller/ packages (roadmap #12). Run with:
+#   mypy src/vanchor/core src/vanchor/controller
+python_version = "3.12"
+ignore_missing_imports = true   # optional deps (numpy, shapely, ...) ship no stubs
+warn_unused_ignores = true      # keep the `# type: ignore` list honest
+warn_redundant_casts = true
+
 [tool.ruff]
 line-length = 100
 

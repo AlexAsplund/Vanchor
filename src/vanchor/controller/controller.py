@@ -18,6 +18,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
+from typing import cast
 
 from ..core import events
 from ..core.events import EventBus
@@ -392,7 +393,9 @@ class Controller:
         try:
             from .anchor_ml import AnchorMLMode
 
-            self.modes[ControlModeName.ANCHOR_ML] = AnchorMLMode(
+            # AnchorMLMode is duck-typed (name/activate/update) but not a
+            # ControlMode subclass, so mypy flags the assignment.
+            self.modes[ControlModeName.ANCHOR_ML] = AnchorMLMode(  # type: ignore[assignment]
                 steer_sign=self.helm.steer_sign
             )
         except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
@@ -400,7 +403,7 @@ class Controller:
         try:
             from .anchor_ml import AnchorLeffeMode
 
-            self.modes[ControlModeName.ANCHOR_LEFFE] = AnchorLeffeMode(
+            self.modes[ControlModeName.ANCHOR_LEFFE] = AnchorLeffeMode(  # type: ignore[assignment]  # duck-typed mode, not a ControlMode subclass
                 steer_sign=self.helm.steer_sign
             )
         except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
@@ -658,9 +661,9 @@ class Controller:
                     float(heading) if heading is not None else self.state.heading_deg
                 )
                 if "throttle" in command:
-                    self.modes[ControlModeName.HEADING_HOLD].throttle = float(
-                        command["throttle"]
-                    )
+                    cast(
+                        HeadingHoldMode, self.modes[ControlModeName.HEADING_HOLD]
+                    ).throttle = float(command["throttle"])
                 self.set_mode(ControlModeName.HEADING_HOLD)
             elif ctype == "goto":
                 wps = command.get("waypoints", [])
@@ -672,9 +675,9 @@ class Controller:
                     for i, w in enumerate(wps)
                 ]
                 if "throttle" in command:
-                    self.modes[ControlModeName.WAYPOINT].config.throttle = float(
-                        command["throttle"]
-                    )
+                    cast(
+                        WaypointMode, self.modes[ControlModeName.WAYPOINT]
+                    ).config.throttle = float(command["throttle"])
                 # "active" present => a LIVE EDIT of the running route (the user
                 # dragged/inserted/deleted/reordered a committed waypoint and the UI
                 # re-sent it). Resume from the given index (clamped) instead of
@@ -702,9 +705,9 @@ class Controller:
                 self.state.route_loop = bool(command.get("loop", False))
                 self.state.route_patrol = bool(command.get("patrol", False))
                 if "throttle" in command:
-                    self.modes[ControlModeName.WAYPOINT].config.throttle = float(
-                        command["throttle"]
-                    )
+                    cast(
+                        WaypointMode, self.modes[ControlModeName.WAYPOINT]
+                    ).config.throttle = float(command["throttle"])
                 self.set_mode(ControlModeName.WAYPOINT)
             elif ctype == "work_area":
                 # Work Area: spots = waypoints (each with optional hold heading); visit
@@ -722,7 +725,7 @@ class Controller:
                 self.state.active_waypoint = 0
                 self.state.route_loop = bool(command.get("loop", False))
                 self.state.route_patrol = bool(command.get("patrol", False))
-                wa = self.modes[ControlModeName.WORK_AREA].config
+                wa = cast(WorkAreaMode, self.modes[ControlModeName.WORK_AREA]).config
                 if "dwell_s" in command:
                     wa.dwell_s = max(0.0, float(command["dwell_s"]))
                 if "advance" in command:
@@ -735,9 +738,9 @@ class Controller:
                 self.state.work_next_requested = True
             elif ctype == "follow_apb":
                 if "throttle" in command:
-                    self.modes[ControlModeName.FOLLOW_APB].config.throttle = float(
-                        command["throttle"]
-                    )
+                    cast(
+                        FollowApbMode, self.modes[ControlModeName.FOLLOW_APB]
+                    ).config.throttle = float(command["throttle"])
                 self.set_mode(ControlModeName.FOLLOW_APB)
             elif ctype == "drift":
                 heading = command.get("heading")
@@ -826,7 +829,7 @@ class Controller:
         self.state.anchor = destination_point(self.state.anchor, distance, bearing)
         logger.info("jog %s %.1f m -> anchor moved", direction, distance)
 
-    def _apply_speed_knots(self, knots: object) -> None:
+    def _apply_speed_knots(self, knots: float | None) -> None:
         """For the guided pattern modes (contour/orbit/trolling): if a
         ``speed_knots`` is supplied, hold it via the existing Cruise Control
         (SOG) loop so the boat keeps that speed over ground; if it is ``None``
@@ -834,7 +837,7 @@ class Controller:
         if knots is not None:
             self._set_cruise(knots)
 
-    def _set_cruise(self, knots: object) -> None:
+    def _set_cruise(self, knots: float | None) -> None:
         """Enable/disable Cruise Control. ``knots`` <= 0 or None turns it off."""
         if knots is None or float(knots) <= 0.0:
             self.cruise_knots = None
@@ -845,7 +848,7 @@ class Controller:
         self.cruise_pid.reset()
         logger.info("cruise on: %.1f kn", self.cruise_knots)
 
-    def _set_throttle(self, percent: object) -> None:
+    def _set_throttle(self, percent: float | None) -> None:
         """Set/clear the guided-mode throttle % override (#49). ``None`` or 0
         clears it; otherwise a 0..100 percent of engine power."""
         if percent is None or float(percent) <= 0.0:
@@ -925,9 +928,9 @@ class Controller:
         self.state.waypoints = waypoints
         self.state.active_waypoint = 0
         if "throttle" in command:
-            self.modes[ControlModeName.WAYPOINT].config.throttle = float(
-                command["throttle"]
-            )
+            cast(
+                WaypointMode, self.modes[ControlModeName.WAYPOINT]
+            ).config.throttle = float(command["throttle"])
         self.set_mode(ControlModeName.WAYPOINT)
         logger.info("%s: navigating %d recorded points", ctype, len(waypoints))
 

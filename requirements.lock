@@ -1,0 +1,117 @@
+# ============================================================================
+# Vanchor-NG — pinned lockfile for reproducible installs (Raspberry Pi deploy)
+# ============================================================================
+#
+# Fully pinned (==) versions for a repeatable install on the boat's Pi. Unlike
+# requirements.txt (which carries loose >= floors), this file freezes the exact
+# resolved versions — including the transitive dependency closure — so a fresh
+# `pip install` on the Pi lands on the SAME set that is tested here.
+#
+# All of these ship as prebuilt aarch64 (manylinux) wheels, so nothing compiles
+# on the Pi. Every version below was read from the tested .venv, not invented.
+#
+# ---------------------------------------------------------------------------
+# Install (runtime only — core + water routing):
+#
+#     python -m venv .venv && . .venv/bin/activate
+#     pip install --upgrade pip
+#     pip install -r requirements.lock          # then: pip install -e . --no-deps
+#
+# `pip install -e . --no-deps` installs the `vanchor` package itself (the
+# console script) without letting pip re-resolve dependencies — the lock owns
+# the versions. See docs/deploy-pi.md for the full deployment walkthrough.
+#
+# ---------------------------------------------------------------------------
+# How to regenerate this file:
+#
+# This lock is the transitive closure of the RUNTIME dependencies declared in
+# pyproject.toml ([project].dependencies + the `routing` and `serial` optional
+# extras), pinned to the versions in the project .venv. To rebuild it after a
+# dependency bump, install into a clean venv and freeze that closure, e.g.:
+#
+#     python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install -U pip
+#     /tmp/lockenv/bin/pip install \
+#         "fastapi>=0.110" "uvicorn[standard]>=0.27" "python-multipart>=0.0.9" \
+#         "numpy>=1.24" "pyyaml>=6.0" "orjson>=3.9" \
+#         "shapely>=2.0" "networkx>=3.0" "pyproj>=3.5" "requests>=2.28" \
+#         "pyserial>=3.5" "pyserial-asyncio>=0.6"
+#     /tmp/lockenv/bin/pip freeze > requirements.lock   # then re-add these headers
+#
+# Keep the >= floors in pyproject.toml as the source of truth for WHICH
+# packages are required; this file only pins the resolved versions.
+# ============================================================================
+
+
+# ----------------------------------------------------------------------------
+# Core runtime — REQUIRED (pyproject [project].dependencies + uvicorn[standard])
+# ----------------------------------------------------------------------------
+fastapi==0.138.0
+uvicorn==0.49.0
+python-multipart==0.0.32          # file uploads (POST /api/restore)
+numpy==2.5.0                      # Fossen 3-DOF boat model
+PyYAML==6.0.3                     # YAML config files
+orjson==3.11.9                    # fast depth-chart JSON (de)serialisation
+
+# Transitive closure of the core runtime (do not remove — pins the full set):
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.14.0
+click==8.4.1
+h11==0.16.0
+httptools==0.8.0                  # uvicorn[standard]
+idna==3.18
+pydantic==2.13.4
+pydantic_core==2.46.4
+python-dotenv==1.2.2              # uvicorn[standard] (.env support)
+starlette==1.3.1
+typing_extensions==4.15.0
+typing-inspection==0.4.2
+uvloop==0.22.1                    # uvicorn[standard]
+watchfiles==1.2.0                 # uvicorn[standard]
+websockets==16.0                  # uvicorn[standard] + WS telemetry stream
+
+# ----------------------------------------------------------------------------
+# Water routing — RECOMMENDED (pyproject `routing` extra)
+# Smart "take me here" water-only routes (POST /api/route/plan). All aarch64
+# wheels, no compilation. Omit only if you never use route planning.
+# ----------------------------------------------------------------------------
+shapely==2.1.2
+networkx==3.6.1
+pyproj==3.7.2
+requests==2.34.2
+# routing transitive closure:
+certifi==2026.6.17
+charset-normalizer==3.4.7
+urllib3==2.7.0
+
+# ----------------------------------------------------------------------------
+# Real serial hardware — OPTIONAL (pyproject `serial` extra)
+# Only needed when VANCHOR_HARDWARE=true drives real GPS / compass / motor over
+# serial. Pure-Python, no wheels to compile. Safe to keep even in simulation.
+# ----------------------------------------------------------------------------
+pyserial==3.5
+pyserial-asyncio==0.6
+
+# ----------------------------------------------------------------------------
+# HWT901B compass/IMU — OPTIONAL, NOT PINNED HERE
+# The `hwt901b` extra (compass_source="hwt901b") depends on the `hwt901b`
+# package. It is not yet published to PyPI, so it cannot be pinned to an index
+# version. Install the sibling checkout separately when you need it:
+#     pip install -e ../python-hwt901b-ttl[serial]
+# ----------------------------------------------------------------------------
+
+# ============================================================================
+# DEV / TEST — NOT installed on the Pi. For contributors only (see
+# CONTRIBUTING.md). These are the exact versions in the project .venv; install
+# them with `pip install -e ".[dev]"` rather than from this lock. Listed here
+# (commented) purely to record the tested toolchain versions:
+#
+#   pytest==9.1.1
+#   pytest-asyncio==1.4.0
+#   pytest-timeout==2.4.0
+#   httpx==0.28.1
+#   hypothesis==6.156.1
+#   ruff==0.15.20
+#   playwright==1.60.0
+#   matplotlib==3.11.0      # `analysis` extra (plots)
+# ============================================================================

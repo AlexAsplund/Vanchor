@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import threading
+from typing import TextIO
 
 logger = logging.getLogger("vanchor.debug")
 
@@ -76,7 +77,7 @@ class DebugRecorder:
         self.path: str | None = None   # the session DIRECTORY
         self.name: str | None = None
         self.counts: dict[str, int] = {}
-        self._fh = None
+        self._fh: TextIO | None = None
         self._lock = threading.RLock()
         self._part = 0
         self._part_start = 0.0
@@ -116,7 +117,7 @@ class DebugRecorder:
     def _open_part(self, now: float) -> None:
         """Open the next chunk. Caller holds the lock."""
         self._part += 1
-        part_path = os.path.join(self.path, f"{self._part:04d}{_SUFFIX}")
+        part_path = os.path.join(self.path, f"{self._part:04d}{_SUFFIX}")  # type: ignore[arg-type]  # self.path set in start() before any part is opened
         self._fh = gzip.open(part_path, "wt", encoding="utf-8")
         self._part_start = now
         self._last_flush = now
@@ -138,7 +139,7 @@ class DebugRecorder:
             self._fh = None
 
     def _current_part_size(self) -> int:
-        return _safe_size(os.path.join(self.path, f"{self._part:04d}{_SUFFIX}"))
+        return _safe_size(os.path.join(self.path, f"{self._part:04d}{_SUFFIX}"))  # type: ignore[arg-type]  # only called while recording, where self.path is set
 
     def write(self, kind: str, data, now: float) -> None:
         with self._lock:

@@ -1,0 +1,40 @@
+# Pre-commit hooks for vanchor-ng (roadmap #12).
+#
+# Install once:   pre-commit install
+# Run manually:   pre-commit run --all-files
+#
+# ruff and mypy run from the project virtualenv (the exact tools already
+# installed in .venv), so local runs and CI stay in lock-step with pyproject.
+# The hygiene hooks come from the standard pre-commit-hooks repo.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-lint
+        name: ruff (lint)
+        entry: .venv/bin/ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff (format check)
+        entry: .venv/bin/ruff format --check
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: mypy
+        name: mypy (core + controller)
+        # Type-check the safety-critical packages as a whole (imports matter),
+        # not just the changed files, but only when one of them changes.
+        entry: .venv/bin/mypy src/vanchor/core src/vanchor/controller
+        language: system
+        pass_filenames: false
+        files: ^src/vanchor/(core|controller)/.*\.py$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
