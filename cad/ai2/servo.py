@@ -24,11 +24,12 @@ trolling-motor shaft:
     bosses (no fastener reaches the interior); motor clamped by
     nest+strap (no shell penetrations); PG7 gland; blind vent + grease
     pilots; press-on splash cap over the lid bore.
-  * Plastic-optimised shell: 2 mm walls / 2.8 mm floor (waterproofing
-    comes from an epoxy/paint coat, rigidity from the box shape + the
-    motor itself), 6.5 mm lid only where the seal pocket needs it,
-    O8 bosses. No hold-down flanges: the housing is retained by the
-    user's transom-mount design.
+  * Plastic-optimised shell: 2 mm walls / 2.8 mm floor / 3 mm lid
+    (waterproofing comes from an epoxy/paint coat, rigidity from the
+    box shape + the motor itself). The rim sits level with the top of
+    the seal pocket so the pocket lives wholly in the lid's under-boss
+    and the plate stays thin. O8 bosses. No hold-down flanges: the
+    housing is retained by the user's transom-mount design.
 
 Toolchain: build123d + bd_warehouse (aarch64; CadQuery unavailable).
 Run:  .venv/bin/python cad/ai2/servo.py   -> STL + STEP in cad/ai2/out/
@@ -105,8 +106,8 @@ class P:
     # the motor + box shape handle rigidity) ---
     wall: float = 2.0
     floor_t: float = 2.8
-    lid_t: float = 6.5
-    rim_flange: float = 2.2
+    lid_t: float = 3.0             # thin plate: the seal pocket lives in the
+    rim_flange: float = 2.2        # under-boss, the rim sits at the pocket top
     corner_r: float = 4.0
     gap_gear_wall: float = 2.5
     wire_bay: float = 13.0
@@ -133,7 +134,7 @@ class P:
     # --- coupler / drive hex / splash cap ---
     hex_af: float = 30.3
     hex_fit: float = 0.4
-    hex_h: float = 9.0
+    hex_h: float = 12.0            # keeps ~9 mm coupler engagement above the lid
     coupler_od: float = 41.0
     coupler_clamp_h: float = 30.0
     slit_w: float = 2.4
@@ -182,7 +183,7 @@ class P:
     @property
     def hub_z1(self):         return self.land_z1 + self.hex_h
     @property
-    def h_int(self):          return 64.6
+    def h_int(self):          return self.top_pocket_z1  # rim = pocket top plane
     @property
     def inner_w(self):        return self.ring_od + 2 * self.gap_gear_wall
     @property
@@ -485,8 +486,8 @@ def lid():
         part -= Pos(bx, by, p.lid_z0 - 1) * Cylinder(
             p.m3_clear / 2, p.lid_t + 2,
             align=(Align.CENTER, Align.CENTER, Align.MIN))
-        part -= Pos(bx, by, p.lid_z1 - 2.5) * Cylinder(
-            p.m3_cb_d / 2, 2.6, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        part -= Pos(bx, by, p.lid_z1 - 1.2) * Cylinder(
+            p.m3_cb_d / 2, 1.3, align=(Align.CENTER, Align.CENTER, Align.MIN))
     return part
 
 

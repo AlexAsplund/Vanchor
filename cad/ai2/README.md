@@ -55,10 +55,12 @@ stays ~35 MPa — the gears remain the designed fuse against a hard jam.
 ## Plastic budget
 
 Shell gauge follows the original cad/ design (2 mm walls, 2.8 mm floor) —
-rigidity comes from the box shape and the motor bolted inside it; the lid is
-6.5 mm only because the top seal pocket lives in it. No mount flanges: the
-transom mount retains the housing. Total printed volume ~350 cm³ solid
-(≈40% less than the earlier robust draft before infill savings).
+rigidity comes from the box shape and the motor clamped inside it. The lid is
+a 3 mm plate: the rim sits level with the top of the seal pocket, so the
+pocket lives wholly in the lid's hanging boss instead of thickening the
+whole plate. No mount flanges: the
+transom mount retains the housing. Total printed volume ~330 cm³ solid
+(≈45% less than the earlier robust draft before infill savings).
 
 ## Parts (out/)
 
@@ -113,11 +115,11 @@ visual references only.
 | `pressure_angle` / `gear_t` | 22.5° / 16 | stubby strong teeth |
 | `seal_land_d` | 35 | TC 35×47×7 seals |
 | `idx_r` / `idx_gap` | 17.5 / 1.2 | index magnet orbit / sensor gap |
-| `wall` / `floor_t` / `lid_t` | 2 / 2.8 / 6.5 | original-gauge shell |
+| `wall` / `floor_t` / `lid_t` | 2 / 2.8 / 3.0 | original-gauge shell |
 | `groove_w` / `groove_d` | 2.4 / 0.8 | silicone retention channel |
 | `enc_hole_pitch` | 18 | AS5600 board holes — **measure yours** |
 
-Envelope: 61 × 189 × 74 mm (+ coupler stack above the lid).
+Envelope: 61 × 189 × 75 mm (+ coupler stack above the lid).
 
 ## Renders
 
