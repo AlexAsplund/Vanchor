@@ -53,7 +53,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
 class P:
     # --- trolling-motor shaft ---
     shaft_d: float = 25.4
-    shaft_clear: float = 0.3       # coupler bore clearance (clamped closed)
+    shaft_clear: float = 0.5       # coupler bore clearance (FDM holes shrink; clamp closes it)
     hub_bore_clear: float = 1.0    # hub tube runs free around the shaft
 
     # --- gears: 1:1, AS5600 reads output azimuth directly ---
@@ -62,13 +62,13 @@ class P:
     teeth_r: int = 24              # output gear on the hub
     pressure_angle: float = 22.5   # stubby strong teeth
     gear_t: float = 16.0           # face width
-    backlash_cd: float = 0.25
+    backlash_cd: float = 0.4       # FDM teeth print fat
 
     # --- rotary lip seals: TC 35x47x7 ---
     seal_land_d: float = 35.0
     seal_od: float = 47.0
     seal_h: float = 7.0
-    seal_pocket_clear: float = 0.3
+    seal_pocket_clear: float = 0.5   # prints to ~0.15 press
     seal_pocket_extra_h: float = 0.4
 
     # --- motor: 5840-31ZY (user's drawing) ---
@@ -83,7 +83,7 @@ class P:
     mot_can_d: float = 31.0
     mot_can_l: float = 57.0
     mot_can_axis_below_face: float = 16.0
-    mot_fit: float = 0.3
+    mot_fit: float = 0.5           # nest inside-faces print tight
 
     # --- AS5600 (on pinion) ---
     magnet_d: float = 6.0          # diametric 6x2.5 in the pinion boss
@@ -100,7 +100,7 @@ class P:
     idx_r: float = 17.5            # orbit radius on the pinion (inside root)
     idx_gap: float = 1.2           # magnet face to sensor face
     idx_body: float = 5.2          # TO-92 pocket width (4.6 body + fit)
-    idx_body_t: float = 3.4        # TO-92 pocket thickness
+    idx_body_t: float = 3.6        # TO-92 pocket thickness (3.2 body + fit)
 
     # --- housing (original-gauge walls: epoxy/paint handles porosity,
     # the motor + box shape handle rigidity) ---
@@ -126,14 +126,14 @@ class P:
     m3_cb_d: float = 6.5
     boss_d: float = 8.0
     m4_clear: float = 4.3
-    m4_head_d: float = 8.2
-    m4_nut_af: float = 7.3
+    m4_head_d: float = 8.4
+    m4_nut_af: float = 7.5         # 7.0 nut + FDM fit
     m4_nut_t: float = 3.6
     # boss_d 8: O4 insert pocket + 2 mm wall - enough for M3 insert torque
 
     # --- coupler / drive hex / splash cap ---
-    hex_af: float = 30.3
-    hex_fit: float = 0.4
+    hex_af: float = 30.0
+    hex_fit: float = 0.6           # socket A/F prints ~0.3 small
     hex_h: float = 12.0            # keeps ~9 mm coupler engagement above the lid
     coupler_od: float = 41.0
     coupler_clamp_h: float = 30.0
@@ -263,8 +263,8 @@ def pinion():
     gear = Pos(0, 0, (p.gear_z0 + p.gear_z1) / 2) * _gear(p.teeth_p)
     part = gear + Pos(0, 0, p.gear_z1) * Cylinder(
         7, p.pin_boss_z1 - p.gear_z1, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    bore_r = p.mot_shaft_d / 2 + 0.15
-    flat_y = p.mot_shaft_flat - p.mot_shaft_d / 2 + 0.15
+    bore_r = p.mot_shaft_d / 2 + 0.2
+    flat_y = p.mot_shaft_flat - p.mot_shaft_d / 2 + 0.2
     bore_top = p.face_z + p.mot_shaft_len + 0.2
     void = Pos(0, 0, p.gear_z0 - 1) * Cylinder(
         bore_r, bore_top - p.gear_z0 + 1,
@@ -275,11 +275,11 @@ def pinion():
         align=(Align.CENTER, Align.CENTER, Align.MIN))
     part -= void - tongue
     part -= Pos(0, 0, p.pin_boss_z1 - p.magnet_h - 0.1) * Cylinder(
-        p.magnet_d / 2 + 0.1, p.magnet_h + 0.2,
+        p.magnet_d / 2 + 0.15, p.magnet_h + 0.2,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
     # index magnet pocket in the top face (flush), same phase as output at 1:1
     part -= Pos(p.idx_r, 0, p.gear_z1 - p.idx_magnet_h - 0.2) * Cylinder(
-        p.idx_magnet_d / 2 + 0.1, p.idx_magnet_h + 0.3,
+        p.idx_magnet_d / 2 + 0.15, p.idx_magnet_h + 0.3,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
     part -= Pos(0, 14, p.gear_z0 + 7) * Rot(90, 0, 0) * Cylinder(1.3, 24)
     return part
