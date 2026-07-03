@@ -18,6 +18,30 @@ priority; each is shippable on its own. Items marked **(safety floor)**
 relate directly to the non-negotiable invariants: motor deadman, isolation,
 STOP always works.
 
+## Status — 2026-07-03: all phases complete ✅
+
+Every item in Phases 0–7 (1–52) has shipped. The per-item notes below are the
+*original* review record; where an item still reads "(partial)"/"not yet" that
+was true at review time — it is now done (see the CHANGELOG and git history:
+Phase 5 #36–40, Phase 2 gaps #17/#18/#20, Phase 6 #41–47, Phase 7 #48–52, and
+Phase 1 tooling #12–14). A whole-branch 3-lens review (safety/correctness/
+integration) ran over the work and its findings were fixed. Suite: **1140 tests
+green**, ruff + mypy clean, regression gate 6/6, e2e 18/18, host-C 186.
+
+**Known follow-ups (built but not fully surfaced — none are safety/correctness
+blockers):**
+- Magnetometer calibration (#41): the hard/soft-iron correction is fitted,
+  persisted, and applied by `MagCalibration.heading_deg()`, but the raw
+  magnetometer vector isn't yet plumbed into the navigator (the HWT901B emits a
+  fused heading), so the correction can't be applied end-to-end until raw mag is
+  surfaced. Documented at the navigator Heading branch.
+- Battery source (#42), sim-motor shaping (#36), and driver/battery/watchdog
+  health are configurable via YAML/env and work, but aren't yet exposed in the
+  Settings UI / telemetry surface.
+- AUTO magnetic declination (#47) is opt-in/off by default; the built-in model
+  is a low-degree approximation (upgrade to a full WMM/IGRF table for survey-
+  grade accuracy).
+
 ### Phase 0 — Safety floor repairs
 
 1. ✅ **(safety floor)** Wire `motor.start()/stop()` into Runtime
