@@ -20,6 +20,21 @@ from .guard import SensorGuard, SensorGuardConfig
 
 logger = logging.getLogger("vanchor.navigator")
 
+# --- COG-derived heading fallback (#17) -------------------------------------- #
+# When the compass goes stale/lost a guided mode has no heading to steer on, so
+# the safety governor coasts the boat. But if the GPS shows the boat making way,
+# its course-over-ground is a usable heading proxy: fall back to COG so guided
+# modes keep steering. Built-in (no config knob) so it is always available.
+#
+# Minimum speed-over-ground for COG to be trusted. Below this the boat is
+# effectively at rest and COG is dominated by GPS position noise (it can point
+# anywhere), so we do NOT fall back -- we keep coasting, exactly as before.
+COG_HEADING_MIN_SOG_KNOTS = 0.5
+# Seconds without a fresh compass heading before the COG fallback may take over.
+# Mirrors the safety governor's default heading_stale_s so the fallback engages
+# right when a guided mode would otherwise be coasted for a stale compass.
+COMPASS_STALE_S = 3.0
+
 
 class Navigator:
     def __init__(
@@ -112,6 +127,38 @@ class Navigator:
             return point
         return GeoPoint(point.lat + self.gps_dlat, point.lon + self.gps_dlon)
 
+    def _maybe_cog_heading_fallback(self, fix: GpsFix) -> None:
+        """Steer on GPS course-over-ground when the compass is stale but moving.
+
+        Called after a fresh fix is ingested. A guided mode steers on
+        ``state.heading_deg``; if the compass goes silent the safety governor
+        coasts the boat (heading_stale). But when the GPS shows the boat making
+        way, its COG is a usable heading proxy, so we adopt it and refresh
+        ``heading_received_mono`` -- which the governor watches -- so the guided
+        mode keeps steering instead of only coasting.
+
+        Guards:
+        * Never fires until a real compass heading has been seen at least once
+          (``compass_received_mono is None``) -- a boat that has never had a
+          compass keeps its existing behaviour rather than getting a synthesised
+          heading out of nowhere.
+        * Only fires once the compass has been stale for ``COMPASS_STALE_S``; a
+          fresh compass is always preferred.
+        * Only fires at/above ``COG_HEADING_MIN_SOG_KNOTS`` -- COG at rest is
+          noise, so below that speed we leave the heading stale and let the
+          governor coast (the conservative, unchanged behaviour).
+        """
+        compass_mono = self.state.compass_received_mono
+        if compass_mono is None:
+            return  # never had a compass; don't invent a heading
+        if (self._mono_fn() - compass_mono) <= COMPASS_STALE_S:
+            return  # compass still fresh -> keep using it
+        if not fix.valid or fix.sog_knots < COG_HEADING_MIN_SOG_KNOTS:
+            return  # at rest -> COG is meaningless, keep coasting
+        self.state.heading_deg = fix.cog_deg % 360
+        self.state.heading_received_mono = self._mono_fn()
+        self.state.heading_from_cog = True
+
     async def _on_nmea(self, sentence: str) -> None:
         for topic, payload in self.handle_sentence(sentence):
             if self.bus is not None:
@@ -146,6 +193,7 @@ class Navigator:
                 self.state.fix_received_mono = self._mono_fn()
                 self.state.sog_knots = parsed.sog_knots
                 events_out.append((events.NAV_FIX, fix))
+                self._maybe_cog_heading_fallback(fix)
         elif isinstance(parsed, nmea.GGA):
             point = self._apply_offset(parsed.point)
             if parsed.fix_quality > 0 and self.guard.check_position(point):
@@ -165,6 +213,7 @@ class Navigator:
                 self.state.fix_seq += 1
                 self.state.fix_received_mono = self._mono_fn()
                 events_out.append((events.NAV_FIX, fix))
+                self._maybe_cog_heading_fallback(fix)
         elif isinstance(parsed, nmea.Heading):
             # Normalise to TRUE heading before storing.
             # Sign convention: True = Magnetic + declination (East-positive).
@@ -175,8 +224,13 @@ class Navigator:
             else:  # "T"
                 true_deg = parsed.heading_deg
             if self.guard.check_heading(true_deg):
+                now = self._mono_fn()
                 self.state.heading_deg = true_deg
-                self.state.heading_received_mono = self._mono_fn()
+                self.state.heading_received_mono = now
+                # The real compass just reported: record it and resume steering on
+                # it, dropping any COG fallback that was in effect.
+                self.state.compass_received_mono = now
+                self.state.heading_from_cog = False
                 events_out.append((events.NAV_HEADING, true_deg))
         elif isinstance(parsed, nmea.Depth):
             self.state.depth_m = parsed.depth_m

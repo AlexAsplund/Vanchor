@@ -1011,6 +1011,18 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         runtime.stop_replay()
         return {"replaying": False}
 
+    # -- always-on black-box flight recorder (#20) ----------------------- #
+    @app.get("/api/blackbox/dumps")
+    async def blackbox_dumps() -> dict:
+        return runtime.blackbox_dumps()
+
+    @app.get("/api/blackbox/download")
+    async def blackbox_download(file: str):
+        path = runtime.blackbox_path_for(file)
+        if path is None:
+            return {"error": "not found"}
+        return FileResponse(path, media_type="application/gzip", filename=file)
+
     # --- Trip log (#66) ------------------------------------------------- #
     @app.get("/api/trips")
     async def trips_list() -> dict:

@@ -408,6 +408,29 @@ class NmeaTcpConfig:
 
 
 @dataclass
+class ObsConfig:
+    """Observability: the always-on black-box flight recorder (roadmap #20).
+
+    A lightweight, always-running ring buffer that samples a low-rate snapshot of
+    the control loop (mode, position, heading, distance-to-anchor, the DESIRED vs
+    APPLIED motor command, and the active alarms). On ANY alarm transition (drag
+    alarm, controller fault, link/fix failsafe, shallow/no-go stop, ...) the ring
+    is dumped -- pre-trigger history plus a short post-trigger tail -- to a
+    timestamped gzip file off the event loop, so an incident is captured even
+    when the opt-in debug recorder isn't running.
+
+    Defaults keep it ON at a low rate: the ring append is O(1) and only samples
+    at ``blackbox_sample_hz``, so the control tick is never slowed. Set
+    ``blackbox_enabled: false`` to turn it off entirely (no ring, no wrapper).
+    """
+
+    blackbox_enabled: bool = True
+    blackbox_sample_hz: float = 1.0        # low-rate ring sampling cadence
+    blackbox_window_s: float = 180.0       # pre-trigger history retained (~3 min)
+    blackbox_post_trigger_s: float = 10.0  # tail captured (at tick rate) after a trip
+
+
+@dataclass
 class AppConfig:
     """The root configuration tree."""
 
@@ -424,6 +447,7 @@ class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     nmea_tcp: NmeaTcpConfig = field(default_factory=NmeaTcpConfig)
+    obs: ObsConfig = field(default_factory=ObsConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AppConfig":
@@ -465,6 +489,7 @@ _SUBCONFIGS: dict[str, type] = {
     "server": ServerConfig,
     "hardware": HardwareConfig,
     "nmea_tcp": NmeaTcpConfig,
+    "obs": ObsConfig,
 }
 
 

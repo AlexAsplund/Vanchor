@@ -33,6 +33,12 @@ class NavigationState:
     fix: GpsFix | None = None
     fix_seq: int = 0  # bumped by the navigator on every fresh fix (freshness)
     heading_deg: float = 0.0  # latest compass heading
+    # True when heading_deg is currently derived from GPS course-over-ground (the
+    # COG fallback, #17) rather than from the compass -- set when the compass goes
+    # stale/lost while the boat is making enough way for COG to be meaningful, so
+    # a guided mode keeps steering instead of only coasting. Lets telemetry/alarms
+    # say "steering on GPS course". Reset to False as soon as the compass returns.
+    heading_from_cog: bool = False
     sog_knots: float = 0.0  # speed over ground from GPS
     depth_m: float = 0.0  # water depth under the boat (from a depth sounder)
     # Latest raw IMU/AHRS sample (accel + gyro), if a compass driver exposes one
@@ -54,6 +60,12 @@ class NavigationState:
     # health telemetry reports it as null.
     fix_received_mono: float | None = None
     heading_received_mono: float | None = None
+    # Monotonic stamp of the last REAL compass heading. Distinct from
+    # heading_received_mono (which the COG fallback ALSO refreshes so the governor
+    # sees a fresh heading and keeps steering): this tracks only the compass, so
+    # the navigator can tell when the compass itself has gone stale and the COG
+    # fallback may take over. ``None`` = no compass heading has ever arrived.
+    compass_received_mono: float | None = None
     depth_received_mono: float | None = None
     imu_received_mono: float | None = None
 
@@ -179,6 +191,7 @@ class NavigationState:
             "mode": self.mode.value,
             "position": {"lat": pos.lat, "lon": pos.lon} if pos else None,
             "heading_deg": round(self.heading_deg, 2),
+            "heading_from_cog": self.heading_from_cog,
             "sog_knots": round(self.sog_knots, 2),
             "depth_m": round(self.depth_m, 1),
             "imu": asdict(self.imu) if self.imu else None,

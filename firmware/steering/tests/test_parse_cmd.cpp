@@ -41,6 +41,24 @@ static void expectOk(const char *line, int wpwm, char wdir, int wsteer) {
   }
 }
 
+// Assert a line parses OK and yields the expected pwm/dir/steer AND seq, when
+// the optional 5th out-parameter is requested (heartbeat, roadmap #18).
+static void expectOkSeq(const char *line, int wpwm, char wdir, int wsteer,
+                        int wseq) {
+  int pwm = -1, steer = 999, seq = -999;
+  char dir = '?';
+  bool ok = vanchorParseCmd(line, &pwm, &dir, &steer, &seq);
+  CHECK(ok);
+  CHECK(pwm == wpwm);
+  CHECK(dir == wdir);
+  CHECK(steer == wsteer);
+  CHECK(seq == wseq);
+  if (!ok || pwm != wpwm || dir != wdir || steer != wsteer || seq != wseq) {
+    std::printf("  ^ line=\"%s\" got ok=%d pwm=%d dir=%c steer=%d seq=%d\n",
+                line, ok, pwm, dir, steer, seq);
+  }
+}
+
 // Assert a line is rejected AND leaves the caller's outputs untouched (the
 // header contract: "Leaves outputs untouched + returns false on any malformed
 // line so the caller keeps the last good command").
@@ -79,6 +97,27 @@ int main() {
   expectOk("CMD 999 F 0", 255, 'F', 0);       // pwm clamps at 255
   expectOk("CMD 300 R 250", 255, 'R', 100);   // pwm + steer both clamp high
   expectOk("CMD 50 F -250", 50, 'F', -100);   // steer clamps low
+
+  // ---- Heartbeat seq echo (roadmap #18) --------------------------------
+  // Backward compatibility: the 4-arg overload still works AND a line without a
+  // seq field is accepted exactly as before (existing expectOk cases above).
+  // A CMD with no seq field, but seq requested, yields -1 ("no seq present").
+  expectOkSeq("CMD 100 F 50", 100, 'F', 50, -1);
+  expectOkSeq("CMD 0 F 0\r", 0, 'F', 0, -1);
+  // A CMD WITH a seq field fills it; whitespace and CRLF still tolerated.
+  expectOkSeq("CMD 100 F 50 7", 100, 'F', 50, 7);
+  expectOkSeq("CMD 255 R -100 42", 255, 'R', -100, 42);
+  expectOkSeq("CMD 10 F 5 0", 10, 'F', 5, 0);          // seq 0 is valid, != -1
+  expectOkSeq("CMD 10 F 5   99\r\n", 10, 'F', 5, 99);  // extra spaces + CRLF
+  expectOkSeq("CMD 300 R 250 123", 255, 'R', 100, 123);// pwm/steer clamp, seq kept
+  // Seq clamps at VANCHOR_SEQ_MAX so a giant value never overflows.
+  expectOkSeq("CMD 10 F 5 999999", 10, 'F', 5, VANCHOR_SEQ_MAX);
+  // A non-numeric tail after a valid steer is ignored -> seq -1, still accepted
+  // (must never turn a valid command into a rejection).
+  expectOkSeq("CMD 10 F 5 abc", 10, 'F', 5, -1);
+  // Seq has no sign support (heartbeat seqs are non-negative); a "-1" tail is
+  // treated as an ignored non-numeric tail -> seq -1, command still valid.
+  expectOkSeq("CMD 10 F 5 -1", 10, 'F', 5, -1);
 
   // ---- Malformed / garbage: must be rejected, outputs untouched --------
   expectReject("");                 // empty line

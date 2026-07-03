@@ -167,8 +167,11 @@ def test_roundtrip_rmc(lat: float, lon: float, sog: float, cog: float) -> None:
     assert p.valid
     assert p.point.lat == pytest.approx(lat, abs=1e-3)
     assert p.point.lon == pytest.approx(lon, abs=1e-3)
-    assert p.sog_knots == pytest.approx(sog, abs=0.05)
-    assert p.cog_deg == pytest.approx(cog, abs=0.05)
+    # Encoders format at 0.1 resolution (":.1f"), so a value on the half-step
+    # (e.g. x.x5) rounds with an error of exactly 0.05; tolerate that half-step
+    # (plus float slop) so the roundtrip asserts fidelity to the wire resolution.
+    assert p.sog_knots == pytest.approx(sog, abs=0.06)
+    assert p.cog_deg == pytest.approx(cog, abs=0.06)
 
 
 @given(_lats, _lons,
@@ -190,7 +193,7 @@ def test_roundtrip_hdm(hdg: float) -> None:
     p = nmea.parse(nmea.encode_hdm(hdg))
     assert isinstance(p, nmea.Heading)
     assert p.reference == "M"
-    assert p.heading_deg == pytest.approx(hdg, abs=0.05)
+    assert p.heading_deg == pytest.approx(hdg, abs=0.06)
 
 
 @given(_headings)
@@ -198,7 +201,7 @@ def test_roundtrip_hdt(hdg: float) -> None:
     p = nmea.parse(nmea.encode_hdt(hdg))
     assert isinstance(p, nmea.Heading)
     assert p.reference == "T"
-    assert p.heading_deg == pytest.approx(hdg, abs=0.05)
+    assert p.heading_deg == pytest.approx(hdg, abs=0.06)
 
 
 @given(st.floats(min_value=0.0, max_value=500.0, allow_nan=False, allow_infinity=False))
@@ -207,7 +210,7 @@ def test_roundtrip_dpt(depth: float) -> None:
     assert nmea.has_valid_checksum(s)
     p = nmea.parse(s)
     assert isinstance(p, nmea.Depth)
-    assert p.depth_m == pytest.approx(depth, abs=0.05)
+    assert p.depth_m == pytest.approx(depth, abs=0.06)
 
 
 @given(st.floats(min_value=-500.0, max_value=500.0, allow_nan=False, allow_infinity=False),
@@ -219,8 +222,8 @@ def test_roundtrip_apb(xte: float, steer: str, brg: float) -> None:
     p = nmea.parse(s)
     assert isinstance(p, nmea.APB)
     assert p.steer_to == steer
-    assert p.cross_track_m == pytest.approx(abs(xte), abs=0.05)
-    assert p.bearing_to_dest == pytest.approx(brg, abs=0.05)
+    assert p.cross_track_m == pytest.approx(abs(xte), abs=0.06)
+    assert p.bearing_to_dest == pytest.approx(brg, abs=0.06)
 
 
 # --------------------------------------------------------------------------- #

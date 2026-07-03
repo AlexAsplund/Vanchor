@@ -24,12 +24,19 @@
  * ------------------------------------------------------ COMMAND (Pi -> Arduino)
  * SerialMotorController._format() emits, once per control tick:
  *
- *     CMD <pwm> <dir> <steer>\r\n
+ *     CMD <pwm> <dir> <steer> [<seq>]\r\n
  *
  *   <pwm>    integer 0..255   magnitude of thrust  (0 = stop)
  *   <dir>    'F' or 'R'       drive direction (F = ahead, R = astern)
  *   <steer>  integer -100..100  steering: -100 hard port, +100 hard starboard,
  *                               0 = centred (dead ahead)
+ *   <seq>    OPTIONAL integer >=0  heartbeat sequence number (roadmap #18). When
+ *                               the Pi arms the heartbeat it appends a wrapping
+ *                               seq to every CMD; the firmware echoes the last
+ *                               seq it parsed back in its A/E feedback so the Pi
+ *                               can detect a ONE-WAY serial failure. Absent when
+ *                               the Pi has not armed the heartbeat -> parses as
+ *                               seq = -1 (backward compatible with an older Pi).
  *
  *   The Pi already maps the normalized MotorCommand as:
  *       pwm   = round(|thrust| * 255)          thrust in [-1, 1]
@@ -59,24 +66,29 @@
  * onto the bus verbatim, so we use an NMEA-style framing that is trivial to
  * parse and won't be confused with GPS/compass sentences:
  *
- *     A <angle_deg> <ok> <wrap_pct>\r\n
+ *     A <angle_deg> <ok> <wrap_pct> [<seq>]\r\n
  *
  *   <angle_deg>  float, actual steering azimuth, signed deg (port -, stbd +)
  *   <ok>         '1' feedback healthy, '0' pot reading implausible / lost
  *   <wrap_pct>   int, -100..100, cable-wrap usage
+ *   <seq>        int, heartbeat echo (roadmap #18): the seq of the last CMD this
+ *                board parsed, or -1 if it has parsed none yet. Always emitted by
+ *                this firmware; an older Pi simply ignores the extra field.
  *
- *   Example:  A -12.4 1 -7\r\n
+ *   Example:  A -12.4 1 -7 42\r\n
  *
  *   The engine board similarly acknowledges its applied state (optional, handy
  *   for debugging / a future thrust-feedback channel):
  *
- *     E <pwm> <dir> <state>\r\n      state = RUN | SOFTSTART | REVDELAY | FAILSAFE
+ *     E <pwm> <dir> <state> [<seq>]\r\n  state = RUN|SOFTSTART|REVDELAY|FAILSAFE
  *
- *   >>> Pi-side note: SerialMotorController today only WRITES; to consume the 'A'
- *   feedback line, the Pi's motor transport read-loop should parse 'A ...' and
- *   set state.steering angle/feedback_ok. Until then the lines are harmless
- *   (ignored / logged). This is the only Pi-side change required and is
- *   documented in docs/firmware.md.
+ *   <seq> is the same heartbeat echo as the A line.
+ *
+ *   >>> Pi-side note (roadmap #18): SerialMotorController parses BOTH the 'A'
+ *   steering feedback and the 'E' engine status off its read-loop, and — when
+ *   the heartbeat is armed — tracks the echoed <seq> to detect a one-way serial
+ *   failure via the existing per-device health flag. A firmware that does not
+ *   echo seq is treated as "unknown", never failed, so it cannot brick the Pi.
  *
  * ----------------------------------------------------------------- HEARTBEAT
  * Loss-of-signal failsafe: if no valid CMD arrives within VANCHOR_WATCHDOG_MS,
@@ -101,15 +113,30 @@
 // Max characters in one inbound line (CMD ... is short; be generous).
 #define VANCHOR_LINE_MAX 48
 
+// Upper bound for a parsed heartbeat seq (roadmap #18). The Pi wraps its seq
+// modulo 10000, so any value at/above this is out-of-range garbage; clamp to
+// keep the echo bounded and prevent long-integer overflow on a malformed tail.
+#ifndef VANCHOR_SEQ_MAX
+#define VANCHOR_SEQ_MAX 65535
+#endif
+
 /*
- * Parsed command line. Returns true on a well-formed "CMD <pwm> <dir> <steer>".
+ * Parsed command line. Returns true on a well-formed
+ * "CMD <pwm> <dir> <steer> [<seq>]".
  *  pwm   filled 0..255
  *  dir   filled 'F' or 'R'
  *  steer filled -100..100
+ *  seq   OPTIONAL out (may be NULL). Filled with the trailing heartbeat seq
+ *        (>=0, clamped to VANCHOR_SEQ_MAX) when present, or -1 when the CMD has
+ *        no seq field (an older Pi). Only written when the whole line parses.
  * Tolerates extra spaces and a trailing '\r'. Leaves outputs untouched + returns
  * false on any malformed line so the caller keeps the last good command.
+ *
+ * Backward-compatible: the seq argument defaults to NULL, so existing callers
+ * (and a CMD line without a seq field) are entirely unaffected.
  */
-inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer) {
+inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer,
+                            int *seq = 0) {
   // Skip leading spaces.
   while (*line == ' ') line++;
   if (line[0] != 'C' || line[1] != 'M' || line[2] != 'D') return false;
@@ -141,9 +168,23 @@ inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer) {
   if (s < -100) s = -100;
   if (s > 100) s = 100;
 
+  // --- seq (OPTIONAL trailing non-negative integer) ---
+  // Absent -> -1 (older Pi, heartbeat not armed). A present-but-non-numeric
+  // tail (e.g. an old debugging suffix) is ignored, also yielding -1, so it can
+  // never turn a valid command into a rejection.
+  long q = -1;
+  const char *pq = p;
+  while (*pq == ' ') pq++;
+  if (*pq >= '0' && *pq <= '9') {
+    q = 0;
+    while (*pq >= '0' && *pq <= '9') { q = q * 10 + (*pq - '0'); pq++; }
+    if (q > VANCHOR_SEQ_MAX) q = VANCHOR_SEQ_MAX;
+  }
+
   *pwm = (int)v;
   *dir = d;
   *steer = (int)s;
+  if (seq) *seq = (int)q;
   return true;
 }
 

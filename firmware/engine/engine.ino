@@ -112,6 +112,7 @@ int8_t  g_lastNonZeroDir = +1;
 unsigned long g_zeroSinceMs = 0;  // when throttle last fell to ~0 (for dead-time)
 unsigned long g_lastCmdMs = 0;    // last valid CMD (for watchdog)
 unsigned long g_lastTickMs = 0;
+int     g_lastSeq = -1;           // heartbeat seq of the last parsed CMD (-1 = none)
 
 char    g_line[VANCHOR_LINE_MAX];
 uint8_t g_lineLen = 0;
@@ -234,8 +235,11 @@ static void pollSerial() {
     if (c == '\n' || c == '\r') {
       if (g_lineLen > 0) {
         g_line[g_lineLen] = '\0';
-        int pwm, steer; char dir;
-        if (vanchorParseCmd(g_line, &pwm, &dir, &steer)) onCommand(pwm, dir, steer);
+        int pwm, steer, seq; char dir;
+        if (vanchorParseCmd(g_line, &pwm, &dir, &steer, &seq)) {
+          onCommand(pwm, dir, steer);
+          g_lastSeq = seq;              // echo this back in the E status line
+        }
       }
       g_lineLen = 0;
     } else if (g_lineLen < VANCHOR_LINE_MAX - 1) {
@@ -323,6 +327,8 @@ static void updateControl() {
     Serial.print(pwmOut);
     Serial.print(g_appliedDir < 0 ? " R " : " F ");
     Serial.print(st);
+    Serial.print(' ');
+    Serial.print(g_lastSeq);      // heartbeat echo (roadmap #18)
     Serial.print("\r\n");
   }
 }

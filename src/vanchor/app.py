@@ -462,6 +462,80 @@ class Runtime:
         # is offloaded off the event loop and must not stack up.
         self._depth_save_in_flight = False
 
+        # --- Always-on black-box flight recorder (#20) ------------------- #
+        # A bounded, low-rate ring of control-loop snapshots (desired vs applied
+        # motor command + alarms) that dumps its pre-trigger history off the loop
+        # on ANY alarm transition -- so incidents are captured even without the
+        # opt-in debug recorder running. Wired at the governor boundary (below),
+        # the one place the DESIRED and APPLIED commands are both visible.
+        self._build_blackbox(cfg)
+
+    def _build_blackbox(self, cfg: AppConfig) -> None:
+        """Construct the black-box recorder and install its governor hook.
+
+        Sizes the ring to hold ``blackbox_window_s`` of low-rate history plus one
+        full post-trigger tail. A disabled recorder is a cheap no-op: no ring,
+        and the governor hook is not installed (zero hot-path cost)."""
+        from .obs.blackbox import BlackBox
+
+        obs = getattr(cfg, "obs", None)
+        if obs is None:  # pragma: no cover - defensive for partial configs
+            from .core.config import ObsConfig
+
+            obs = ObsConfig()
+        sample_hz = max(0.01, float(obs.blackbox_sample_hz))
+        tick_hz = max(0.01, float(cfg.control.tick_hz))
+        window_frames = int(math.ceil(max(0.0, obs.blackbox_window_s) * sample_hz))
+        post_frames = int(round(max(0.0, obs.blackbox_post_trigger_s) * tick_hz))
+        self.blackbox = BlackBox(
+            cfg.data_dir,
+            enabled=bool(obs.blackbox_enabled),
+            capacity=window_frames + post_frames + 8,
+            sample_period_s=1.0 / sample_hz,
+            post_trigger_frames=post_frames,
+            now_fn=self._now_fn,
+        )
+        self._install_blackbox_hook()
+
+    def _install_blackbox_hook(self) -> None:
+        """Wrap the safety governor's ``govern`` so every control tick feeds the
+        black box the DESIRED (pre-governor) and APPLIED (post-governor) command
+        plus the resulting alarms. The wrapper returns the governor's result
+        bit-for-bit and swallows any recorder error, so it can NEVER change or
+        break the governed command -- it only observes."""
+        bb = self.blackbox
+        if not bb.enabled:
+            return
+        gov = self.controller.safety
+        orig_govern = gov.govern
+        state = self.state
+        runtime = self
+
+        def govern(command, *args, **kwargs):
+            applied, status = orig_govern(command, *args, **kwargs)
+            bb.observe(
+                command,
+                applied,
+                status,
+                state,
+                controller_fault=state.controller_fault is not None,
+                link_failsafe=runtime._link_failsafe_engaged,
+            )
+            return applied, status
+
+        gov.govern = govern
+
+    # ------------------------------------------------------------------ #
+    # Black-box flight recorder (#20) -- read API for the UI
+    # ------------------------------------------------------------------ #
+    def blackbox_dumps(self) -> dict:
+        """List recent black-box dump files (newest first) + whether it's on."""
+        return {"enabled": self.blackbox.enabled, "dumps": self.blackbox.dumps()}
+
+    def blackbox_path_for(self, file_name: str) -> str | None:
+        """Resolve a dump file name to a safe on-disk path (or ``None``)."""
+        return self.blackbox.path_for(file_name)
+
     # ------------------------------------------------------------------ #
     # Server-persisted safety geometry (#23)
     # ------------------------------------------------------------------ #
