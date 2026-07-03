@@ -23,6 +23,47 @@ the boat's own Raspberry Pi.
 > **This is 1.0-alpha** — a from-scratch rewrite that supersedes the 0.1-alpha project.
 > See [`RELEASE.md`](RELEASE.md) for release notes and migration notes.
 
+## ⚓ The virtual anchor
+
+**Vanchor = Virtual Anchor.** The headline feature: tap a spot and the boat
+*holds it* — GPS station-keeping on a cheap trolling motor, no ground tackle.
+It anticipates wind and current drift (crabbing to stay put rather than
+orbiting), snaps back if pushed outside a watch circle you set, and takes a
+**jog** to nudge the hold point a metre at a time. A rolling **hold-quality**
+readout (RMS error, % of time inside the circle) lets you compare how tightly
+it's holding.
+
+Two station-keepers are available, and you can switch between them live:
+
+- **Robust PID (default)** — a hand-tuned deadband/drive/reverse law: idle in
+  the middle of the circle, drive back toward the mark when pushed out, back
+  *straight* up when the mark is astern (no wasteful looping). Predictable and
+  dependable.
+- **Learned ML station-keeper (opt-in)** — a tiny neural net that *refines* the
+  PID rather than replacing it: the command is `clip(pid + 0.3 · net(obs))`, so
+  the **worst case is just the PID**. The net is a ~1.6k-parameter tanh MLP
+  (8-dim body-frame observation × 4 stacked frames → 32 → 16 → 2), small enough
+  to run on the Raspberry Pi as a few microsecond numpy matrix multiplies —
+  **no ML runtime, no GPU**. It's trained offline by **Evolution Strategies**
+  (gradient-free, numpy-only) against the exact Fossen 3-DOF physics across
+  thousands of randomised scenarios — wind 0–12 m/s with gusts, current up to
+  ~1.2 m/s, and the boat itself (mass, hull, motor power, bow/stern/centre
+  mount). A runtime **guardrail** watches the actual hold and decays the net's
+  influence back toward the pure PID if it ever underperforms. Net result vs
+  the PID baseline: an equally tight (slightly tighter) hold at **3–4× less
+  motor energy** — easier on the battery while anchored — across bow *and*
+  stern mounts.
+
+- **Thrust vectoring (opt-in)** — normally the autopilot only steers within a
+  ±35° band; vectored station-keeping instead swings the motor through its
+  **full rotation** to push *directly* against the wind/current, instead of
+  reorienting the whole hull first. In a beam set that tightens the hold
+  dramatically (measured RMS radial error **3.3 m → 1.3 m**, 100 % of the time
+  inside the circle), and it's stable on bow and stern mounts alike.
+
+> Everything above runs in the [built-in simulator](#sim-first) with no hardware
+> — you can watch the anchor hold against a gusting beam current on your laptop.
+
 ## Hardware — the boat build
 
 Vanchor-NG runs on any single-board computer that can reach a motor + steering
