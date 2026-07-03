@@ -135,5 +135,5 @@ from real hardware.
 - **Map/data:** © OpenStreetMap contributors, © CARTO, © Esri/Maxar, OpenSeaMap,
   OpenTopoMap.
 - **Marine dynamics:** modelling after **Thor I. Fossen**.
-- **Hardware (prototype):** 3D-printable steering gearbox designed parametrically
-  with build123d (see `cad/`).
+- **Hardware (prototype):** a 3D-printable **worm-gear steering servo** with
+  AS5600 magnetic angle feedback (STLs + build notes in [`cad/`](../cad/)).

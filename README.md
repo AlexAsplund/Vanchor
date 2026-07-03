@@ -102,6 +102,12 @@ graph TD
     WORM -->|"AS5600 angle feedback"| PICO
 ```
 
+The steering end is a 3D-printable **worm-gear steering servo** — a small
+gearmotor turns a worm that swings the trolling-motor shaft (self-locking, so it
+holds a heading with the motor idle), with an **AS5600** magnetic encoder for
+absolute angle feedback. STLs, an assembly gallery, and build/waterproofing notes
+are in [`cad/`](cad/). *(Also prototype-stage — not yet water-tight.)*
+
 ## Screenshots
 
 | | |

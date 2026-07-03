@@ -1,60 +1,53 @@
-# cad/ — handoff
+# Steering servo — worm-gear actuator
 
-Parametric, code-driven CAD for Vanchor-NG hardware. Everything regenerates from
-source; STEP/STL/PNG outputs live under `cad/out/` (and can be deleted + rebuilt).
+A **simple steering servo** for the trolling motor: a small DC gearmotor turns a
+**worm**, the worm drives a **worm gear** on the steering output, and the output
+**coupler** grips the trolling-motor shaft and swings it left/right. Using a worm
+drive gives a big reduction in one stage and is **self-locking** — the output
+can't back-drive the motor — so the boat holds a heading with the motor idle.
 
-## Toolchain (important — this machine is aarch64)
-- **build123d** is the CAD kernel (OpenCASCADE/OCP), in the project `.venv`. It
-  exports **STEP + STL**.
-- **CadQuery does NOT work here**: PyPI only ships OCP **7.9** wheels for py3.12,
-  which no CadQuery release supports. `enclosure.py` is an old CadQuery demo kept
-  for reference — **it will not run**. Port it to build123d if needed.
-- **OpenSCAD**: no usable binary (no root; only an x86_64 AppImage exists, won't
-  run on aarch64).
-- A stub `site-packages/nlopt.py` exists so leftover CadQuery can import; harmless.
-- PNG "print-screens" render headless via **matplotlib mplot3d** from STL
-  (`render.py`) — preview quality, **no true hidden-surface removal** (far walls
-  ghost through). For clean filled views/sections, open the STEP in FreeCAD/Fusion/
-  an online viewer and apply a section plane.
+Steering angle is read by an **AS5600 magnetic rotary encoder**: a diametric
+magnet sits on the output-shaft axis and the AS5600 breakout board mounts just
+above it (see the pictures), reporting the absolute steering angle over I²C. That
+is the feedback the firmware closes the steering loop on.
 
-Setup from scratch (if the venv is rebuilt):
-`pip install build123d numpy-stl matplotlib`
+## Pictures
 
-## Files
-| File | What |
+Different views of the assembly — some with the housing/top hidden or sectioned
+for visibility. You can see the motor and its **worm** driving the **shaft
+gear**, the **AS5600** board mounted just above the shaft-gear axis, and the
+splined **output coupler** that grips the trolling-motor shaft.
+
+| | |
+|:---:|:---:|
+| ![Steering servo view 1](images/1.png) | ![Steering servo view 2](images/2.png) |
+| ![Steering servo view 3](images/3.png) | ![Steering servo view 4](images/4.png) |
+
+## Parts (STL, in [`models/`](models/))
+
+| File | Part |
 |---|---|
-| `steering.py` | **Main deliverable.** Parametric steering/azimuth gearbox (v2). All dims in the `P` dataclass. `python cad/steering.py` → STEP+STL+assembly. |
-| `steering_BOM.md` | Bill of materials, cheap/reliable part choices, build + firmware/integration notes. |
-| `steering_REVIEW.md` | 10-iteration design review (10×10 checklist, v1 flaws → v2 fixes → what remains). |
-| `make_renders.py` | Per-part + assembled + exploded PNGs → `out/renders/`. |
-| `make_section.py` | Centre-plane cross-section PNG → `out/renders/section.png`. |
-| `render.py` | STL → shaded multi-view PNG helper. |
-| `enclosure.py` | CadQuery electronics-box demo — **does not run here** (see above). |
+| `Bottom.stl` | Housing body (holds the motor + gear train) |
+| `Top.stl` | Top plate / mounting lid, with the output-shaft bore |
+| `EngineGear.stl` | Worm that presses onto the motor shaft |
+| `ShaftGear.stl` | Worm gear on the steering output (carries the encoder magnet) |
+| `ShaftAdapter.stl` | Splined coupler that grips the trolling-motor shaft |
 
-Run renders from inside `cad/` (they `import steering`):
-`cd cad && python make_renders.py && python make_section.py`
+These are STL exports of the Fusion 360 `TrollingMotorServo` design — drop them
+straight into a slicer to print. Print the gears and coupler in a tough,
+outdoor-friendly material (PETG / ASA / nylon); PLA will creep and UV-degrade on
+a boat.
 
-## Design state — steering gearbox (v2)
-A closed-loop "servo" that swings the trolling motor. The 1" shaft slides into a
-rotating **turret** socket (top split-clamp grips it); a quiet, self-locking **12 V
-worm gearmotor** (mounted under the housing) drives a **pinion → ring gear** (4:1);
-an **AS5600** magnetic absolute encoder reads turret angle for feedback + cable-
-wrap limit; sealed housing (gasket+bolts, O-ring on the turret, weep, breather).
-Current size: module 2, ~**202×142×44 mm**. Parts: `pinion, ring_gear,
-turret_holder, housing_bottom, housing_top`.
+## ⚠️ Not water-tight yet
 
-Key params to tune in `P`: `module`/`ring_teeth` (size vs torque), `shaft_dia`,
-`bearing_*`, `motor_*`, `enc_gap`, seal/clearance fields.
+This revision is **not sealed against water**. Before putting it on the water:
 
-## Open items (from the review — need a real prototype)
-- Boat-mount **flange/feet** (not yet modelled).
-- **Motor-mount slots** for backlash/mesh adjustment.
-- True **lip seal on an SS sleeve** for real IP rating (today: splash/rain only).
-- **Involute** gears in nylon for production (current teeth are simplified).
-- Manual **declutch** / hard end-stop; finalize fuse/H-bridge spec.
-- Torque/FEA validation; coupon-tuned print fits.
-- Optional: shrink the box via module 1.5 or a 2-stage reduction.
+- **Conformal-coat the AS5600 chip** (and its board) so spray and condensation
+  don't corrode or short it.
+- **Waterproof the motor** — a marine/brushed motor with a sealed can, or pot the
+  terminals and seal the shaft exit.
+- Treat the housing joints and the output-shaft bore as splash paths — gasket or
+  seal them, and give the enclosure a drain so water can't pool inside.
 
-## Status
-Geometry builds and exports cleanly; renders are current. Not yet
-prototyped/printed. No automated tests cover CAD (geometry is validated visually).
+A properly sealed revision (shaft seal + gasketed lid + cable glands) is future
+work; until then, keep it out of standing water and coat the electronics.
