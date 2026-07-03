@@ -36,6 +36,7 @@ from .core.config import (
     AppConfig,
     HardwareConfig,
     NmeaTcpConfig,
+    SimMotorConfig,
     _merge_into,
     apply_device_overrides,
     load,
@@ -922,22 +923,33 @@ class Runtime:
             "restart_required": False,
         }
 
+    def sim_motor_config(self) -> dict:
+        """Current simulated-motor actuation-shaping config (#36) as a plain dict.
+
+        A small standalone reader kept separate from :meth:`device_config` so the
+        (frozen) device-config response shape is unchanged; the values are still
+        editable through :meth:`set_device_config`'s ``sim_motor`` block."""
+        return asdict(self.config.sim_motor)
+
     def set_device_config(self, payload: dict) -> dict:
         """Validate, persist, and apply a device-config edit.
 
-        ``payload`` is ``{"hardware": {...}, "nmea_tcp": {...}}`` (either key
-        optional). Validates source values + field types, writes
-        ``devices.json``, and updates the in-memory ``config.hardware`` /
-        ``config.nmea_tcp`` so a subsequent read reflects it. Devices are NOT
-        hot-swapped; the change applies on the next restart, so the returned
-        ``restart_required`` is ``True``. Raises :class:`ValueError` on a bad
-        payload (the endpoint maps it to a 400)."""
+        ``payload`` is ``{"hardware": {...}, "nmea_tcp": {...},
+        "sim_motor": {...}}`` (every key optional). Validates source values +
+        field types, writes ``devices.json``, and updates the in-memory
+        ``config.hardware`` / ``config.nmea_tcp`` / ``config.sim_motor`` so a
+        subsequent read reflects it. Hardware/NMEA devices are NOT hot-swapped
+        (the change applies on the next restart, so ``restart_required`` is
+        ``True``); the ``sim_motor`` actuation shaping (#36) IS applied live to
+        the running simulated motor when there is one. Raises :class:`ValueError`
+        on a bad payload (the endpoint maps it to a 400)."""
         if not isinstance(payload, dict):
             raise ValueError("payload must be an object")
         hw_in = payload.get("hardware") or {}
         nmea_in = payload.get("nmea_tcp") or {}
-        if not isinstance(hw_in, dict) or not isinstance(nmea_in, dict):
-            raise ValueError("'hardware' and 'nmea_tcp' must be objects")
+        motor_in = payload.get("sim_motor") or {}
+        if not isinstance(hw_in, dict) or not isinstance(nmea_in, dict) or not isinstance(motor_in, dict):
+            raise ValueError("'hardware', 'nmea_tcp' and 'sim_motor' must be objects")
 
         # Build validated copies off the *current* config (so an edit can be
         # partial). Sources: sensors sim|serial|nmea, motor sim|serial|both.
@@ -964,17 +976,38 @@ class Runtime:
                 except (TypeError, ValueError):
                     raise ValueError(f"{key} must be an integer") from None
 
+        # Sim-motor actuation shaping (#36): non-negative floats.
+        for key in ("reverse_delay_s", "thrust_slew_per_s", "thrust_lag_tau_s"):
+            if key in motor_in and motor_in[key] is not None:
+                try:
+                    if float(motor_in[key]) < 0.0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    raise ValueError(f"sim_motor.{key} must be a non-negative number") from None
+
         nmea = NmeaTcpConfig(**asdict(self.config.nmea_tcp))
+        motor = SimMotorConfig(**asdict(self.config.sim_motor))
         _merge_into(hw, hw_in)
         _merge_into(nmea, nmea_in)
+        _merge_into(motor, motor_in)
 
-        save_device_overrides(self.config.data_dir, hw, nmea)
-        # Reflect the edit in the live config so a subsequent GET shows it
-        # (the actual devices are rebuilt only on restart).
+        save_device_overrides(self.config.data_dir, hw, nmea, motor)
+        # Reflect the edit in the live config so a subsequent GET shows it.
         self.config.hardware = hw
         self.config.nmea_tcp = nmea
-        logger.info("device config updated (restart required to apply): %s", payload)
-        # Persisted + reflected in-memory; devices are rebuilt on the next start.
+        self.config.sim_motor = motor
+        # Apply the shaping to the LIVE sim motor immediately (no restart): the
+        # simulated motor exposes ``configure``; a real/tee motor doesn't, so this
+        # is a safe no-op off-sim.
+        sim_motor = getattr(self.simulator, "motor", None)
+        if sim_motor is not None and hasattr(sim_motor, "configure"):
+            sim_motor.configure(
+                reverse_delay_s=motor.reverse_delay_s,
+                thrust_slew_per_s=motor.thrust_slew_per_s,
+                thrust_lag_tau_s=motor.thrust_lag_tau_s,
+            )
+        logger.info("device config updated: %s", payload)
+        # Hardware/NMEA devices rebuild on the next start; sim_motor applied live.
         return {"ok": True, "restart_required": True}
 
     # --- GPS baud capacity constants (used for the link-saturation warning) ---
@@ -1053,7 +1086,7 @@ class Runtime:
         ds.setdefault(kind, {})[key] = value
         try:
             save_device_overrides(self.config.data_dir, self.config.hardware,
-                                  self.config.nmea_tcp)
+                                  self.config.nmea_tcp, self.config.sim_motor)
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "message": f"could not save: {exc}"}
         # Apply to the running device too, if there is one that accepts it.
@@ -1108,6 +1141,10 @@ class Runtime:
                 time_scale=cfg.sim.time_scale,
                 model=cfg.sim.model,
                 battery_config=_build_battery_config(cfg),
+                # Actuation shaping (#36): default-zero => transparent passthrough.
+                motor_reverse_delay_s=cfg.sim_motor.reverse_delay_s,
+                motor_thrust_slew_per_s=cfg.sim_motor.thrust_slew_per_s,
+                motor_thrust_lag_tau_s=cfg.sim_motor.thrust_lag_tau_s,
             )
         sim_motor = simulator.motor if simulator is not None else None
         if src["motor"] == "serial":
@@ -1127,8 +1164,12 @@ class Runtime:
         if src["compass"] == "serial":
             compass = self._build_serial_compass(cfg)
         elif src["compass"] == "sim":
+            # Deterministic sea-state model (#38) drives the sim IMU; Hs<=0 (the
+            # default) leaves the flat-water IMU bit-for-bit unchanged.
+            from .sim.sea_state import SeaState
             compass = SimCompass(simulator.truth, self.bus, update_hz=cfg.sensors.compass_hz,
-                                 heading_noise_deg=cfg.sensors.compass_noise_deg)
+                                 heading_noise_deg=cfg.sensors.compass_noise_deg,
+                                 sea_state=SeaState.from_config(cfg.sea_state))
         elif registry.has("compass", src["compass"]):
             # A pluggable driver builds eagerly (may open a port / import an
             # optional lib), so a failure here must NOT crash startup -- skip it,
@@ -1285,6 +1326,13 @@ class Runtime:
             self.simulator.set_weather_base()
         elif ctype == "weather_preset" and self.simulator is not None:
             self._apply_weather_preset(str(command.get("id", "")))
+        elif ctype == "sim_fault":
+            self.set_sim_fault(
+                str(command.get("name", "")),
+                bool(command.get("enabled", True)),
+                **{k: v for k, v in command.items()
+                   if k not in ("type", "name", "enabled")},
+            )
         elif ctype == "teleport":
             self._teleport(command)
         elif ctype == "inject_nmea":
@@ -1322,6 +1370,51 @@ class Runtime:
                 )
         else:
             self.controller.handle_command(command)
+
+    # ------------------------------------------------------------------ #
+    # Sim fault injection (#37)
+    # ------------------------------------------------------------------ #
+    # Fault names -> (device attribute, device-level fault name). The prefix
+    # selects which simulated sensor is degraded; the sensor's ``set_fault``
+    # applies it. Kept as data so the set is easy to extend/introspect.
+    _SIM_FAULTS: dict = {
+        "gps_dropout": ("gps", "dropout"),
+        "gps_eof": ("gps", "eof"),
+        "gps_glitch": ("gps", "glitch"),
+        "gps_garbage": ("gps", "garbage"),
+        "nmea_garbage": ("gps", "garbage"),  # alias
+        "gps_latency": ("gps", "latency"),
+        "baud_saturation": ("gps", "latency"),  # alias
+        "compass_freeze": ("compass", "freeze"),
+        "compass_garbage": ("compass", "garbage"),
+    }
+
+    def set_sim_fault(self, name: str, enabled: bool = True, **params) -> dict:
+        """Toggle a simulated-sensor fault at runtime (roadmap #37).
+
+        ``name`` is one of :attr:`_SIM_FAULTS` (e.g. ``"gps_dropout"``,
+        ``"nmea_garbage"``, ``"compass_freeze"``, ``"baud_saturation"``).
+        Extra kwargs are passed through to the device (e.g. ``glitch_m``,
+        ``latency_s``). **Guarded**: a no-op returning ``{"applied": False, ...}``
+        whenever the simulator isn't running or the target isn't a simulated
+        device (so hitting the trigger on real hardware can never degrade it).
+        Returns ``{"applied": bool, "name": str, "enabled": bool}`` (plus a
+        ``reason`` when it was a no-op)."""
+        if self.simulator is None:
+            return {"applied": False, "name": name, "reason": "no simulator"}
+        target = self._SIM_FAULTS.get(name)
+        if target is None:
+            return {"applied": False, "name": name, "reason": "unknown fault"}
+        attr, fault = target
+        device = getattr(self, attr, None)
+        setter = getattr(device, "set_fault", None)
+        if not callable(setter):
+            return {"applied": False, "name": name,
+                    "reason": f"{attr} is not a simulated device"}
+        ok = setter(fault, enabled, **params)
+        if ok:
+            logger.info("sim fault %s -> %s (%s)", name, enabled, params or "")
+        return {"applied": bool(ok), "name": name, "enabled": bool(enabled)}
 
     def _teleport(self, command: dict) -> None:
         """Sim teleport (#90): instantly snap the simulated boat's ground truth to

@@ -51,11 +51,21 @@ class Simulator:
         time_scale: float = 1.0,
         model: str = "simple",
         battery_config: BatteryConfig | None = None,
+        motor_reverse_delay_s: float = 0.0,
+        motor_thrust_slew_per_s: float = 0.0,
+        motor_thrust_lag_tau_s: float = 0.0,
     ) -> None:
         self.boat = _make_boat(model, start, params)
         self.model = model
         self.environment = environment or Environment()
-        self.motor = SimMotorController()
+        # Actuation shaping (roadmap #36): all-zero defaults leave the motor a
+        # transparent passthrough (``step`` is then a no-op), so existing tuned
+        # gains and recorded scenarios are bit-for-bit unchanged.
+        self.motor = SimMotorController(
+            reverse_delay_s=motor_reverse_delay_s,
+            thrust_slew_per_s=motor_thrust_slew_per_s,
+            thrust_lag_tau_s=motor_thrust_lag_tau_s,
+        )
         # Simulated battery: drained by the applied thrust each physics step.
         self.battery = Battery(battery_config)
         self.physics_hz = physics_hz
@@ -120,11 +130,17 @@ class Simulator:
             step_env = dataclasses.replace(
                 env, wind_speed=max(0.0, env.wind_speed + self.current_gust_mps)
             )
-        self.boat.step(dt, self.motor.command, step_env)
+        # Advance the motor's actuation shaping by this step (#36). A no-op while
+        # every shaping parameter is zero (the default), so the applied command
+        # equals the requested command exactly; when shaping is configured this
+        # is what makes the reverse-delay / slew / lag take effect on the sim boat.
+        self.motor.step(dt)
+        command = self.motor.command
+        self.boat.step(dt, command, step_env)
 
         # Drain the battery for the thrust we just applied, using the boat's
         # ground speed for the range estimate.
-        self.battery.step(dt, self.motor.command.thrust, self.boat.state.speed_mps)
+        self.battery.step(dt, command.thrust, self.boat.state.speed_mps)
 
     def truth(self) -> BoatState:
         return self.boat.truth()

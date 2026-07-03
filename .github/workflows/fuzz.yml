@@ -1,0 +1,41 @@
+name: Fuzz
+
+# Property-based (Hypothesis) fuzzing of the NMEA parser plus a host-compiled
+# unit test of the shared firmware command parser (vanchorParseCmd). Both are
+# fast and hardware-free, so they run on every push / PR.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  nmea-fuzz:
+    name: NMEA parser fuzz (Hypothesis)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install hypothesis
+
+      - name: Run NMEA fuzz tests
+        run: python -m pytest tests/test_nmea_fuzz.py -q
+
+  firmware-host-test:
+    name: Firmware command-parser host test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run vanchorParseCmd host test
+        run: make -C firmware/steering/tests

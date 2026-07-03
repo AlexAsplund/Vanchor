@@ -1,0 +1,37 @@
+name: Regression
+
+# Sim-based regression gates (roadmap #39): run a fixed set of key analysis
+# scenarios and fail the build if their control-quality metrics (settling time,
+# overshoot, station-keeping RMS, cross-track, ...) drift outside tolerance
+# against the committed baseline in src/vanchor/analysis/baselines/regression.json.
+#
+# When an INTENDED control/sim change moves the numbers, regenerate the baseline
+# locally and commit the diff:
+#     python scripts/regression_check.py --update
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  regression:
+    name: Sim regression gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e . -r requirements-dev.txt
+
+      - name: Run regression gate
+        run: python scripts/regression_check.py --verbose
+
+      - name: Self-test the gate + soak invariants
+        run: pytest scripts/test_ci_regression.py -q

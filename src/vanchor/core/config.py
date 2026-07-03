@@ -41,6 +41,47 @@ class SimConfig:
 
 
 @dataclass
+class SimMotorConfig:
+    """Simulated-motor actuation shaping (roadmap #36).
+
+    Maps onto :class:`vanchor.sim.devices.SimMotorController`'s opt-in shaping
+    stages, which mirror the actuation holes present in the real firmware/ESC so
+    sim-trained gains can be stress-tested against them. **All fields default to
+    zero = OFF**, so the simulated motor is a transparent passthrough and every
+    existing tuned gain / recorded scenario is bit-for-bit preserved until a
+    field is set. See ``SimMotorController`` for the physical meaning of each
+    stage; they compose in order (reverse-delay gate -> slew limit -> lag).
+
+    These are surfaced through the same persisted device-config path as the
+    hardware config (``devices.json``), so a bench setup survives a restart and
+    is editable live from Settings alongside the real-hardware knobs.
+    """
+
+    reverse_delay_s: float = 0.0     # hold output at zero this long after a thrust sign flip
+    thrust_slew_per_s: float = 0.0   # max normalized thrust change per second (0 = unlimited)
+    thrust_lag_tau_s: float = 0.0    # first-order prop spin-up lag time-constant (0 = instant)
+
+
+@dataclass
+class SeaStateConfig:
+    """Deterministic sea-state / wave model driving the simulated IMU (#38).
+
+    Maps onto :class:`vanchor.sim.sea_state.SeaState`. A couple of superposed,
+    seeded sinusoids parameterised by significant wave height + peak period add
+    roll/pitch/heave motion (and the matching accelerometer/gyro signature) on
+    top of the flat-water IMU. **Default-off**: ``significant_wave_height_m: 0``
+    contributes exactly zero, so the IMU output is bit-for-bit unchanged from the
+    flat-water model until waves are enabled. Fully deterministic (seeded, no
+    wall-clock) so recorded/replayed sessions stay reproducible.
+    """
+
+    significant_wave_height_m: float = 0.0  # Hs; 0 = flat water (model OFF)
+    peak_period_s: float = 4.0              # dominant wave period (s)
+    heading_deg: float = 0.0                # wave-propagation heading (splits roll vs pitch)
+    seed: int = 20240517                    # phase seed (deterministic, no wall-clock)
+
+
+@dataclass
 class BoatConfig:
     """Physical boat + trolling-motor geometry.
 
@@ -372,6 +413,8 @@ class AppConfig:
 
     data_dir: str = "vanchor_data"  # persisted depth map + debug recordings
     sim: SimConfig = field(default_factory=SimConfig)
+    sim_motor: SimMotorConfig = field(default_factory=SimMotorConfig)
+    sea_state: SeaStateConfig = field(default_factory=SeaStateConfig)
     boat: BoatConfig = field(default_factory=BoatConfig)
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
     sensors: SensorConfig = field(default_factory=SensorConfig)
@@ -411,6 +454,8 @@ class AppConfig:
 # type annotations into strings.
 _SUBCONFIGS: dict[str, type] = {
     "sim": SimConfig,
+    "sim_motor": SimMotorConfig,
+    "sea_state": SeaStateConfig,
     "boat": BoatConfig,
     "environment": EnvironmentConfig,
     "sensors": SensorConfig,
@@ -438,8 +483,11 @@ def _build_sub(sub_cls: type, data: Any) -> Any:
 # edit + persist (separately from the load-only YAML/defaults). It lives in a
 # small ``<data_dir>/devices.json`` so a saved hardware setup survives restarts.
 # Shape: ``{"hardware": {...HardwareConfig fields...},
-#           "nmea_tcp": {...NmeaTcpConfig fields...}}`` -- the same defensive,
-# field-merge tolerance as the rest of the config (unknown/missing keys OK).
+#           "nmea_tcp": {...NmeaTcpConfig fields...},
+#           "sim_motor": {...SimMotorConfig fields...}}`` -- the same defensive,
+# field-merge tolerance as the rest of the config (unknown/missing keys OK). The
+# ``sim_motor`` block is only written when a SimMotorConfig is supplied, so the
+# on-disk shape stays backward-compatible with files/tests that predate it.
 DEVICES_FILE = "devices.json"
 
 
@@ -498,19 +546,28 @@ def apply_device_overrides(config: AppConfig, data_dir: str | Path | None = None
         return config
     _merge_into(config.hardware, overrides.get("hardware"))
     _merge_into(config.nmea_tcp, overrides.get("nmea_tcp"))
+    _merge_into(config.sim_motor, overrides.get("sim_motor"))
     log.info("applied device overrides from %s", DEVICES_FILE)
     return config
 
 
 def save_device_overrides(
-    data_dir: str | Path, hardware: HardwareConfig, nmea_tcp: NmeaTcpConfig
+    data_dir: str | Path,
+    hardware: HardwareConfig,
+    nmea_tcp: NmeaTcpConfig,
+    sim_motor: SimMotorConfig | None = None,
 ) -> dict[str, Any]:
-    """Persist ``hardware`` + ``nmea_tcp`` to ``<data_dir>/devices.json``.
+    """Persist ``hardware`` + ``nmea_tcp`` (and optionally ``sim_motor``) to
+    ``<data_dir>/devices.json``.
 
-    Returns the written ``{"hardware": {...}, "nmea_tcp": {...}}`` mapping. The
+    Returns the written mapping. The ``sim_motor`` block is included only when a
+    :class:`SimMotorConfig` is supplied, keeping the on-disk shape backward
+    compatible with callers/tests that persist only hardware + nmea_tcp. The
     directory is created if needed.
     """
-    payload = {"hardware": asdict(hardware), "nmea_tcp": asdict(nmea_tcp)}
+    payload: dict[str, Any] = {"hardware": asdict(hardware), "nmea_tcp": asdict(nmea_tcp)}
+    if sim_motor is not None:
+        payload["sim_motor"] = asdict(sim_motor)
     d = Path(data_dir)
     d.mkdir(parents=True, exist_ok=True)
     (d / DEVICES_FILE).write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -665,6 +722,17 @@ sim:
   physics_hz: 20.0
   model: fossen          # "fossen" (3-DOF, bow-mount aware) or "simple"
   time_scale: 1.0
+
+sim_motor:               # simulated-motor actuation shaping (#36); all 0 = OFF (passthrough)
+  reverse_delay_s: 0.0     # hold output at zero this long after a thrust sign flip
+  thrust_slew_per_s: 0.0   # max normalized thrust change per second (0 = unlimited)
+  thrust_lag_tau_s: 0.0    # first-order prop spin-up lag time-constant (0 = instant)
+
+sea_state:               # deterministic wave model driving the sim IMU (#38)
+  significant_wave_height_m: 0.0  # Hs; 0 = flat water (model OFF, IMU unchanged)
+  peak_period_s: 4.0              # dominant wave period (s)
+  heading_deg: 0.0                # wave-propagation heading (splits roll vs pitch)
+  seed: 20240517                  # phase seed (deterministic; no wall-clock)
 
 boat:
   length_m: 4.1

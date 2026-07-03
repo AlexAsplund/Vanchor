@@ -1,0 +1,47 @@
+name: Soak
+
+# Long-running headless sim soak (roadmap #40): drive a full-sim Runtime with
+# continuous mode churn + injected link drops, asserting no crash, no stuck
+# motor, and bounded memory (scripts/soak.py).
+#
+# Scheduled nightly + manual (workflow_dispatch). CI runs a SHORT soak so it
+# stays cheap; for a real overnight soak run locally with a big --duration:
+#     python scripts/soak.py --duration 3600
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # 03:17 UTC nightly
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Soak duration in wall-clock seconds"
+        required: false
+        default: "60"
+      time_scale:
+        description: "Sim physics speed-up factor"
+        required: false
+        default: "10"
+
+jobs:
+  soak:
+    name: Sim soak (short)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e . -r requirements-dev.txt
+
+      - name: Run soak
+        run: |
+          python scripts/soak.py \
+            --duration "${{ github.event.inputs.duration || '60' }}" \
+            --time-scale "${{ github.event.inputs.time_scale || '10' }}" \
+            --verbose
