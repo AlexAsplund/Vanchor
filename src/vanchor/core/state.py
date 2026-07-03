@@ -50,6 +50,19 @@ class NavigationState:
     heading_rejected: int = 0
     position_rejected: int = 0
 
+    # --- Live sonar/fishfinder ingest + chart divergence (#45) ----------- #
+    # Written by nav/sonar.ingest when a live sounding is merged with the chart.
+    # ``sonar_depth_m`` is the latest measured depth from the fishfinder;
+    # ``charted_depth_m`` is what the imported DepthMap says at the boat's
+    # position (0 = no chart data nearby); ``depth_divergence_m`` is
+    # measured - charted (NEGATIVE = sounder shallower than the chart, the
+    # grounding-risk case); ``depth_divergence_alert`` latches True while they
+    # disagree beyond tolerance so telemetry/UI can flag an uncharted shoal.
+    sonar_depth_m: float = 0.0
+    charted_depth_m: float = 0.0
+    depth_divergence_m: float = 0.0
+    depth_divergence_alert: bool = False
+
     # --- Sensor staleness (freshness watchdog) --------------------------- #
     # ``time.monotonic()`` (via the navigator's injectable clock) stamp of when
     # each primary input was last ingested, so the governor can force a safe
@@ -198,6 +211,15 @@ class NavigationState:
             "sensors": {
                 "heading_rejected": self.heading_rejected,
                 "position_rejected": self.position_rejected,
+            },
+            # Live sonar vs charted depth (#45): latest measured depth, the
+            # charted depth under the boat, their signed difference, and the
+            # divergence alarm (sounder materially shallower than the chart).
+            "sonar": {
+                "depth_m": round(self.sonar_depth_m, 1),
+                "charted_depth_m": round(self.charted_depth_m, 1),
+                "divergence_m": round(self.depth_divergence_m, 1),
+                "divergence_alert": self.depth_divergence_alert,
             },
             "anchor": (
                 {"lat": self.anchor.lat, "lon": self.anchor.lon}

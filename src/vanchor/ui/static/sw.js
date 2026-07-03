@@ -27,7 +27,10 @@ const CACHE = VERSION;
 
 // The app shell. Kept in sync with index.html's <link>/<script> tags. "/" and
 // "/index.html" both resolve to the same document; we precache both so a direct
-// navigation or an offline fallback both hit the cache.
+// navigation or an offline fallback both hit the cache. The /static/*.js entries
+// below are cross-checked against index.html's <script> tags by
+// scripts/check_shell_manifest.py (tests/test_shell_manifest.py + CI), which
+// fails if the two lists drift.
 const SHELL = [
   "/",
   "/index.html",

@@ -210,6 +210,12 @@ def _is_allowed_host(hostname: str, extra: frozenset[str]) -> bool:
 
 
 def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
+    from ..obs.session_upload import SessionUploader
+
+    # Opt-in "upload last session on WiFi" (#48). Read-only over the data dir;
+    # the opt-in flag + destination live in the prefs KV store, never in config.
+    session_uploader = SessionUploader(runtime.config.data_dir)
+
     clients: set[WebSocket] = set()
     # Multi-client roles (#24). ``client_order`` preserves connection order so
     # helm succession promotes the OLDEST remaining client. ``_helm["ws"]`` is
@@ -1098,6 +1104,48 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         if path is None:
             return {"error": "not found"}
         return FileResponse(path, media_type="application/gzip", filename=file)
+
+    # -- opt-in "upload last session on WiFi" (#48) ---------------------- #
+    # A deliberate, user-triggered action: package the most recent on-boat
+    # session artifacts (debug recordings + black-box dumps) and POST them to a
+    # user-configured destination so a real-water incident becomes a replayable
+    # test scenario. Strictly OPT-IN -- the ``session_upload_enabled`` flag and
+    # ``session_upload_url`` live in the prefs KV store (default OFF / empty),
+    # NOT in config, and nothing here ever uploads automatically.
+    @app.get("/api/session/list")
+    async def session_list() -> dict:
+        """Recent uploadable sessions (newest first) + the opt-in state and last
+        upload status, so the UI can render the panel without extra round-trips."""
+        prefs = runtime.prefs.get()
+        return {
+            "sessions": session_uploader.list_sessions(),
+            "opt_in": bool(prefs.get("session_upload_enabled", False)),
+            "destination_set": bool(str(prefs.get("session_upload_url", "") or "")),
+            "status": session_uploader.status(),
+        }
+
+    @app.get("/api/session/upload/status")
+    async def session_upload_status() -> dict:
+        return session_uploader.status()
+
+    @app.post("/api/session/upload")
+    async def session_upload(payload: dict) -> dict:
+        """Trigger an opt-in upload of the latest (or a named) session.
+
+        Reads the opt-in flag + destination from prefs, then runs the blocking
+        package+POST OFF the event loop (executor) so it never touches the
+        control path. Refuses cleanly when opt-in is off or no URL is set."""
+        prefs = runtime.prefs.get()
+        opt_in = bool(prefs.get("session_upload_enabled", False))
+        dest = str(prefs.get("session_upload_url", "") or "")
+        session_id = (payload or {}).get("session") or None
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: session_uploader.upload(
+                dest, opt_in=opt_in, session_id=session_id
+            ),
+        )
 
     # --- Trip log (#66) ------------------------------------------------- #
     @app.get("/api/trips")

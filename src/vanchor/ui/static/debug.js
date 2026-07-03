@@ -42,6 +42,75 @@
     }
   });
   $("debug-refresh").addEventListener("click", refresh);
+
+  // --- Opt-in "upload last session on WiFi" (#48) ------------------------
+  // A DELIBERATE user action: uploads never happen automatically. The button
+  // is injected here (no index.html edit) into the debug card's button row.
+  // First click walks the user through opting in + setting a destination URL
+  // (persisted in the prefs KV store), then POSTs the latest session.
+  const uploadBtn = document.createElement("button");
+  uploadBtn.id = "session-upload";
+  uploadBtn.className = "btn-ghost";
+  uploadBtn.textContent = "⤴ Upload last session";
+  uploadBtn.title =
+    "Opt-in: package the most recent session and send it to your configured URL";
+  (recBtn.parentNode || $("debug-card")).appendChild(uploadBtn);
+  const uploadInfo = document.createElement("div");
+  uploadInfo.id = "session-upload-info";
+  uploadInfo.className = "hint";
+  (recBtn.parentNode || $("debug-card")).appendChild(uploadInfo);
+
+  async function ensureOptIn() {
+    // Read the current opt-in + destination straight from the server prefs so a
+    // fresh device reflects the durable choice. Returns true when good to go.
+    let prefs = {};
+    try { prefs = await VA.getJSON("/api/prefs"); } catch (e) { prefs = {}; }
+    let url = String(prefs.session_upload_url || "");
+    const enabled = !!prefs.session_upload_enabled;
+    if (!enabled || !url) {
+      const entered = window.prompt(
+        "Upload the latest session to a destination URL?\n" +
+        "This is opt-in and only happens when you click Upload.\n\n" +
+        "Enter the HTTPS endpoint that receives the zip (blank to cancel):",
+        url,
+      );
+      if (!entered) return false;
+      url = entered.trim();
+      if (!url) return false;
+      // Persist the opt-in flag + URL so it is a durable, deliberate choice.
+      await fetch("/api/prefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_upload_enabled: true,
+          session_upload_url: url,
+        }),
+      });
+    }
+    return true;
+  }
+
+  uploadBtn.addEventListener("click", async () => {
+    if (!(await ensureOptIn())) {
+      uploadInfo.textContent = "Upload cancelled — opt-in required.";
+      return;
+    }
+    uploadBtn.disabled = true;
+    uploadInfo.textContent = "Uploading latest session…";
+    let r;
+    try {
+      r = await VA.postJSON("/api/session/upload", {});
+    } catch (e) {
+      uploadInfo.textContent = "Upload failed: " + e;
+      uploadBtn.disabled = false;
+      return;
+    }
+    uploadInfo.textContent = r && r.ok
+      ? "Uploaded " + (r.filename || "session") +
+        " (" + Math.round((r.bytes || 0) / 1024) + " KB)"
+      : "Upload failed: " + ((r && r.error) || "unknown error");
+    uploadBtn.disabled = false;
+  });
   const stopReplay = () => VA.postJSON("/api/debug/replay/stop", {});
   $("replay-stop").addEventListener("click", stopReplay);
   $("replay-ind-stop").addEventListener("click", stopReplay);

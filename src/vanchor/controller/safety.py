@@ -21,6 +21,9 @@ Behaviours, all applied within a single :meth:`SafetyGovernor.govern` call:
 * **Loss-of-fix failsafe** -- once the time since the last fresh fix exceeds
   ``fix_timeout_s`` thrust is forced to zero so the boat coasts rather than
   steaming blind.
+* **Low-battery thrust derate** -- an externally-set cap (the battery ladder,
+  #49) limits the applied thrust magnitude in progressive steps as the pack
+  drains; it only ever lowers thrust and never overrides STOP or a failsafe.
 * **Anchor drag alarm** -- in anchor-hold mode, drifting beyond
   ``drag_alarm_factor * anchor_radius_m`` from the anchor raises an alarm.
 * **Steering slew limiting** -- the steering change per tick is capped at
@@ -34,6 +37,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from math import copysign
+from typing import Any
 
 from shapely.affinity import scale
 from shapely.geometry import Point, Polygon
@@ -106,6 +110,12 @@ class SafetyStatus:
     shallow_stop: bool = False
     nogo_stop: bool = False
     min_depth_m: float = 0.0
+    # Low-battery thrust-derating ladder (#49): the current max-thrust CAP
+    # (1.0 = full) and whether a derate is actually in force this tick. Exposed on
+    # the status object (and via ``SafetyGovernor.thrust_cap``) for callers/tests;
+    # kept OUT of ``to_dict`` so the serialized telemetry contract is unchanged.
+    thrust_cap: float = 1.0
+    thrust_derated: bool = False
     messages: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -121,6 +131,65 @@ class SafetyStatus:
             "min_depth_m": self.min_depth_m,
             "messages": list(self.messages),
         }
+
+
+@dataclass(frozen=True)
+class BatteryLadder:
+    """Pure low-battery thrust-derating ladder (#49).
+
+    Maps a battery state-of-charge (percent) to a maximum-thrust CAP in ``[0, 1]``.
+    As SoC falls through each ``(soc_pct, cap)`` rung the cap steps DOWN (a soft
+    derate) so propulsion is progressively limited BEFORE the boat is handed off
+    to the existing RTL/failsafe at ``rtl_soc_pct``.
+
+    The ladder is deliberately one-directional: the cap it returns is
+    monotonically NON-INCREASING as SoC drops (it is the minimum cap over every
+    rung whose threshold the SoC has fallen to or below), and it is 1.0 (full)
+    above the top rung. It never RAISES thrust. STOP and every failsafe still take
+    precedence in the governor -- a cap only limits magnitude, it can never force
+    motion.
+    """
+
+    rungs: tuple[tuple[float, float], ...] = ()
+    rtl_soc_pct: float = 0.0
+    enabled: bool = True
+
+    @classmethod
+    def from_config(cls, safety: Any) -> "BatteryLadder":
+        """Build from a config object exposing ``battery_ladder`` (a list of
+        ``[soc_pct, cap]`` pairs), ``battery_rtl_soc_pct`` and
+        ``battery_ladder_enabled``. Rungs are coerced to floats and caps clamped
+        to ``[0, 1]``; malformed rungs are skipped rather than raising."""
+        raw = getattr(safety, "battery_ladder", None) or ()
+        rungs: list[tuple[float, float]] = []
+        for entry in raw:
+            try:
+                soc, cap = float(entry[0]), float(entry[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            rungs.append((soc, max(0.0, min(1.0, cap))))
+        return cls(
+            rungs=tuple(rungs),
+            rtl_soc_pct=float(getattr(safety, "battery_rtl_soc_pct", 0.0)),
+            enabled=bool(getattr(safety, "battery_ladder_enabled", True)),
+        )
+
+    def cap_for(self, soc_pct: float) -> float:
+        """Max-thrust cap for the given SoC (1.0 = full thrust allowed).
+
+        The cap is the minimum over every rung the SoC has fallen to/below, so a
+        lower SoC can only ever yield an equal-or-lower cap (monotone)."""
+        if not self.enabled:
+            return 1.0
+        cap = 1.0
+        for thresh, rung_cap in self.rungs:
+            if soc_pct <= thresh:
+                cap = min(cap, rung_cap)
+        return cap
+
+    def at_rtl(self, soc_pct: float) -> bool:
+        """True once SoC has reached the lowest (RTL hand-off) stage."""
+        return self.enabled and soc_pct <= self.rtl_soc_pct
 
 
 class SafetyGovernor:
@@ -144,6 +213,11 @@ class SafetyGovernor:
         self._rest_timer_s: float = 0.0
         # Seconds since the last fresh fix was observed.
         self._time_since_fix_s: float = 0.0
+        # Low-battery thrust-derating cap (#49): an externally-set ceiling on the
+        # THRUST MAGNITUDE in [0, 1] (1.0 = no derate). Set by the battery ladder
+        # from the ~1 Hz supervisor. It only ever LIMITS magnitude, so STOP and
+        # every failsafe (which force thrust to zero) still take precedence.
+        self._thrust_cap: float = 1.0
         # No-go polygons in (lon, lat) order, prepared for fast contains/distance.
         self._nogo: list[Polygon] = []
         self._nogo_prepared: list = []
@@ -167,6 +241,21 @@ class SafetyGovernor:
     @property
     def nogo_zone_count(self) -> int:
         return len(self._nogo)
+
+    @property
+    def thrust_cap(self) -> float:
+        """The current low-battery thrust-magnitude cap (1.0 = no derate)."""
+        return self._thrust_cap
+
+    def set_thrust_cap(self, cap: float) -> None:
+        """Set the low-battery thrust-derating cap (#49), clamped to ``[0, 1]``.
+
+        A soft ceiling on the applied thrust MAGNITUDE only: it never raises
+        thrust and never forces motion, so STOP and every failsafe still take
+        precedence. Set to 1.0 to remove the derate. Called by the battery ladder
+        from the supervisor -- never from a command path -- so it cannot be used
+        to WEAKEN a failsafe."""
+        self._thrust_cap = max(0.0, min(1.0, float(cap)))
 
     def reset(self, thrust: float = 0.0, steering: float = 0.0) -> None:
         """Forget the transient timers (e.g. on mode change or restart), but seed
@@ -239,6 +328,19 @@ class SafetyGovernor:
         # Work on the clamped command so all reasoning is in [-1, 1].
         desired = command.clamped().thrust
         steering = command.clamped().steering
+
+        # --- Low-battery thrust derate (soft cap, #49) ----------------- #
+        # An externally-set cap limits the THRUST MAGNITUDE only. It is applied
+        # FIRST, but every zeroing failsafe below (fix-loss, shallow, no-go,
+        # stale-heading) still overrides it, and a STOP command already arrives as
+        # desired=0 -- which is under any cap -- so the derate can never keep the
+        # boat moving. It only ever LOWERS thrust.
+        cap = max(0.0, min(1.0, self._thrust_cap))
+        status.thrust_cap = cap
+        if cap < 1.0:
+            status.thrust_derated = True
+            if abs(desired) > cap:
+                desired = copysign(cap, desired)
 
         # --- Stale compass heading ------------------------------------- #
         # A guided (autopilot) mode steers on the compass; if it goes silent the

@@ -1683,6 +1683,10 @@
     </div>
   </div>
 
+  <!-- App shell scripts. This list is mirrored by the SHELL precache array in
+       sw.js so the app boots fully offline (#82). The two lists must stay in
+       sync: scripts/check_shell_manifest.py (run by tests/test_shell_manifest.py
+       + CI) fails if a /static/*.js is in one list but not the other. -->
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/vendor/uplot/uPlot.iife.min.js"></script>
   <script src="/static/core.js"></script>

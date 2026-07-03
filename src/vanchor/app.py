@@ -28,7 +28,7 @@ import time
 from .controller.calibration import CalibrationRunner
 from .controller.controller import Controller, GainSchedule, Helm
 from .controller.modes import AnchorConfig, DriftConfig, FollowApbConfig, WaypointConfig
-from .controller.safety import SafetyConfig
+from .controller.safety import BatteryLadder, SafetyConfig
 from .core import events, observability
 from dataclasses import asdict
 
@@ -36,6 +36,7 @@ from .core.config import (
     AppConfig,
     HardwareConfig,
     NmeaTcpConfig,
+    SafetyFloor,
     SimMotorConfig,
     _merge_into,
     apply_device_overrides,
@@ -52,6 +53,7 @@ from .nav.navigator import Navigator
 from .nav.trip import TripLog
 from .hardware import registry
 from .hardware.drivers import load_drivers
+from .hardware.watchdog import HardwareWatchdog
 from .sim.bathymetry import Bathymetry
 from .sim.devices import SimCompass, SimDepthSounder, SimGps
 from .sim.simulator import Simulator
@@ -227,6 +229,21 @@ class Runtime:
     ) -> None:
         self.config = config or AppConfig()
         cfg = self.config
+
+        # --- Non-negotiable safety-floor lockout (#50) ------------------- #
+        # Capture the locked safety values from the BASE/startup config NOW, so
+        # every later apply path (the persisted safety geometry below, a runtime
+        # Settings edit, a backup-restore) can be routed through it and can only
+        # ratchet the failsafes TIGHTER -- never weaker. Must be set before
+        # _apply_safety_geometry() runs (it applies persisted min-depth/failsafe).
+        self.safety_floor = SafetyFloor.from_config(cfg.safety)
+
+        # --- Low-battery thrust-derating ladder (#49) -------------------- #
+        # Pure SoC->thrust-cap ladder, evaluated by the ~1 Hz supervisor and
+        # pushed into the governor as a soft thrust cap. One-shot flag so the
+        # lowest-stage RTL hand-off engages once (cleared when SoC recovers).
+        self._battery_ladder = BatteryLadder.from_config(cfg.safety)
+        self._battery_rtl_engaged = False
 
         # Two injectable clock seams so both can be driven deterministically in
         # tests. ``_now_fn`` is WALL-CLOCK -- used only for timestamps that are
@@ -474,6 +491,18 @@ class Runtime:
         # the one place the DESIRED and APPLIED commands are both visible.
         self._build_blackbox(cfg)
 
+        # --- External hardware watchdog heartbeat (#44) ------------------ #
+        # A GPIO line the ~1 Hz supervisor must keep toggling or an external relay
+        # cuts the motor supply -- covering a Pi hard-hang the firmware watchdog
+        # cannot. OFF by default and a no-op until started, so building it here is
+        # free. Uses the MONOTONIC clock so an RTC step can't skew the cadence.
+        from .core.config import WatchdogConfig
+
+        self.watchdog = HardwareWatchdog.from_config(
+            getattr(cfg, "watchdog", None) or WatchdogConfig(),
+            now_fn=self._mono_fn,
+        )
+
     def _build_blackbox(self, cfg: AppConfig) -> None:
         """Construct the black-box recorder and install its governor hook.
 
@@ -556,10 +585,16 @@ class Runtime:
             gov.set_nogo_zones(
                 [[(float(p[0]), float(p[1])) for p in ring] for ring in geo.nogo_zones]
             )
+        # Safety-floor lockout (#50): the persisted geometry (which a backup can
+        # replace) may make these SAFER but never weaker than the startup floor,
+        # so a restored/edited store can't silently disable a failsafe or lower
+        # the min-depth stop.
         if geo.min_depth_m is not None:
-            gov.config.min_depth_m = geo.min_depth_m
+            gov.config.min_depth_m = self.safety_floor.enforce_min_depth(geo.min_depth_m)
         if geo.fix_failsafe_enabled is not None:
-            gov.config.fix_failsafe_enabled = geo.fix_failsafe_enabled
+            gov.config.fix_failsafe_enabled = self.safety_floor.enforce_fix_failsafe(
+                geo.fix_failsafe_enabled
+            )
         logger.info(
             "safety geometry applied: %d no-go zones, min_depth=%s, fix_failsafe=%s",
             len(geo.nogo_zones), geo.min_depth_m, geo.fix_failsafe_enabled,
@@ -1513,6 +1548,25 @@ class Runtime:
             # governor stays the authority; we mirror its resulting state (for
             # min-depth/failsafe) and the raw command rings (for no-go zones,
             # which the governor keeps only as prepared shapely polygons).
+            #
+            # Safety-floor lockout (#50): a runtime Settings edit may make the
+            # failsafes SAFER but never weaker -- clamp a disable / a lowered
+            # min-depth back to the startup floor BEFORE it reaches the governor,
+            # so the persisted mirror below also stores the floored value.
+            if ctype == "set_min_depth":
+                command = {
+                    **command,
+                    "min_depth_m": self.safety_floor.enforce_min_depth(
+                        command.get("min_depth_m", 0.0)
+                    ),
+                }
+            elif ctype == "set_fix_failsafe":
+                command = {
+                    **command,
+                    "enabled": self.safety_floor.enforce_fix_failsafe(
+                        command.get("enabled", False)
+                    ),
+                }
             self.controller.handle_command(command)
             if ctype == "set_nogo_zones":
                 self.safety_geometry.set_nogo_zones(command.get("zones", []))
@@ -1790,6 +1844,59 @@ class Runtime:
             self._rtl_in_flight = False
 
     # ------------------------------------------------------------------ #
+    # Low-battery thrust-derating ladder (#49)
+    # ------------------------------------------------------------------ #
+    def evaluate_battery_ladder(self) -> float:
+        """Push a soft thrust cap into the governor from the battery SoC, and hand
+        off to the existing RTL at the lowest stage. Returns the applied cap
+        (1.0 = no derate).
+
+        The cap is a magnitude-only ceiling, so STOP and every failsafe still take
+        precedence and are never blocked. Only runs when there is a real battery
+        reading (a simulated pack or a battery monitor); with no battery source
+        the cap is left at 1.0 so a boat with no gauge is never spuriously derated
+        by the zeros fallback in :meth:`battery_snapshot`."""
+        ladder = self._battery_ladder
+        gov = self.controller.safety
+        if not ladder.enabled or (
+            getattr(self, "battery_monitor", None) is None and self.simulator is None
+        ):
+            gov.set_thrust_cap(1.0)
+            return 1.0
+        soc = self.battery_snapshot().get("soc_pct")
+        if soc is None:
+            gov.set_thrust_cap(1.0)
+            return 1.0
+        soc = float(soc)
+        cap = ladder.cap_for(soc)
+        gov.set_thrust_cap(cap)
+        if ladder.at_rtl(soc):
+            self._battery_rtl_handoff(soc)
+        else:
+            # Recovered above the RTL stage (e.g. a battery swap) -> re-arm.
+            self._battery_rtl_engaged = False
+        return cap
+
+    def _battery_rtl_handoff(self, soc_pct: float) -> None:
+        """At the lowest ladder stage, hand off to the EXISTING RTL/failsafe once.
+
+        Idempotent via a one-shot flag (cleared when SoC recovers above the
+        stage), and guarded so it only fires when a launch point exists to return
+        to. The progressive derate above this stage still holds regardless."""
+        if self._battery_rtl_engaged:
+            return
+        self._battery_rtl_engaged = True
+        if self.state.launch is None:
+            logger.warning(
+                "battery critically low (%.0f%%) but no launch point recorded; "
+                "holding the lowest derate cap (no RTL target)", soc_pct)
+            return
+        logger.warning(
+            "battery critically low (%.0f%%); handing off to Return-to-Launch",
+            soc_pct)
+        self._schedule_auto_rtl()
+
+    # ------------------------------------------------------------------ #
     # Periodic safety supervisor (1 Hz) + depth accumulation
     # ------------------------------------------------------------------ #
     def _supervise_once(self) -> None:
@@ -1801,10 +1908,15 @@ class Runtime:
         loop level, can't kill the supervisor)."""
         steps = (
             ("maybe_record_launch", self.controller.maybe_record_launch),
+            ("evaluate_battery_ladder", self.evaluate_battery_ladder),
             ("evaluate_rtl_recommend", self.evaluate_rtl_recommend),
             ("evaluate_link_failsafe", self.evaluate_link_failsafe),
             ("trip_update", lambda: self.trip.update(
                 self.state.position, self.state.sog_knots, self._now_fn())),
+            # Hardware watchdog heartbeat (#44): pet the GPIO line every tick. If
+            # the supervisor stalls this stops toggling -> the external relay
+            # drops the motor supply. Last so a stalled step still lets it beat.
+            ("watchdog_pump", self.watchdog.pump),
         )
         for name, step in steps:
             try:
@@ -2772,6 +2884,12 @@ class Runtime:
     # ------------------------------------------------------------------ #
     async def start(self) -> None:
         self.recorder.start()
+        # Arm the external hardware watchdog (#44) before the supervisor begins
+        # petting it. A no-op when disabled; a bad GPIO must not crash boot.
+        try:
+            self.watchdog.start()
+        except Exception:
+            logger.exception("hardware watchdog failed to start; continuing without it")
         if self.nmea_tcp is not None:
             # A taken NMEA-TCP port must not crash the whole app on boot.
             try:
@@ -2835,6 +2953,10 @@ class Runtime:
                 await bm.stop()
         if self.nmea_tcp is not None:
             await self.nmea_tcp.stop()
+        # De-assert the hardware watchdog line (#44): stopping the heartbeat is
+        # itself the safe state (relay drops). Best-effort so shutdown never hangs.
+        with contextlib.suppress(Exception):
+            self.watchdog.stop()
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:

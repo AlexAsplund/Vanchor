@@ -325,6 +325,100 @@ class SafetyConfig:
     # Lost-connection failsafe (#64): seconds with no UI client connected while
     # underway before auto-engaging anchor-hold (hold position).
     link_loss_timeout_s: float = 20.0
+    # --- Low-battery thrust-derating ladder (#49) ----------------------- #
+    # As the battery state-of-charge falls through these rungs the maximum
+    # applied thrust is capped in progressive steps (a SOFT derate) BEFORE the
+    # lowest stage hands the boat off to the existing RTL/failsafe. Each rung is
+    # ``[soc_pct, thrust_cap]`` (cap in 0..1). The ladder only ever LOWERS the
+    # cap -- STOP and every failsafe still take precedence and are never blocked.
+    # Defaults: full thrust above 40 %, then 70 % / 45 % / 25 % caps as the pack
+    # drains, then RTL hand-off at 10 %. Set ``battery_ladder_enabled: false`` to
+    # disable the derate entirely (the cap stays 1.0).
+    battery_ladder_enabled: bool = True
+    battery_ladder: list = field(
+        default_factory=lambda: [[40.0, 0.7], [25.0, 0.45], [15.0, 0.25]]
+    )
+    battery_rtl_soc_pct: float = 10.0  # lowest stage: hand off to RTL at/below this SoC
+
+
+# Keys of :class:`SafetyConfig` that constitute the non-negotiable safety floor
+# (#50). A later hot-reload, per-boat profile, or backup-restore may make these
+# SAFER but never WEAKER. Named here (rather than as a config field) so the set
+# is discoverable + testable in one place without polluting the serialized config.
+SAFETY_FLOOR_KEYS: tuple[str, ...] = ("fix_failsafe_enabled", "min_depth_m")
+
+
+@dataclass(frozen=True)
+class SafetyFloor:
+    """Non-negotiable safety-floor lockout (#50).
+
+    Captures the LOCKED safety values from the BASE/startup config. Wherever
+    config is later merged, reloaded, or applied -- a hot-reload, a per-boat
+    profile, a backup-restore, or a runtime Settings edit -- a locked key may be
+    ratcheted TIGHTER (safer) but can never be WEAKENED below its startup value:
+
+    * ``fix_failsafe_enabled`` -- if the loss-of-fix failsafe was ON at startup it
+      can never be disabled by a later partial update (only left on).
+    * ``min_depth_m`` -- the shallow-water auto-stop limit can be RAISED but never
+      lowered below the startup floor (lowering it toward 0 weakens the stop).
+
+    :meth:`enforce_fix_failsafe` / :meth:`enforce_min_depth` return the *allowed*
+    value (clamped to the floor) and log a warning when they refuse a weakening;
+    :meth:`sanitize` applies both to a partial update mapping. This is a pure,
+    I/O-free policy object so it is exhaustively unit-testable -- the callers
+    (the config-apply / command / geometry paths) route their proposed values
+    through it, so a failsafe can only ever tighten.
+    """
+
+    fix_failsafe_enabled: bool = True
+    min_depth_m: float = 0.0
+
+    @classmethod
+    def from_config(cls, safety: "SafetyConfig") -> "SafetyFloor":
+        """Capture the floor from a (startup/base) :class:`SafetyConfig`."""
+        return cls(
+            fix_failsafe_enabled=bool(getattr(safety, "fix_failsafe_enabled", True)),
+            min_depth_m=float(getattr(safety, "min_depth_m", 0.0)),
+        )
+
+    def enforce_fix_failsafe(self, proposed: bool | None) -> bool:
+        """Allowed loss-of-fix-failsafe value: a base-enabled failsafe can never
+        be turned OFF. ``None`` means "not being changed" -> keep the floor."""
+        if proposed is None:
+            return self.fix_failsafe_enabled
+        allowed = bool(proposed) or self.fix_failsafe_enabled
+        if allowed != bool(proposed):
+            log.warning(
+                "safety-floor lockout (#50): refusing to DISABLE the loss-of-fix "
+                "failsafe -- it was locked ON by the startup config"
+            )
+        return allowed
+
+    def enforce_min_depth(self, proposed: float | None) -> float:
+        """Allowed min-depth stop: can be RAISED but never lowered below the
+        startup floor. ``None`` means "not being changed" -> keep the floor."""
+        if proposed is None:
+            return self.min_depth_m
+        p = float(proposed)
+        if p < self.min_depth_m:
+            log.warning(
+                "safety-floor lockout (#50): refusing min-depth %.2fm below the "
+                "startup floor of %.2fm -- keeping the safer limit", p, self.min_depth_m
+            )
+            return self.min_depth_m
+        return p
+
+    def sanitize(self, updates: dict[str, Any]) -> dict[str, Any]:
+        """Return a copy of a partial ``{key: value}`` update with every locked
+        key clamped to the floor (weakening refused + logged). Keys not present
+        are left untouched, so a non-safety partial update passes through
+        unchanged and non-locked keys still hot-reload normally."""
+        out = dict(updates)
+        if "fix_failsafe_enabled" in out:
+            out["fix_failsafe_enabled"] = self.enforce_fix_failsafe(out["fix_failsafe_enabled"])
+        if "min_depth_m" in out:
+            out["min_depth_m"] = self.enforce_min_depth(out["min_depth_m"])
+        return out
 
 
 @dataclass
@@ -424,6 +518,26 @@ class NmeaTcpConfig:
 
 
 @dataclass
+class WatchdogConfig:
+    """External hardware watchdog: a heartbeat GPIO the ~1 Hz supervisor must keep
+    toggling or an external relay cuts the motor supply (#44).
+
+    This covers a Raspberry Pi HARD-HANG that the in-process (firmware) watchdog
+    cannot catch: if the event loop stops, the heartbeat stops toggling, an
+    external retriggerable relay driver times out, and the motor supply drops --
+    independently of the (hung) software. **OFF by default**; enable it and set
+    the BCM ``gpio_pin`` wired to the relay driver. The real RPi.GPIO / gpiozero
+    backend is lazy-imported and is **untested on hardware** (bench only); a fake
+    injectable backend drives the unit tests.
+    """
+
+    enabled: bool = False
+    gpio_pin: int = 17        # BCM pin driving the external retriggerable relay
+    interval_s: float = 1.0   # minimum seconds between heartbeat edges (~supervisor rate)
+    active_low: bool = False  # invert the electrical level for the relay board's polarity
+
+
+@dataclass
 class ObsConfig:
     """Observability: the always-on black-box flight recorder (roadmap #20).
 
@@ -463,6 +577,7 @@ class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     nmea_tcp: NmeaTcpConfig = field(default_factory=NmeaTcpConfig)
+    watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     obs: ObsConfig = field(default_factory=ObsConfig)
 
     @classmethod
@@ -505,6 +620,7 @@ _SUBCONFIGS: dict[str, type] = {
     "server": ServerConfig,
     "hardware": HardwareConfig,
     "nmea_tcp": NmeaTcpConfig,
+    "watchdog": WatchdogConfig,
     "obs": ObsConfig,
 }
 
@@ -870,6 +986,16 @@ safety:
   rtl_margin_m: 100.0        # warn when range-home nears battery range (#61)
   auto_rtl: false            # if true, auto-engage Return-to-Launch (not just recommend) (#61)
   link_loss_timeout_s: 20.0  # no-UI-client time before hold-position failsafe (#64)
+  # Low-battery thrust-derating ladder (#49): as SoC falls through each
+  # [soc_pct, thrust_cap] rung the max applied thrust is capped in steps (a soft
+  # derate) BEFORE the lowest stage hands off to RTL. Only ever LOWERS thrust;
+  # STOP + all failsafes still take precedence. Set enabled false to disable.
+  battery_ladder_enabled: true
+  battery_ladder:            # [soc_pct, thrust_cap]; full thrust above the top rung
+    - [40.0, 0.7]
+    - [25.0, 0.45]
+    - [15.0, 0.25]
+  battery_rtl_soc_pct: 10.0  # lowest stage: hand off to the existing RTL/failsafe at/below this SoC
 
 battery:
   capacity_ah: 100.0         # pack capacity (amp-hours) (#60)
@@ -911,4 +1037,10 @@ nmea_tcp:
   enabled: false
   host: 0.0.0.0
   port: 10110
+
+watchdog:                    # external hardware watchdog heartbeat (#44)
+  enabled: false             # OFF by default; enable to arm the relay heartbeat
+  gpio_pin: 17               # BCM pin wired to the external retriggerable relay driver
+  interval_s: 1.0            # min seconds between heartbeat edges (~supervisor rate)
+  active_low: false          # invert the electrical level for the relay board's polarity
 """

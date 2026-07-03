@@ -161,6 +161,8 @@ def parse(sentence: str, *, require_checksum: bool = False) -> Sentence | None:
             return _parse_dpt(fields)
         if kind == "DBT":
             return _parse_dbt(fields)
+        if kind == "DBS":
+            return _parse_dbs(fields)
     except (IndexError, ValueError) as exc:
         raise NmeaError(f"could not parse {sentence!r}: {exc}") from exc
 
@@ -229,7 +231,14 @@ def _parse_dpt(f: list[str]) -> Depth:
 
 
 def _parse_dbt(f: list[str]) -> Depth:
-    # $..DBT,<feet>,f,<metres>,M,<fathoms>,F
+    # $..DBT,<feet>,f,<metres>,M,<fathoms>,F  (depth *below the transducer*)
+    return Depth(depth_m=float(f[3]) if len(f) > 3 and f[3] else 0.0)
+
+
+def _parse_dbs(f: list[str]) -> Depth:
+    # $..DBS,<feet>,f,<metres>,M,<fathoms>,F  (depth *below the surface*, i.e.
+    # the transducer offset is already folded in -- same layout as DBT). We take
+    # the metres field (index 3).
     return Depth(depth_m=float(f[3]) if len(f) > 3 and f[3] else 0.0)
 
 
