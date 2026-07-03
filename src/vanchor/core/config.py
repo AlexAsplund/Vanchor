@@ -329,16 +329,27 @@ class SafetyConfig:
 
 @dataclass
 class BatteryConfig:
-    """Simulated/monitored battery pack (#60).
+    """Simulated/monitored battery pack (#60, #42).
 
     Maps onto ``sim.battery.BatteryConfig``. On real hardware the live
-    SOC/voltage/current come from a battery monitor over the HAL; these fields
-    still size the pack for the range/time-to-empty estimates.
+    SOC/voltage/current come from a battery monitor over the HAL
+    (``hardware.battery_source: ina226``); these fields still size the pack for
+    the range/time-to-empty estimates. The ``i2c_*`` / ``shunt_ohms`` fields are
+    read by the INA226 battery driver (the reference 4th device kind, #42) — this
+    dataclass is exactly the narrow config slice that driver's capability object
+    exposes.
     """
 
     capacity_ah: float = 100.0  # pack capacity (amp-hours)
     nominal_v: float = 12.0  # nominal terminal voltage
     reserve_pct: float = 15.0  # usable-charge reserve (%) kept in hand
+    # Recent-draw smoothing time constant (s) for the range/time estimate.
+    draw_tau_s: float = 20.0
+    # --- INA226 / shunt battery driver (battery_source: ina226) -------------- #
+    i2c_bus: int = 1  # /dev/i2c-<n> the shunt is on
+    i2c_addr: int = 0x40  # INA226 I2C address (0x40 default)
+    shunt_ohms: float = 0.001  # shunt resistance (ohms); current = Vshunt / Rshunt
+    max_current_a: float = 80.0  # gauge full-scale current (informational/UI)
 
 
 @dataclass
@@ -382,6 +393,11 @@ class HardwareConfig:
     compass_source: str | None = None  # "sim" | "serial" | "nmea"
     depth_source: str | None = None    # "sim" | "nmea" (no serial depth yet)
     motor_source: str | None = None    # "sim" | "serial" | "both"
+    # Battery monitor (#42): the reference registry-driven 4th device kind.
+    # "sim" reads the simulated pack; "ina226" is a real shunt gauge over I2C;
+    # "none" disables it. None => "sim" when a simulated boat exists, else "none"
+    # (a real battery monitor isn't implied by enabling serial GPS/compass/motor).
+    battery_source: str | None = None  # "sim" | "ina226" | "none"
 
     # Per-device settings from a driver's device_menu(), keyed by device kind:
     # e.g. {"compass": {"declination_mode": "manual", "manual_declination_deg": 3}}.
@@ -691,6 +707,7 @@ def apply_env_overrides(config: AppConfig) -> AppConfig:
     _apply("VANCHOR_COMPASS_SOURCE", config.hardware, "compass_source", str)
     _apply("VANCHOR_DEPTH_SOURCE", config.hardware, "depth_source", str)
     _apply("VANCHOR_MOTOR_SOURCE", config.hardware, "motor_source", str)
+    _apply("VANCHOR_BATTERY_SOURCE", config.hardware, "battery_source", str)
     # NMEA bridge.
     _apply("VANCHOR_NMEA_TCP", config.nmea_tcp, "enabled", _parse_bool)
     _apply("VANCHOR_NMEA_TCP_HOST", config.nmea_tcp, "host", str)
@@ -858,6 +875,12 @@ battery:
   capacity_ah: 100.0         # pack capacity (amp-hours) (#60)
   nominal_v: 12.0            # nominal terminal voltage
   reserve_pct: 15.0          # usable-charge reserve (%) kept in hand
+  draw_tau_s: 20.0           # recent-draw smoothing (s) for range/time estimate
+  # INA226 / shunt battery driver (used only when hardware.battery_source: ina226) (#42):
+  i2c_bus: 1                 # /dev/i2c-<n> the shunt is on
+  i2c_addr: 64              # INA226 I2C address (0x40 = 64 decimal)
+  shunt_ohms: 0.001          # shunt resistance (ohms); current = Vshunt / Rshunt
+  max_current_a: 80.0        # gauge full-scale current (informational)
 
 server:
   host: 127.0.0.1
@@ -882,6 +905,7 @@ hardware:
   compass_source: null       # sim | serial | nmea
   depth_source: null         # sim | nmea
   motor_source: null         # sim | serial | both
+  battery_source: null       # sim | ina226 | none (#42; null = sim when simulated, else none)
 
 nmea_tcp:
   enabled: false

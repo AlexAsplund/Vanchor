@@ -17,8 +17,15 @@ disclaimer is the UI's job (it drives the boat).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
+import os
+from dataclasses import dataclass
+
+import numpy as np
+
+from ..core.prefs import _atomic_write_json
 
 logger = logging.getLogger("vanchor.calibration")
 
@@ -377,3 +384,411 @@ def _ff_trim_delta(drift_off_dps: float, drift_on_dps: float, ff_angle_rad: floa
 
 def _round(params: dict) -> dict:
     return {k: round(v, 4) if isinstance(v, float) else v for k, v in params.items()}
+
+
+# ===================================================================== #
+#  Magnetometer hard/soft-iron calibration (roadmap #41)
+# ===================================================================== #
+#
+# A magnetometer reads the local field distorted by the vessel's own iron:
+#
+#   * **Hard iron** — a fixed additive bias (permanent magnets, DC wiring). It
+#     shifts the *centre* of the sphere the readings trace as the boat rotates.
+#   * **Soft iron** — a linear distortion (ferrous mass reshaping the field). It
+#     turns that sphere into a tilted ellipsoid (scale + skew).
+#
+# Spin the boat through (ideally) a full circle and the samples land on an
+# ellipsoid; fit it, and the correction is
+#
+#     corrected = W @ (raw - offset)
+#
+# where ``offset`` is the hard-iron bias (the learned COMPASS OFFSET we persist)
+# and ``W`` is the soft-iron matrix that maps the ellipsoid back onto a sphere of
+# the fitted field strength. Applied per-sample, ``atan2`` of the corrected
+# horizontal components then yields an undistorted magnetic heading.
+#
+# The fit is a plain algebraic least-squares ellipsoid fit (numpy only). It is
+# fully unit-testable with synthetic distorted data where the true offset/scale
+# are known; the *live sample capture* is the only hardware-dependent part and is
+# driven through an injected provider callable so it runs against a fake in tests.
+
+# Minimum distinct samples for a trustworthy ellipsoid fit. Nine free parameters
+# means nine is the algebraic floor; we demand a healthy margin so noise averages
+# out and a near-degenerate (e.g. barely-rotated) capture is rejected.
+_MAG_MIN_SAMPLES: int = 30
+
+# Heading-coverage bins (horizontal angle of each sample). Full 360° rotation
+# lights all of them; a partial sweep leaves gaps -> lower reported coverage.
+_MAG_COVERAGE_BINS: int = 12
+
+
+@dataclass
+class MagCalibration:
+    """A fitted hard/soft-iron magnetometer correction.
+
+    ``offset`` is the hard-iron bias (the persisted compass offset); ``matrix``
+    is the 3x3 soft-iron correction. Apply with :meth:`apply`::
+
+        corrected = matrix @ (raw - offset)
+
+    ``field_strength`` is the fitted sphere radius the correction maps onto,
+    ``residual`` the RMS of ``|corrected| / field_strength - 1`` over the fit
+    samples (0 = perfect), and ``quality`` a friendly ``max(0, 1 - residual)``
+    score in ``[0, 1]``.
+    """
+
+    offset: tuple[float, float, float]
+    matrix: tuple[tuple[float, float, float], ...]
+    field_strength: float
+    residual: float
+    quality: float
+    n_samples: int
+    coverage: float = 0.0
+
+    def apply(self, sample) -> tuple[float, float, float]:
+        """Correct one raw ``(x, y, z)`` reading -> ``(x, y, z)`` on the sphere."""
+        w = np.asarray(self.matrix, dtype=float)
+        o = np.asarray(self.offset, dtype=float)
+        v = w @ (np.asarray(sample, dtype=float) - o)
+        return (float(v[0]), float(v[1]), float(v[2]))
+
+    def to_dict(self) -> dict:
+        return {
+            "offset": [float(x) for x in self.offset],
+            "matrix": [[float(x) for x in row] for row in self.matrix],
+            "field_strength": float(self.field_strength),
+            "residual": float(self.residual),
+            "quality": float(self.quality),
+            "n_samples": int(self.n_samples),
+            "coverage": float(self.coverage),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "MagCalibration | None":
+        """Rebuild from a persisted dict, or ``None`` if it is malformed."""
+        try:
+            offset = tuple(float(x) for x in d["offset"])
+            matrix = tuple(tuple(float(x) for x in row) for row in d["matrix"])
+            if len(offset) != 3 or len(matrix) != 3 or any(len(r) != 3 for r in matrix):
+                return None
+            cal = cls(
+                offset=offset,  # type: ignore[arg-type]
+                matrix=matrix,  # type: ignore[arg-type]
+                field_strength=float(d.get("field_strength", 1.0)),
+                residual=float(d.get("residual", 0.0)),
+                quality=float(d.get("quality", 0.0)),
+                n_samples=int(d.get("n_samples", 0)),
+                coverage=float(d.get("coverage", 0.0)),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not (np.all(np.isfinite(cal.offset)) and np.all(np.isfinite(cal.matrix))):
+            return None
+        return cal
+
+
+def fit_hard_soft_iron(samples) -> MagCalibration:
+    """Least-squares hard/soft-iron fit of ``samples`` (an ``(N, 3)`` array).
+
+    Fits the general ellipsoid ``[x y z 1] A [x y z 1]^T = 0`` the readings trace
+    as the boat rotates, then extracts the hard-iron ``offset`` (its centre) and a
+    soft-iron ``matrix`` that maps the ellipsoid back onto a sphere of the mean
+    semi-axis (the fitted field strength).
+
+    Raises :class:`ValueError` for a degenerate capture: too few samples, a
+    rank-deficient / non-finite system (e.g. a coplanar or barely-rotated sweep),
+    or a non-ellipsoidal solution (the fitted quadric isn't positive-definite).
+    """
+    pts = np.asarray(samples, dtype=float)
+    if pts.size == 0:
+        pts = pts.reshape(0, 3)  # empty capture -> falls through to the count floor
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError("magnetometer samples must be an (N, 3) array")
+    # Drop exact-duplicate rows so a stalled/repeating sensor can't look like a
+    # rich capture, then apply the sample-count floor.
+    pts = np.unique(pts, axis=0)
+    n = pts.shape[0]
+    if n < _MAG_MIN_SAMPLES:
+        raise ValueError(
+            f"need at least {_MAG_MIN_SAMPLES} distinct samples, got {n}"
+        )
+    if not np.all(np.isfinite(pts)):
+        raise ValueError("magnetometer samples contain non-finite values")
+
+    x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+    # Design matrix for a x^2 + b y^2 + c z^2 + 2(d yz + e xz + f xy)
+    #                       + 2(g x + h y + i z) = 1
+    design = np.column_stack(
+        [x * x, y * y, z * z, 2 * y * z, 2 * x * z, 2 * x * y, 2 * x, 2 * y, 2 * z]
+    )
+    rhs = np.ones(n)
+    try:
+        v, _res, rank, _sv = np.linalg.lstsq(design, rhs, rcond=None)
+    except np.linalg.LinAlgError as exc:  # pragma: no cover - numeric edge
+        raise ValueError(f"ellipsoid fit failed: {exc}") from exc
+    if rank < 9 or not np.all(np.isfinite(v)):
+        raise ValueError("degenerate magnetometer capture (rank-deficient fit)")
+
+    a4 = np.array(
+        [
+            [v[0], v[3], v[4], v[6]],
+            [v[3], v[1], v[5], v[7]],
+            [v[4], v[5], v[2], v[8]],
+            [v[6], v[7], v[8], -1.0],
+        ]
+    )
+    a3 = a4[:3, :3]
+    try:
+        center = np.linalg.solve(-a3, v[6:9])
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"ellipsoid has no finite centre: {exc}") from exc
+    if not np.all(np.isfinite(center)):
+        raise ValueError("degenerate magnetometer capture (no finite centre)")
+
+    # Translate the quadric to the centre, then normalise so the ellipsoid form
+    # is ``(p - c)^T M (p - c) = 1``.
+    t = np.eye(4)
+    t[3, :3] = center
+    r = t @ a4 @ t.T
+    if abs(r[3, 3]) < 1e-12:
+        raise ValueError("degenerate magnetometer capture (singular quadric)")
+    m = r[:3, :3] / -r[3, 3]
+    # Symmetrise to kill round-off asymmetry before eigendecomposition.
+    m = 0.5 * (m + m.T)
+    evals, evecs = np.linalg.eigh(m)
+    if not np.all(evals > 0) or not np.all(np.isfinite(evals)):
+        raise ValueError("degenerate magnetometer capture (not an ellipsoid)")
+
+    radii = 1.0 / np.sqrt(evals)          # semi-axes of the fitted ellipsoid
+    field = float(np.mean(radii))          # target sphere radius
+    # W = V diag(1/radii) V^T maps the ellipsoid onto the UNIT sphere; scale by
+    # ``field`` so corrected magnitudes sit at the mean field strength.
+    w = evecs @ np.diag(1.0 / radii) @ evecs.T * field
+
+    offset = (float(center[0]), float(center[1]), float(center[2]))
+    corrected = (w @ (pts - center).T).T
+    mag = np.linalg.norm(corrected, axis=1)
+    residual = float(np.sqrt(np.mean((mag / field - 1.0) ** 2)))
+    quality = max(0.0, 1.0 - residual)
+    return MagCalibration(
+        offset=offset,
+        matrix=tuple(tuple(float(x) for x in row) for row in w),
+        field_strength=field,
+        residual=residual,
+        quality=quality,
+        n_samples=n,
+        coverage=_coverage_fraction(pts, offset),
+    )
+
+
+def _coverage_fraction(pts, offset) -> float:
+    """Fraction of the 12 horizontal heading bins the samples visited.
+
+    A full circular sweep lights every bin (1.0); a partial rotation leaves gaps.
+    Used only as guidance for the operator — the fit itself already rejects a
+    truly degenerate capture."""
+    o = np.asarray(offset, dtype=float)
+    dx = np.asarray(pts, dtype=float)[:, 0] - o[0]
+    dy = np.asarray(pts, dtype=float)[:, 1] - o[1]
+    ang = np.arctan2(dy, dx)  # [-pi, pi]
+    bins = np.floor((ang + math.pi) / (2 * math.pi) * _MAG_COVERAGE_BINS)
+    bins = np.clip(bins, 0, _MAG_COVERAGE_BINS - 1).astype(int)
+    return float(len(np.unique(bins)) / _MAG_COVERAGE_BINS)
+
+
+class MagCalibrationStore:
+    """Persists the learned magnetometer calibration to
+    ``<data_dir>/mag_calibration.json`` and reloads it on startup so the compass
+    offset survives a restart.
+
+    Uses the same atomic ``tmp + os.replace`` write as the other stores, so a
+    crash mid-write can never leave a half-written file. A malformed or missing
+    file loads as "no calibration" (``calibration is None``) rather than raising.
+    """
+
+    def __init__(self, data_dir: str) -> None:
+        self._dir = data_dir
+        self._path = os.path.join(data_dir, "mag_calibration.json")
+        self.calibration: MagCalibration | None = None
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            with open(self._path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict):
+            self.calibration = MagCalibration.from_dict(data)
+
+    def save(self, calibration: MagCalibration) -> None:
+        """Persist ``calibration`` atomically and keep it as the live value."""
+        self.calibration = calibration
+        _atomic_write_json(self._path, calibration.to_dict())
+
+    def clear(self) -> None:
+        """Forget the calibration (and delete the file) — revert to raw readings."""
+        self.calibration = None
+        try:
+            os.remove(self._path)
+        except OSError:
+            pass
+
+
+class MagCalibrationRunner:
+    """Interactive magnetometer-calibration session (roadmap #41).
+
+    Collects magnetometer samples while the operator rotates the boat through a
+    circle, then fits + persists the hard/soft-iron correction. Samples come from
+    an injected ``sample_provider`` — a ``() -> (x, y, z) | None`` callable — so
+    the capture is testable against a fake (the live wiring reads the AHRS
+    magnetometer from the runtime). A background poll loop accumulates samples at
+    ``poll_hz`` between :meth:`start` and :meth:`stop`; :meth:`add_sample` feeds
+    one directly (used by tests and any push source).
+
+    ``stop`` runs the fit: on success it saves to the store and returns the fit
+    quality; on a degenerate capture it returns ``ok=False`` with the reason and
+    leaves any previously-saved calibration untouched.
+    """
+
+    def __init__(
+        self,
+        sample_provider,
+        store: MagCalibrationStore,
+        *,
+        poll_hz: float = 10.0,
+        max_samples: int = 3000,
+        min_gap: float = 1e-6,
+    ) -> None:
+        self._provider = sample_provider
+        self.store = store
+        self.poll_hz = max(0.5, poll_hz)
+        self.max_samples = max_samples
+        self._min_gap = min_gap
+        self.running = False
+        self.phase = "idle"
+        self.message = ""
+        self.samples: list[tuple[float, float, float]] = []
+        self.result: MagCalibration | None = None
+        self._task: asyncio.Task | None = None
+
+    # -- public ----------------------------------------------------------- #
+    def snapshot(self) -> dict:
+        """Live status for the UI: progress + the last/persisted fit quality."""
+        saved = self.store.calibration
+        return {
+            "running": self.running,
+            "phase": self.phase,
+            "message": self.message,
+            "n_samples": len(self.samples),
+            "coverage": round(self._live_coverage(), 3),
+            "min_samples": _MAG_MIN_SAMPLES,
+            "result": self.result.to_dict() if self.result else None,
+            "saved": saved.to_dict() if saved else None,
+        }
+
+    def start(self) -> bool:
+        """Begin a capture (clears any prior in-progress samples). Returns False
+        if a capture is already running."""
+        if self.running:
+            return False
+        self.samples = []
+        self.result = None
+        self.running = True
+        self.phase = "collecting"
+        self.message = "Slowly rotate the boat through a full circle…"
+        # Poll the live provider on a background task when an event loop is
+        # running (the server). With no running loop (sync tests / a push-only
+        # source) the capture is fed via add_sample instead.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._task = None
+        else:
+            self._task = asyncio.ensure_future(self._run())
+        return True
+
+    def add_sample(self, x: float, y: float, z: float) -> bool:
+        """Record one raw sample. Ignored when not collecting, at the cap, or when
+        it duplicates the previous point (a stalled sensor). Returns True if kept."""
+        if not self.running or len(self.samples) >= self.max_samples:
+            return False
+        p = (float(x), float(y), float(z))
+        if not all(math.isfinite(c) for c in p):
+            return False
+        if self.samples:
+            last = self.samples[-1]
+            if math.dist(p, last) < self._min_gap:
+                return False
+        self.samples.append(p)
+        return True
+
+    def cancel(self) -> dict:
+        """Abort the capture WITHOUT fitting; keeps any saved calibration."""
+        self._stop_task()
+        self.running = False
+        self.phase = "idle"
+        self.message = "Calibration cancelled."
+        self.samples = []
+        self.result = None
+        return self.snapshot()
+
+    def stop(self) -> dict:
+        """Finish the capture: fit + persist, and return the result.
+
+        On success ``{ok: True, result: {...quality...}}``; on a degenerate
+        capture ``{ok: False, message: <reason>}`` with the saved calibration
+        left untouched."""
+        self._stop_task()
+        self.running = False
+        try:
+            cal = fit_hard_soft_iron(self.samples)
+        except ValueError as exc:
+            self.phase = "error"
+            self.message = str(exc)
+            out = self.snapshot()
+            out["ok"] = False
+            out["message"] = str(exc)
+            return out
+        self.result = cal
+        self.store.save(cal)
+        self.phase = "done"
+        self.message = (
+            f"Calibrated — quality {cal.quality:.2f}, "
+            f"coverage {cal.coverage * 100:.0f}%."
+        )
+        out = self.snapshot()
+        out["ok"] = True
+        return out
+
+    # -- internals -------------------------------------------------------- #
+    def _stop_task(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+    def _live_coverage(self) -> float:
+        if len(self.samples) < 3:
+            return 0.0
+        pts = np.asarray(self.samples, dtype=float)
+        return _coverage_fraction(pts, pts.mean(axis=0))
+
+    async def _run(self) -> None:
+        period = 1.0 / self.poll_hz
+        try:
+            while self.running and len(self.samples) < self.max_samples:
+                try:
+                    sample = self._provider()
+                except Exception:  # noqa: BLE001 - a flaky provider must not kill us
+                    logger.debug("mag sample provider raised", exc_info=True)
+                    sample = None
+                if sample is not None:
+                    try:
+                        self.add_sample(sample[0], sample[1], sample[2])
+                    except (TypeError, IndexError, ValueError):
+                        logger.debug("bad mag sample %r", sample)
+                await asyncio.sleep(period)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("mag calibration capture loop error")

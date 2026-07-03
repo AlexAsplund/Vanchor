@@ -290,6 +290,10 @@ class Runtime:
         self.gps = dev["gps"]
         self.compass = dev["compass"]
         self.depth_sounder = dev["depth_sounder"]
+        # Battery monitor (#42): the registry-driven 4th device kind. ``sim`` is a
+        # read-view of the simulator's pack (identical telemetry to before); an
+        # ``ina226`` source is a real shunt driver built via the #43 capability API.
+        self.battery_monitor = dev["battery_monitor"]
         motor = dev["motor"]
 
         # Accumulates depth soundings for the auto depth-map overlay.
@@ -969,6 +973,16 @@ class Runtime:
     # "both" (drive the sim boat AND mirror to a real servo).
     _SENSOR_SOURCES = ("sim", "serial", "nmea")
     _MOTOR_SOURCES = ("sim", "serial", "both")
+    # Battery is the registry-driven 4th device kind (#42): the built-in "sim" +
+    # "none" baselines plus any registered/pack battery driver (e.g. "ina226").
+    _BATTERY_SOURCES = ("sim", "none")
+
+    def _battery_sources(self) -> tuple:
+        """Built-in battery sources + any registered driver sources (e.g.
+        ``ina226``), discovered from the registry so a pack driver needs no edit
+        here."""
+        from .hardware import registry
+        return self._BATTERY_SOURCES + tuple(registry.sources("battery"))
 
     def _compass_sources(self) -> tuple:
         """Built-in compass sources + any registered driver sources (e.g.
@@ -1038,6 +1052,11 @@ class Runtime:
         if hw_in.get("motor_source") is not None and hw_in["motor_source"] not in self._MOTOR_SOURCES:
             raise ValueError(
                 f"motor_source must be one of {self._MOTOR_SOURCES} (got {hw_in['motor_source']!r})"
+            )
+        batt_allowed = self._battery_sources()
+        if hw_in.get("battery_source") is not None and hw_in["battery_source"] not in batt_allowed:
+            raise ValueError(
+                f"battery_source must be one of {batt_allowed} (got {hw_in['battery_source']!r})"
             )
         # Ports are strings; baudrate is an int. Coerce/validate via the merge.
         for key in ("gps_port", "compass_port", "motor_port"):
@@ -1262,8 +1281,66 @@ class Runtime:
                 simulator.truth,
                 Bathymetry(origin=GeoPoint(cfg.sim.start_lat, cfg.sim.start_lon)),
                 self.bus, update_hz=cfg.sensors.depth_hz)
+        battery_monitor = self._build_battery_monitor(cfg, simulator)
         return {"simulator": simulator, "gps": gps, "compass": compass,
-                "depth_sounder": depth, "motor": motor}
+                "depth_sounder": depth, "motor": motor,
+                "battery_monitor": battery_monitor}
+
+    def _driver_context(self, kind: str, source: str, config):
+        """Build the NARROW, versioned capability object (#43) a pluggable driver
+        is constructed with — publish a reading, report health, read its own
+        config, a logger/clock, and coarse boat motion. Deliberately carries NO
+        reference to the runtime, the motor, or the safety governor, so a driver
+        (or a community pack) can never reach STOP/the deadman/the failsafes
+        through it (see docs/community-plan.md — the safety floor is never a pack
+        concern)."""
+        def motion():
+            st = getattr(self, "state", None)
+            if st is None or st.fix is None:
+                return None
+            return (st.fix.cog_deg, st.sog_knots * 0.514444)  # knots -> m/s
+
+        return registry.DriverContext(
+            kind=kind, source=source, config=config,
+            _bus=self.bus, _now=self._now_fn, _motion=motion,
+        )
+
+    def _build_battery_monitor(self, cfg: AppConfig, simulator):
+        """Build the battery monitor (#42) — the reference registry-driven 4th
+        device kind. ``sim`` presents the simulator's integrated pack (the
+        baseline, identical telemetry to before); any other source is a pluggable
+        driver built through the versioned capability API (#43). A driver that
+        can't be built (missing lib, no hardware) is skipped with a warning — the
+        rest of the boat still runs — mirroring the compass-driver resilience.
+
+        Default: ``sim`` when a simulated boat exists (unchanged behaviour), else
+        ``none`` (a real battery monitor is not implied by enabling serial GPS/
+        compass/motor)."""
+        source = cfg.hardware.battery_source or ("sim" if simulator is not None else "none")
+        if source in ("none", None):
+            return None
+        if source == "sim":
+            if simulator is None:
+                return None
+            from .hardware.drivers.battery import SimBatteryMonitor
+            return SimBatteryMonitor(simulator.battery)
+        if registry.uses_context("battery", source):
+            try:
+                ctx = self._driver_context("battery", source, cfg.battery)
+                return registry.build_with_context("battery", source, ctx)
+            except Exception as exc:  # noqa: BLE001 - a bad driver must not crash startup
+                logger.warning(
+                    "battery source %r could not be built (%s); running without a "
+                    "battery monitor. Change it in Settings -> Devices.", source, exc)
+                return None
+        if registry.has("battery", source):  # legacy (runtime, cfg) driver
+            try:
+                return registry.build_device("battery", source, self, cfg)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("battery source %r could not be built (%s).", source, exc)
+                return None
+        logger.warning("unknown battery source %r; running without a battery monitor.", source)
+        return None
 
     async def reload_devices(self) -> dict:
         """Rebuild the device set LIVE (no process restart) so a device-config
@@ -1278,7 +1355,8 @@ class Runtime:
             return {"applied": False, "error": str(exc)}
         started: list = []
         try:
-            for d in (new["gps"], new["compass"], new["depth_sounder"]):
+            for d in (new["gps"], new["compass"], new["depth_sounder"],
+                      new["battery_monitor"]):
                 if d is not None:
                     await d.start()
                     started.append(d)
@@ -1296,7 +1374,8 @@ class Runtime:
             await _stop_motor(new["motor"])
             return {"applied": False, "error": str(exc)}
         # New set is live — now retire the old one and swap references.
-        for d in (self.gps, self.compass, self.depth_sounder):
+        for d in (self.gps, self.compass, self.depth_sounder,
+                  getattr(self, "battery_monitor", None)):
             if d is not None:
                 with contextlib.suppress(Exception):
                     await d.stop()
@@ -1305,6 +1384,7 @@ class Runtime:
         if self._sim_task is not None:
             self._sim_task.cancel()
         self.gps, self.compass, self.depth_sounder = new["gps"], new["compass"], new["depth_sounder"]
+        self.battery_monitor = new["battery_monitor"]
         self.simulator, self._sim_task = new["simulator"], new_sim_task
         # Swap the motor in, then stop the OLD one (closes its port + kills the
         # feedback task -> no port/task leak). Best-effort so a stubborn old
@@ -1573,8 +1653,11 @@ class Runtime:
     # Battery (#60)
     # ------------------------------------------------------------------ #
     def battery_snapshot(self) -> dict:
-        """Battery telemetry. From the sim battery, or zeros if none (hardware
-        battery monitor over the HAL will populate this later)."""
+        """Battery telemetry. From the active battery monitor (#42) — the sim
+        pack or a real shunt driver — falling back to the sim battery directly,
+        then to zeros when there is no battery source at all."""
+        if getattr(self, "battery_monitor", None) is not None:
+            return self.battery_monitor.snapshot()
         if self.simulator is not None:
             return self.simulator.battery.to_dict()
         return {
@@ -2709,6 +2792,10 @@ class Runtime:
         await _try_start("gps", self.gps)
         await _try_start("compass", self.compass)
         await _try_start("depth", self.depth_sounder)
+        # Battery monitor (#42): the sim monitor is a read-view (no lifecycle); a
+        # real shunt driver starts its poll loop here. A gauge that won't start is
+        # logged, not fatal — same boot-resilience as the sensors.
+        await _try_start("battery", getattr(self, "battery_monitor", None))
         # Open the motor transport too: a serial motor is never usable
         # otherwise -- its first flush() raises on the unopened port. Same
         # boot-resilience as the sensors: a motor that won't open is logged, not
@@ -2742,6 +2829,10 @@ class Runtime:
             await self.compass.stop()
         if self.depth_sounder is not None:
             await self.depth_sounder.stop()
+        bm = getattr(self, "battery_monitor", None)
+        if bm is not None:
+            with contextlib.suppress(Exception):
+                await bm.stop()
         if self.nmea_tcp is not None:
             await self.nmea_tcp.stop()
         for task in self._tasks:

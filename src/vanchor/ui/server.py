@@ -960,6 +960,82 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         runtime.calibration.cancel()
         return {"cancelled": True}
 
+    # -- interactive magnetometer (hard/soft-iron) calibration (#41) ----- #
+    def _mag_runner():
+        """The runtime's magnetometer-calibration session, created lazily.
+
+        Persisted to ``<data_dir>/mag_calibration.json`` via the store, which
+        also LOADS any prior calibration on construction so the learned compass
+        offset survives a restart. Attached to ``runtime`` (not owned by app.py)
+        so this lane adds the feature without editing the runtime build seam.
+
+        The live sample source reads the AHRS magnetometer off the runtime state
+        when a driver surfaces it; with no live magnetometer (sim/bench) the
+        provider yields ``None`` and the capture simply collects nothing — the
+        fit is exercised in tests with a synthetic provider. HARDWARE CAVEAT:
+        the real magnetometer feed is untested on the bench.
+        """
+        runner = getattr(runtime, "_mag_cal_runner", None)
+        if runner is None:
+            from ..controller.calibration import (
+                MagCalibrationRunner,
+                MagCalibrationStore,
+            )
+
+            store = MagCalibrationStore(runtime.config.data_dir)
+
+            def provider():
+                st = getattr(runtime, "state", None)
+                if st is None:
+                    return None
+                # Accept either a ``mag`` object with x/y/z or flat mag_* scalars.
+                mag = getattr(st, "mag", None)
+                if mag is not None:
+                    xyz = (
+                        getattr(mag, "x", None),
+                        getattr(mag, "y", None),
+                        getattr(mag, "z", None),
+                    )
+                else:
+                    xyz = (
+                        getattr(st, "mag_x", None),
+                        getattr(st, "mag_y", None),
+                        getattr(st, "mag_z", None),
+                    )
+                if any(c is None for c in xyz):
+                    return None
+                return (float(xyz[0]), float(xyz[1]), float(xyz[2]))
+
+            runner = MagCalibrationRunner(provider, store)
+            runtime._mag_cal_runner = runner  # type: ignore[attr-defined]
+        return runner
+
+    @app.post("/api/calibrate/mag/start")
+    async def calibrate_mag_start() -> dict:
+        """Begin an interactive magnetometer calibration: spin the boat through a
+        full circle while samples are captured. Returns the live status."""
+        runner = _mag_runner()
+        started = runner.start()
+        out = runner.snapshot()
+        out["started"] = started
+        return out
+
+    @app.post("/api/calibrate/mag/stop")
+    async def calibrate_mag_stop() -> dict:
+        """Finish the capture: fit + persist the hard/soft-iron correction, and
+        return the fit quality (``ok=False`` with a reason on a bad capture)."""
+        return _mag_runner().stop()
+
+    @app.post("/api/calibrate/mag/cancel")
+    async def calibrate_mag_cancel() -> dict:
+        """Abort the capture without fitting; keeps any saved calibration."""
+        return _mag_runner().cancel()
+
+    @app.get("/api/calibrate/mag/status")
+    async def calibrate_mag_status() -> dict:
+        """Live capture progress + the persisted calibration's fit quality."""
+        return _mag_runner().snapshot()
+
     # -- debug session recording + replay -------------------------------- #
     @app.post("/api/debug/start")
     async def debug_start(payload: dict) -> dict:

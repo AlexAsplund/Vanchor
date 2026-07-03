@@ -9,6 +9,7 @@ asynchronously (subscribed to the ``nmea.in`` topic at runtime).
 from __future__ import annotations
 
 import logging
+import math
 import time
 
 from ..core import events
@@ -36,6 +37,81 @@ COG_HEADING_MIN_SOG_KNOTS = 0.5
 COMPASS_STALE_S = 3.0
 
 
+# --- Magnetic declination model (#47) --------------------------------------- #
+# A single, self-contained source of local magnetic declination (a.k.a.
+# variation), used to convert a MAGNETIC compass heading (HDM / uncorrected HDG,
+# reference="M") into the TRUE frame the whole control stack steers in. It is a
+# low-degree spherical-harmonic (World Magnetic Model-style) approximation: the
+# centered dipole plus quadrupole terms of IGRF-13, epoch 2020.0. That is enough
+# to place declination within a few degrees across the populated mid-latitudes
+# (hand-verified ~+5.9 deg for Stockholm vs. the ~+6.5 deg real value) while
+# staying dependency-free and fully unit-testable.
+#
+# Deliberately NOT a config knob this wave: the source is internal so heading
+# semantics stay in one place. Clear extension point -- ``magnetic_declination_deg``
+# is a pure ``(lat, lon) -> degrees`` function; swap it for a full-degree
+# WMM/IGRF evaluation (add the higher-degree Gauss coefficients + a Legendre
+# recursion), or wrap it to prefer a survey/plotter-supplied variation, without
+# touching a single call site.
+#
+# IGRF-13 Gauss coefficients (nT), epoch 2020.0, Schmidt semi-normalized.
+_IGRF_G: dict[tuple[int, int], float] = {
+    (1, 0): -29404.8,
+    (1, 1): -1450.9,
+    (2, 0): -2499.6,
+    (2, 1): 2982.0,
+    (2, 2): 1677.0,
+}
+_IGRF_H: dict[tuple[int, int], float] = {
+    (1, 1): 4652.5,
+    (2, 1): -2991.6,
+    (2, 2): -734.6,
+}
+_SQRT3 = math.sqrt(3.0)
+
+
+def magnetic_declination_deg(lat: float, lon: float) -> float:
+    """Approximate local magnetic declination (variation) at *lat*/*lon*.
+
+    Returns degrees, East-positive: ``true = magnetic + declination``. Uses the
+    low-degree (dipole + quadrupole) IGRF-13/2020 spherical-harmonic model
+    described in the module note above -- accurate to a few degrees over the
+    populated mid-latitudes and degrading toward the magnetic poles, where the
+    horizontal field vanishes and declination is inherently ill-conditioned.
+    """
+    theta = math.radians(90.0 - lat)  # geocentric colatitude
+    phi = math.radians(lon)
+    st, ct = math.sin(theta), math.cos(theta)
+    if abs(st) < 1e-9:
+        # A geographic pole: horizontal field (and thus declination) undefined.
+        return 0.0
+    # Schmidt semi-normalized associated Legendre functions P and dP/dtheta,
+    # degrees 1-2 as closed forms (extend here for higher degree).
+    legendre_p: dict[tuple[int, int], float] = {
+        (1, 0): ct,
+        (1, 1): st,
+        (2, 0): (3.0 * ct * ct - 1.0) / 2.0,
+        (2, 1): _SQRT3 * st * ct,
+        (2, 2): (_SQRT3 / 2.0) * st * st,
+    }
+    legendre_dp: dict[tuple[int, int], float] = {
+        (1, 0): -st,
+        (1, 1): ct,
+        (2, 0): -3.0 * st * ct,
+        (2, 1): _SQRT3 * (ct * ct - st * st),
+        (2, 2): _SQRT3 * st * ct,
+    }
+    x = 0.0  # geographic-north field component
+    y = 0.0  # geographic-east field component
+    for (n, m), p in legendre_p.items():
+        g = _IGRF_G.get((n, m), 0.0)
+        h = _IGRF_H.get((n, m), 0.0)
+        cos_mphi, sin_mphi = math.cos(m * phi), math.sin(m * phi)
+        x += (g * cos_mphi + h * sin_mphi) * legendre_dp[(n, m)]
+        y += (m / st) * (g * sin_mphi - h * cos_mphi) * p
+    return math.degrees(math.atan2(y, x))
+
+
 class Navigator:
     def __init__(
         self,
@@ -43,7 +119,7 @@ class Navigator:
         bus: EventBus | None = None,
         guard_config: SensorGuardConfig | None = None,
         *,
-        declination_deg: float = 0.0,
+        declination_deg: float | None = 0.0,
         mono_fn=time.monotonic,
     ) -> None:
         self.state = state
@@ -51,8 +127,15 @@ class Navigator:
         # Local magnetic declination (degrees East-positive). Applied to MAGNETIC
         # headings (HDM/HDG with reference="M") to yield true before the control
         # stack uses state.heading_deg. True headings (HDT/HDG fully corrected,
-        # reference="T") pass through unchanged. Set to 0 if the compass source
-        # already emits true heading to avoid double-correction.
+        # reference="T") pass through unchanged.
+        #
+        #   * A float (default 0.0): a fixed manual declination. 0.0 is a no-op,
+        #     matching a compass source that already emits true heading and the
+        #     simulator (which uses true headings throughout) -- behaviour is
+        #     unchanged from before this field learned to auto-compute.
+        #   * None: AUTO -- derive declination from the boat's current fix via the
+        #     internal ``magnetic_declination_deg`` model, recomputed per heading.
+        #     Falls back to 0.0 until a position is known.
         self.declination_deg = declination_deg
         # MONOTONIC clock used to stamp each sensor's receive time on the state
         # (the freshness watchdog). Injectable so the runtime can drive it and
@@ -67,6 +150,27 @@ class Navigator:
         if bus is not None:
             bus.subscribe(events.NMEA_IN, self._on_nmea)
             bus.subscribe(events.IMU_IN, self._on_imu)
+
+    def _declination(self) -> float:
+        """The single central declination (deg, East-positive) used to convert
+        every MAGNETIC heading to true. A fixed value if one was configured,
+        else the internal model evaluated at the current fix (0.0 with no fix)."""
+        if self.declination_deg is not None:
+            return self.declination_deg
+        pos = self.state.position
+        if pos is None:
+            return 0.0
+        return magnetic_declination_deg(pos.lat, pos.lon)
+
+    @property
+    def true_heading_deg(self) -> float:
+        """The current best TRUE heading (deg, 0-360).
+
+        ``state.heading_deg`` is always stored in the true frame -- magnetic
+        sources are declination-corrected on ingest and true sources pass
+        through -- so this feeds ``nmea.encode_hdt`` directly to emit a correct
+        HDT sentence for downstream/telemetry consumers."""
+        return self.state.heading_deg % 360.0
 
     async def _on_imu(self, sample) -> None:
         """Store the latest raw IMU sample (accel+gyro) from an AHRS device.
@@ -220,7 +324,7 @@ class Navigator:
             # HDT (reference="T") and fully-corrected HDG already carry a true
             # heading — pass through unchanged to avoid double-correction.
             if parsed.reference == "M":
-                true_deg = (parsed.heading_deg + self.declination_deg) % 360
+                true_deg = (parsed.heading_deg + self._declination()) % 360
             else:  # "T"
                 true_deg = parsed.heading_deg
             if self.guard.check_heading(true_deg):

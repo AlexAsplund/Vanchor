@@ -189,10 +189,15 @@ def _parse_heading(f: list[str], kind: str) -> Heading:
     """Parse HDM (magnetic), HDT (true), or HDG (sensor + deviation + variation).
 
     Sign convention (NMEA 0183 § 6.7 / §8.3.21):
-        True = sensor_heading + deviation(E+, W-) + variation(E+, W-)
-    HDG returns ``reference="T"`` only when *both* deviation **and** variation
-    fields are present and valid; otherwise it falls back to ``"M"``
-    (uncorrected magnetic).
+        magnetic = sensor_heading + deviation(E+, W-)
+        true     = magnetic + variation(E+, W-)
+
+    HDG returns ``reference="T"`` iff the **variation** field is present and
+    valid — that is the field that carries a sentence back to the true frame, so
+    it is honored whether or not the (often-empty) deviation field is supplied.
+    Deviation, when present, is folded in to reach magnetic first. With no
+    variation the result is at best magnetic, so ``reference="M"`` and the
+    navigator applies its own declination on top.
     """
     if kind == "HDT":
         return Heading(heading_deg=float(f[1]) if f[1] else 0.0, reference="T")
@@ -204,12 +209,14 @@ def _parse_heading(f: list[str], kind: str) -> Heading:
         var_dir = f[5] if len(f) > 5 else ""
         has_dev = bool(dev_raw) and dev_dir in ("E", "W")
         has_var = bool(var_raw) and var_dir in ("E", "W")
-        if has_dev and has_var:
-            dev = float(dev_raw) * (1.0 if dev_dir == "E" else -1.0)
-            var = float(var_raw) * (1.0 if var_dir == "E" else -1.0)
+        dev = float(dev_raw) * (1.0 if dev_dir == "E" else -1.0) if has_dev else 0.0
+        var = float(var_raw) * (1.0 if var_dir == "E" else -1.0) if has_var else 0.0
+        if has_var:
+            # Variation present → we can express a true heading. Deviation (if
+            # any) first corrects the sensor to magnetic; variation to true.
             return Heading(heading_deg=(heading + dev + var) % 360, reference="T")
-        # Partial or absent correction fields → return raw sensor heading as magnetic.
-        return Heading(heading_deg=heading, reference="M")
+        # No variation → still magnetic. Apply deviation (→ magnetic) if given.
+        return Heading(heading_deg=(heading + dev) % 360, reference="M")
     # HDM: magnetic heading, no correction applied.
     return Heading(heading_deg=float(f[1]) if f[1] else 0.0, reference="M")
 
