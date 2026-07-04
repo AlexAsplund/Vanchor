@@ -15,3 +15,12 @@ Subpackages:
 - :mod:`vanchor.controller` — control modes, PID, calibration, safety
 - :mod:`vanchor.ui` — the FastAPI server + the static PWA
 """
+
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:  # the single source of truth is pyproject's [project] version
+    __version__ = _pkg_version("vanchor-ng")
+except PackageNotFoundError:  # running from a source tree that isn't installed
+    __version__ = "0.0.0+unknown"
+
+__all__ = ["__version__"]

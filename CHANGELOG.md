@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.4.0a0] — 2026-07-04
+
 - **Smart station-keeper upgraded to a full-azimuth hybrid.** The learned
   residual is now trained with a wide (120°) steering swing, so it *vectors*
   the motor through its full rotation on top of the PID base (rescaled to the
