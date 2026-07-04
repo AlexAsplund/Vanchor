@@ -21,6 +21,9 @@ assert the invariants hold, rather than hand-picking a few examples.
 from __future__ import annotations
 
 import pytest
+
+pytest.importorskip("hypothesis")  # property/fuzz lib (a dev/test dependency)
+
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 

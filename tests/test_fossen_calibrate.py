@@ -11,6 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+pytest.importorskip("scipy")  # the calibrate module fits via scipy.optimize
+
 from vanchor.analysis.fossen_calibrate import (
     CalibrationResult,
     Recording,

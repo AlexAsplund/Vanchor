@@ -5,3 +5,5 @@ pytest-timeout>=2.3
 httpx>=0.27
 ruff>=0.4
 playwright>=1.44
+hypothesis>=6          # property/fuzz tests (tests/test_nmea_fuzz.py)
+scipy>=1.10            # Fossen auto-calibration (tests/test_fossen_calibrate.py)
