@@ -147,9 +147,11 @@ def test_model_is_pure_and_bounded():
 
 
 def test_model_geographic_pole_is_defined():
-    # No blow-up at the geographic pole (horizontal field vanishes -> 0.0).
-    assert magnetic_declination_deg(90.0, 0.0) == 0.0
-    assert magnetic_declination_deg(-90.0, 123.0) == 0.0
+    import math
+    # Defined (finite, no NaN/blow-up) at the geographic poles, where declination
+    # is technically ill-conditioned but the WMM still returns a finite value.
+    assert math.isfinite(magnetic_declination_deg(90.0, 0.0))
+    assert math.isfinite(magnetic_declination_deg(-90.0, 123.0))
 
 
 def test_model_stockholm_is_east_positive_and_reasonable():
@@ -177,16 +179,15 @@ def test_auto_mode_uses_model_at_current_fix():
     assert state.heading_deg == pytest.approx((100.0 + expected) % 360, abs=0.1)
 
 
-def test_declination_docstring_is_accuracy_honest():
-    """(#8) The docstring must not overstate the low-degree model. It should own
-    the real error budget (anomaly regions, ~10-13 deg) and that AUTO is opt-in /
-    off by default, so an operator is not misled into trusting it as survey-grade."""
-    doc = (magnetic_declination_deg.__doc__ or "").lower()
-    assert "survey-grade" in doc  # explicitly disclaims survey accuracy
-    assert "anomal" in doc  # names the strong-anomaly failure mode
-    assert "opt-in" in doc and "off by default" in doc  # AUTO is not the default
-    # The honest magnitude of the error is stated somewhere in the doc.
-    assert "13" in doc
+def test_full_wmm_declination_is_accurate():
+    """(#47/#8) The shipped model is the full WMM2025 -- accurate to a fraction of
+    a degree worldwide, including strongly-anomalous regions the old low-degree
+    model got ~10-13 deg wrong (e.g. the US west coast)."""
+    from vanchor.nav.wmm import declination_deg
+    refs = {(59.33, 18.07): 7.71, (0.0, 0.0): -3.83,
+            (37.77, -122.42): 12.86, (-33.9, 151.2): 12.83, (-80.0, 0.0): -23.86}
+    for (lat, lon), exp in refs.items():
+        assert declination_deg(lat, lon, year=2026.5) == pytest.approx(exp, abs=0.1)
 
 
 def test_auto_mode_leaves_true_headings_alone():

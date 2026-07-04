@@ -115,3 +115,4 @@ pyserial-asyncio==0.6
 #   playwright==1.60.0
 #   matplotlib==3.11.0      # `analysis` extra (plots)
 # ============================================================================
+pygeomag==1.1.0

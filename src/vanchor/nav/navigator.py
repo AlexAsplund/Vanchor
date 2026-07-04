@@ -37,92 +37,14 @@ COG_HEADING_MIN_SOG_KNOTS = 0.5
 COMPASS_STALE_S = 3.0
 
 
-# --- Magnetic declination model (#47) --------------------------------------- #
-# A single, self-contained source of local magnetic declination (a.k.a.
-# variation), used to convert a MAGNETIC compass heading (HDM / uncorrected HDG,
-# reference="M") into the TRUE frame the whole control stack steers in. It is a
-# low-degree spherical-harmonic (World Magnetic Model-style) approximation: the
-# centered dipole plus quadrupole terms of IGRF-13, epoch 2020.0. Truncating to
-# degree 2 keeps it dependency-free and fully unit-testable, but it is only a
-# COARSE model: it captures the broad global trend (e.g. hand-verified ~+5.9 deg
-# for Stockholm vs. the ~+6.5 deg real value) yet drops the regional crustal
-# anomalies, so it can be ~10-13 deg off where the field is strongly anomalous
-# (e.g. the US west coast, parts of the Southern Ocean) and degrades further
-# toward the magnetic poles. Do NOT treat it as survey-grade.
-#
-# Because of that error budget, AUTO declination (``declination_deg=None``) is
-# OPT-IN and OFF by default: the navigator ships with a fixed 0.0 declination
-# (the simulator's true-heading world and true-emitting compasses are a no-op),
-# and a real magnetic compass should be given a measured local variation instead.
-#
-# Deliberately NOT a config knob this wave: the source is internal so heading
-# semantics stay in one place. Clear extension point -- ``magnetic_declination_deg``
-# is a pure ``(lat, lon) -> degrees`` function; swap it for the full-degree
-# WMM/IGRF evaluation (add the higher-degree Gauss coefficients + a Legendre
-# recursion) for survey-grade accuracy, or wrap it to prefer a
-# survey/plotter-supplied variation, without touching a single call site.
-#
-# IGRF-13 Gauss coefficients (nT), epoch 2020.0, Schmidt semi-normalized.
-_IGRF_G: dict[tuple[int, int], float] = {
-    (1, 0): -29404.8,
-    (1, 1): -1450.9,
-    (2, 0): -2499.6,
-    (2, 1): 2982.0,
-    (2, 2): 1677.0,
-}
-_IGRF_H: dict[tuple[int, int], float] = {
-    (1, 1): 4652.5,
-    (2, 1): -2991.6,
-    (2, 2): -734.6,
-}
-_SQRT3 = math.sqrt(3.0)
-
-
-def magnetic_declination_deg(lat: float, lon: float) -> float:
-    """Approximate local magnetic declination (variation) at *lat*/*lon*.
-
-    Returns degrees, East-positive: ``true = magnetic + declination``. Uses the
-    low-degree (dipole + quadrupole) IGRF-13/2020 spherical-harmonic model
-    described in the module note above. It is COARSE: it tracks the broad global
-    trend to within a few degrees over much of the mid-latitudes but omits
-    regional crustal anomalies, so it can be ~10-13 deg off in strongly anomalous
-    regions (e.g. the US west coast) and degrades further toward the magnetic
-    poles, where the horizontal field vanishes and declination is ill-conditioned.
-    Not survey-grade -- see the module note; prefer a measured local variation,
-    and swap in a full-degree WMM/IGRF evaluation for real accuracy. This is why
-    AUTO declination (``declination_deg=None``) is opt-in and off by default.
-    """
-    theta = math.radians(90.0 - lat)  # geocentric colatitude
-    phi = math.radians(lon)
-    st, ct = math.sin(theta), math.cos(theta)
-    if abs(st) < 1e-9:
-        # A geographic pole: horizontal field (and thus declination) undefined.
-        return 0.0
-    # Schmidt semi-normalized associated Legendre functions P and dP/dtheta,
-    # degrees 1-2 as closed forms (extend here for higher degree).
-    legendre_p: dict[tuple[int, int], float] = {
-        (1, 0): ct,
-        (1, 1): st,
-        (2, 0): (3.0 * ct * ct - 1.0) / 2.0,
-        (2, 1): _SQRT3 * st * ct,
-        (2, 2): (_SQRT3 / 2.0) * st * st,
-    }
-    legendre_dp: dict[tuple[int, int], float] = {
-        (1, 0): -st,
-        (1, 1): ct,
-        (2, 0): -3.0 * st * ct,
-        (2, 1): _SQRT3 * (ct * ct - st * st),
-        (2, 2): _SQRT3 * st * ct,
-    }
-    x = 0.0  # geographic-north field component
-    y = 0.0  # geographic-east field component
-    for (n, m), p in legendre_p.items():
-        g = _IGRF_G.get((n, m), 0.0)
-        h = _IGRF_H.get((n, m), 0.0)
-        cos_mphi, sin_mphi = math.cos(m * phi), math.sin(m * phi)
-        x += (g * cos_mphi + h * sin_mphi) * legendre_dp[(n, m)]
-        y += (m / st) * (g * sin_mphi - h * cos_mphi) * p
-    return math.degrees(math.atan2(y, x))
+# --- Magnetic declination (#47) --------------------------------------------- #
+# Converts a MAGNETIC compass heading (HDM / uncorrected HDG, reference="M") into
+# the TRUE frame the control stack steers in, via the full degree-12 WMM2025
+# model (see vanchor.nav.wmm), accurate to a fraction of a degree worldwide.
+# AUTO declination (``declination_deg=None``) is now the DEFAULT for real magnetic
+# compasses; the app forces a fixed 0.0 when the compass is the simulator (a
+# zero-declination, true-heading world) so simulator behaviour is unchanged.
+from .wmm import declination_deg as magnetic_declination_deg  # re-export  # noqa: E402
 
 
 class Navigator:

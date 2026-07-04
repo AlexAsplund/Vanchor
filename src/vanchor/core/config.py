@@ -208,15 +208,14 @@ class SensorConfig:
     gps_noise_m: float = 0.35
     compass_noise_deg: float = 1.0
     # Local magnetic declination applied by the navigator to convert MAGNETIC
-    # headings (HDM/HDG) to true before the control stack uses them.
-    # Degrees East-positive (e.g. Sweden +3°, Minnesota +1°, Pacific NW +15°).
-    # Leave 0.0 if your compass source already emits true heading (HDT) or if
-    # the HWT901B driver is in auto/manual mode — it corrects internally and
-    # emits HDT, so setting this would double-correct.
-    # Note: the simulator emits HDM with implicit zero declination (the sim world
-    # uses true headings throughout); a nonzero value here will shift the sim
-    # compass reading, which is acceptable since sim declination is zero by definition.
-    magnetic_declination_deg: float = 0.0
+    # headings (HDM/HDG, reference="M") to true. Degrees East-positive.
+    #   None  = AUTO: evaluate the full WMM2025 model at the current position
+    #           (the DEFAULT). Only affects magnetic sources; HDT/true sources
+    #           (e.g. the HWT901B, which self-corrects) pass through untouched.
+    #   float = a fixed manual override (e.g. a survey/plotter-supplied variation).
+    # The app forces 0.0 when the compass is the SIMULATOR (a zero-declination,
+    # true-heading world) so sim behaviour is unchanged regardless of this default.
+    magnetic_declination_deg: float | None = None
     # Sensor-anomaly protection (spike rejection).
     position_jump_max_m: float = 15.0
     heading_jump_max_deg: float = 30.0
@@ -935,10 +934,11 @@ sensors:
   gps_noise_m: 0.35   # denoised plotter output (steady), not raw-receiver scatter
   compass_noise_deg: 1.0
   # Local magnetic declination, degrees East-positive; applied to MAGNETIC headings
-  # (HDM/HDG) to produce true. Leave 0 if your compass source already emits true
-  # heading (HDT) — e.g. HWT901B in auto/manual mode corrects internally and emits
-  # HDT, so setting this nonzero alongside it would double-correct.
-  magnetic_declination_deg: 0.0
+  # (HDM/HDG) to produce true. Default AUTO (full WMM2025 at the current position);
+  # set a number to force a fixed value. Only affects magnetic sources — HDT/true
+  # sources (e.g. the self-correcting HWT901B) pass through; the simulator is
+  # forced to 0. Omit the key (or use null) for AUTO.
+  magnetic_declination_deg: null
   position_jump_max_m: 15.0    # reject GPS jumps bigger than this (unless confirmed)
   heading_jump_max_deg: 30.0   # reject heading spikes bigger than this per sample
 

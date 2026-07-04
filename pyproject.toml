@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=1.24",        # Fossen 3-DOF boat model (sim model="fossen")
     "pyyaml>=6.0",        # YAML config files
     "orjson>=3.9",        # fast depth-chart JSON (de)serialisation (graceful fallback)
+    "pygeomag>=1.1",      # full WMM2025 magnetic declination (nav.wmm; degree-2 fallback)
 ]
 
 [project.optional-dependencies]

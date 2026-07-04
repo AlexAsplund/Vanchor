@@ -333,7 +333,14 @@ class Runtime:
                 heading_jump_max_deg=cfg.sensors.heading_jump_max_deg,
             ),
             mono_fn=self._mono_fn,
-            declination_deg=cfg.sensors.magnetic_declination_deg,
+            # AUTO (None) = full WMM at the current position, the default. But the
+            # SIMULATOR is a zero-declination true-heading world, so a sim compass
+            # is pinned to 0.0 (a manual float in config still overrides both).
+            declination_deg=(
+                0.0 if cfg.sensors.magnetic_declination_deg is None
+                and cfg.hardware.source("compass") == "sim"
+                else cfg.sensors.magnetic_declination_deg
+            ),
         )
         self.controller = Controller(
             self.state,
