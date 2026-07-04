@@ -66,19 +66,45 @@ transom mount retains the housing. Total printed volume ~320 cm³ solid
 
 ## Parts (out/)
 
-| File | Part | Print |
-|---|---|---|
-| `Housing.stl` | Body: floor seal boss, motor nest, blind bosses, gland, silicone channel | PETG, 3 walls, 20% gyroid, brim |
-| `Lid.stl` | Lid: seal boss, AS5600 bosses, hall pocket, 11 c'bored M3 | PETG, 3 walls |
-| `HubGear.stl` | Output hub: z24 gear + seal lands + drive hex | PETG, 4 walls, ≥40%, 0.12–0.16 mm |
-| `Pinion.stl` | z24 pinion: D-bore, AS5600 + index magnet pockets, grub pilot | same |
-| `Coupler.stl` | Hex-socket split clamp, splash-cap groove | PETG, 4 walls, 40% |
-| `SplashCap.stl` | Spray umbrella, snaps into the coupler groove | PETG, 100% |
-| `Strap.stl` | Motor-can hold-down | PETG |
-| `TestFit.stl` | **Print first**: fit coupons — seal pocket, land+hex (slide a real seal over it), hex socket, D-bore, magnet pockets, insert hole, M4 nut pocket | PETG, same settings as real parts |
+| File | Part |
+|---|---|
+| `Housing.stl` | Body: floor seal boss tower, motor nest, blind bosses, gland, silicone channel |
+| `Lid.stl` | Lid: seal boss, AS5600 bosses, hall pocket, 11 c'bored M3 |
+| `HubGear.stl` | Output hub: z24 gear + seal lands + drive hex |
+| `Pinion.stl` | z24 pinion: D-bore, AS5600 + index magnet pockets, grub pilot |
+| `Coupler.stl` | Hex-socket split clamp, splash-cap groove |
+| `SplashCap.stl` | Spray umbrella, snaps into the coupler groove |
+| `Strap.stl` | Motor-can hold-down |
+| `TestFit.stl` | **Print first**: fit coupons — seal pocket, land+hex (slide a real seal over it), hex socket, D-bore, magnet pockets, insert hole, M4 nut pocket |
+
+Print settings per part are in the table below.
 
 All STLs print-oriented, no supports. `Assembly/Section/Cutaway.stl` are
 visual references only.
+
+## Print settings (PETG, 0.4 mm nozzle)
+
+Common to everything: dry PETG, ~240 °C / 80 °C bed, fan 30–50 %, **no
+supports anywhere** (all STLs are pre-oriented), elephant-foot compensation
+~0.15 mm on (or lightly deburr bores after printing). Where a range is
+given, the first value is the recommendation.
+
+| Part | Layer | Walls | Infill | Top/bottom | Notes |
+|---|---|---|---|---|---|
+| `Housing` | 0.20 | 3 | 20 % gyroid | 5 / 4 | 5 mm brim (tall thin box). Walls are 2 mm ⇒ effectively solid from perimeters; infill only fills the boss tower and gussets. Slow the top layers for a clean gasket rim + channel. |
+| `Lid` | 0.20 | 3 | 25 % gyroid | 5 / 5 | Prints top-face-down: first layer is the visible outside — clean bed. Plate is 3 mm ⇒ mostly skin anyway. |
+| `HubGear` | **0.12–0.16** | 4–5 | 50 % gyroid/cubic | 5 / 5 | The precision part. Fine layers for tooth profile + seal-land finish; outer perimeter slow (~30 mm/s). Seam: *aligned* (one line to sand off the Ø35 lands), not random. |
+| `Pinion` | **0.12–0.16** | 4 | 50 % gyroid/cubic | 5 / 5 | Same as hub. D-bore is a press fit — don't over-extrude first layers. |
+| `Coupler` | 0.20 | 4 | 40 % gyroid | 5 / 5 | Clamp flexes at the slit: PETG only, no brittle blends. Nut pockets bridge fine. |
+| `SplashCap` | 0.20 | 2 | 100 % | — | Tiny; solid. Slight flex needed to snap over the groove. |
+| `Strap` | 0.20 | 3 | 30 % | 4 / 4 | Nothing critical. |
+| `TestFit` | match target | match | 20 % | 4 / 4 | Use the **same layer height, walls, flow and material** as the part each coupon stands in for — that's what makes the fit test meaningful. Infill doesn't matter. |
+
+Why these: dimensional fits are set by perimeters/flow (hence matching
+TestFit to the real settings), gear strength is set by walls + infill at
+the tooth roots (hence 4–5 walls on the gears, not just infill), and the
+sealing surfaces (gasket rim, seal lands, lid faces) want slow, consistent
+skins rather than more plastic.
 
 ## Bill of materials
 
