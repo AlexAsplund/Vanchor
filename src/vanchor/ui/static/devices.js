@@ -37,11 +37,13 @@
     serial: "Serial (wired)",
     nmea: "NMEA (from phone/plotter)",
     hwt901b: "HWT901B AHRS",
+    none: "Not connected",
   };
   const MOTOR_LABELS = {
     sim: "Simulated",
     serial: "Serial (real servo)",
     both: "Both (sim boat + real servo)",
+    none: "Not connected",
   };
   const BATTERY_LABELS = {
     sim: "Simulated",
@@ -52,9 +54,9 @@
 
   // Fallbacks if the backend omits `options`.
   const DEFAULT_OPTS = {
-    sensor: ["sim", "serial", "nmea"],
-    compass: ["sim", "serial", "nmea", "hwt901b"],
-    motor: ["sim", "serial", "both"],
+    sensor: ["sim", "serial", "nmea", "none"],
+    compass: ["sim", "serial", "nmea", "hwt901b", "none"],
+    motor: ["sim", "serial", "both", "none"],
     battery: ["sim", "none", "ina226"],
   };
 

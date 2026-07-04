@@ -129,9 +129,9 @@ def test_get_returns_config_and_options(client):
                          "driver_menus", "restart_required"}
     assert data["restart_required"] is False
     assert data["options"] == {
-        "sensor": ["sim", "serial", "nmea"],
-        "compass": ["sim", "serial", "nmea", "hwt901b"],  # + registered drivers
-        "motor": ["sim", "serial", "both"],
+        "sensor": ["sim", "serial", "nmea", "none"],  # "none" = Not connected
+        "compass": ["sim", "serial", "nmea", "none", "hwt901b"],  # + registered drivers
+        "motor": ["sim", "serial", "both", "none"],
         "battery": ["sim", "none", "ina226"],  # sim/none built-in + registered ina226 driver
     }
     assert isinstance(data["menus"], list)  # active device menus (sim => empty)

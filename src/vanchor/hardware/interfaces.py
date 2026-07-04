@@ -56,6 +56,19 @@ class MotorController(abc.ABC):
         return None
 
 
+class NullMotor(MotorController):
+    """A motor that is 'Not connected': it safely accepts and discards commands.
+
+    Used when ``motor_source`` is ``"none"`` so the control loop can run without
+    crashing while no actuation happens. Motor-commanding modes are disabled in
+    the UI + controller (see :mod:`vanchor.core.capabilities`); this is only the
+    backstop that makes an errant command a harmless no-op.
+    """
+
+    def apply(self, command: MotorCommand) -> None:  # noqa: D102
+        return None
+
+
 class Actuator(abc.ABC):
     """A generic single-channel actuator (servo angle or stepper position).
 

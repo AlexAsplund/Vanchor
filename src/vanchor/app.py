@@ -418,6 +418,10 @@ class Runtime:
             # can't weaken a failsafe by bypassing Runtime.handle_command.
             safety_floor=self.safety_floor,
         )
+        # Device-availability gating: a "Not connected" device disables the modes
+        # that need it (UI greys them out with the reason; the controller refuses
+        # to engage them). See vanchor.core.capabilities.
+        self.controller.device_connected = self._device_connected_map(cfg)
 
         if cfg.nmea_tcp.enabled:
             from .nav.nmea_net import NmeaTcpServer
@@ -1014,8 +1018,8 @@ class Runtime:
     # The valid values for each source field (used to validate edits + to tell
     # the UI which options to offer). Sensors share one set; the motor adds
     # "both" (drive the sim boat AND mirror to a real servo).
-    _SENSOR_SOURCES = ("sim", "serial", "nmea")
-    _MOTOR_SOURCES = ("sim", "serial", "both")
+    _SENSOR_SOURCES = ("sim", "serial", "nmea", "none")
+    _MOTOR_SOURCES = ("sim", "serial", "both", "none")
     # Battery is the registry-driven 4th device kind (#42): the built-in "sim" +
     # "none" baselines plus any registered/pack battery driver (e.g. "ina226").
     _BATTERY_SOURCES = ("sim", "none")
@@ -1283,13 +1287,18 @@ class Runtime:
                 motor_thrust_slew_per_s=cfg.sim_motor.thrust_slew_per_s,
                 motor_thrust_lag_tau_s=cfg.sim_motor.thrust_lag_tau_s,
             )
+        from .hardware.interfaces import NullMotor
         sim_motor = simulator.motor if simulator is not None else None
-        if src["motor"] == "serial":
+        if src["motor"] == "none":
+            # Motor "Not connected": a safe no-op so the loop runs; motor modes
+            # are disabled (see vanchor.core.capabilities).
+            motor = NullMotor()
+        elif src["motor"] == "serial":
             motor = self._build_serial_motor(cfg)
         elif src["motor"] == "both":
             motor = _TeeMotor([sim_motor, self._build_serial_motor(cfg)])
         else:
-            motor = sim_motor
+            motor = sim_motor if sim_motor is not None else NullMotor()
         # "nmea" (or anything not sim/serial) builds NO internal sensor: the
         # navigator is fed by external NMEA over the bridge/inject instead.
         gps = compass = depth = None
@@ -1435,6 +1444,7 @@ class Runtime:
         # motor can't strand the reload.
         old_motor = self.controller.motor
         self.controller.motor = new["motor"]
+        self.controller.device_connected = self._device_connected_map(self.config)
         await _stop_motor(old_motor)
         # Re-prime the navigator with a fresh fix/heading so the fix-lost failsafe
         # doesn't latch (and stop the motor) over the brief gap during the swap.
@@ -2735,6 +2745,46 @@ class Runtime:
             }
         return out
 
+    def _device_connected_map(self, cfg: AppConfig) -> dict:
+        """``{kind: bool}`` — a device is connected unless its source is "none"."""
+        hw = cfg.hardware
+        conn = {k: hw.source(k) != "none" for k in ("gps", "compass", "depth", "motor")}
+        bsrc = hw.battery_source or ("sim" if self.simulator is not None else "none")
+        conn["battery"] = bsrc != "none"
+        return conn
+
+    def device_status(self) -> dict:
+        """Per-device ``{source, connected, healthy}`` for the gating UI.
+
+        ``connected`` = the configured source is not "none". ``healthy`` is the
+        device's live health (``None`` when the device doesn't report it, e.g. a
+        sim device)."""
+        hw = self.config.hardware
+        connected = self._device_connected_map(self.config)
+
+        def _healthy(dev) -> bool | None:
+            h = getattr(dev, "healthy", None)
+            if h is not None:
+                return bool(h)
+            hf = getattr(dev, "health", None)  # battery monitors expose health()
+            if callable(hf):
+                try:
+                    return bool(hf().get("healthy")) if isinstance(hf(), dict) else None
+                except Exception:  # noqa: BLE001
+                    return None
+            return None
+
+        out: dict = {}
+        for kind, dev in (("gps", self.gps), ("compass", self.compass),
+                          ("depth", self.depth_sounder), ("motor", self.controller.motor),
+                          ("battery", getattr(self, "battery_monitor", None))):
+            src = hw.battery_source if kind == "battery" else hw.source(kind)
+            if kind == "battery" and not src:
+                src = "sim" if self.simulator is not None else "none"
+            out[kind] = {"source": src, "connected": connected.get(kind, True),
+                         "healthy": _healthy(dev)}
+        return out
+
     def telemetry(self) -> dict:
         """Build a PURE telemetry snapshot -- no side effects.
 
@@ -2770,6 +2820,13 @@ class Runtime:
             "fix_failsafe_enabled": _gov.fix_failsafe_enabled,
         }
         payload["health"] = self._health_snapshot()
+        # Device availability + per-mode gating (Not-connected devices disable the
+        # modes/functions that need them; the UI shows the reason).
+        from .core.capabilities import mode_availability
+        payload["devices"] = self.device_status()
+        payload["mode_availability"] = mode_availability(
+            {k: v["connected"] for k, v in payload["devices"].items()}
+        )
         payload["battery"] = self.battery_snapshot()
         payload["link"] = {
             "client_connected": self._ui_clients > 0,

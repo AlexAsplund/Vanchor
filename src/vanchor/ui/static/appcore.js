@@ -92,6 +92,52 @@
     get currentMode() { return currentMode; },
   };
 
+  // ---- device-availability gating -----------------------------------------
+  // A "Not connected" device disables the modes that need it (backend
+  // `mode_availability`). Grey the buttons out with the reason, and block a
+  // click before any mode handler fires (capture phase covers appcore + the
+  // guided/mobile handlers).
+  let modeAvail = {};
+  function applyModeAvailability(ma) {
+    modeAvail = ma || {};
+    document.querySelectorAll(".mode-btn[data-mode], .more-item[data-mode]").forEach((b) => {
+      const info = modeAvail[b.dataset.mode];
+      const blocked = !!(info && info.available === false);
+      b.classList.toggle("mode-unavailable", blocked);
+      if (blocked) {
+        b.setAttribute("aria-disabled", "true");
+        b.title = info.reason || "Unavailable";
+        b.dataset.reason = info.reason || "Unavailable";
+      } else {
+        b.removeAttribute("aria-disabled");
+        if (b.dataset.reason) { b.removeAttribute("title"); delete b.dataset.reason; }
+      }
+    });
+  }
+  function toast(msg) {
+    let el = $("va-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "va-toast";
+      el.className = "va-toast";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("show"), 2600);
+  }
+  // Capture-phase block: an unavailable mode click never reaches a mode handler.
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest &&
+      e.target.closest(".mode-btn[data-mode], .more-item[data-mode]");
+    if (btn && btn.classList.contains("mode-unavailable")) {
+      e.stopPropagation();
+      e.preventDefault();
+      toast(btn.dataset.reason || "Unavailable — device not connected");
+    }
+  }, true);
+
   document.querySelectorAll(".mode-btn[data-mode]").forEach((b) =>
     b.addEventListener("click", () => {
       const m = b.dataset.mode;
@@ -115,6 +161,7 @@
       lastTelemetryMode = t.mode;
       applyModePanels(panelFor(t.mode));
     }
+    if (t.mode_availability) applyModeAvailability(t.mode_availability);
     highlightRail();
   });
 })();

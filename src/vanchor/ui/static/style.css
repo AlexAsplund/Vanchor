@@ -2287,3 +2287,23 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   background: rgba(var(--accent-rgb), 0.08); vertical-align: middle; margin-left: 2px;
 }
 .info-dot:hover, .info-dot:focus { border-color: var(--accent); outline: none; }
+
+/* Device-availability gating: a mode whose required device is "Not connected"
+   is greyed out but still visible (with the reason on hover / in a toast). */
+.mode-btn.mode-unavailable, .more-item.mode-unavailable {
+  opacity: 0.38; cursor: not-allowed; filter: grayscale(0.6);
+}
+.mode-btn.mode-unavailable::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: repeating-linear-gradient(-45deg, transparent 0 5px, rgba(0,0,0,0.14) 5px 7px);
+  pointer-events: none;
+}
+/* Transient toast (e.g. the reason a mode is unavailable). */
+.va-toast {
+  position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%) translateY(12px);
+  z-index: 4000; max-width: min(88vw, 420px); padding: 10px 16px; border-radius: 10px;
+  background: rgba(20, 22, 28, 0.96); color: #fff; font-size: 14px; line-height: 1.35;
+  border: 1px solid var(--line-bright); box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+  opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s;
+}
+.va-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }

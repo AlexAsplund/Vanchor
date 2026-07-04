@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from ..core import events
+from ..core.capabilities import DEVICE_LABEL, missing_devices
 from ..core.config import SafetyFloor
 from ..core.events import EventBus
 from ..core.geo import angle_difference, destination_point, normalize_deg
@@ -85,6 +86,24 @@ _JOG_OFFSETS = {"forward": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
 # learned anchor_ml can be compared on the same yardstick.
 _SPOTLOCK_MODES = frozenset({ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML,
                              ControlModeName.ANCHOR_LEFFE})
+
+# Command types that engage a control mode -> the mode they enter, so the
+# device-availability gate can refuse one whose required device is Not connected.
+_CTYPE_MODE = {
+    "manual": ControlModeName.MANUAL,
+    "anchor_hold": ControlModeName.ANCHOR_HOLD,
+    "anchor_ml": ControlModeName.ANCHOR_ML,
+    "anchor_leffe": ControlModeName.ANCHOR_LEFFE,
+    "heading_hold": ControlModeName.HEADING_HOLD,
+    "goto": ControlModeName.WAYPOINT,
+    "load_route": ControlModeName.WAYPOINT,
+    "work_area": ControlModeName.WORK_AREA,
+    "follow_apb": ControlModeName.FOLLOW_APB,
+    "drift": ControlModeName.DRIFT,
+    "contour_follow": ControlModeName.CONTOUR_FOLLOW,
+    "orbit": ControlModeName.ORBIT,
+    "trolling": ControlModeName.TROLLING,
+}
 
 
 # Below this |thrust| the trolling motor has no meaningful steering authority
@@ -329,6 +348,10 @@ class Controller:
     ) -> None:
         self.state = state
         self.motor = motor
+        # Device connectivity (kind -> bool), set by the Runtime. A "Not connected"
+        # device (source "none") disables the modes that need it; empty = all
+        # connected (fail-open). See vanchor.core.capabilities.
+        self.device_connected: dict[str, bool] = {}
         self.bus = bus
         # Non-negotiable safety-floor lockout (#50), enforced HERE at the actual
         # mutation site so a command delivered via the bus "command" topic (which
@@ -607,6 +630,16 @@ class Controller:
     def handle_command(self, command: dict) -> None:
         """Apply a command dict. Shape: ``{"type": ..., ...}``."""
         ctype = command.get("type")
+        # Device-availability gate: refuse to engage a mode whose required device
+        # is "Not connected" (backstop for a stale/API command; the UI already
+        # greys these out). STOP and non-mode commands are never gated.
+        target_mode = _CTYPE_MODE.get(ctype) if isinstance(ctype, str) else None
+        if target_mode is not None:
+            miss = missing_devices(target_mode, self.device_connected)
+            if miss:
+                reason = " + ".join(DEVICE_LABEL.get(d, d) for d in miss) + " not connected"
+                logger.warning("refusing mode %s: %s", ctype, reason)
+                return
         try:
             if ctype == "manual":
                 self.manual.set(
