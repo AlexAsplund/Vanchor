@@ -23,9 +23,9 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: |
-          pip install -e .
-          pip install hypothesis
+        # The dev extra carries pytest AND hypothesis (single source of truth in
+        # pyproject), so the fuzz job has the test runner it needs.
+        run: pip install -e ".[dev]"
 
       - name: Run NMEA fuzz tests
         run: python -m pytest tests/test_nmea_fuzz.py -q
