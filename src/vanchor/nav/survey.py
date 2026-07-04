@@ -264,7 +264,15 @@ def _sweep_lines(poly_m: Polygon, spacing_m: float, angle_deg: float) -> list[Li
     # 5,15,25,35,45 m (each covering its 10 m strip). This is the standard
     # lawnmower convention and is robust to sub-metre jitter in the bounds.
     height = maxy - miny
-    n_passes = max(1, int(math.ceil(height / spacing_m - 1e-9)))
+    # ceil(height/spacing), but first snap a span that is an exact multiple of the
+    # spacing (within reprojection float jitter) to that integer -- otherwise a
+    # 50 m band at 10 m spacing lands at 50.0000002 m on some runners and ceils to
+    # a spurious 6th pass. The tolerance (1e-4 of a spacing, sub-mm at metre
+    # spacings) is far below any real area difference, which is whole spacings.
+    ratio = height / spacing_m
+    if abs(ratio - round(ratio)) < 1e-4:
+        ratio = float(round(ratio))
+    n_passes = max(1, int(math.ceil(ratio - 1e-9)))
     used = (n_passes - 1) * spacing_m
     y0 = miny + (height - used) / 2.0
     pad = (maxx - minx) * 0.05 + 1.0  # extend lines past the bbox before clipping
