@@ -314,7 +314,7 @@ def coupler():
         p.coupler_od / 2, z1 - z0, align=(Align.CENTER, Align.CENTER, Align.MIN))
     body = chamfer(body.edges().filter_by(GeomType.CIRCLE).group_by(Axis.Z)[-1], 1.5)
     lug_y0, lug_y1 = 14.0, 26.0
-    lug_z0 = z0 + 3.5              # lugs start above the splash-cap groove
+    lug_z0 = z0 + 9.0              # lugs start above the splash-cap skirt
     lugs = Pos(0, (lug_y0 + lug_y1) / 2, lug_z0) * Box(
         22, lug_y1 - lug_y0, z1 - lug_z0, align=(Align.CENTER, Align.CENTER, Align.MIN))
     lugs = fillet(lugs.edges().filter_by(Axis.Z).group_by(Axis.Y)[-1], 3)
@@ -351,24 +351,27 @@ def coupler():
 
 
 def splash_cap():
-    """Umbrella ring: collar snaps into the coupler groove, skirt shields
-    the lid bore gap from spray. Prints skirt-rim down, support-free."""
+    """Umbrella ring: collar snaps into the coupler groove, 45deg skirt
+    flares UP and out over the lid bore gap. Prints upright (collar ring
+    on the bed), support-free - a downward skirt in this little vertical
+    space would slope ~68deg and droop."""
     z0 = p.lid_z1 + 0.5
-    collar = Pos(0, 0, z0 + 1.3) * Cylinder(
+    collar = Pos(0, 0, z0 + 1.4) * Cylinder(
         p.coupler_od / 2 + p.cap_t, 1.8,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
-    collar -= Pos(0, 0, z0 + 1.2) * Cylinder(
-        p.coupler_od / 2 - 0.8, 2.2, align=(Align.CENTER, Align.CENTER, Align.MIN))
-    skirt = Pos(0, 0, p.lid_z1 + 0.8) * Cone(
-        p.cap_skirt_od / 2, p.coupler_od / 2 + p.cap_t, 2.3,
+    rise = (p.cap_skirt_od - p.coupler_od) / 2 - p.cap_t   # 45deg to rim
+    skirt = Pos(0, 0, z0 + 2.4) * Cone(
+        p.coupler_od / 2 + p.cap_t, p.cap_skirt_od / 2, rise,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
-    skirt -= Pos(0, 0, p.lid_z1 + 0.6) * Cone(
-        p.cap_skirt_od / 2 - 2 * p.cap_t, p.coupler_od / 2 - 0.8, 2.3,
+    skirt -= Pos(0, 0, z0 + 2.4 - 0.01) * Cone(
+        p.coupler_od / 2 + p.cap_t - 2.5, p.cap_skirt_od / 2 - 2.5, rise + 0.02,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
     cap = collar + skirt
     # clear the centre completely (grip lip only) so hub hex + coupler pass
     cap -= Pos(0, 0, z0 - 0.5) * Cylinder(
-        p.coupler_od / 2 - 0.8, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        p.coupler_od / 2 - 0.8, 2.2, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    cap -= Pos(0, 0, z0 + 1.3) * Cylinder(
+        p.coupler_od / 2 - 0.8, 2.0, align=(Align.CENTER, Align.CENTER, Align.MIN))
     return cap
 
 
@@ -624,7 +627,7 @@ if __name__ == "__main__":
         "HubGear": (hub_gear(), True),
         "Pinion": (pinion(), False),
         "Coupler": (coupler(), True),
-        "SplashCap": (splash_cap(), True),
+        "SplashCap": (splash_cap(), False),  # prints upright
         "Housing": (housing(), False),
         "Lid": (lid(), True),
         "Strap": (strap(), True),

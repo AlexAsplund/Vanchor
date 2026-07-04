@@ -113,7 +113,7 @@ given, the first value is the recommendation.
 | `HubGear` | **0.12–0.16** | 4–5 | 50 % gyroid/cubic | 5 / 5 | The precision part. Fine layers for tooth profile + seal-land finish; outer perimeter slow (~30 mm/s). Seam: *aligned* (one line to sand off the Ø35 lands), not random. |
 | `Pinion` | **0.12–0.16** | 4 | 50 % gyroid/cubic | 5 / 5 | Same as hub. D-bore is a press fit — don't over-extrude first layers. |
 | `Coupler` | 0.20 | 4 | 40 % gyroid | 5 / 5 | Clamp flexes at the slit: PETG only, no brittle blends. Nut pockets bridge fine. |
-| `SplashCap` | 0.20 | 2 | 100 % | — | Tiny; solid. Slight flex needed to snap over the groove. |
+| `SplashCap` | 0.20 | 2 | 100 % | — | Prints upright, 45° umbrella. Slight flex needed to snap over the groove. |
 | `Strap` | 0.20 | 3 | 30 % | 4 / 4 | Nothing critical. |
 | `TestFit` | match target | match | 20 % | 4 / 4 | Use the **same layer height, walls, flow and material** as the part each coupon stands in for — that's what makes the fit test meaningful. Infill doesn't matter. |
 
