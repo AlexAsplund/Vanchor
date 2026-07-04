@@ -43,6 +43,11 @@
     serial: "Serial (real servo)",
     both: "Both (sim boat + real servo)",
   };
+  const BATTERY_LABELS = {
+    sim: "Simulated",
+    none: "None (no gauge)",
+    ina226: "INA226 shunt gauge",
+  };
   const AUTO_LABEL = "Auto (follows mode)";
 
   // Fallbacks if the backend omits `options`.
@@ -50,6 +55,7 @@
     sensor: ["sim", "serial", "nmea"],
     compass: ["sim", "serial", "nmea", "hwt901b"],
     motor: ["sim", "serial", "both"],
+    battery: ["sim", "none", "ina226"],
   };
 
   const SRC_FIELDS = [
@@ -57,6 +63,7 @@
     { id: "dev-src-compass", key: "compass_source", kind: "compass" },
     { id: "dev-src-depth", key: "depth_source", kind: "sensor" },
     { id: "dev-src-motor", key: "motor_source", kind: "motor" },
+    { id: "dev-src-battery", key: "battery_source", kind: "battery" },
   ];
 
   let loaded = false;
@@ -82,7 +89,8 @@
   function fillSelect(sel, kind) {
     if (!sel) return;
     const vals = (options && options[kind]) || DEFAULT_OPTS[kind] || [];
-    const labels = kind === "motor" ? MOTOR_LABELS : SENSOR_LABELS;
+    const labels = kind === "motor" ? MOTOR_LABELS
+      : kind === "battery" ? BATTERY_LABELS : SENSOR_LABELS;
     sel.innerHTML = "";
     // Null source = Auto.
     const auto = document.createElement("option");
@@ -347,6 +355,7 @@
         compass_source: srcVal("dev-src-compass"),
         depth_source: srcVal("dev-src-depth"),
         motor_source: srcVal("dev-src-motor"),
+        battery_source: srcVal("dev-src-battery"),
       },
       nmea_tcp: {
         enabled: !!(nEn && nEn.checked),

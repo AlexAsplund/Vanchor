@@ -1048,6 +1048,7 @@ class Runtime:
                 "sensor": list(self._SENSOR_SOURCES),
                 "compass": list(self._compass_sources()),
                 "motor": list(self._MOTOR_SOURCES),
+                "battery": list(self._battery_sources()),
             },
             "menus": self._device_menus(),
             "driver_menus": self._driver_menus(),

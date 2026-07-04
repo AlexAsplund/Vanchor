@@ -132,6 +132,7 @@ def test_get_returns_config_and_options(client):
         "sensor": ["sim", "serial", "nmea"],
         "compass": ["sim", "serial", "nmea", "hwt901b"],  # + registered drivers
         "motor": ["sim", "serial", "both"],
+        "battery": ["sim", "none", "ina226"],  # sim/none built-in + registered ina226 driver
     }
     assert isinstance(data["menus"], list)  # active device menus (sim => empty)
     # Driver menu schemas by source, shown on selection (hwt901b ships one):
