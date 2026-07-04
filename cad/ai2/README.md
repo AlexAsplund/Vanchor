@@ -32,6 +32,23 @@ stays ~35 MPa — the gears remain the designed fuse against a hard jam.
   re-zero automatically after any reassembly or slip. At 1:1 the pinion
   magnet is exactly in phase with the output.
 
+### Alignment chain (the stored zero survives reassembly)
+
+- **Hub ↔ coupler is keyed**: a 5×1.6 mm rib on one hex flat + matching
+  keyway in the socket — the coupler fits in exactly ONE of the six hex
+  orientations (verified: all five wrong positions physically block). The
+  key stays inside the hex corner radius, so the seal-passage envelope is
+  unchanged.
+- **Gear mesh witness rule**: if you ever separate the gears, re-mesh with
+  the hub's key rib and the pinion's index-magnet pocket facing each other
+  along the gear centre line (they're both visible from above). That pins
+  the mesh phase, which otherwise shifts the index azimuth in 15° tooth
+  steps.
+- **Coupler ↔ shaft** is a friction clamp (continuous): when re-clamping,
+  point the trolling motor straight forward first — then the stored offset
+  is still exact. And if anything slips anyway, one pass through the index
+  pulse re-zeros in firmware.
+
 ## Sealing
 
 - Two **TC 35×47×7** rotary lip seals on the hollow hub's Ø35 lands (floor
@@ -149,6 +166,7 @@ until they fit — they cost minutes; the housing costs a day.
 | `pressure_angle` / `gear_t` | 22.5° / 16 | stubby strong teeth |
 | `seal_land_d` | 35 | TC 35×47×7 seals |
 | `idx_r` / `idx_gap` | 17.5 / 1.2 | index magnet orbit / sensor gap |
+| `key_w` / `key_h` / `key_fit` | 5 / 1.6 / 0.5 | hex orientation key |
 | `wall` / `floor_t` / `lid_t` | 2 / 2.8 / 3.0 | original-gauge shell |
 | `groove_w` / `groove_d` | 2.4 / 0.8 | silicone retention channel |
 | `enc_hole_pitch` | 18 | AS5600 board holes — **measure yours** |

@@ -138,6 +138,9 @@ class P:
     # --- coupler / drive hex / splash cap ---
     hex_af: float = 30.0
     hex_fit: float = 0.6           # socket A/F prints ~0.3 small
+    key_w: float = 5.0             # orientation key on one hex flat: the
+    key_h: float = 1.6             # coupler only fits the hub ONE way, so a
+    key_fit: float = 0.5           # stored hall zero survives reassembly
     hex_h: float = 12.0            # keeps ~9 mm coupler engagement above the lid
     coupler_od: float = 41.0
     coupler_clamp_h: float = 30.0
@@ -234,6 +237,8 @@ for _ys in p.screw_ys:
         math.hypot(p.screw_x, _ys - p.cd) > p.ring_od / 2 + p.boss_d / 2 + 0.4, \
         f"screw boss at y={_ys} inside a gear sweep"
 assert p.face_z + p.mot_shaft_len <= p.pin_boss_z1 - p.magnet_h - 1.0
+assert p.hex_af / 2 + p.key_h <= p.land_r - 0.5, \
+    "orientation key must stay inside the seal-passage envelope"
 assert p.hall_face_z > p.gear_z1 + 0.8, "hall boss touches the pinion"
 
 
@@ -260,6 +265,11 @@ def hub_gear():
     hub = gear + bot_land + cone + top_land + hexp
     hub = chamfer(hub.edges().filter_by(GeomType.CIRCLE)
                   .group_by(Axis.Z)[0], 1.2)          # seal lead-in
+    # orientation key on the +Y flat (toward the pinion): the coupler fits
+    # ONE way, so the stored hall zero survives any reassembly. Stays inside
+    # the hex corner radius, so the seal-passage envelope is unchanged.
+    hub += Pos(0, p.hex_af / 2 + (p.key_h + 1) / 2 - 1,
+               p.land_z1 + p.hex_h / 2) * Box(p.key_w, p.key_h + 1, p.hex_h)
     hub -= Pos(0, 0, p.hub_z0 - 1) * Cylinder(
         p.hub_bore_d / 2, p.hub_z1 - p.hub_z0 + 2,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -286,8 +296,10 @@ def pinion():
     part -= Pos(0, 0, p.pin_boss_z1 - p.magnet_h - 0.1) * Cylinder(
         p.magnet_d / 2 + 0.15, p.magnet_h + 0.2,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
-    # index magnet pocket in the top face (flush), same phase as output at 1:1
-    part -= Pos(p.idx_r, 0, p.gear_z1 - p.idx_magnet_h - 0.2) * Cylinder(
+    # index magnet pocket in the top face (flush), same phase as output at
+    # 1:1. On the -Y side (toward the hub): assembly witness rule is
+    # "hub key rib and this pocket face each other along the centre line"
+    part -= Pos(0, -p.idx_r, p.gear_z1 - p.idx_magnet_h - 0.2) * Cylinder(
         p.idx_magnet_d / 2 + 0.15, p.idx_magnet_h + 0.3,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
     part -= Pos(0, 14, p.gear_z0 + 7) * Rot(90, 0, 0) * Cylinder(1.3, 24)
@@ -310,7 +322,12 @@ def coupler():
     sock_af = p.hex_af + p.hex_fit
     body -= Pos(0, 0, z0 - 0.1) * extrude(
         RegularPolygon(sock_af / math.cos(math.radians(30)) / 2, 6,
-                       major_radius=True), p.hub_z1 - z0 + 0.3)
+                       major_radius=True), p.hub_z1 - z0 + 1.0)
+    # keyway matching the hub's orientation key
+    kw_out = p.hex_af / 2 + p.key_h + p.key_fit
+    body -= Pos(0, (sock_af / 2 - 1 + kw_out) / 2, z0 - 0.1) * Box(
+        p.key_w + p.key_fit, kw_out - sock_af / 2 + 1, p.hub_z1 - z0 + 1.0,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
     body -= Pos(0, 0, p.hub_z1) * Cylinder(
         (p.shaft_d + p.shaft_clear) / 2, z1 - p.hub_z1 + 1,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -549,6 +566,8 @@ def test_coupons():
     stub += Pos(0, 0, 13) * extrude(
         RegularPolygon(p.hex_af / math.cos(math.radians(30)) / 2, 6,
                        major_radius=True), 8)
+    stub += Pos(0, p.hex_af / 2 + (p.key_h + 1) / 2 - 1, 17) * Box(
+        p.key_w, p.key_h + 1, 8)
     stub -= Pos(0, 0, -1) * Cylinder(p.hub_bore_d / 2, 23,
                                      align=(Align.CENTER, Align.CENTER, Align.MIN))
     out.append(Pos(0, 62, 0) * stub)
@@ -558,6 +577,10 @@ def test_coupons():
     sock -= Pos(0, 0, -1) * extrude(
         RegularPolygon((p.hex_af + p.hex_fit) / math.cos(math.radians(30)) / 2,
                        6, major_radius=True), 14)
+    kw_out = p.hex_af / 2 + p.key_h + p.key_fit
+    sock -= Pos(0, ((p.hex_af + p.hex_fit) / 2 - 1 + kw_out) / 2, -1) * Box(
+        p.key_w + p.key_fit, kw_out - (p.hex_af + p.hex_fit) / 2 + 1, 14,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
     out.append(Pos(55, 62, 0) * sock)
     # block: motor D-bore, both magnet pockets, insert hole, M4 nut pocket
     blk = Pos(55, 20, 6) * Box(26, 40, 12)
