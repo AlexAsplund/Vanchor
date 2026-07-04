@@ -386,9 +386,20 @@ def housing():
     ig = fillet(ig.vertices(), max(0.5, p.corner_r - 0.5 - p.groove_w))
     part -= Pos(0, 0, p.h_int - p.groove_d) * extrude(og - ig, p.groove_d + 1)
 
-    # ---- floor seal boss ----
-    part += Cylinder(p.boss_or, p.boss_rim_z,
+    # ---- floor seal boss: thin-wall tower, full ring only at the pocket ----
+    tube_r = 37.0 / 2 + 2.4              # 2.4 wall around the labyrinth chamber
+    z_flare0 = p.bot_pocket_z0 - (p.boss_or - tube_r)   # 45deg flare to ring
+    part += Cylinder(tube_r, z_flare0,
                      align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part += Pos(0, 0, z_flare0) * Cone(
+        tube_r, p.boss_or, p.bot_pocket_z0 - z_flare0,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    part += Pos(0, 0, p.bot_pocket_z0) * Cylinder(
+        p.boss_or, p.boss_rim_z - p.bot_pocket_z0,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    for a in (45, 135, 225, 315):        # bending gussets, embedded in tube+ring
+        part += Rot(0, 0, a) * Pos(22.5, 0, (p.bot_pocket_z0 + 0.8) / 2) * \
+            Box(6, 2.4, p.bot_pocket_z0 + 0.8)
     part -= Pos(0, 0, p.bot_pocket_z0) * Cylinder(
         p.pocket_d / 2, p.pocket_h + 1,
         align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -516,6 +527,63 @@ def strap():
     return block
 
 
+def test_coupons():
+    """Quick test plate that validates every critical fit before committing
+    to the long prints: seal press pocket, seal land + hex (slide a real TC
+    seal over the hex onto the land), hex drive pair, motor D-bore, magnet
+    pockets, M3 insert hole, M4 nut pocket. Print with the same settings as
+    the real parts."""
+    out = []
+    # seal-pocket ring (= the floor boss top): press a real TC 35x47x7 in
+    ring = Cylinder(p.boss_or, p.pocket_h + 2,
+                    align=(Align.CENTER, Align.CENTER, Align.MIN))
+    ring -= Pos(0, 0, 2) * Cylinder(p.pocket_d / 2, p.pocket_h + 1,
+                                    align=(Align.CENTER, Align.CENTER, Align.MIN))
+    ring -= Pos(0, 0, -1) * Cylinder(37.0 / 2, 4,
+                                     align=(Align.CENTER, Align.CENTER, Align.MIN))
+    out.append(ring)
+    # hub-top mimic: land + drive hex + bore (seal lip test + hex male)
+    stub = Cylinder(21, 3, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    stub += Pos(0, 0, 3) * Cylinder(p.land_r, 10,
+                                    align=(Align.CENTER, Align.CENTER, Align.MIN))
+    stub += Pos(0, 0, 13) * extrude(
+        RegularPolygon(p.hex_af / math.cos(math.radians(30)) / 2, 6,
+                       major_radius=True), 8)
+    stub -= Pos(0, 0, -1) * Cylinder(p.hub_bore_d / 2, 23,
+                                     align=(Align.CENTER, Align.CENTER, Align.MIN))
+    out.append(Pos(0, 62, 0) * stub)
+    # coupler-socket mimic (mates with the stub above)
+    sock = Cylinder(p.coupler_od / 2, 12,
+                    align=(Align.CENTER, Align.CENTER, Align.MIN))
+    sock -= Pos(0, 0, -1) * extrude(
+        RegularPolygon((p.hex_af + p.hex_fit) / math.cos(math.radians(30)) / 2,
+                       6, major_radius=True), 14)
+    out.append(Pos(55, 62, 0) * sock)
+    # block: motor D-bore, both magnet pockets, insert hole, M4 nut pocket
+    blk = Pos(55, 20, 6) * Box(26, 40, 12)
+    bore_r = p.mot_shaft_d / 2 + 0.2
+    flat_y = p.mot_shaft_flat - p.mot_shaft_d / 2 + 0.2
+    void = Pos(55, 8, -1) * Cylinder(bore_r, 14,
+                                     align=(Align.CENTER, Align.CENTER, Align.MIN))
+    tongue = void & Pos(55, 8 + flat_y + 10, 0) * Box(22, 20, 40)
+    blk -= void - tongue
+    blk -= Pos(55, 20, 12 - p.magnet_h - 0.1) * Cylinder(
+        p.magnet_d / 2 + 0.15, p.magnet_h + 0.2,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    blk -= Pos(48, 20, 12 - p.idx_magnet_h - 0.2) * Cylinder(
+        p.idx_magnet_d / 2 + 0.15, p.idx_magnet_h + 0.3,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    blk -= Pos(55, 32, 12 - p.insert_hole_h) * Cylinder(
+        p.insert_hole_d / 2, p.insert_hole_h + 0.1,
+        align=(Align.CENTER, Align.CENTER, Align.MIN))
+    blk -= Pos(55 - 14, 8, 6) * Rot(0, 90, 0) * Cylinder(p.m4_clear / 2, 40)
+    nut = extrude(RegularPolygon(p.m4_nut_af / math.sqrt(3), 6,
+                                 major_radius=True), 20)
+    blk -= Pos(55 - 13 + p.m4_nut_t, 8, 6) * Rot(0, -90, 0) * nut
+    out.append(blk)
+    return Compound(children=out)
+
+
 # ============================================================
 # BUILD + EXPORT
 # ============================================================
@@ -537,6 +605,7 @@ if __name__ == "__main__":
         "Housing": (housing(), False),
         "Lid": (lid(), True),
         "Strap": (strap(), True),
+        "TestFit": (test_coupons(), False),   # print + verify fits FIRST
     }
     os.makedirs(OUT, exist_ok=True)
     asm = []
@@ -547,7 +616,8 @@ if __name__ == "__main__":
               f"z {bb.min.Z:.1f}..{bb.max.Z:.1f}")
         if name == "Pinion":
             part = Pos(0, p.cd, 0) * Rot(0, 0, 180.0 / p.teeth_p) * part
-        asm.append(part)
+        if name != "TestFit":
+            asm.append(part)
         pp = zero(part, flip)
         export_stl(pp, os.path.join(OUT, f"{name}.stl"), tolerance=0.01,
                    angular_tolerance=0.1)

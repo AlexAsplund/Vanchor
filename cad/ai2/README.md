@@ -58,8 +58,10 @@ Shell gauge follows the original cad/ design (2 mm walls, 2.8 mm floor) —
 rigidity comes from the box shape and the motor clamped inside it. The lid is
 a 3 mm plate: the rim sits level with the top of the seal pocket, so the
 pocket lives wholly in the lid's hanging boss instead of thickening the
-whole plate. No mount flanges: the
-transom mount retains the housing. Total printed volume ~330 cm³ solid
+whole plate. The floor seal boss is a thin-wall tower (2.4 mm around the
+labyrinth, 45° flare, four gussets) — the full ring exists only at the
+seal pocket. No mount flanges: the
+transom mount retains the housing. Total printed volume ~320 cm³ solid
 (≈45% less than the earlier robust draft before infill savings).
 
 ## Parts (out/)
@@ -73,6 +75,7 @@ transom mount retains the housing. Total printed volume ~330 cm³ solid
 | `Coupler.stl` | Hex-socket split clamp, splash-cap groove | PETG, 4 walls, 40% |
 | `SplashCap.stl` | Spray umbrella, snaps into the coupler groove | PETG, 100% |
 | `Strap.stl` | Motor-can hold-down | PETG |
+| `TestFit.stl` | **Print first**: fit coupons — seal pocket, land+hex (slide a real seal over it), hex socket, D-bore, magnet pockets, insert hole, M4 nut pocket | PETG, same settings as real parts |
 
 All STLs print-oriented, no supports. `Assembly/Section/Cutaway.stl` are
 visual references only.
@@ -106,6 +109,11 @@ visual references only.
    hub hex and the shaft, two M4 pinch bolts.
 8. Calibrate once: steer to boat-centre, note AS5600; pass the index pulse
    and store the offset.
+
+Before any of this: **print `TestFit.stl`** and check every fit against the
+real hardware (seal press, lip-over-hex slide, hex pair, motor shaft,
+magnets, insert, nut). Tune the `P` tolerances and reprint the coupons
+until they fit — they cost minutes; the housing costs a day.
 
 ## Key parameters (`P` in servo.py)
 
