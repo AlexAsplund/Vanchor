@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.4.0a1] — 2026-07-04
+
 ## [1.4.0a0] — 2026-07-04
 
 - **Smart station-keeper upgraded to a full-azimuth hybrid.** The learned
