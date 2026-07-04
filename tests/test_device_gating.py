@@ -95,3 +95,18 @@ def test_none_is_a_valid_device_source():
     # round-trips through the device-config API
     rt.set_device_config({"hardware": {"gps_source": "none"}})
     assert rt.config.hardware.gps_source == "none"
+
+
+def test_a_source_can_be_reset_to_auto_null():
+    # Regression: a present-but-null source must reset to Auto (was skipped by the
+    # merge, so you could never leave "none"/"sim" once set).
+    rt = _rt()
+    for first in ("none", "sim", "serial"):
+        rt.set_device_config({"hardware": {"gps_source": first}})
+        assert rt.config.hardware.gps_source == first
+        rt.set_device_config({"hardware": {"gps_source": None}})  # Auto
+        assert rt.config.hardware.gps_source is None
+    # a field absent from the payload is preserved (not wrongly reset)
+    rt.set_device_config({"hardware": {"gps_source": "serial"}})
+    rt.set_device_config({"hardware": {"compass_source": "sim"}})
+    assert rt.config.hardware.gps_source == "serial"

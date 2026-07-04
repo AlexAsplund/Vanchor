@@ -1139,6 +1139,14 @@ class Runtime:
         _merge_into(hw, hw_in)
         _merge_into(nmea, nmea_in)
         _merge_into(motor, motor_in)
+        # _merge_into keeps the current value on a present-but-null field (right
+        # for ports/baud), but for the SOURCE fields null is a real value: "Auto"
+        # (follow mode). Apply those explicitly so selecting Auto actually resets
+        # a source that was set to sim/serial/none.
+        for k in ("gps_source", "compass_source", "depth_source", "motor_source",
+                  "battery_source"):
+            if k in hw_in:
+                setattr(hw, k, hw_in[k])
 
         save_device_overrides(self.config.data_dir, hw, nmea, motor)
         # Reflect the edit in the live config so a subsequent GET shows it.
