@@ -1048,6 +1048,7 @@ class Runtime:
         return {
             "hardware": asdict(self.config.hardware),
             "nmea_tcp": asdict(self.config.nmea_tcp),
+            "sim_motor": asdict(self.config.sim_motor),  # actuation shaping (#36)
             "options": {
                 "sensor": list(self._SENSOR_SOURCES),
                 "compass": list(self._compass_sources()),
@@ -2743,6 +2744,12 @@ class Runtime:
                 "healthy": bool(healthy),
                 "data_age_s": round(now - last, 2) if last is not None else None,
             }
+        # Hardware watchdog (#44): only when enabled. healthy = the heartbeat is
+        # armed + running (a stopped watchdog would drop the motor-supply relay).
+        wd = getattr(self, "watchdog", None)
+        if wd is not None and getattr(wd, "enabled", False):
+            out["watchdog"] = {"healthy": bool(getattr(wd, "_started", False)),
+                               "data_age_s": None}
         return out
 
     def _device_connected_map(self, cfg: AppConfig) -> dict:

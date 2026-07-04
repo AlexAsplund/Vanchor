@@ -195,6 +195,12 @@
     setVal("dev-motor-port", hw.motor_port);
     setVal("dev-baudrate", hw.baudrate);
 
+    // Sim-motor actuation shaping (#36) — simulator-only response tuning.
+    const sm = cfg.sim_motor && typeof cfg.sim_motor === "object" ? cfg.sim_motor : {};
+    setVal("dev-simmotor-revdelay", sm.reverse_delay_s);
+    setVal("dev-simmotor-slew", sm.thrust_slew_per_s);
+    setVal("dev-simmotor-lag", sm.thrust_lag_tau_s);
+
     const nEn = $("dev-nmea-enabled");
     if (nEn) nEn.checked = !!nmea.enabled;
     setVal("dev-nmea-port", nmea.port);
@@ -346,6 +352,14 @@
       return v === "" ? null : v;
     };
     const nEn = $("dev-nmea-enabled");
+    // Sim-motor shaping: only send keys the user actually set (null would clobber).
+    const simMotor = {};
+    [["reverse_delay_s", "dev-simmotor-revdelay"],
+     ["thrust_slew_per_s", "dev-simmotor-slew"],
+     ["thrust_lag_tau_s", "dev-simmotor-lag"]].forEach(([k, id]) => {
+      const v = num($(id) && $(id).value);
+      if (v != null) simMotor[k] = v;
+    });
     return {
       hardware: {
         enabled: readEnabled(),
@@ -363,6 +377,7 @@
         enabled: !!(nEn && nEn.checked),
         port: num($("dev-nmea-port") && $("dev-nmea-port").value),
       },
+      sim_motor: simMotor,
     };
   }
 

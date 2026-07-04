@@ -1227,6 +1227,20 @@
             </label>
           </div>
 
+          <div class="ctx-sub">Simulator motor response <small class="muted">(sim only)</small></div>
+          <label class="dev-srcrow" title="Dead time before a reverse command takes effect">
+            <span>Reverse delay (s)</span>
+            <input type="number" id="dev-simmotor-revdelay" min="0" step="0.1" placeholder="0" autocomplete="off" />
+          </label>
+          <label class="dev-srcrow" title="Max thrust change per second (0 = instant)">
+            <span>Thrust slew (/s)</span>
+            <input type="number" id="dev-simmotor-slew" min="0" step="0.1" placeholder="0" autocomplete="off" />
+          </label>
+          <label class="dev-srcrow" title="First-order thrust lag time constant">
+            <span>Thrust lag τ (s)</span>
+            <input type="number" id="dev-simmotor-lag" min="0" step="0.1" placeholder="0" autocomplete="off" />
+          </label>
+
           <div class="ctx-sub">NMEA bridge</div>
           <label class="switch"><input type="checkbox" id="dev-nmea-enabled" /><span class="track"></span> Listen for NMEA over TCP</label>
           <label class="dev-srcrow" id="dev-nmea-port-row">

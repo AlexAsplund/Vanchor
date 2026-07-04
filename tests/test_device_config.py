@@ -125,7 +125,7 @@ def client(tmp_path):
 
 def test_get_returns_config_and_options(client):
     data = client.get("/api/config/devices").json()
-    assert set(data) == {"hardware", "nmea_tcp", "options", "menus",
+    assert set(data) == {"hardware", "nmea_tcp", "sim_motor", "options", "menus",
                          "driver_menus", "restart_required"}
     assert data["restart_required"] is False
     assert data["options"] == {
