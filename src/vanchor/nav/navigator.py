@@ -20,6 +20,7 @@ from ..core.state import NavigationState
 from . import nmea
 from .calibration import GAIN_KEYS, CaptureBuffer, FusionCalibration
 from .fusion import NavFusion
+from .gps_filter import GpsPositionFilter
 from .guard import SensorGuard, SensorGuardConfig
 
 logger = logging.getLogger("vanchor.navigator")
@@ -60,6 +61,7 @@ class Navigator:
         declination_deg: float | None = 0.0,
         mono_fn=time.monotonic,
         fusion: "NavFusion | None" = None,
+        gps_filter: "GpsPositionFilter | None" = None,
     ) -> None:
         self.state = state
         self.bus = bus
@@ -69,6 +71,9 @@ class Navigator:
         # combo behaves exactly as before. Fed from whatever sensors are present
         # (works partially for NMEA + IMU too).
         self.fusion = fusion
+        # Optional accuracy-weighted position low-pass (nav.gps_filter): smooths a
+        # low-accuracy fix (large hAcc) toward the estimate; passthrough otherwise.
+        self.gps_filter = gps_filter
         self._last_imu_mono: float | None = None
         # Fusion calibration (nav.calibration): a gyro-bias correction subtracted
         # from the IMU yaw rate, plus a still-capture buffer. Gains are applied to
@@ -162,6 +167,10 @@ class Navigator:
         point = self._apply_offset(fix.point)
         if not (fix.valid and self.guard.check_position(point)):
             return
+        # Accuracy-weighted low-pass (after the spike guard sees the raw point):
+        # smooths a low-accuracy fix, ~passthrough for a good one.
+        if self.gps_filter is not None:
+            point = self.gps_filter.update(point, fix.h_acc_m, self._mono_fn())
         # keep the receiver's velocity/accuracy, re-point through the GPS offset
         fix = replace(fix, point=point)
         self.state.fix = fix

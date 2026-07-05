@@ -231,11 +231,29 @@ class SimGps(Sensor):
         position_noise_m: float = 0.35,
         seed: int | None = 1234,
         emit_velocity: bool = False,
+        # Multipath jitter model (e.g. indoor/urban). All 0 => the plain white-
+        # noise GPS above, unchanged. When set, an Ornstein-Uhlenbeck random walk
+        # adds a SLOW-wandering position error (walk_sigma_m steady-state, walk_tau_s
+        # correlation) + a phantom velocity bias, and the fix reports reported_hacc_m
+        # -- matching a real stationary M9N by a window (~5.7 m RMS, ~0.4 m/s phantom,
+        # ~15 m hAcc). See scripts/measured jitter.
+        walk_sigma_m: float = 0.0,
+        walk_tau_s: float = 40.0,
+        vel_bias_sigma_mps: float = 0.0,
+        vel_tau_s: float = 8.0,
+        reported_hacc_m: float = 0.0,
     ) -> None:
         self.get_truth = get_truth
         self.bus = bus
         self.update_hz = update_hz
         self.position_noise_m = position_noise_m
+        self.walk_sigma_m = walk_sigma_m
+        self.walk_tau_s = walk_tau_s
+        self.vel_bias_sigma_mps = vel_bias_sigma_mps
+        self.vel_tau_s = vel_tau_s
+        self.reported_hacc_m = reported_hacc_m
+        self._walk_e = self._walk_n = 0.0      # OU position random-walk state (m)
+        self._vbias_e = self._vbias_n = 0.0    # OU phantom-velocity state (m/s)
         # When True, publish a rich GpsFix carrying the NED ground-velocity vector
         # (like a UBX receiver) instead of an NMEA RMC -- so the sim exercises the
         # SAME capability-gated fusion path as real UBX hardware, proving the
@@ -284,6 +302,23 @@ class SimGps(Sensor):
             return False
         return True
 
+    def _advance_jitter(self) -> tuple[float, float]:
+        """Advance the multipath OU random-walk one tick; return the (east, north)
+        position error in metres. No-op (0, 0) unless a jitter profile is set."""
+        if self.walk_sigma_m <= 0.0:
+            return 0.0, 0.0
+        dt = 1.0 / self.update_hz
+        rho = math.exp(-dt / max(self.walk_tau_s, 1e-3))
+        q = math.sqrt(max(0.0, 1.0 - rho * rho)) * self.walk_sigma_m
+        self._walk_e = self._walk_e * rho + self._rng.gauss(0.0, q)
+        self._walk_n = self._walk_n * rho + self._rng.gauss(0.0, q)
+        if self.vel_bias_sigma_mps > 0.0:
+            rv = math.exp(-dt / max(self.vel_tau_s, 1e-3))
+            qv = math.sqrt(max(0.0, 1.0 - rv * rv)) * self.vel_bias_sigma_mps
+            self._vbias_e = self._vbias_e * rv + self._rng.gauss(0.0, qv)
+            self._vbias_n = self._vbias_n * rv + self._rng.gauss(0.0, qv)
+        return self._walk_e, self._walk_n
+
     def sample(self, truth: BoatState | None = None) -> str:
         """Build one RMC sentence from ground truth (pure, for tests).
 
@@ -296,11 +331,13 @@ class SimGps(Sensor):
         reported position by a large jump to exercise the spike guard."""
         truth = truth or self.get_truth()
         if self.fault_garbage:
+            self._advance_jitter()  # keep the walk clock ticking even under garbage
             return _GARBAGE_NMEA
+        de, dn = self._advance_jitter()
         noisy = offset_meters(
             truth.point,
-            self._rng.gauss(0.0, self.position_noise_m),
-            self._rng.gauss(0.0, self.position_noise_m),
+            self._rng.gauss(0.0, self.position_noise_m) + de,
+            self._rng.gauss(0.0, self.position_noise_m) + dn,
         )
         if self.fault_glitch:
             noisy = offset_meters(noisy, self.fault_glitch_m, self.fault_glitch_m)
@@ -321,20 +358,25 @@ class SimGps(Sensor):
         accuracy estimates, so the fusion's capability-gated features light up
         exactly as they would for a real UBX M9N. Honours the ``glitch`` fault."""
         truth = truth or self.get_truth()
+        de, dn = self._advance_jitter()
         noisy = offset_meters(
             truth.point,
-            self._rng.gauss(0.0, self.position_noise_m),
-            self._rng.gauss(0.0, self.position_noise_m),
+            self._rng.gauss(0.0, self.position_noise_m) + de,
+            self._rng.gauss(0.0, self.position_noise_m) + dn,
         )
         if self.fault_glitch:
             noisy = offset_meters(noisy, self.fault_glitch_m, self.fault_glitch_m)
-        sog_mps = math.hypot(truth.ground_ve, truth.ground_vn)
-        cog = (math.degrees(math.atan2(truth.ground_ve, truth.ground_vn)) % 360.0
+        # Phantom velocity: the multipath drift leaks into the receiver's velocity,
+        # so a "stationary" fix still reports ~0.4 m/s (matching the real M9N).
+        vel_n = truth.ground_vn + self._vbias_n
+        vel_e = truth.ground_ve + self._vbias_e
+        sog_mps = math.hypot(vel_e, vel_n)
+        cog = (math.degrees(math.atan2(vel_e, vel_n)) % 360.0
                if sog_mps > 0.05 else truth.heading_deg)
         return GpsFix(
             point=noisy, sog_knots=mps_to_knots(sog_mps), cog_deg=cog, valid=True,
-            vel_n_mps=truth.ground_vn, vel_e_mps=truth.ground_ve, vel_d_mps=0.0,
-            h_acc_m=self.position_noise_m, s_acc_mps=0.05,
+            vel_n_mps=vel_n, vel_e_mps=vel_e, vel_d_mps=0.0,
+            h_acc_m=self.reported_hacc_m or self.position_noise_m, s_acc_mps=0.05,
         )
 
     def _note_emit(self, *, sentence: str | None = None, fix: GpsFix | None = None) -> None:

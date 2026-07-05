@@ -225,6 +225,13 @@ class SensorConfig:
     # a UBX receiver) instead of NMEA RMC -- exercises the capability-gated fusion
     # path end-to-end in the sim. Off by default (keeps the sim's NMEA behaviour).
     gps_velocity: bool = False
+    # Sim-GPS multipath jitter profile: "off" (clean white noise) or "indoor" (a
+    # slow-wandering random walk + phantom velocity + large hAcc, matching a real
+    # stationary M9N by a window ~5.7 m RMS). For testing the autopilot + filtering.
+    gps_jitter: str = "off"
+    # Accuracy-weighted GPS position low-pass: smooths harder when the receiver
+    # reports a large hAcc (bad fix), ~passthrough for a good fix. Off by default.
+    gps_position_filter: bool = False
     # Sensor-anomaly protection (spike rejection).
     position_jump_max_m: float = 15.0
     heading_jump_max_deg: float = 30.0

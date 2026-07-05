@@ -175,6 +175,12 @@ def _make_fusion():
     return NavFusion()
 
 
+def _make_gps_filter():
+    """An accuracy-weighted GPS position low-pass (nav.gps_filter)."""
+    from .nav.gps_filter import GpsPositionFilter
+    return GpsPositionFilter()
+
+
 def _build_battery_config(cfg: AppConfig):
     """Map the app `battery:` config onto the sim battery model (#60)."""
     from .sim.battery import BatteryConfig as SimBatteryConfig
@@ -350,6 +356,7 @@ class Runtime:
             # GNSS/INS fusion (additive) when enabled -- fills the state.fusion_*
             # fields from whatever sensors are present; None disables the filter.
             fusion=(_make_fusion() if cfg.sensors.fusion_enabled else None),
+            gps_filter=(_make_gps_filter() if cfg.sensors.gps_position_filter else None),
         )
         # Apply a persisted fusion calibration (still-capture system-ID), if any.
         from .nav.calibration import load_calibration
@@ -1509,9 +1516,13 @@ class Runtime:
         if src["gps"] == "serial":
             gps = self._build_serial_gps(cfg)
         elif src["gps"] == "sim":
+            # Multipath jitter profile (measured off a real stationary M9N indoors).
+            _jitter = {"indoor": dict(walk_sigma_m=5.5, walk_tau_s=40.0,
+                                      vel_bias_sigma_mps=0.35, vel_tau_s=8.0,
+                                      reported_hacc_m=15.0)}.get(cfg.sensors.gps_jitter, {})
             gps = SimGps(simulator.truth, self.bus, update_hz=cfg.sensors.gps_hz,
                          position_noise_m=cfg.sensors.gps_noise_m,
-                         emit_velocity=cfg.sensors.gps_velocity)
+                         emit_velocity=cfg.sensors.gps_velocity, **_jitter)
         elif registry.has("gps", src["gps"]):
             # A pluggable GPS driver (e.g. the UBX "ublox" M9N). Build eagerly but
             # resiliently -- a failure must not crash startup (mirrors compass).
