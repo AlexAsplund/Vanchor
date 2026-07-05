@@ -1962,6 +1962,26 @@ body.mobile .follow-fab:active { transform: scale(0.94); }
 body.mobile[data-sheet="mid"] .follow-fab { bottom: calc(46vh + 16px + env(safe-area-inset-bottom)); }
 body.mobile[data-sheet="full"] .follow-fab { display: none; }   /* sheet covers the map */
 
+/* Desktop: the recenter FAB appears (bottom-right, pulsing) whenever the boat has
+   drifted off-screen -- one tap re-follows + centres. Hidden while the boat is in
+   view. (Mobile keeps its always-on FAB above; the view-hide rule still wins.) */
+body:not(.mobile) .follow-fab.offscreen {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; right: 16px; bottom: 96px;
+  width: 46px; height: 46px; border-radius: 50%;
+  border: 1px solid var(--line-bright);
+  background: var(--panel, rgba(8, 14, 22, 0.85)); color: var(--accent);
+  font-size: 22px; cursor: pointer; z-index: 1140;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  animation: fab-pulse 1.8s ease-in-out infinite;
+}
+body:not(.mobile) .follow-fab.offscreen:hover { border-color: var(--accent); }
+@keyframes fab-pulse {
+  0%, 100% { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); }
+  50% { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 0 6px rgba(27, 228, 255, 0.14); }
+}
+
 /* Safety banners + replay sit just under the slim top bar. */
 body.mobile .safety-banners,
 body.mobile #banner { top: 52px; left: 8px; right: 8px; }

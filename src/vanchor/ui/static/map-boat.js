@@ -29,6 +29,9 @@
   });
   const START = ctx.START;
   const follow = ctx.follow;
+  // Recenter FAB (#follow-fab): the click -> VA.map.recenter() is wired elsewhere;
+  // here we reveal it (on desktop too) whenever the boat drifts out of the map view.
+  const followFab = document.getElementById("follow-fab");
   const { BOAT_DESIGNS, BOW_X, BOW_Y, boatDiv, updateMotorIndicator } = ctx.boatIcon;
 
   const BOAT_ICON_KEY = "vanchor-boat-icon";
@@ -258,6 +261,9 @@
     const hdg = useTruth && Number.isFinite(truth.heading_deg) ? truth.heading_deg : t.heading_deg;
     if (lat !== null && lon !== null && Number.isFinite(lat) && Number.isFinite(lon)) {
       boatMarker.setLatLng([lat, lon]);
+      // Show the recenter FAB when the boat is off-screen (auto-hidden while
+      // following, since the boat is then kept in view).
+      if (followFab) followFab.classList.toggle("offscreen", !map.getBounds().contains([lat, lon]));
       updateModeBadge(t, lat, lon);
       const el = boatMarker.getElement()?.querySelector(".boat-icon");
       if (el) {
