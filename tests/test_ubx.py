@@ -251,6 +251,6 @@ def test_cfg_marine_10hz_wellformed() -> None:
     cls, mid, payload = frames[0]
     assert (cls, mid) == ubx.CFG_VALSET
     assert payload[1] == 1  # RAM layer
-    # 5 items: U2 + U1 + U1 + L + L values -> 2+1+1+1+1 = 6 value bytes,
-    # plus 5*4 key bytes, plus 4-byte header
-    assert len(payload) == 4 + 5 * 4 + (2 + 1 + 1 + 1 + 1)
+    # 8 items (UART1 + USB): RATE U2, DYNMODEL U1, 2x NAV_PVT U1, 4x OUTPROT L
+    # -> value bytes 2+1+1+1+1+1+1+1 = 9, plus 8*4 key bytes, plus 4-byte header
+    assert len(payload) == 4 + 8 * 4 + 9

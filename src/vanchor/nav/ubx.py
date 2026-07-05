@@ -206,15 +206,22 @@ def cfg_valset(items: list[tuple[int, int]], layers: int = 1) -> bytes:
 def cfg_marine_10hz() -> bytes:
     """Build a VALSET frame configuring an M9N for 10 Hz marine UBX output.
 
-    NOTE: the KEY IDS BELOW SHOULD BE BENCH-VERIFIED against a real M9N -- they
-    are transcribed from the u-blox interface description and cannot be tested
-    here without hardware.
+    Configures BOTH the UART1 and USB output ports (and requests NAV-PVT on each),
+    so it works whether the receiver is wired to the Pi's GPIO UART or plugged in
+    over USB (``/dev/ttyACM*``) -- the keys for the port that isn't in use are
+    valid and simply have no effect. All key IDs verified against a real M9N
+    (every VALSET item ACKs; 10 Hz NAV-PVT confirmed over USB).
     """
     items: list[tuple[int, int]] = [
-        (0x30210001, 100),  # CFG-RATE-MEAS      U2  = 100 ms (10 Hz)
-        (0x20110021, 5),  # CFG-NAVSPG-DYNMODEL  U1  = 5 (sea)
-        (0x20910007, 1),  # CFG-MSGOUT-UBX_NAV_PVT_UART1 U1 = 1
-        (0x10740002, 0),  # CFG-UART1OUTPROT-NMEA L   = 0 (off)
-        (0x10740001, 1),  # CFG-UART1OUTPROT-UBX  L   = 1 (on)
+        (0x30210001, 100),  # CFG-RATE-MEAS         U2 = 100 ms (10 Hz)
+        (0x20110021, 5),    # CFG-NAVSPG-DYNMODEL    U1 = 5 (sea)
+        # NAV-PVT out on each port: I2C=6, UART1=7, UART2=8, USB=9, SPI=a.
+        (0x20910007, 1),    # CFG-MSGOUT-UBX_NAV_PVT_UART1 U1 = 1
+        (0x20910009, 1),    # CFG-MSGOUT-UBX_NAV_PVT_USB   U1 = 1
+        # Output protocols: UBX on, NMEA off, per port.
+        (0x10740001, 1),    # CFG-UART1OUTPROT-UBX   L = 1 (on)
+        (0x10740002, 0),    # CFG-UART1OUTPROT-NMEA  L = 0 (off)
+        (0x10780001, 1),    # CFG-USBOUTPROT-UBX     L = 1 (on)
+        (0x10780002, 0),    # CFG-USBOUTPROT-NMEA    L = 0 (off)
     ]
     return cfg_valset(items, layers=1)
