@@ -76,6 +76,10 @@ class Navigator:
         # capture is running.
         self._gyro_bias = 0.0
         self._heading_offset = 0.0     # compass/IMU mounting yaw offset (align capture)
+        # EXPERIMENTAL motor-interference remedy: subtract slope*|thrust| from the
+        # heading in real time. Off (slope 0 / disabled) until enabled.
+        self._interference_slope = 0.0
+        self._interference_comp = False
         self._capture: CaptureBuffer | None = None
         self._cap_gyro = 0.0           # gyro-integrated heading during a capture (ref)
         # Local magnetic declination (degrees East-positive). Applied to MAGNETIC
@@ -192,6 +196,8 @@ class Navigator:
         gains (a ``None`` field reverts to the default)."""
         self._gyro_bias = cal.gyro_bias_dps or 0.0
         self._heading_offset = cal.heading_offset_deg or 0.0
+        self._interference_slope = cal.motor_interference_slope or 0.0
+        self._interference_comp = bool(cal.interference_comp_enabled)
         if self.fusion is not None:
             overrides = cal.gain_overrides()
             defaults = NavFusion()  # fresh instance carries the default gains
@@ -411,8 +417,13 @@ class Navigator:
             if self.guard.check_heading(true_deg):
                 now = self._mono_fn()
                 # Compass/IMU mounting yaw offset (align calibration) applied here;
-                # 0.0 until calibrated, so an un-calibrated boat is unchanged.
-                corrected = (true_deg + self._heading_offset) % 360.0
+                # 0.0 until calibrated, so an un-calibrated boat is unchanged. Plus
+                # the EXPERIMENTAL motor-interference remedy (subtract the measured
+                # drift for the current thrust); 0.0 unless explicitly enabled.
+                comp = (self._interference_slope * abs(self.state.motor_command.thrust)
+                        if self._interference_comp else 0.0)
+                self.state.interference_comp_deg = comp
+                corrected = (true_deg + self._heading_offset - comp) % 360.0
                 self.state.heading_deg = corrected
                 self.state.heading_received_mono = now
                 if self._capture is not None:

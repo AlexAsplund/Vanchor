@@ -62,8 +62,12 @@ class FusionCalibration:
     heading_offset_deg: float | None = None
     # interference: diagnostics (not auto-applied)
     motor_interference_deg: float | None = None          # max heading drift over the sweep
-    motor_interference_slope: float | None = None        # deg per unit thrust
+    motor_interference_slope: float | None = None        # deg per unit thrust (the remedy coeff)
     motor_interference_score: int | None = None          # 0 (unusable) .. 100 (no interference)
+    # EXPERIMENTAL: apply -slope*|thrust| to the heading in real time to undo the
+    # motor's pull. None => unchanged; a dedicated toggle sets it True/False so a
+    # later capture-mode save never flips it.
+    interference_comp_enabled: bool | None = None
     # measured noise (provenance / display)
     gps_pos_sigma_m: float | None = None
     gps_vel_sigma_mps: float | None = None

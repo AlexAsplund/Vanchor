@@ -146,6 +146,15 @@
             <!-- Mitigation advice for the SAVED interference score (GET). -->
             <div id="dev-calib-saved-recs" class="hidden"></div>
 
+            <!-- EXPERIMENTAL: real-time software remedy that subtracts the
+                 measured motor-interference drift. Only useful once an
+                 interference sweep has produced a drift model. -->
+            <div id="dev-calib-comp" class="hidden">
+              <label class="switch"><input type="checkbox" id="dev-calib-comp-toggle" /><span class="track"></span> Apply interference compensation <span class="badge">Experimental</span></label>
+              <div id="dev-calib-comp-need" class="hint hidden">Run an interference sweep first — there's no drift model to apply yet.</div>
+              <div class="hint">Experimental: subtracts the measured drift for the current thrust. First-order only — it doesn't yet account for the motor's steering angle, and won't fix a physically bad install.</div>
+            </div>
+
             <!-- Guided sequence panel ("Calibrate all") — runs the three modes
                  step-by-step. Hidden unless a sequence is active. -->
             <div id="dev-calib-seq" class="hidden">

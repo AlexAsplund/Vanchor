@@ -1132,15 +1132,31 @@ class Runtime:
         """Saved calibration + live capture status (for GET)."""
         from .nav.calibration import interference_recommendations
         capturing, samples, seconds = self.navigator.capture_status()
-        score = self._fusion_cal.motor_interference_score if self._fusion_cal else None
+        cal = self._fusion_cal
+        score = cal.motor_interference_score if cal else None
         return {
-            "calibration": self._fusion_cal.to_dict() if self._fusion_cal else None,
+            "calibration": cal.to_dict() if cal else None,
             "capturing": capturing,
             "capture_samples": samples,
             "capture_seconds": seconds,
             "enabled": self.navigator.fusion is not None,
             "recommendations": interference_recommendations(score),
+            # experimental motor-interference remedy state
+            "interference_comp_enabled": bool(cal.interference_comp_enabled) if cal else False,
+            "has_interference_model": bool(cal and cal.motor_interference_slope is not None),
         }
+
+    def set_interference_compensation(self, enabled: bool) -> dict:
+        """EXPERIMENTAL: toggle the real-time motor-interference heading remedy
+        (needs an interference calibration to have any effect)."""
+        from .nav.calibration import FusionCalibration, save_calibration
+        cal = self._fusion_cal or FusionCalibration()
+        cal.interference_comp_enabled = bool(enabled)
+        save_calibration(self.config.data_dir, cal)
+        self._fusion_cal = cal
+        self.navigator.apply_calibration(cal)
+        return {"ok": True, "enabled": bool(enabled),
+                "has_model": cal.motor_interference_slope is not None}
 
     def start_fusion_capture(self, mode: str = "still") -> dict:
         from .nav.calibration import CAPTURE_MODES

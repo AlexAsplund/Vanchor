@@ -181,6 +181,38 @@ def test_navigator_applies_heading_offset():
     assert abs(st.heading_deg - 100.0) < 1e-6
 
 
+def test_navigator_applies_experimental_interference_comp():
+    from vanchor.core.models import MotorCommand
+    st = NavigationState()
+    nav = Navigator(st, bus=None, mono_fn=lambda: 0.0, fusion=NavFusion())
+    nav.apply_calibration(FusionCalibration(motor_interference_slope=8.0,
+                                            interference_comp_enabled=True))
+    st.motor_command = MotorCommand(thrust=0.5)          # half thrust -> 8*0.5 = 4° pull
+    nav.handle_sentence(nmea.encode_hdt(100.0))
+    assert abs(st.heading_deg - 96.0) < 1e-6             # 100 - 4, the remedy applied
+    assert abs(st.interference_comp_deg - 4.0) < 1e-6
+    # disabled -> no correction (default/experimental-off)
+    nav.apply_calibration(FusionCalibration(motor_interference_slope=8.0,
+                                            interference_comp_enabled=False))
+    nav.handle_sentence(nmea.encode_hdt(100.0))
+    assert abs(st.heading_deg - 100.0) < 1e-6 and st.interference_comp_deg == 0.0
+
+
+def test_runtime_interference_comp_toggle_persists(tmp_path):
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    rt.save_fusion_calibration({"motor_interference_slope": 6.0, "motor_interference_score": 40})
+    r = rt.set_interference_compensation(True)
+    assert r["ok"] and r["enabled"] and r["has_model"]
+    g = rt.fusion_calibration()
+    assert g["interference_comp_enabled"] is True and g["has_interference_model"] is True
+    assert rt.navigator._interference_comp is True and rt.navigator._interference_slope == 6.0
+    assert load_calibration(str(tmp_path)).interference_comp_enabled is True   # persisted
+    rt.set_interference_compensation(False)
+    assert rt.fusion_calibration()["interference_comp_enabled"] is False
+
+
 def test_navigator_capture_collects_samples():
     st = NavigationState()
     nav = Navigator(st, bus=None, mono_fn=lambda: 0.0, fusion=NavFusion())

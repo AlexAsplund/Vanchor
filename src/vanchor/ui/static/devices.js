@@ -828,6 +828,57 @@
     // Mitigation advice for the saved interference score (empty -> hidden).
     renderRecs($("dev-calib-saved-recs"), data && data.recommendations,
       cal && cal.motor_interference_score);
+    renderComp(data);
+  }
+
+  // Experimental interference-compensation switch. Reflects GET state; disabled
+  // (greyed, with a hint) until an interference sweep has produced a drift model.
+  // Hidden entirely on backends that don't report the field.
+  function renderComp(data) {
+    const wrap = $("dev-calib-comp");
+    if (!wrap) return;
+    const has = !!(data && "interference_comp_enabled" in data);
+    wrap.classList.toggle("hidden", !has);
+    if (!has) return;
+    const hasModel = !!(data && data.has_interference_model);
+    const tog = $("dev-calib-comp-toggle");
+    if (tog) {
+      tog.checked = !!data.interference_comp_enabled;
+      tog.disabled = !hasModel;
+      const sw = tog.closest(".switch");
+      if (sw) sw.classList.toggle("dev-dim", !hasModel);
+    }
+    const need = $("dev-calib-comp-need");
+    if (need) need.classList.toggle("hidden", hasModel);
+  }
+
+  function onCompToggle() {
+    const tog = $("dev-calib-comp-toggle");
+    if (!tog) return;
+    const want = tog.checked;
+    tog.disabled = true;
+    setStatus(want ? "Enabling compensation…" : "Disabling compensation…", "busy");
+    fetch("/api/fusion/interference-comp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: want }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          tog.checked = !want;     // revert the control on rejection
+          tog.disabled = false;
+          setStatus((j && j.error) || "Couldn't change compensation.", "err");
+          return;
+        }
+        setStatus(j.enabled ? "Interference compensation on." : "Interference compensation off.", "ok");
+        load();  // re-sync full state (enabled + model availability)
+      })
+      .catch(() => {
+        tog.checked = !want;       // revert on network failure
+        tog.disabled = false;
+        setStatus("Couldn't change compensation.", "err");
+      });
   }
 
   // ---- capture lifecycle ------------------------------------------------
@@ -1188,6 +1239,9 @@
   });
   const resetBtn = $("dev-calib-reset");
   if (resetBtn) resetBtn.addEventListener("click", doReset);
+
+  const compTog = $("dev-calib-comp-toggle");
+  if (compTog) compTog.addEventListener("change", onCompToggle);
 
   // Guided-sequence controls.
   const seqStartBtn = $("dev-calib-seq-start");

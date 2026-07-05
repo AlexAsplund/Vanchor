@@ -56,6 +56,7 @@ class NavigationState:
     crab_deg: float | None = None        # course-minus-heading (leeway/set), signed deg
     dead_reckoning: bool = False         # fusion is coasting on IMU through a GPS gap
     velocity_measured: bool = False      # ground velocity is from a real velocity vector
+    interference_comp_deg: float = 0.0   # experimental motor-interference heading remedy applied
 
     # Sensor-anomaly protection: how many implausible readings were rejected.
     heading_rejected: int = 0
@@ -229,6 +230,7 @@ class NavigationState:
                 "crab_deg": (round(self.crab_deg, 1) if self.crab_deg is not None else None),
                 "dead_reckoning": self.dead_reckoning,
                 "velocity_measured": self.velocity_measured,
+                "interference_comp_deg": round(self.interference_comp_deg, 2),
             },
             "depth_m": round(self.depth_m, 1),
             "imu": asdict(self.imu) if self.imu else None,

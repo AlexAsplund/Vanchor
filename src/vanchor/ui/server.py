@@ -942,6 +942,12 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         """Clear the saved calibration and revert the filter to defaults."""
         return runtime.reset_fusion_calibration()
 
+    @app.post("/api/fusion/interference-comp")
+    async def set_interference_comp(payload: dict) -> dict:
+        """EXPERIMENTAL: toggle the real-time motor-interference heading remedy.
+        Body ``{enabled: bool}``."""
+        return runtime.set_interference_compensation(bool((payload or {}).get("enabled")))
+
     @app.post("/api/config/devices")
     async def set_device_config(payload: dict):
         """Validate + persist a device-config edit to ``devices.json`` and update
