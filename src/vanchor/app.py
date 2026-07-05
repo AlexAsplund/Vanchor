@@ -351,6 +351,11 @@ class Runtime:
             # fields from whatever sensors are present; None disables the filter.
             fusion=(_make_fusion() if cfg.sensors.fusion_enabled else None),
         )
+        # Apply a persisted fusion calibration (still-capture system-ID), if any.
+        from .nav.calibration import load_calibration
+        self._fusion_cal = load_calibration(cfg.data_dir)
+        if self._fusion_cal is not None:
+            self.navigator.apply_calibration(self._fusion_cal)
         self.controller = Controller(
             self.state,
             motor,
@@ -1121,6 +1126,47 @@ class Runtime:
                             "stable": bool(stable_re.match(path))})
         out.sort(key=lambda e: (not e["stable"], e["path"]))
         return out
+
+    # -- fusion calibration (still-capture system-ID; see nav.calibration) --- #
+    def fusion_calibration(self) -> dict:
+        """Saved calibration + live capture status (for GET)."""
+        capturing, samples, seconds = self.navigator.capture_status()
+        return {
+            "calibration": self._fusion_cal.to_dict() if self._fusion_cal else None,
+            "capturing": capturing,
+            "capture_samples": samples,
+            "capture_seconds": seconds,
+            "enabled": self.navigator.fusion is not None,
+        }
+
+    def start_fusion_capture(self) -> dict:
+        if self.navigator.fusion is None:
+            return {"ok": False, "error": "fusion is disabled"}
+        self.navigator.start_capture()
+        return {"ok": True, "capturing": True}
+
+    def stop_fusion_capture(self) -> dict:
+        from .nav.calibration import tune
+        buf = self.navigator.stop_capture()
+        if buf is None:
+            return {"ok": False, "error": "no capture was running"}
+        cal, warnings = tune(buf)
+        return {"ok": True, "calibration": cal.to_dict(), "warnings": warnings}
+
+    def save_fusion_calibration(self, data: dict) -> dict:
+        from .nav.calibration import FusionCalibration, save_calibration
+        cal = FusionCalibration.from_dict(data)
+        save_calibration(self.config.data_dir, cal)
+        self._fusion_cal = cal
+        self.navigator.apply_calibration(cal)
+        return {"ok": True}
+
+    def reset_fusion_calibration(self) -> dict:
+        from .nav.calibration import FusionCalibration, clear_calibration
+        clear_calibration(self.config.data_dir)
+        self._fusion_cal = None
+        self.navigator.apply_calibration(FusionCalibration())
+        return {"ok": True}
 
     def device_config(self) -> dict:
         """Current device/hardware config + the selectable options.

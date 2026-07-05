@@ -607,3 +607,318 @@
     if (card.open && !loaded) load();
   });
 })();
+
+/* Sensor calibration (fusion) — a self-contained subsection of the Devices card.
+ *
+ * Records the boat's sensor noise while it sits still (motor off), then tunes the
+ * GNSS/INS fusion filter to it. Lazy-loads GET /api/fusion/calibration on the
+ * card's first open; if that 404s (backend without this flow) the whole section
+ * stays hidden and no errors surface — same graceful-degrade pattern as above.
+ *
+ * Contract (must match the backend):
+ *   GET  /api/fusion/calibration ->
+ *     { calibration:{…}|null, capturing:bool, capture_samples:int,
+ *       capture_seconds:float, enabled:bool }
+ *   POST /api/fusion/calibrate/start -> { ok:true, capturing:true }  (ok:false if off)
+ *   POST /api/fusion/calibrate/stop  -> { ok:true, calibration:{…}, warnings:[str] }
+ *                                       or { ok:false, error:str }
+ *   POST /api/fusion/calibrate/save  body { calibration:{…} } -> { ok:true }
+ *   POST /api/fusion/calibrate/reset -> { ok:true }
+ */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const card = $("devices-card");
+  const box = $("dev-calib");
+  if (!card || !box || !window.VA) return;
+
+  // How long a capture runs (client-side auto-stop). The button label says 30 s.
+  const CAPTURE_MS = 30000;
+
+  // Fields shown in the readout / proposal, in order. `d` = decimal places.
+  const FIELDS = [
+    { key: "gyro_bias_dps", label: "Gyro bias", unit: "°/s", d: 3 },
+    { key: "heading_gain", label: "Heading gain", unit: "", d: 3 },
+    { key: "vel_tau_s", label: "Velocity τ", unit: "s", d: 2 },
+    { key: "dr_timeout_s", label: "Dead-reckoning timeout", unit: "s", d: 1 },
+    { key: "crab_min_sog_mps", label: "Crab min SOG", unit: "m/s", d: 2 },
+    { key: "crab_min_sog_measured_mps", label: "Crab min SOG (measured)", unit: "m/s", d: 2 },
+    { key: "gps_pos_sigma_m", label: "GPS position σ", unit: "m", d: 2 },
+    { key: "gps_vel_sigma_mps", label: "GPS velocity σ", unit: "m/s", d: 3 },
+    { key: "heading_sigma_deg", label: "Heading σ", unit: "°", d: 2 },
+    { key: "yaw_rate_sigma_dps", label: "Yaw-rate σ", unit: "°/s", d: 3 },
+    { key: "samples", label: "Samples", unit: "", d: 0 },
+    { key: "duration_s", label: "Duration", unit: "s", d: 1 },
+  ];
+
+  let loaded = false;
+  let enabled = false;    // fusion on?
+  let capturing = false;  // a capture is in flight
+  let proposal = null;    // last stop() result awaiting Apply/Discard
+  let pollTimer = null;
+  let stopTimer = null;
+  let startedAt = 0;
+
+  function setStatus(msg, kind) {
+    const el = $("dev-calib-status");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = "hint" + (kind ? " " + kind : "");
+  }
+
+  function fmt(v, d) {
+    const n = Number(v);
+    if (v == null || !Number.isFinite(n)) return "—";
+    return d != null ? n.toFixed(d) : String(n);
+  }
+
+  // Render the labelled numbers of a calibration object as text rows.
+  function renderCal(host, cal) {
+    if (!host) return;
+    host.innerHTML = "";
+    FIELDS.forEach((f) => {
+      if (!(f.key in cal) || cal[f.key] == null) return;
+      const row = document.createElement("div");
+      row.className = "dev-srcrow";
+      const lab = document.createElement("span");
+      lab.textContent = f.label;
+      const val = document.createElement("b");
+      val.textContent = fmt(cal[f.key], f.d) + (f.unit ? " " + f.unit : "");
+      row.append(lab, val);
+      host.appendChild(row);
+    });
+  }
+
+  // Reflect the current (saved) calibration + fusion-enabled state in the UI.
+  function renderState(data) {
+    enabled = !!(data && data.enabled);
+    const cal = data && data.calibration;
+    const readout = $("dev-calib-readout");
+    const reset = $("dev-calib-reset");
+    const disabled = $("dev-calib-disabled");
+
+    if (disabled) disabled.classList.toggle("hidden", enabled);
+
+    if (readout) {
+      if (cal && typeof cal === "object") {
+        readout.className = "hint";
+        renderCal(readout, cal);
+      } else {
+        readout.className = "hint";
+        readout.textContent = "Not calibrated — using defaults.";
+      }
+    }
+    if (reset) reset.classList.toggle("hidden", !(cal && typeof cal === "object"));
+  }
+
+  // ---- capture lifecycle ------------------------------------------------
+
+  function showCapturing(on) {
+    capturing = on;
+    const prog = $("dev-calib-progress");
+    const start = $("dev-calib-start");
+    const stop = $("dev-calib-stop");
+    if (prog) prog.classList.toggle("hidden", !on);
+    if (start) start.disabled = on;
+    if (stop) stop.classList.toggle("hidden", !on);
+    if (!on) {
+      const fill = $("dev-calib-fill");
+      if (fill) fill.style.width = "0%";
+    }
+  }
+
+  function updateProgress(samples) {
+    const s = $("dev-calib-samples");
+    if (s && samples != null && Number.isFinite(Number(samples))) {
+      s.textContent = String(samples);
+    }
+    const pct = startedAt
+      ? Math.max(0, Math.min(100, ((Date.now() - startedAt) / CAPTURE_MS) * 100))
+      : 0;
+    const fill = $("dev-calib-fill");
+    if (fill) fill.style.width = pct.toFixed(0) + "%";
+    const p = $("dev-calib-pct");
+    if (p) p.textContent = String(Math.round(pct));
+  }
+
+  function clearTimers() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+  }
+
+  function poll() {
+    fetch("/api/fusion/calibration")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j) return;
+        if (capturing) updateProgress(j.capture_samples);
+        // If the backend says capture ended on its own, stop cleanly.
+        if (capturing && j.capturing === false) doStop();
+      })
+      .catch(() => {});
+  }
+
+  function doStart() {
+    if (!enabled) {
+      setStatus("Fusion is off — turn it on to calibrate.", "err");
+      return;
+    }
+    setStatus("Starting…", "busy");
+    const start = $("dev-calib-start");
+    if (start) start.disabled = true;
+    fetch("/api/fusion/calibrate/start", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          setStatus((j && j.error) || "Couldn't start — is fusion on?", "err");
+          if (start) start.disabled = false;
+          return;
+        }
+        startedAt = Date.now();
+        showCapturing(true);
+        updateProgress(0);
+        setStatus("Capturing — keep the boat still with the motor off.", "busy");
+        clearTimers();
+        pollTimer = setInterval(poll, 1000);
+        stopTimer = setTimeout(doStop, CAPTURE_MS);
+      })
+      .catch(() => {
+        setStatus("Couldn't start calibration.", "err");
+        if (start) start.disabled = false;
+      });
+  }
+
+  function doStop() {
+    clearTimers();
+    if (!capturing) return;    // guard double-stop (timer + manual + poll)
+    showCapturing(false);
+    setStatus("Analysing…", "busy");
+    fetch("/api/fusion/calibrate/stop", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          setStatus((j && j.error) || "Calibration failed.", "err");
+          proposal = null;
+          return;
+        }
+        proposal = j.calibration || null;
+        showProposal(j.calibration, j.warnings);
+        setStatus("Capture complete — review the proposal below.", "ok");
+      })
+      .catch(() => {
+        setStatus("Calibration failed.", "err");
+        proposal = null;
+      });
+  }
+
+  function showProposal(cal, warnings) {
+    const wrap = $("dev-calib-proposal");
+    const body = $("dev-calib-proposal-body");
+    const warn = $("dev-calib-warnings");
+    if (warn) {
+      const list = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+      warn.classList.toggle("hidden", list.length === 0);
+      warn.textContent = list.length ? "⚠ " + list.join("  ⚠ ") : "";
+    }
+    if (cal && typeof cal === "object") {
+      renderCal(body, cal);
+      if (wrap) wrap.classList.remove("hidden");
+    } else {
+      if (body) body.textContent = "No calibration produced.";
+      if (wrap) wrap.classList.remove("hidden");
+    }
+  }
+
+  function hideProposal() {
+    const wrap = $("dev-calib-proposal");
+    if (wrap) wrap.classList.add("hidden");
+    proposal = null;
+  }
+
+  function doApply() {
+    if (!proposal) { hideProposal(); return; }
+    setStatus("Saving…", "busy");
+    fetch("/api/fusion/calibrate/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ calibration: proposal }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          setStatus((j && j.error) || "Save failed.", "err");
+          return;
+        }
+        hideProposal();
+        setStatus("Calibration saved.", "ok");
+        load();  // refresh the saved-state readout
+      })
+      .catch(() => setStatus("Save failed.", "err"));
+  }
+
+  function doReset() {
+    setStatus("Resetting…", "busy");
+    fetch("/api/fusion/calibrate/reset", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          setStatus((j && j.error) || "Reset failed.", "err");
+          return;
+        }
+        hideProposal();
+        setStatus("Reset to defaults.", "ok");
+        load();
+      })
+      .catch(() => setStatus("Reset failed.", "err"));
+  }
+
+  // ---- load -------------------------------------------------------------
+
+  function load() {
+    fetch("/api/fusion/calibration")
+      .then((r) => {
+        if (!r.ok) return null;   // 404 / older backend -> stay hidden
+        return r.json();
+      })
+      .then((data) => {
+        if (!data || typeof data !== "object" || !("enabled" in data)) {
+          box.classList.add("hidden");
+          return;
+        }
+        box.classList.remove("hidden");
+        renderState(data);
+        // Resume the UI if a capture is already running (e.g. after a reload).
+        if (data.capturing && !capturing) {
+          startedAt = startedAt || Date.now();
+          showCapturing(true);
+          updateProgress(data.capture_samples);
+          setStatus("Capturing — keep the boat still with the motor off.", "busy");
+          clearTimers();
+          pollTimer = setInterval(poll, 1000);
+          // No auto-stop timer: we don't know when this capture began.
+        }
+        loaded = true;
+      })
+      .catch(() => { box.classList.add("hidden"); });
+  }
+
+  // ---- wiring -----------------------------------------------------------
+
+  const startBtn = $("dev-calib-start");
+  if (startBtn) startBtn.addEventListener("click", doStart);
+  const stopBtn = $("dev-calib-stop");
+  if (stopBtn) stopBtn.addEventListener("click", doStop);
+  const applyBtn = $("dev-calib-apply");
+  if (applyBtn) applyBtn.addEventListener("click", doApply);
+  const discardBtn = $("dev-calib-discard");
+  if (discardBtn) discardBtn.addEventListener("click", () => {
+    hideProposal();
+    setStatus("Discarded.", "");
+  });
+  const resetBtn = $("dev-calib-reset");
+  if (resetBtn) resetBtn.addEventListener("click", doReset);
+
+  // Lazy: fetch on the card's first open (mirrors the config section above).
+  card.addEventListener("toggle", () => {
+    if (card.open && !loaded) load();
+  });
+})();

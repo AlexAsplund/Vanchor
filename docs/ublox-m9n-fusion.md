@@ -60,6 +60,27 @@ is trustworthy near-stationary where COG is not). The sim proves it: set
 fusion features activate with zero driver-specific code (and it gives an in-sim
 harness to validate the whole path).
 
+## Sensor calibration (still-capture system-ID)
+The fusion ships with hand-picked gains; a short **still capture** (boat
+stationary, motor off) measures the boat's actual sensor noise and tunes them.
+`nav/calibration.py` is the pure core: a `CaptureBuffer` accumulates raw
+per-channel samples (gyro rate, GPS position/velocity, compass heading) and
+`tune()` derives a `FusionCalibration` — **gyro bias** (mean resting yaw rate),
+per-sensor **noise σ**, and gains mapped from that noise (monotonic, clamped
+heuristics: noisier velocity → more smoothing + higher crab thresholds; noisier
+compass → a gentler complementary blend). It flags a capture where the boat was
+moving or too short. A field left `None` keeps the NavFusion default, so a
+partial capture never makes things worse.
+
+The navigator records raw samples while a capture runs, subtracts the gyro bias
+from the IMU rate, and applies the tuned gains live (`apply_calibration`). The
+result persists to `fusion_cal.json` and re-applies at startup. Flow is driven by
+`/api/fusion/calibrate/{start,stop,save,reset}` + a "Sensor calibration" step in
+the Devices settings (start → 30 s capture with a live sample count → review the
+proposed bias/gains/σ + warnings → apply & save). It's kept **separate from the
+one-time boat-setup wizard** — it's re-run whenever a sensor is moved. The same
+captured data is a natural input for matching the sim/ML to a specific boat.
+
 ## Status
 - Fully unit-tested: UBX parser (15), fusion (9), driver (4), navigator wiring (3),
   incl. the non-blocking guarantee. Suite green.

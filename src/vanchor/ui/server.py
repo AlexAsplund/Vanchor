@@ -915,6 +915,32 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         of the user hand-typing ``/dev/tty...`` (OpenPlotter-style auto-detect)."""
         return {"ports": runtime.list_serial_ports()}
 
+    # -- fusion calibration (still-capture sensor system-ID) ------------- #
+    @app.get("/api/fusion/calibration")
+    async def get_fusion_calibration() -> dict:
+        """Saved fusion calibration + live capture status."""
+        return runtime.fusion_calibration()
+
+    @app.post("/api/fusion/calibrate/start")
+    async def start_fusion_capture() -> dict:
+        """Begin a still capture (boat stationary, motor off)."""
+        return runtime.start_fusion_capture()
+
+    @app.post("/api/fusion/calibrate/stop")
+    async def stop_fusion_capture() -> dict:
+        """End the capture and return the PROPOSED calibration (not yet saved)."""
+        return runtime.stop_fusion_capture()
+
+    @app.post("/api/fusion/calibrate/save")
+    async def save_fusion_calibration(payload: dict) -> dict:
+        """Persist + apply a calibration. Body ``{calibration:{...}}``."""
+        return runtime.save_fusion_calibration((payload or {}).get("calibration", {}))
+
+    @app.post("/api/fusion/calibrate/reset")
+    async def reset_fusion_calibration() -> dict:
+        """Clear the saved calibration and revert the filter to defaults."""
+        return runtime.reset_fusion_calibration()
+
     @app.post("/api/config/devices")
     async def set_device_config(payload: dict):
         """Validate + persist a device-config edit to ``devices.json`` and update

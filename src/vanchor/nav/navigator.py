@@ -18,6 +18,7 @@ from ..core.events import EventBus
 from ..core.models import GeoPoint, GpsFix
 from ..core.state import NavigationState
 from . import nmea
+from .calibration import GAIN_KEYS, CaptureBuffer, FusionCalibration
 from .fusion import NavFusion
 from .guard import SensorGuard, SensorGuardConfig
 
@@ -69,6 +70,12 @@ class Navigator:
         # (works partially for NMEA + IMU too).
         self.fusion = fusion
         self._last_imu_mono: float | None = None
+        # Fusion calibration (nav.calibration): a gyro-bias correction subtracted
+        # from the IMU yaw rate, plus a still-capture buffer. Gains are applied to
+        # ``fusion`` directly. All no-ops until a calibration is applied / a
+        # capture is running.
+        self._gyro_bias = 0.0
+        self._capture: CaptureBuffer | None = None
         # Local magnetic declination (degrees East-positive). Applied to MAGNETIC
         # headings (HDM/HDG with reference="M") to yield true before the control
         # stack uses state.heading_deg. True headings (HDT/HDG fully corrected,
@@ -128,10 +135,13 @@ class Navigator:
         now = self._mono_fn()
         self.state.imu = sample
         self.state.imu_received_mono = now
+        if self._capture is not None:
+            self._capture.add_imu(sample.gz, now)   # RAW rate -> measures the bias
         if self.fusion is not None:
             dt = (now - self._last_imu_mono) if self._last_imu_mono is not None else 0.0
             self._last_imu_mono = now
-            self.fusion.update_imu(sample.gz, dt)
+            # Feed the bias-corrected rate (calibration removes the resting offset).
+            self.fusion.update_imu(sample.gz - self._gyro_bias, dt)
             self._apply_fusion(now)
 
     async def _on_gps_fix(self, fix: GpsFix) -> None:
@@ -153,15 +163,51 @@ class Navigator:
             await self.bus.publish(events.NAV_FIX, fix)
 
     def _feed_fusion_gps(self, fix: GpsFix) -> None:
+        now = self._mono_fn()
+        if self._capture is not None:
+            # Record the best available velocity (measured vector, else derived
+            # from SOG/COG) + position, so a still capture measures GPS noise.
+            if fix.has_velocity:
+                vn, ve = fix.vel_n_mps, fix.vel_e_mps
+            else:
+                sog = fix.sog_knots * 0.5144444
+                c = math.radians(fix.cog_deg)
+                vn, ve = sog * math.cos(c), sog * math.sin(c)
+            self._capture.add_gps(fix.point.lat, fix.point.lon, vn, ve, now)
         if self.fusion is None:
             return
-        now = self._mono_fn()
         self.fusion.update_gps(
             fix.point, now,
             vel_n_mps=fix.vel_n_mps, vel_e_mps=fix.vel_e_mps, vel_d_mps=fix.vel_d_mps,
             cog_deg=fix.cog_deg, sog_mps=fix.sog_knots * 0.5144444,
         )
         self._apply_fusion(now)
+
+    # -- fusion calibration (still-capture system-ID; see nav.calibration) --- #
+    def apply_calibration(self, cal: FusionCalibration) -> None:
+        """Apply a calibration live: subtract the gyro bias and set the fusion
+        gains (a ``None`` override resets that gain to the NavFusion default)."""
+        self._gyro_bias = cal.gyro_bias_dps
+        if self.fusion is not None:
+            overrides = cal.gain_overrides()
+            defaults = NavFusion()  # fresh instance carries the default gains
+            for key in GAIN_KEYS:
+                setattr(self.fusion, key, overrides.get(key, getattr(defaults, key)))
+
+    def start_capture(self) -> None:
+        """Begin buffering raw sensor samples for a calibration capture."""
+        self._capture = CaptureBuffer()
+
+    def stop_capture(self) -> CaptureBuffer | None:
+        """End the capture and return its buffer (None if none was running)."""
+        buf, self._capture = self._capture, None
+        return buf
+
+    def capture_status(self) -> tuple[bool, int, float]:
+        """(capturing, samples, seconds) for the live capture."""
+        if self._capture is None:
+            return (False, 0, 0.0)
+        return (True, self._capture.count, round(self._capture.duration_s, 1))
 
     def _apply_fusion(self, now: float) -> None:
         """Publish the fusion outputs into the (additive) state fields."""
@@ -361,6 +407,8 @@ class Navigator:
                 now = self._mono_fn()
                 self.state.heading_deg = true_deg
                 self.state.heading_received_mono = now
+                if self._capture is not None:
+                    self._capture.add_heading(true_deg, now)
                 if self.fusion is not None:
                     self.fusion.update_compass(true_deg)
                     self._apply_fusion(now)

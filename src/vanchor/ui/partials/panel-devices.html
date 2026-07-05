@@ -132,6 +132,42 @@
           <!-- Device-specific settings/actions rendered from each active device's
                device_menu() (e.g. the HWT901B compass: declination, calibration). -->
           <div id="dev-menus"></div>
+
+          <!-- Sensor calibration (fusion) — records sensor noise while the boat
+               sits still, then tunes the GNSS/INS fusion filter. Lazy-loads GET
+               /api/fusion/calibration on the card's first open; hidden if 404. -->
+          <div id="dev-calib" class="hidden">
+            <div class="ctx-sub">Sensor calibration</div>
+            <div class="hint">Records your sensors' noise while the boat sits <b>completely still with the motor off</b>, then tunes the fusion filter to match. Re-run it whenever you move or replace a sensor.</div>
+
+            <div id="dev-calib-disabled" class="hint err hidden">Turn on the fusion filter to calibrate the sensors.</div>
+
+            <div id="dev-calib-readout" class="hint"></div>
+
+            <!-- Live capture progress (shown only while capturing). -->
+            <div id="dev-calib-progress" class="hidden">
+              <div class="calib-bar"><div class="calib-fill" id="dev-calib-fill"></div></div>
+              <div class="hint">Capturing — keep the boat still… <b><span id="dev-calib-samples">0</span></b> samples (<span id="dev-calib-pct">0</span>%)</div>
+            </div>
+
+            <!-- Proposed calibration after a capture (shown only on stop). -->
+            <div id="dev-calib-proposal" class="hidden">
+              <div class="ctx-sub">Proposed calibration</div>
+              <div id="dev-calib-warnings" class="hint err hidden"></div>
+              <div id="dev-calib-proposal-body" class="hint"></div>
+              <div class="btn-row">
+                <button id="dev-calib-apply" class="btn-primary" type="button">Apply &amp; save</button>
+                <button id="dev-calib-discard" class="btn-ghost" type="button">Discard</button>
+              </div>
+            </div>
+
+            <div class="btn-row">
+              <button id="dev-calib-start" class="btn-primary" type="button">Calibrate (30 s)</button>
+              <button id="dev-calib-stop" class="btn-ghost hidden" type="button">Stop now</button>
+              <button id="dev-calib-reset" class="btn-ghost hidden" type="button">Reset to defaults</button>
+            </div>
+            <div id="dev-calib-status" class="hint"></div>
+          </div>
         </div>
       </details>
 
