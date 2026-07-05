@@ -86,7 +86,9 @@ def test_serial_gps_uses_gps_baud_not_shared_baudrate():
         with patch("vanchor.hardware.serial_devices.SerialGps", MagicMock()):
             rt._build_serial_gps(cfg)
 
-    mock_transport_cls.assert_called_once_with(cfg.hardware.gps_port, baudrate=57600)
+    mock_transport_cls.assert_called_once_with(
+        cfg.hardware.gps_port, baudrate=57600,
+        bytesize=8, parity="N", stopbits=1.0)  # default 8N1 framing
 
 
 def _make_runtime_for_baud_tests():

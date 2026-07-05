@@ -1209,24 +1209,62 @@
 
           <div id="dev-serial" class="hidden">
             <div class="ctx-sub">Serial ports</div>
-            <div class="hint">Pick a detected port. Prefer a "stable USB ID" entry (<code>/dev/serial/by-id/…</code>) — it survives reboots &amp; replugging; a raw <code>/dev/ttyUSB0</code> can get renumbered.</div>
+            <div class="hint">Pick a detected port. Prefer a "stable" entry (<code>/dev/serial/by-id/…</code> or an on-board <code>/dev/serial0</code>) — it survives reboots &amp; replugging; a raw <code>/dev/ttyUSB0</code> can get renumbered. Set each port's baud to match its device.</div>
             <datalist id="dev-serial-ports"></datalist>
+
             <label class="dev-srcrow">
               <span>GPS port</span>
-              <input type="text" id="dev-gps-port" list="dev-serial-ports" placeholder="/dev/ttyAMA0" autocomplete="off" spellcheck="false" />
+              <select id="dev-gps-port-pick" data-input="dev-gps-port"></select>
             </label>
+            <label class="dev-srcrow dev-port-custom hidden">
+              <span>GPS custom</span>
+              <input type="text" id="dev-gps-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/… or /dev/ttyUSB0" autocomplete="off" spellcheck="false" />
+            </label>
+            <div class="dev-srcrow dev-lineopts">
+              <span>GPS line</span>
+              <div class="line-fields">
+                <input type="number" id="dev-gps-baud" min="1200" step="100" placeholder="38400" title="Baud rate" autocomplete="off" />
+                <select id="dev-gps-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                <select id="dev-gps-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                <select id="dev-gps-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+              </div>
+            </div>
+
             <label class="dev-srcrow">
               <span>Compass port</span>
-              <input type="text" id="dev-compass-port" list="dev-serial-ports" placeholder="/dev/ttyUSB0" autocomplete="off" spellcheck="false" />
+              <select id="dev-compass-port-pick" data-input="dev-compass-port"></select>
             </label>
+            <label class="dev-srcrow dev-port-custom hidden">
+              <span>Compass custom</span>
+              <input type="text" id="dev-compass-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/… or /dev/ttyUSB0" autocomplete="off" spellcheck="false" />
+            </label>
+            <div class="dev-srcrow dev-lineopts">
+              <span>Compass line</span>
+              <div class="line-fields">
+                <input type="number" id="dev-compass-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
+                <select id="dev-compass-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                <select id="dev-compass-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                <select id="dev-compass-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+              </div>
+            </div>
+
             <label class="dev-srcrow">
               <span>Motor port</span>
-              <input type="text" id="dev-motor-port" list="dev-serial-ports" placeholder="/dev/ttyACM0" autocomplete="off" spellcheck="false" />
+              <select id="dev-motor-port-pick" data-input="dev-motor-port"></select>
             </label>
-            <label class="dev-srcrow">
-              <span>Baud rate</span>
-              <input type="number" id="dev-baudrate" min="1200" step="100" placeholder="115200" autocomplete="off" />
+            <label class="dev-srcrow dev-port-custom hidden">
+              <span>Motor custom</span>
+              <input type="text" id="dev-motor-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/… or /dev/ttyUSB0" autocomplete="off" spellcheck="false" />
             </label>
+            <div class="dev-srcrow dev-lineopts">
+              <span>Motor line</span>
+              <div class="line-fields">
+                <input type="number" id="dev-motor-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
+                <select id="dev-motor-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                <select id="dev-motor-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                <select id="dev-motor-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+              </div>
+            </div>
           </div>
 
           <div class="ctx-sub">Simulator motor response <small class="muted">(sim only)</small></div>

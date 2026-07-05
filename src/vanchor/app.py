@@ -1056,39 +1056,54 @@ class Runtime:
         back to a glob if pyserial is unavailable, and never raises."""
         import glob
         import os
-        # realpath(device) -> its stable /dev/serial/by-id symlink, if any.
-        by_id: dict[str, str] = {}
-        for link in sorted(glob.glob("/dev/serial/by-id/*")):
-            try:
-                by_id[os.path.realpath(link)] = link
-            except OSError:
-                pass
-        out: list[dict] = []
-        seen: set[str] = set()
+        import re
 
-        def _add(path: str, desc: str, stable: bool) -> None:
-            if path and path not in seen:
-                seen.add(path)
-                out.append({"path": path, "description": desc, "stable": stable})
+        # A path is STABLE if it's a /dev/serial/by-id | by-path symlink (USB) or a
+        # /dev/serialN alias (the Pi's on-board GPIO UART) -- all survive reboots.
+        stable_re = re.compile(r"^/dev/serial(/|\d+$)")
 
+        def _onboard(dev: str) -> bool:
+            b = os.path.basename(dev)
+            return b.startswith(("ttyAMA", "ttyS", "ttyO", "ttymxc", "ttySC")) \
+                or dev.startswith("/dev/serial")
+
+        # (path, description) candidates. STABLE links first so they win the dedup
+        # below; then pyserial's richly-described USB ports; then a broad glob of
+        # on-board UART + USB device nodes pyserial may not enumerate.
+        candidates: list[tuple[str, str]] = []
+        for pat in ("/dev/serial/by-id/*", "/dev/serial[0-9]", "/dev/serial/by-path/*"):
+            for link in sorted(glob.glob(pat)):
+                try:
+                    target = os.path.basename(os.path.realpath(link))
+                except OSError:
+                    target = os.path.basename(link)
+                tag = " - on-board UART" if target.startswith(("ttyAMA", "ttyS", "ttyO", "ttymxc")) else ""
+                candidates.append((link, f"{target}{tag} (stable)"))
         try:
             from serial.tools import list_ports
             for p in list_ports.comports():
-                dev = p.device
                 desc = (p.description or "").strip()
-                desc = desc if desc and desc != "n/a" else os.path.basename(dev)
-                stable_link = by_id.get(os.path.realpath(dev)) if dev else None
-                if stable_link:
-                    _add(stable_link, f"{desc} - stable USB ID", True)
-                _add(dev, desc, False)
-        except Exception:  # noqa: BLE001 - pyserial absent / odd platform -> glob
-            for pat in ("/dev/serial/by-id/*", "/dev/ttyUSB*", "/dev/ttyACM*",
-                        "/dev/ttyAMA*", "/dev/ttyS*", "/dev/tty.*", "/dev/cu.*"):
-                for dev in sorted(glob.glob(pat)):
-                    stable = "/serial/by-id/" in dev
-                    label = os.path.basename(dev) + (" - stable USB ID" if stable else "")
-                    _add(dev, label, stable)
-        # Stable (by-id) entries first so the recommended choice is on top.
+                if not desc or desc == "n/a":
+                    desc = os.path.basename(p.device)
+                if _onboard(p.device) and "UART" not in desc:
+                    desc += " - on-board UART"
+                candidates.append((p.device, desc))
+        except Exception:  # noqa: BLE001 - pyserial absent -> the glob below covers it
+            pass
+        for pat in ("/dev/ttyAMA[0-9]*", "/dev/ttyS[0-9]*", "/dev/ttyO[0-9]*",
+                    "/dev/ttymxc[0-9]*", "/dev/ttySC[0-9]*", "/dev/ttyUSB[0-9]*",
+                    "/dev/ttyACM[0-9]*", "/dev/tty.*", "/dev/cu.*"):  # last two: macOS
+            for dev in sorted(glob.glob(pat)):
+                tag = " - on-board UART" if _onboard(dev) else ""
+                candidates.append((dev, os.path.basename(dev) + tag))
+
+        out: list[dict] = []
+        seen: set[str] = set()
+        for path, desc in candidates:
+            if path and path not in seen:
+                seen.add(path)
+                out.append({"path": path, "description": desc,
+                            "stable": bool(stable_re.match(path))})
         out.sort(key=lambda e: (not e["stable"], e["path"]))
         return out
 
@@ -1171,6 +1186,28 @@ class Runtime:
                     int(src[key])
                 except (TypeError, ValueError):
                     raise ValueError(f"{key} must be an integer") from None
+        # Per-device serial framing: baud (int), bytesize 5-8, parity N/E/O/M/S,
+        # stopbits 1/1.5/2. Normalise parity to an upper-case letter.
+        for dev in ("gps", "compass", "motor"):
+            baud = hw_in.get(f"{dev}_baud")
+            if baud is not None:
+                try:
+                    if int(baud) <= 0:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    raise ValueError(f"{dev}_baud must be a positive integer") from None
+            bs = hw_in.get(f"{dev}_bytesize")
+            if bs is not None and int(bs) not in (5, 6, 7, 8):
+                raise ValueError(f"{dev}_bytesize must be 5, 6, 7 or 8")
+            par = hw_in.get(f"{dev}_parity")
+            if par is not None:
+                par = str(par).upper()
+                if par not in ("N", "E", "O", "M", "S"):
+                    raise ValueError(f"{dev}_parity must be one of N/E/O/M/S")
+                hw_in[f"{dev}_parity"] = par
+            sb = hw_in.get(f"{dev}_stopbits")
+            if sb is not None and float(sb) not in (1.0, 1.5, 2.0):
+                raise ValueError(f"{dev}_stopbits must be 1, 1.5 or 2")
 
         # Sim-motor actuation shaping (#36): non-negative floats.
         for key in ("reverse_delay_s", "thrust_slew_per_s", "thrust_lag_tau_s"):
@@ -1244,7 +1281,9 @@ class Runtime:
                 100.0 * required_bps / baud,
                 baud,
             )
-        return SerialGps(PySerialTransport(hw.gps_port, baudrate=baud), self.bus)
+        return SerialGps(PySerialTransport(
+            hw.gps_port, baudrate=baud, bytesize=hw.gps_bytesize,
+            parity=hw.gps_parity, stopbits=hw.gps_stopbits), self.bus)
 
     def _device_menus(self) -> list:
         """Collect device-specific menus (settings/actions) from the active
@@ -1313,13 +1352,17 @@ class Runtime:
         from .hardware.serial_devices import SerialCompass
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialCompass(PySerialTransport(hw.compass_port, baudrate=hw.compass_baud), self.bus)
+        return SerialCompass(PySerialTransport(
+            hw.compass_port, baudrate=hw.compass_baud, bytesize=hw.compass_bytesize,
+            parity=hw.compass_parity, stopbits=hw.compass_stopbits), self.bus)
 
     def _build_serial_motor(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialMotorController
         from .hardware.serial_link import PySerialTransport
         hw = cfg.hardware
-        return SerialMotorController(PySerialTransport(hw.motor_port, baudrate=hw.motor_baud))
+        return SerialMotorController(PySerialTransport(
+            hw.motor_port, baudrate=hw.motor_baud, bytesize=hw.motor_bytesize,
+            parity=hw.motor_parity, stopbits=hw.motor_stopbits))
 
     def _construct_devices(self, cfg: AppConfig) -> dict:
         """Build the device set (simulator + sensors + motor) for ``cfg.hardware``.

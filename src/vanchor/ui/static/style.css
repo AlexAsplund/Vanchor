@@ -2307,3 +2307,10 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s;
 }
 .va-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Per-port serial line settings: baud + data bits + parity + stop bits inline. */
+.dev-lineopts { display: flex; align-items: center; gap: 8px; }
+.dev-lineopts > span { flex: 0 0 auto; }
+.dev-lineopts .line-fields { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.dev-lineopts .line-fields input { width: 5.5em; flex: 0 0 auto; }
+.dev-lineopts .line-fields select { flex: 1 1 0; min-width: 0; }

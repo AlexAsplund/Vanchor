@@ -486,6 +486,18 @@ class HardwareConfig:
     gps_baud: int = 38400
     compass_baud: int = 4800
     motor_baud: int = 4800
+    # Per-device serial framing. NMEA 0183 and the Arduino motor link are 8N1
+    # (the defaults); override only for an unusual device. bytesize 5-8;
+    # parity "N"/"E"/"O"/"M"/"S"; stopbits 1, 1.5 or 2.
+    gps_bytesize: int = 8
+    gps_parity: str = "N"
+    gps_stopbits: float = 1.0
+    compass_bytesize: int = 8
+    compass_parity: str = "N"
+    compass_stopbits: float = 1.0
+    motor_bytesize: int = 8
+    motor_parity: str = "N"
+    motor_stopbits: float = 1.0
     # Sensors also accept "nmea": build NO internal device and let the navigator
     # be fed by external NMEA over the TCP bridge (--nmea-tcp) or inject_nmea —
     # e.g. a phone or chart-plotter GPS. So "GPS from NMEA" is never blocked.

@@ -193,7 +193,14 @@
     setVal("dev-gps-port", hw.gps_port);
     setVal("dev-compass-port", hw.compass_port);
     setVal("dev-motor-port", hw.motor_port);
-    setVal("dev-baudrate", hw.baudrate);
+    fillPortPicks();  // reflect the loaded ports in the dropdowns
+    // Per-port serial line settings (baud + data bits + parity + stop bits).
+    ["gps", "compass", "motor"].forEach((d) => {
+      setVal("dev-" + d + "-baud", hw[d + "_baud"]);
+      setVal("dev-" + d + "-bytesize", hw[d + "_bytesize"]);
+      setVal("dev-" + d + "-parity", hw[d + "_parity"]);
+      setVal("dev-" + d + "-stopbits", hw[d + "_stopbits"]);
+    });
 
     // Sim-motor actuation shaping (#36) — simulator-only response tuning.
     const sm = cfg.sim_motor && typeof cfg.sim_motor === "object" ? cfg.sim_motor : {};
@@ -360,13 +367,25 @@
       const v = num($(id) && $(id).value);
       if (v != null) simMotor[k] = v;
     });
+    // Per-port serial line settings -> only send keys the user actually set.
+    const serial = {};
+    ["gps", "compass", "motor"].forEach((d) => {
+      const b = num($("dev-" + d + "-baud") && $("dev-" + d + "-baud").value);
+      if (b != null) serial[d + "_baud"] = b;
+      const bs = num($("dev-" + d + "-bytesize") && $("dev-" + d + "-bytesize").value);
+      if (bs != null) serial[d + "_bytesize"] = bs;
+      const par = ($("dev-" + d + "-parity") || {}).value;
+      if (par) serial[d + "_parity"] = par;
+      const sb = num($("dev-" + d + "-stopbits") && $("dev-" + d + "-stopbits").value);
+      if (sb != null) serial[d + "_stopbits"] = sb;
+    });
     return {
       hardware: {
         enabled: readEnabled(),
         gps_port: textVal("dev-gps-port"),
         compass_port: textVal("dev-compass-port"),
         motor_port: textVal("dev-motor-port"),
-        baudrate: num($("dev-baudrate") && $("dev-baudrate").value),
+        ...serial,
         gps_source: srcVal("dev-src-gps"),
         compass_source: srcVal("dev-src-compass"),
         depth_source: srcVal("dev-src-depth"),
@@ -393,22 +412,88 @@
 
   // Fetch directly (not VA.getJSON) so we can read the HTTP status: an older
   // backend returns 404 here, which must degrade to "unavailable", not error.
-  // Auto-detect serial ports (OpenPlotter-style) -> a <datalist> the port inputs
-  // suggest from, so you pick a device instead of typing /dev/tty... by hand.
+  // Auto-detect serial ports (OpenPlotter-style). Each port field is a DROPDOWN
+  // of the detected devices (stable /dev/serial/by-id + on-board UART aliases
+  // first, marked ★), plus a "Custom path…" option that reveals a text field for
+  // anything not auto-detected. The hidden text input stays the source of truth
+  // (collect() reads it); the dropdown just writes the chosen path into it.
+  const PORT_PICKS = [
+    ["dev-gps-port-pick", "dev-gps-port"],
+    ["dev-compass-port-pick", "dev-compass-port"],
+    ["dev-motor-port-pick", "dev-motor-port"],
+  ];
+  const PORT_CUSTOM = "__custom__";
+  let serialPorts = [];
+
+  function fillPortPicks() {
+    PORT_PICKS.forEach(([pickId, inputId]) => {
+      const sel = $(pickId);
+      if (!sel) return;
+      const cur = ($(inputId) || {}).value || "";
+      sel.innerHTML = "";
+      const none = document.createElement("option");
+      none.value = ""; none.textContent = "— none —";
+      sel.appendChild(none);
+      let matched = cur === "";
+      serialPorts.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.path;
+        o.textContent = (p.stable ? "★ " : "") + (p.description || p.path);
+        if (p.path === cur) matched = true;
+        sel.appendChild(o);
+      });
+      if (cur && !matched) { // preserve a configured path that wasn't detected
+        const o = document.createElement("option");
+        o.value = cur; o.textContent = cur + " (configured)";
+        sel.appendChild(o);
+      }
+      const custom = document.createElement("option");
+      custom.value = PORT_CUSTOM; custom.textContent = "Custom path…";
+      sel.appendChild(custom);
+      syncPortPick(pickId, inputId);
+    });
+  }
+
+  function syncPortPick(pickId, inputId) {
+    const sel = $(pickId), inp = $(inputId);
+    if (!sel || !inp) return;
+    const cur = inp.value || "";
+    const known = Array.prototype.some.call(sel.options,
+      (o) => o.value === cur && o.value !== PORT_CUSTOM);
+    const customRow = inp.closest(".dev-port-custom");
+    sel.value = (known || cur === "") ? cur : PORT_CUSTOM;
+    if (customRow) customRow.classList.toggle("hidden", sel.value !== PORT_CUSTOM);
+  }
+
+  function onPortPick(pickId, inputId) {
+    const sel = $(pickId), inp = $(inputId);
+    if (!sel || !inp) return;
+    const customRow = inp.closest(".dev-port-custom");
+    if (sel.value === PORT_CUSTOM) {
+      if (customRow) customRow.classList.remove("hidden");
+      inp.focus();
+    } else {
+      inp.value = sel.value;  // the dropdown IS the source; mirror into the input
+      if (customRow) customRow.classList.add("hidden");
+    }
+  }
+
   function loadSerialPorts() {
-    const dl = $("dev-serial-ports");
-    if (!dl) return;
     fetch("/api/devices/serial-ports")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
-        if (!j || !Array.isArray(j.ports)) return;
-        dl.innerHTML = "";
-        j.ports.forEach((p) => {
-          const o = document.createElement("option");
-          o.value = p.path;
-          if (p.description && p.description !== p.path) o.label = p.description;
-          dl.appendChild(o);
-        });
+        serialPorts = (j && Array.isArray(j.ports)) ? j.ports : [];
+        const dl = $("dev-serial-ports");  // suggestions for the custom text inputs
+        if (dl) {
+          dl.innerHTML = "";
+          serialPorts.forEach((p) => {
+            const o = document.createElement("option");
+            o.value = p.path;
+            if (p.description && p.description !== p.path) o.label = p.description;
+            dl.appendChild(o);
+          });
+        }
+        fillPortPicks();
       })
       .catch(() => {});
   }
@@ -484,6 +569,12 @@
   SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
     if (sel) sel.addEventListener("change", () => { syncSerial(); refreshMenus(); });
+  });
+
+  // Serial-port dropdowns: mirror the pick into the (source-of-truth) input.
+  PORT_PICKS.forEach(([pk, ip]) => {
+    const sel = $(pk);
+    if (sel) sel.addEventListener("change", () => onPortPick(pk, ip));
   });
 
   const nEn = $("dev-nmea-enabled");

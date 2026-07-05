@@ -149,9 +149,15 @@ class PySerialTransport(SerialTransport):
     ``"/dev/ttyUSB0"``) and a ``baudrate``.
     """
 
-    def __init__(self, port: str, baudrate: int = 4800) -> None:
+    def __init__(self, port: str, baudrate: int = 4800, *, bytesize: int = 8,
+                 parity: str = "N", stopbits: float = 1.0) -> None:
         self.port = port
         self.baudrate = baudrate
+        # pyserial takes these values verbatim: bytesize 5-8, parity letter
+        # "N"/"E"/"O"/"M"/"S", stopbits 1 / 1.5 / 2.
+        self.bytesize = bytesize
+        self.parity = parity
+        self.stopbits = stopbits
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
 
@@ -166,9 +172,11 @@ class PySerialTransport(SerialTransport):
                 "(pip install pyserial-asyncio)"
             ) from exc
         self._reader, self._writer = await serial_asyncio.open_serial_connection(
-            url=self.port, baudrate=self.baudrate
+            url=self.port, baudrate=self.baudrate, bytesize=self.bytesize,
+            parity=self.parity, stopbits=self.stopbits,
         )
-        logger.info("opened serial port %s @ %d baud", self.port, self.baudrate)
+        logger.info("opened serial port %s @ %d baud %d%s%s", self.port,
+                    self.baudrate, self.bytesize, self.parity, self.stopbits)
 
     async def close(self) -> None:
         writer, self._writer = self._writer, None

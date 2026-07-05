@@ -97,6 +97,18 @@ def test_none_is_a_valid_device_source():
     assert rt.config.hardware.gps_source == "none"
 
 
+def test_per_port_serial_framing_round_trips_and_validates():
+    rt = _rt()
+    rt.set_device_config({"hardware": {"gps_baud": 9600, "gps_bytesize": 7,
+                                       "gps_parity": "e", "gps_stopbits": 2}})
+    c = rt.config.hardware
+    assert (c.gps_baud, c.gps_bytesize, c.gps_parity, c.gps_stopbits) == (9600, 7, "E", 2.0)
+    import pytest
+    for bad in ({"gps_parity": "X"}, {"gps_bytesize": 9}, {"gps_stopbits": 3}):
+        with pytest.raises(ValueError):
+            rt.set_device_config({"hardware": bad})
+
+
 def test_serial_ports_are_enumerated():
     # Auto-detect returns {path, description, stable}; never raises. Stable
     # (by-id) entries sort first so the recommended bind is on top.
