@@ -4,6 +4,28 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a0] — 2026-07-05
+
+- **GNSS/INS sensor fusion (u-blox M9N UBX + HWT901B IMU).** A new UBX GPS driver
+  (`gps_source: ublox`) surfaces the NED ground-velocity vector + per-fix accuracy
+  that NMEA can't, and a loosely-coupled complementary filter fuses it with the
+  IMU into a smooth heading, real yaw rate, clean low-speed velocity, crab/leeway,
+  and dead-reckoning through GPS gaps. Fully **additive/non-blocking** — it fills
+  new `state.fusion` telemetry only; heading/position/control are unchanged, so
+  every existing hardware combo behaves exactly as before.
+- **Capability-driven activation.** The richer path keys off what a `GpsFix`
+  carries (`has_velocity`/`has_3d_velocity`/`has_accuracy`), not which driver made
+  it — any velocity source (UBX, a future GNSS, a bridge, or the sim via
+  `sensors.gps_velocity`) lights up the same behaviour.
+- **Sensor-calibration wizard** (separate from boat setup): guided *still* (gyro
+  bias + noise → tuned fusion gains), *align* (drive-straight → compass/IMU
+  mounting offset) and *interference* (thrust×steer sweep) captures, plus a
+  "Calibrate all" sequence. Interference reports a **0–100 quality score**,
+  escalating mitigation **recommendations**, and an **experimental** software
+  remedy that compensates the heading for both motor thrust **and** servo angle.
+- **UBX config bench-verified** on a real M9N; configures both UART1 and USB so it
+  works however the receiver is wired. See `docs/ublox-m9n-fusion.md`.
+
 ## [1.4.0a1] — 2026-07-04
 
 ## [1.4.0a0] — 2026-07-04
