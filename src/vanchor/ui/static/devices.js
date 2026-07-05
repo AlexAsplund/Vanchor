@@ -393,8 +393,29 @@
 
   // Fetch directly (not VA.getJSON) so we can read the HTTP status: an older
   // backend returns 404 here, which must degrade to "unavailable", not error.
+  // Auto-detect serial ports (OpenPlotter-style) -> a <datalist> the port inputs
+  // suggest from, so you pick a device instead of typing /dev/tty... by hand.
+  function loadSerialPorts() {
+    const dl = $("dev-serial-ports");
+    if (!dl) return;
+    fetch("/api/devices/serial-ports")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || !Array.isArray(j.ports)) return;
+        dl.innerHTML = "";
+        j.ports.forEach((p) => {
+          const o = document.createElement("option");
+          o.value = p.path;
+          if (p.description && p.description !== p.path) o.label = p.description;
+          dl.appendChild(o);
+        });
+      })
+      .catch(() => {});
+  }
+
   function load() {
     setStatus("Loading…", "busy");
+    loadSerialPorts();
     fetch("/api/config/devices")
       .then((r) => {
         if (r.status === 404) {

@@ -455,6 +455,9 @@ class ServerConfig:
 
     host: str = "127.0.0.1"
     port: int = 8000
+    # Advertise the UI over mDNS so a phone/PWA can auto-find it at vanchor.local
+    # (no IP typing). Graceful no-op if zeroconf is unavailable.
+    mdns: bool = True
 
 
 @dataclass

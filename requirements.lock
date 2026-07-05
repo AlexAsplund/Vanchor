@@ -116,3 +116,4 @@ pyserial-asyncio==0.6
 #   matplotlib==3.11.0      # `analysis` extra (plots)
 # ============================================================================
 pygeomag==1.1.0
+zeroconf==0.150.0

@@ -1209,17 +1209,18 @@
 
           <div id="dev-serial" class="hidden">
             <div class="ctx-sub">Serial ports</div>
+            <datalist id="dev-serial-ports"></datalist>
             <label class="dev-srcrow">
               <span>GPS port</span>
-              <input type="text" id="dev-gps-port" placeholder="/dev/ttyAMA0" autocomplete="off" spellcheck="false" />
+              <input type="text" id="dev-gps-port" list="dev-serial-ports" placeholder="/dev/ttyAMA0" autocomplete="off" spellcheck="false" />
             </label>
             <label class="dev-srcrow">
               <span>Compass port</span>
-              <input type="text" id="dev-compass-port" placeholder="/dev/ttyUSB0" autocomplete="off" spellcheck="false" />
+              <input type="text" id="dev-compass-port" list="dev-serial-ports" placeholder="/dev/ttyUSB0" autocomplete="off" spellcheck="false" />
             </label>
             <label class="dev-srcrow">
               <span>Motor port</span>
-              <input type="text" id="dev-motor-port" placeholder="/dev/ttyACM0" autocomplete="off" spellcheck="false" />
+              <input type="text" id="dev-motor-port" list="dev-serial-ports" placeholder="/dev/ttyACM0" autocomplete="off" spellcheck="false" />
             </label>
             <label class="dev-srcrow">
               <span>Baud rate</span>

@@ -97,6 +97,14 @@ def test_none_is_a_valid_device_source():
     assert rt.config.hardware.gps_source == "none"
 
 
+def test_serial_ports_are_enumerated():
+    # Auto-detect returns a list of {path, description}; never raises.
+    ports = _rt().list_serial_ports()
+    assert isinstance(ports, list)
+    for p in ports:
+        assert "path" in p and "description" in p
+
+
 def test_a_source_can_be_reset_to_auto_null():
     # Regression: a present-but-null source must reset to Auto (was skipped by the
     # merge, so you could never leave "none"/"sim" once set).

@@ -5,6 +5,7 @@ python-multipart>=0.0.9   # file uploads (POST /api/restore)
 numpy>=1.24
 pyyaml>=6.0
 pygeomag>=1.1            # full WMM2025 magnetic declination
+zeroconf>=0.130            # mDNS discovery
 
 # Smart "Take me here" water routing (POST /api/route/plan). Optional but
 # required for the routing feature; all install from prebuilt aarch64 wheels.

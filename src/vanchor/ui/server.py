@@ -417,6 +417,13 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     async def state() -> dict:
         return runtime.telemetry()
 
+    @app.get("/api/contract")
+    async def api_contract() -> dict:
+        """The versioned, self-describing API contract: telemetry field types +
+        units and the accepted command types (see vanchor.core.contract)."""
+        from ..core.contract import build_contract
+        return build_contract(envelope_version=_PROTOCOL_V)
+
     @app.get("/api/log")
     async def log(n: int = 50, full: int = 0) -> dict:
         """Recent telemetry frames from the in-memory ring.
@@ -881,6 +888,12 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         Returns ``{hardware:{...}, nmea_tcp:{...}, options:{sensor:[...],
         motor:[...]}, restart_required:false}``."""
         return runtime.device_config()
+
+    @app.get("/api/devices/serial-ports")
+    async def serial_ports() -> dict:
+        """Serial ports detected on the host, so the UI can suggest them instead
+        of the user hand-typing ``/dev/tty...`` (OpenPlotter-style auto-detect)."""
+        return {"ports": runtime.list_serial_ports()}
 
     @app.post("/api/config/devices")
     async def set_device_config(payload: dict):

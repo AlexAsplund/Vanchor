@@ -1045,6 +1045,30 @@ class Runtime:
         from .hardware import registry
         return self._SENSOR_SOURCES + tuple(registry.sources("compass"))
 
+    def list_serial_ports(self) -> list[dict]:
+        """Serial ports present on the host, for the device-config UI to suggest
+        instead of making the user type ``/dev/tty...`` paths. Each is
+        ``{path, description}``; ``by-id`` symlinks are preferred (stable across
+        reboots). Best-effort: falls back to a glob if pyserial isn't available,
+        and never raises."""
+        out: list[dict] = []
+        try:
+            from serial.tools import list_ports
+            for p in list_ports.comports():
+                desc = (p.description or "").strip()
+                out.append({"path": p.device,
+                            "description": desc if desc and desc != "n/a" else p.device})
+        except Exception:  # noqa: BLE001 - pyserial absent / odd platform -> glob
+            import glob
+            seen: set[str] = set()
+            for pat in ("/dev/serial/by-id/*", "/dev/ttyUSB*", "/dev/ttyACM*",
+                        "/dev/ttyAMA*", "/dev/ttyS*", "/dev/tty.*", "/dev/cu.*"):
+                for dev in sorted(glob.glob(pat)):
+                    if dev not in seen:
+                        seen.add(dev)
+                        out.append({"path": dev, "description": dev})
+        return out
+
     def device_config(self) -> dict:
         """Current device/hardware config + the selectable options.
 
@@ -3126,12 +3150,24 @@ def main(argv: list[str] | None = None) -> None:
 
     runtime = Runtime(config)
     app = create_app(runtime)
-    uvicorn.run(
-        app,
-        host=config.server.host,
-        port=config.server.port,
-        log_level=(args.log_level or "info").lower(),
-    )
+
+    # Advertise over mDNS so a phone/PWA finds vanchor.local without an IP.
+    advert = None
+    if config.server.mdns:
+        from . import __version__
+        from .discovery import advertise
+        advert = advertise(config.server.port, config.server.host,
+                           properties={"version": __version__})
+    try:
+        uvicorn.run(
+            app,
+            host=config.server.host,
+            port=config.server.port,
+            log_level=(args.log_level or "info").lower(),
+        )
+    finally:
+        if advert is not None:
+            advert.close()
 
 
 if __name__ == "__main__":
