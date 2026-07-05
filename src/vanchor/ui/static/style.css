@@ -1945,27 +1945,11 @@ body.mobile .dock .btn-row { gap: 8px; }
 body.mobile .map-fab,                 /* drop-marker FAB: fold into drawer  */
 body.mobile #marker-fab { display: none; }
 
-body.mobile .follow-fab {
-  display: flex; align-items: center; justify-content: center;
-  position: fixed; right: 12px;
-  bottom: calc(76px + 16px + env(safe-area-inset-bottom));
-  width: 48px; height: 48px; border-radius: 50%;
-  border: 1px solid var(--line-bright);
-  background: var(--panel, rgba(8, 14, 22, 0.85)); color: var(--accent);
-  font-size: 22px; cursor: pointer; z-index: 1140;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
-}
-body.mobile .follow-fab:active { transform: scale(0.94); }
-
-/* As the sheet grows, lift the FAB so it stays clear of it. */
-body.mobile[data-sheet="mid"] .follow-fab { bottom: calc(46vh + 16px + env(safe-area-inset-bottom)); }
-body.mobile[data-sheet="full"] .follow-fab { display: none; }   /* sheet covers the map */
-
-/* Desktop: the recenter FAB appears (bottom-right, pulsing) whenever the boat has
-   drifted off-screen -- one tap re-follows + centres. Hidden while the boat is in
-   view. (Mobile keeps its always-on FAB above; the view-hide rule still wins.) */
-body:not(.mobile) .follow-fab.offscreen {
+/* Recenter FAB (#follow-fab): appears with a gentle pulse whenever the boat drifts
+   off-screen, on EVERY device (width-independent -- the .offscreen class is toggled
+   from map-boat.js regardless of mobile/desktop). One tap re-follows + centres;
+   hidden while the boat is in view. */
+.follow-fab.offscreen {
   display: flex; align-items: center; justify-content: center;
   position: fixed; right: 16px; bottom: 96px;
   width: 46px; height: 46px; border-radius: 50%;
@@ -1976,7 +1960,16 @@ body:not(.mobile) .follow-fab.offscreen {
   backdrop-filter: blur(8px);
   animation: fab-pulse 1.8s ease-in-out infinite;
 }
-body:not(.mobile) .follow-fab.offscreen:hover { border-color: var(--accent); }
+.follow-fab.offscreen:hover { border-color: var(--accent); }
+.follow-fab.offscreen:active { transform: scale(0.94); }
+
+/* Mobile: a bigger touch target, and lift above the bottom sheet. */
+body.mobile .follow-fab.offscreen {
+  right: 12px; width: 48px; height: 48px;
+  bottom: calc(76px + 16px + env(safe-area-inset-bottom));
+}
+body.mobile[data-sheet="mid"] .follow-fab.offscreen { bottom: calc(46vh + 16px + env(safe-area-inset-bottom)); }
+body.mobile[data-sheet="full"] .follow-fab.offscreen { display: none; }   /* sheet covers the map */
 @keyframes fab-pulse {
   0%, 100% { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); }
   50% { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 0 6px rgba(27, 228, 255, 0.14); }
