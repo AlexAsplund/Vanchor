@@ -37,6 +37,7 @@
     serial: "Serial (wired)",
     nmea: "NMEA (from phone/plotter)",
     hwt901b: "HWT901B AHRS",
+    ublox: "u-blox M9N (UBX)",
     none: "Not connected",
   };
   const MOTOR_LABELS = {
@@ -55,13 +56,14 @@
   // Fallbacks if the backend omits `options`.
   const DEFAULT_OPTS = {
     sensor: ["sim", "serial", "nmea", "none"],
+    gps: ["sim", "serial", "nmea", "none", "ublox"],
     compass: ["sim", "serial", "nmea", "hwt901b", "none"],
     motor: ["sim", "serial", "both", "none"],
     battery: ["sim", "none", "ina226"],
   };
 
   const SRC_FIELDS = [
-    { id: "dev-src-gps", key: "gps_source", kind: "sensor" },
+    { id: "dev-src-gps", key: "gps_source", kind: "gps" },
     { id: "dev-src-compass", key: "compass_source", kind: "compass" },
     { id: "dev-src-depth", key: "depth_source", kind: "sensor" },
     { id: "dev-src-motor", key: "motor_source", kind: "motor" },

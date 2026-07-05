@@ -11,12 +11,14 @@ from __future__ import annotations
 import logging
 import math
 import time
+from dataclasses import replace
 
 from ..core import events
 from ..core.events import EventBus
 from ..core.models import GeoPoint, GpsFix
 from ..core.state import NavigationState
 from . import nmea
+from .fusion import NavFusion
 from .guard import SensorGuard, SensorGuardConfig
 
 logger = logging.getLogger("vanchor.navigator")
@@ -56,9 +58,17 @@ class Navigator:
         *,
         declination_deg: float | None = 0.0,
         mono_fn=time.monotonic,
+        fusion: "NavFusion | None" = None,
     ) -> None:
         self.state = state
         self.bus = bus
+        # Optional GNSS/INS fusion (M9N UBX velocity + HWT901B IMU). ADDITIVE: it
+        # only fills state.yaw_rate_dps / ground_vel_* / crab_deg / dead_reckoning;
+        # heading, position and control are unchanged, so every existing hardware
+        # combo behaves exactly as before. Fed from whatever sensors are present
+        # (works partially for NMEA + IMU too).
+        self.fusion = fusion
+        self._last_imu_mono: float | None = None
         # Local magnetic declination (degrees East-positive). Applied to MAGNETIC
         # headings (HDM/HDG with reference="M") to yield true before the control
         # stack uses state.heading_deg. True headings (HDT/HDG fully corrected,
@@ -84,6 +94,7 @@ class Navigator:
         self.gps_dlon = 0.0
         if bus is not None:
             bus.subscribe(events.NMEA_IN, self._on_nmea)
+            bus.subscribe(events.GPS_FIX_IN, self._on_gps_fix)
             bus.subscribe(events.IMU_IN, self._on_imu)
 
     def _declination(self) -> float:
@@ -108,13 +119,60 @@ class Navigator:
         return self.state.heading_deg % 360.0
 
     async def _on_imu(self, sample) -> None:
-        """Store the latest raw IMU sample (accel+gyro) from an AHRS device.
+        """Store the latest raw IMU sample (accel+gyro) from an AHRS device, and
+        (when fusion is enabled) feed its yaw rate into the GNSS/INS filter.
 
-        Auxiliary: it's kept on the state for logging/analysis; the controller
-        does not steer on it. Heading still comes via NMEA (HDM), so the nav path
-        is unchanged whether or not an IMU is present."""
+        Still auxiliary to the control path -- fusion only fills the additive
+        state.fusion_* fields; heading/steering are unchanged whether or not an
+        IMU is present."""
+        now = self._mono_fn()
         self.state.imu = sample
-        self.state.imu_received_mono = self._mono_fn()
+        self.state.imu_received_mono = now
+        if self.fusion is not None:
+            dt = (now - self._last_imu_mono) if self._last_imu_mono is not None else 0.0
+            self._last_imu_mono = now
+            self.fusion.update_imu(sample.gz, dt)
+            self._apply_fusion(now)
+
+    async def _on_gps_fix(self, fix: GpsFix) -> None:
+        """Ingest a rich GpsFix (with velocity/accuracy) from a UBX GPS driver --
+        the path NMEA can't carry. Mirrors the RMC ingestion but preserves the
+        velocity vector, and feeds the fusion filter."""
+        point = self._apply_offset(fix.point)
+        if not (fix.valid and self.guard.check_position(point)):
+            return
+        # keep the receiver's velocity/accuracy, re-point through the GPS offset
+        fix = replace(fix, point=point)
+        self.state.fix = fix
+        self.state.fix_seq += 1
+        self.state.fix_received_mono = self._mono_fn()
+        self.state.sog_knots = fix.sog_knots
+        self._maybe_cog_heading_fallback(fix, has_fresh_course=True)
+        self._feed_fusion_gps(fix)
+        if self.bus is not None:
+            await self.bus.publish(events.NAV_FIX, fix)
+
+    def _feed_fusion_gps(self, fix: GpsFix) -> None:
+        if self.fusion is None:
+            return
+        now = self._mono_fn()
+        self.fusion.update_gps(
+            fix.point, now,
+            vel_n_mps=fix.vel_n_mps, vel_e_mps=fix.vel_e_mps,
+            cog_deg=fix.cog_deg, sog_mps=fix.sog_knots * 0.5144444,
+        )
+        self._apply_fusion(now)
+
+    def _apply_fusion(self, now: float) -> None:
+        """Publish the fusion outputs into the (additive) state fields."""
+        if self.fusion is None:
+            return
+        fs = self.fusion.step(now)
+        self.state.yaw_rate_dps = fs.yaw_rate_dps
+        self.state.ground_vel_n_mps = fs.ground_vel_n_mps
+        self.state.ground_vel_e_mps = fs.ground_vel_e_mps
+        self.state.crab_deg = fs.crab_deg
+        self.state.dead_reckoning = fs.dead_reckoning
 
     # ------------------------------------------------------------------ #
     # GPS offset calibration (#45)
@@ -246,6 +304,7 @@ class Navigator:
                 # RMC genuinely carries course/speed over ground -> may drive the
                 # COG heading fallback.
                 self._maybe_cog_heading_fallback(fix, has_fresh_course=True)
+                self._feed_fusion_gps(fix)
         elif isinstance(parsed, nmea.GGA):
             point = self._apply_offset(parsed.point)
             if parsed.fix_quality > 0 and self.guard.check_position(point):
@@ -265,6 +324,7 @@ class Navigator:
                 self.state.fix_seq += 1
                 self.state.fix_received_mono = self._mono_fn()
                 events_out.append((events.NAV_FIX, fix))
+                self._feed_fusion_gps(fix)
                 # GGA has no course/speed of its own -- the cog/sog above are
                 # forwarded from an earlier fix and may be stale (the boat may
                 # have since stopped), so it must NOT drive the COG fallback.
@@ -299,6 +359,9 @@ class Navigator:
                 now = self._mono_fn()
                 self.state.heading_deg = true_deg
                 self.state.heading_received_mono = now
+                if self.fusion is not None:
+                    self.fusion.update_compass(true_deg)
+                    self._apply_fusion(now)
                 # The real compass just reported: record it and resume steering on
                 # it, dropping any COG fallback that was in effect.
                 self.state.compass_received_mono = now

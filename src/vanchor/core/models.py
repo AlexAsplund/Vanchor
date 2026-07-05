@@ -53,6 +53,13 @@ class GpsFix:
     cog_deg: float = 0.0  # course over ground
     timestamp: float = 0.0
     valid: bool = True
+    # Richer fields a UBX (u-blox) receiver supplies and NMEA does not; None on an
+    # NMEA/sim fix so every existing path is unchanged (see nav.fusion / drivers.ublox).
+    vel_n_mps: float | None = None   # NED ground velocity, north (m/s)
+    vel_e_mps: float | None = None   # NED ground velocity, east (m/s)
+    vel_d_mps: float | None = None   # NED velocity, down (m/s)
+    h_acc_m: float | None = None     # horizontal position accuracy estimate (m)
+    s_acc_mps: float | None = None   # speed accuracy estimate (m/s)
 
 
 @dataclass(frozen=True)

@@ -57,6 +57,16 @@ class SerialTransport(abc.ABC):
     async def write_line(self, line: str) -> None:
         """Write one line; the terminator (``\\r\\n``) is appended here."""
 
+    # Binary I/O for protocols that aren't line-oriented (e.g. u-blox UBX).
+    # Line-only transports may leave these unimplemented.
+    async def read(self, n: int = 4096) -> bytes:
+        """Read up to ``n`` raw bytes; raises ``EOFError`` when the stream ends."""
+        raise NotImplementedError
+
+    async def write(self, data: bytes) -> None:
+        """Write raw bytes (e.g. a UBX config frame)."""
+        raise NotImplementedError
+
 
 class FakeSerialTransport(SerialTransport):
     """In-memory transport for deterministic tests.
@@ -74,7 +84,9 @@ class FakeSerialTransport(SerialTransport):
         # Queue items: str (normal line), None (EOF sentinel), or a
         # BaseException instance to be raised on the next read_line call.
         self._inbound: asyncio.Queue[object] = asyncio.Queue()
+        self._inbytes: asyncio.Queue[object] = asyncio.Queue()  # binary read path
         self.written: list[str] = []
+        self.written_bytes = bytearray()  # everything a driver wrote via write()
         self.opened: bool = False
         self.closed: bool = False
         # Reconnect-testing knobs. ``open_calls`` counts every :meth:`open`
@@ -139,6 +151,27 @@ class FakeSerialTransport(SerialTransport):
             raise OSError("fake serial transport write failed (down)")
         self.written.append(line)
 
+    # -- binary I/O (UBX) ------------------------------------------------- #
+    def feed_bytes(self, data: bytes) -> None:
+        """Make ``data`` available to the next :meth:`read` call."""
+        self._inbytes.put_nowait(bytes(data))
+
+    def feed_bytes_eof(self) -> None:
+        self._inbytes.put_nowait(None)
+
+    async def read(self, n: int = 4096) -> bytes:
+        item = await self._inbytes.get()
+        if item is None:
+            raise EOFError("fake serial transport closed")
+        if isinstance(item, BaseException):
+            raise item
+        return item  # type: ignore[return-value]
+
+    async def write(self, data: bytes) -> None:
+        if self.fail_writes:
+            raise OSError("fake serial transport write failed (down)")
+        self.written_bytes.extend(data)
+
 
 class PySerialTransport(SerialTransport):
     """Real serial transport backed by ``pyserial-asyncio``.
@@ -200,4 +233,18 @@ class PySerialTransport(SerialTransport):
         if self._writer is None:
             raise RuntimeError("transport not open")
         self._writer.write((line + "\r\n").encode("ascii", errors="replace"))
+        await self._writer.drain()
+
+    async def read(self, n: int = 4096) -> bytes:  # pragma: no cover - real port
+        if self._reader is None:
+            raise RuntimeError("transport not open")
+        data = await self._reader.read(n)
+        if not data:
+            raise EOFError(f"serial port {self.port} closed")
+        return data
+
+    async def write(self, data: bytes) -> None:  # pragma: no cover - real port
+        if self._writer is None:
+            raise RuntimeError("transport not open")
+        self._writer.write(data)
         await self._writer.drain()

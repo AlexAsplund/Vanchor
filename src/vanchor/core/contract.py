@@ -30,6 +30,8 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "truth": {"type": "object|null", "desc": "simulator ground-truth boat state (sim only)"},
     "imu": {"type": "object|null", "desc": "latest AHRS accel+gyro sample"},
     "sensors": {"type": "object", "desc": "raw sensor snapshot (fix/heading/depth)"},
+    "fusion": {"type": "object", "desc": "GNSS/INS fusion outputs (yaw rate, ground "
+               "velocity, crab, dead-reckoning) when a UBX GPS + IMU are fused"},
     # --- anchor / spot-lock ---
     "anchor": {"type": "object|null", "desc": "the held anchor/spot-lock point {lat, lon}"},
     "anchor_radius_m": {"type": "number", "unit": "m", "desc": "watch-circle radius"},
