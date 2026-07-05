@@ -1,0 +1,47 @@
+      <section class="cm-panel hidden" data-cat="fishing">
+
+      <details class="card" id="catch-card">
+        <summary>Catch logger <span id="catch-card-state" class="badge"></span></summary>
+        <label class="switch"><input type="checkbox" id="catch-overlay-show" checked /><span class="track"></span> Show catches overlay</label>
+        <label class="switch"><input type="checkbox" id="catch-heatmap-show" /><span class="track"></span> Show catch heatmap</label>
+        <button id="catch-analytics-open2" class="btn-ghost wide">📊 Catch analytics</button>
+        <div class="ctx-sub">Species</div>
+        <div class="hint">Tap the 🎣 HUD button to log a catch at the current position. Edit your species list here.</div>
+        <ol id="species-list" class="species-list"></ol>
+        <div class="btn-row">
+          <input type="text" id="species-new" class="species-new" placeholder="Add species…" aria-label="new species" />
+          <button id="species-add" class="btn-ghost">Add</button>
+        </div>
+        <button id="species-reset" class="btn-ghost wide">Reset to defaults</button>
+        <div class="ctx-sub">Catch log</div>
+        <div class="btn-row">
+          <button id="catch-export" class="btn-ghost">Export</button>
+          <button id="catch-clear" class="btn-ghost">Clear all</button>
+        </div>
+        <div id="catch-card-status" class="hint"></div>
+      </details>
+
+      <details class="card hidden" id="trips-card">
+        <summary>Trips <span id="trips-card-state" class="badge"></span></summary>
+        <div class="hint">Record a trip to log distance, duration and speed. The live readout shows while a trip is active.</div>
+        <div class="ctx-sub">Live trip</div>
+        <div id="trip-live" class="trip-live trip-live-idle">
+          <div class="trip-live-name" id="trip-live-name">No active trip</div>
+          <div class="trip-stats">
+            <div class="trip-stat"><span>Distance</span><b id="trip-dist">—</b></div>
+            <div class="trip-stat"><span>Duration</span><b id="trip-dur">—</b></div>
+            <div class="trip-stat"><span>Avg speed</span><b id="trip-avg">—</b></div>
+            <div class="trip-stat"><span>Max speed</span><b id="trip-max">—</b></div>
+          </div>
+        </div>
+        <div class="btn-row">
+          <input type="text" id="trip-name" class="species-new" placeholder="Trip name…" aria-label="trip name" />
+          <button id="trip-start" class="btn-primary">▶ Start</button>
+        </div>
+        <button id="trip-stop" class="btn-stop wide hidden">■ Stop trip</button>
+        <div id="trip-status" class="hint"></div>
+        <div class="ctx-sub">Past trips</div>
+        <ol id="trips-list" class="trips-list"></ol>
+      </details>
+
+      </section><!-- /fishing -->

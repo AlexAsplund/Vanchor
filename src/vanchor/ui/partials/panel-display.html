@@ -1,0 +1,74 @@
+      <section class="cm-panel hidden" data-cat="display">
+
+      <details class="card" id="appearance-card">
+        <summary>Appearance</summary>
+        <div class="ctx-sub">Theme</div>
+        <div class="seg theme-seg" id="theme-seg" role="group" aria-label="Theme">
+          <button type="button" data-theme="dark" class="on">🌙 Dark</button>
+          <button type="button" data-theme="daylight">☀ Daylight</button>
+        </div>
+        <div class="hint">Daylight is a bright, high-contrast palette for direct sun.</div>
+        <!-- Kept (hidden) for layout.js profile save/restore compatibility. -->
+        <span class="theme-compat" hidden aria-hidden="true"><input type="checkbox" id="theme-toggle-box" checked /></span>
+      </details>
+
+      <details class="card" id="hud-card">
+        <summary>HUD overlay</summary>
+        <label class="switch"><input type="checkbox" id="hud-show" checked /><span class="track"></span> Show HUD</label>
+        <label class="switch"><input type="checkbox" id="hud-frame-toggle" /><span class="track"></span> Tactical HUD frame (heading tape + reticles)</label>
+        <label class="slider-row">HUD opacity <output id="hud-opacity-val">100</output>%
+          <input type="range" id="hud-opacity" min="30" max="100" step="5" value="100" />
+        </label>
+        <label class="switch"><input type="checkbox" id="hud-fade-text" /><span class="track"></span> Keep numbers sharp (fade only the box, not the text)</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="speed" checked /><span class="track"></span> Speed</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="heading" checked /><span class="track"></span> Compass</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="depth" checked /><span class="track"></span> Depth</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="anchor" checked /><span class="track"></span> Dist→Anchor</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="battery" checked /><span class="track"></span> Battery</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="steering" checked /><span class="track"></span> Steering gauge</label>
+        <label class="switch"><input type="checkbox" class="hud-toggle" data-widget="catch" checked /><span class="track"></span> Catch logger</label>
+      </details>
+
+      <details class="card" id="layout-card">
+        <summary>Layout &amp; profiles</summary>
+        <div class="hint">Drag the HUD, steering gauge and control dock by their grip handles. Profiles capture panel positions, overlays, theme and HUD prefs.</div>
+        <label for="profile-select">Profile</label>
+        <select id="profile-select"></select>
+        <div class="btn-row">
+          <button id="profile-saveas" class="btn-ghost">Save as…</button>
+          <button id="profile-delete" class="btn-ghost">Delete</button>
+        </div>
+        <button id="layout-reset" class="btn-ghost wide">Reset layout</button>
+      </details>
+
+      <details class="card" id="views-card">
+        <summary>Views <span id="views-current" class="badge"></span></summary>
+        <div class="hint">Specialised, URL-addressable layouts of the same live
+          controls. Each is deep-linkable at <code>/view/&lt;name&gt;</code> and
+          keeps a visible STOP.</div>
+        <div class="ctx-sub">Active view</div>
+        <div class="seg views-seg" id="views-seg" role="group" aria-label="View">
+          <button type="button" data-view="chart">🗺 Chart</button>
+          <button type="button" data-view="helm">🕹 Helm</button>
+          <button type="button" data-view="instruments">📊 Instruments</button>
+          <button type="button" data-view="manual">🎚 Manual</button>
+        </div>
+        <div class="ctx-sub">Instruments widgets</div>
+        <div class="views-widgets" id="views-widgets-instruments" data-view="instruments">
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="speed" checked /><span class="track"></span> Speed</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="heading" checked /><span class="track"></span> Heading</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="depth" checked /><span class="track"></span> Depth</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="anchor" checked /><span class="track"></span> Dist→Anchor</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="instruments" data-widget="battery" checked /><span class="track"></span> Battery</label>
+        </div>
+        <div class="ctx-sub">Helm strip widgets</div>
+        <div class="views-widgets" id="views-widgets-helm" data-view="helm">
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="speed" checked /><span class="track"></span> Speed</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="heading" checked /><span class="track"></span> Heading</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="depth" checked /><span class="track"></span> Depth</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="anchor" /><span class="track"></span> Dist→Anchor</label>
+          <label class="switch"><input type="checkbox" class="vw-toggle" data-view="helm" data-widget="battery" /><span class="track"></span> Battery</label>
+        </div>
+      </details>
+
+      </section><!-- /display -->

@@ -1,0 +1,50 @@
+      <section class="cm-panel hidden" data-cat="safety">
+
+      <details class="card" id="safety-card">
+        <summary>Safety &amp; power <span id="safety-card-state" class="badge"></span></summary>
+
+        <div class="ctx-sub">Battery</div>
+        <div class="row"><span>State of charge</span><b id="set-batt-soc">—</b></div>
+        <div class="row"><span>Voltage</span><b id="set-batt-volts">—</b></div>
+        <div class="row"><span>Draw</span><b id="set-batt-draw">—</b></div>
+        <div class="row"><span>Range left</span><b id="set-batt-range">—</b></div>
+        <div class="row"><span>Time to empty</span><b id="set-batt-tte">—</b></div>
+
+        <div class="ctx-sub">Return to Launch</div>
+        <div class="row"><span>Launch set</span><b id="set-launch-state">no</b></div>
+        <div class="btn-row">
+          <button id="set-set-launch" class="btn-ghost">⚑ Set launch here</button>
+          <button id="set-rtl" class="btn-primary">🏠 Return to Launch</button>
+        </div>
+
+        <div class="ctx-sub">Failsafes</div>
+        <label class="switch" title="When ON, the motor is cut if the GPS fix is lost for longer than the timeout. OFF (default) holds the last command through a fix dropout."><input type="checkbox" id="fix-failsafe" /><span class="track"></span> Stop motor on GPS-fix loss</label>
+
+        <div class="ctx-sub">No-go / shallow zones</div>
+        <div class="hint">Draw red no-go polygons the boat must avoid. Min depth triggers a shallow auto-stop. Zones persist on this device.</div>
+        <label class="switch"><input type="checkbox" id="nogo-show" checked /><span class="track"></span> Show no-go overlay</label>
+        <div class="slider-row">
+          <label>Min depth <output id="min-depth-val">0.0</output> m</label>
+          <input type="range" id="min-depth" min="0" max="5" step="0.1" value="0.0" />
+        </div>
+        <div class="btn-row">
+          <button id="nogo-draw" class="btn-primary">✏ Draw no-go zone</button>
+          <button id="nogo-cancel" class="btn-ghost hidden">Cancel</button>
+        </div>
+        <div class="row"><span>Zones</span><b id="nogo-count">0</b></div>
+        <button id="nogo-clear" class="btn-ghost wide">Clear all zones</button>
+        <div id="nogo-status" class="hint"></div>
+
+        <div class="ctx-sub">Remote link</div>
+        <div class="row"><span>Client</span><b id="set-link-state">—</b></div>
+        <div class="row"><span>Failsafe</span><b id="set-link-failsafe">—</b></div>
+
+        <div class="ctx-sub">Test (simulator)</div>
+        <div class="slider-row">
+          <label>Set battery SOC <output id="batt-test-val">80</output> %</label>
+          <input type="range" id="batt-test" min="0" max="100" step="1" value="80" />
+        </div>
+        <button id="batt-test-send" class="btn-ghost wide">Apply test SOC</button>
+      </details>
+
+      </section><!-- /safety -->

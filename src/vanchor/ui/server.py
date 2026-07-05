@@ -15,6 +15,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,6 +32,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("vanchor.ui")
 STATIC_DIR = Path(__file__).parent / "static"
+# HTML fragments inlined into index.html at serve time (no build step). Lets the
+# large single-page shell be split into maintainable partials; see _render_shell.
+_PARTIALS_DIR = Path(__file__).parent / "partials"
+_INCLUDE_RE = re.compile(r"[ \t]*<!--#include:\s*([\w./-]+)\s*-->")
+
+
+def _render_shell() -> str:
+    """Assemble index.html, inlining ``<!--#include: name.html-->`` partials from
+    the partials/ dir. Re-read per call (cheap; one page load) so editing a
+    partial shows up on the next reload -- no build step, mirrors sw.js version
+    injection. A missing/leading-indent marker is replaced by the partial verbatim
+    (the marker's own line indent is dropped; the partial carries its own)."""
+    raw = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return _INCLUDE_RE.sub(
+        lambda m: (_PARTIALS_DIR / m.group(1)).read_text(encoding="utf-8").rstrip("\n"),
+        raw,
+    )
 
 # Placeholder in sw.js replaced at serve time with the content hash below.
 _SW_VERSION_PLACEHOLDER = "__SHELL_VERSION__"
@@ -372,11 +390,13 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     app.add_middleware(_HostCheckMiddleware)
 
     @app.get("/")
-    async def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+    @app.get("/index.html")
+    async def index() -> Response:
+        # Assembled from index.html + partials at serve time (no build step).
+        return Response(_render_shell(), media_type="text/html")
 
     @app.get("/view/{name}")
-    async def view(name: str) -> FileResponse:
+    async def view(name: str) -> Response:
         """Serve the SAME single-page shell for every ``/view/<name>`` URL.
 
         Views are a pure client-side concern: ``views.js`` reads
@@ -386,7 +406,7 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         client-side instead of a hard error, and deep-linked/offline navigations
         to ``/view/*`` always boot the app. The host-check middleware still runs.
         """
-        return FileResponse(STATIC_DIR / "index.html")
+        return Response(_render_shell(), media_type="text/html")
 
     @app.get("/sw.js")
     async def service_worker() -> Response:

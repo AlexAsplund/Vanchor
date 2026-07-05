@@ -1,0 +1,81 @@
+      <section class="cm-panel hidden" data-cat="map">
+
+      <details class="card" id="markers-card">
+        <summary>Map markers <span id="marker-state" class="badge"></span></summary>
+        <label class="switch"><input type="checkbox" id="marker-overlay-show" checked /><span class="track"></span> Show markers overlay</label>
+        <div class="ctx-sub">Drop icon</div>
+        <div id="marker-icon-chooser" class="mm-icons"></div>
+        <label class="switch"><input type="checkbox" id="marker-sticky" /><span class="track"></span> Keep placing (don't disarm after drop)</label>
+        <div class="hint">Tap the 📍 button (bottom-right of the map) to arm, then tap the map. Long-press the map also drops a marker. Drag markers to move; tap to rename / re-icon / delete.</div>
+        <div class="ctx-sub">Import / export</div>
+        <label class="btn-ghost wide file-btn" for="marker-import">Import GPX / GeoJSON
+          <input type="file" id="marker-import" accept=".gpx,.geojson,.json,application/geo+json,application/json,application/gpx+xml" hidden /></label>
+        <div class="btn-row">
+          <button id="marker-export" class="btn-ghost">Export GeoJSON</button>
+          <button id="marker-clear" class="btn-ghost">Clear all</button>
+        </div>
+        <div id="marker-import-status" class="hint"></div>
+      </details>
+
+      <details class="card" id="depth-card">
+        <summary>Depth map <span id="depth-state" class="badge"></span></summary>
+        <label class="switch"><input type="checkbox" id="depth-show" /><span class="track"></span> Show depth overlay</label>
+        <div class="row"><span>Current depth</span><b id="depth-now">—</b></div>
+        <div class="row"><span>Soundings</span><b id="depth-count">0</b></div>
+        <div class="slider-row">
+          <label>Sonar cone angle <output id="sonar-cone-val">20</output>°</label>
+          <input type="range" id="sonar-cone" min="5" max="60" step="1" value="20" />
+        </div>
+        <div class="hint">Soundings are averaged into a colored depth chart (cell size scales with zoom). Shallow = red, deep = blue. The cone angle only affects the per-dot fallback used when the depth-grid backend is unavailable.</div>
+
+        <div class="ctx-sub">Import chart</div>
+        <div class="hint">Load an open-format depth file — CSV/XYZ (<code>lat,lon,depth</code> per row) or GeoJSON points. Merges into the chart unless "replace" is ticked.</div>
+        <label class="switch"><input type="checkbox" id="depth-import-replace" /><span class="track"></span> Replace existing chart</label>
+        <div class="btn-row">
+          <button id="depth-import-btn" class="btn-primary">⬆ Import depth map…</button>
+        </div>
+        <input type="file" id="depth-import-file" accept=".csv,.xyz,.txt,.geojson,.json" class="hidden" />
+        <div id="depth-import-status" class="hint"></div>
+      </details>
+
+      <!-- Offline maps (#52): pre-download tiles into IndexedDB so the map works
+           offline on the boat, plus prefetch nautical charts for offline routing. -->
+      <details class="card" id="offline-card">
+        <summary>Offline maps</summary>
+        <div class="hint">Pre-download map tiles for an area so the map works without a connection on the boat. Pick an area, a zoom range and a base layer.</div>
+        <button id="offline-pick" class="btn-primary wide">Select area on map</button>
+        <div class="row">
+          <label for="offline-base">Base layer</label>
+          <select id="offline-base"></select>
+        </div>
+        <div class="row">
+          <label for="offline-zmin">Zoom from</label>
+          <select id="offline-zmin"></select>
+          <label for="offline-zmax">to</label>
+          <select id="offline-zmax"></select>
+        </div>
+        <div class="row">
+          <label for="offline-cap">Max tiles</label>
+          <input type="number" id="offline-cap" min="1000" max="500000" step="1000" value="50000" />
+        </div>
+        <div id="offline-est" class="hint"></div>
+        <div class="btn-row">
+          <button id="offline-download" class="btn-primary" disabled>⬇ Download tiles</button>
+          <button id="offline-cancel" class="btn-ghost hidden">Cancel</button>
+        </div>
+        <div id="offline-bar" class="dl-bar hidden"><div id="offline-fill" class="dl-fill"></div></div>
+        <div id="offline-status" class="hint"></div>
+        <div class="row"><span>Cache</span><b id="offline-used">—</b></div>
+        <button id="offline-clear" class="btn-ghost wide">Clear tile cache</button>
+
+        <div class="ctx-sub">Offline charts (routing)</div>
+        <div class="hint">Prefetch nautical charts for the selected area so routing works offline too.</div>
+        <div class="btn-row">
+          <button id="offline-charts" class="btn-primary">⚓ Prefetch charts</button>
+          <button id="offline-charts-clear" class="btn-ghost">Clear charts</button>
+        </div>
+        <div id="offline-charts-status" class="hint"></div>
+        <div id="offline-charts-list"></div>
+      </details>
+
+      </section><!-- /map -->

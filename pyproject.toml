@@ -57,7 +57,10 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # Ship the trained tiny anchor-policy weights alongside the controller.
-"vanchor.controller" = ["anchor_policy.json"]
+"vanchor.controller" = ["anchor_policy.json", "anchor_leffe.json"]
+# The PWA shell: static assets + the HTML partials index.html is assembled from
+# at serve time. (Editable installs read the source tree; this is for wheels.)
+"vanchor.ui" = ["static/**/*", "partials/*.html"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

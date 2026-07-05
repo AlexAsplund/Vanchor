@@ -1,0 +1,113 @@
+      <section class="cm-panel drawer-body hidden" data-cat="boat">
+
+      <button id="setup-open" class="btn-primary wide drawer-setup" title="Init / calibrate the boat">⚙ Set up / calibrate boat</button>
+
+      <details class="card" id="boat-card">
+        <summary>Boat <span id="boat-card-state" class="badge"></span></summary>
+
+        <!-- Profiles: hidden gracefully if the profiles endpoints 404. -->
+        <div id="boat-profiles" class="hidden">
+          <div class="ctx-sub">Profiles</div>
+          <div class="row">
+            <label for="boat-profile-select">Active boat</label>
+            <select id="boat-profile-select"></select>
+          </div>
+          <div class="btn-row">
+            <button id="boat-profile-add" class="btn-ghost">＋ Add boat</button>
+            <button id="boat-profile-rename" class="btn-ghost">Rename</button>
+            <button id="boat-profile-delete" class="btn-ghost">Delete</button>
+          </div>
+          <div id="boat-profile-status" class="hint"></div>
+        </div>
+
+        <!-- Live spec editor for the active boat. -->
+        <div class="ctx-sub">Specs <span id="boat-applied" class="boat-applied hidden">applied ✓</span></div>
+        <div class="hint">Changing any value applies to the boat live and updates the active profile. Max speed is measured by calibration, not set here.</div>
+        <div class="spec-grid" id="boat-spec-grid">
+          <div class="spec" data-field="length_m">
+            <label>Length <span class="unit">m</span><output class="spec-out">—</output></label>
+            <input type="range" min="1" max="12" step="0.1" />
+          </div>
+          <div class="spec" data-field="beam_m">
+            <label>Beam <span class="unit">m</span><output class="spec-out">—</output></label>
+            <input type="range" min="0.5" max="4" step="0.05" />
+          </div>
+          <div class="spec" data-field="mass_kg">
+            <label>Mass <span class="unit">kg</span><output class="spec-out">—</output></label>
+            <input type="range" min="50" max="3000" step="10" />
+          </div>
+          <div class="spec" data-field="max_thrust_n">
+            <label>Max thrust <span class="unit">N</span><output class="spec-out">—</output></label>
+            <input type="range" min="50" max="2000" step="10" />
+          </div>
+          <div class="spec" data-field="reverse_efficiency">
+            <label>Reverse eff <output class="spec-out">—</output></label>
+            <input type="range" min="0" max="1" step="0.05" />
+          </div>
+          <div class="spec" data-field="max_steer_angle_deg">
+            <label>Max steer <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="20" max="270" step="1" />
+          </div>
+          <div class="spec" data-field="autopilot_steer_deg">
+            <label>Autopilot steer <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="5" max="90" step="1" />
+          </div>
+          <div class="spec" data-field="shaft_dia_mm">
+            <label>Shaft dia <span class="unit">mm</span><output class="spec-out">—</output></label>
+            <input type="range" min="10" max="80" step="1" />
+          </div>
+          <div class="spec" data-field="steer_range_deg">
+            <label>Steer range <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="60" max="720" step="5" />
+          </div>
+          <div class="spec" data-field="steer_reduction">
+            <label>Steer reduction <output class="spec-out">—</output></label>
+            <input type="range" min="1" max="20" step="0.5" />
+          </div>
+          <div class="spec" data-field="sonar_cone_deg">
+            <label>Sonar cone <span class="unit">°</span><output class="spec-out">—</output></label>
+            <input type="range" min="5" max="60" step="1" />
+          </div>
+          <div class="spec spec-hull" data-field="hull_tracking">
+            <label>Hull character <output class="spec-out" id="boat-hull-out">—</output></label>
+            <input type="range" id="boat-hull" min="0.35" max="2.5" step="0.05" value="1" />
+            <div class="hull-anchors" aria-hidden="true">
+              <span>Jon boat</span><span>Skiff</span><span>Semi-V</span><span>Deep-V</span><span>Keelboat</span>
+            </div>
+            <div class="spec-help hull-caption" id="boat-hull-caption">Skiff — balanced</div>
+          </div>
+          <div class="spec spec-mount" data-field="thruster_mount">
+            <label>Motor position</label>
+            <div class="mp-host" id="boat-mp"></div>
+            <div class="spec-help">Pick Bow or Stern, then tap the boat where the
+              trolling motor is mounted — including off to one side.</div>
+          </div>
+        </div>
+        <div id="boat-spec-status" class="hint"></div>
+      </details>
+
+      <details class="card" id="gpscal-card">
+        <summary>GPS calibration <span id="gpscal-state" class="badge"></span></summary>
+        <div class="hint">Correct a fixed GPS offset: tap your true location on the map and the boat's reported position is shifted to match.</div>
+        <button id="gpscal-adjust" class="btn-primary wide">📍 Adjust GPS position</button>
+        <div class="row"><span>Offset (lat)</span><b id="gpscal-dlat">—</b></div>
+        <div class="row"><span>Offset (lon)</span><b id="gpscal-dlon">—</b></div>
+        <button id="gpscal-reset" class="btn-ghost wide">Reset offset</button>
+        <div id="gpscal-status" class="hint"></div>
+      </details>
+
+      <details class="card" id="tune-card">
+        <summary>Auto-tune (PID)</summary>
+        <div class="hint">Tunes the live sim's control gains. Apply updates the running controller (not saved to config).</div>
+        <div class="btn-grid" id="tune-jobs">
+          <button data-job="heading" class="btn-ghost">Heading</button>
+          <button data-job="anchor" class="btn-ghost">Anchor</button>
+          <button data-job="cruise" class="btn-ghost">Cruise</button>
+          <button data-job="drift" class="btn-ghost">Drift</button>
+        </div>
+        <div id="tune-status" class="hint"></div>
+        <div id="tune-result"></div>
+        <button id="tune-apply" class="btn-primary wide" disabled hidden>Apply live</button>
+      </details>
+
+      </section><!-- /boat -->
