@@ -47,6 +47,19 @@ can never change how an existing boat behaves; the controller/ML can opt into th
 richer signals later (a natural retrain target). Enabled by
 `sensors.fusion_enabled` (default on); `fusion=None` disables it entirely.
 
+## Capability-driven activation (source-agnostic)
+The enhanced behaviour keys off **what a `GpsFix` carries, not which driver made
+it** — the velocity/accuracy live on `GpsFix`, and the fusion branches on
+`fix.has_velocity` / `has_3d_velocity` / `has_accuracy`. So *any* source that
+fills those fields lights up the same path: the UBX M9N today, a future GNSS
+module, a SignalK/NMEA-2000 bridge, or the simulator. Concretely, a **measured**
+velocity vector (vs one derived from SOG/COG) sets `velocity_measured`, exposes
+vertical velocity, and unlocks **crab at low speed** (a real receiver's velocity
+is trustworthy near-stationary where COG is not). The sim proves it: set
+`sensors.gps_velocity` and `SimGps` emits a velocity-carrying fix — the identical
+fusion features activate with zero driver-specific code (and it gives an in-sim
+harness to validate the whole path).
+
 ## Status
 - Fully unit-tested: UBX parser (15), fusion (9), driver (4), navigator wiring (3),
   incl. the non-blocking guarantee. Suite green.

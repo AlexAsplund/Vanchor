@@ -52,8 +52,10 @@ class NavigationState:
     yaw_rate_dps: float | None = None    # sensor/fused yaw rate (deg/s), else None
     ground_vel_n_mps: float | None = None  # fused NED ground velocity, north (m/s)
     ground_vel_e_mps: float | None = None  # fused NED ground velocity, east (m/s)
+    vertical_vel_mps: float | None = None  # NED down velocity (only from a 3D-velocity source)
     crab_deg: float | None = None        # course-minus-heading (leeway/set), signed deg
     dead_reckoning: bool = False         # fusion is coasting on IMU through a GPS gap
+    velocity_measured: bool = False      # ground velocity is from a real velocity vector
 
     # Sensor-anomaly protection: how many implausible readings were rejected.
     heading_rejected: int = 0
@@ -222,8 +224,11 @@ class NavigationState:
                                      if self.ground_vel_n_mps is not None else None),
                 "ground_vel_e_mps": (round(self.ground_vel_e_mps, 3)
                                      if self.ground_vel_e_mps is not None else None),
+                "vertical_vel_mps": (round(self.vertical_vel_mps, 3)
+                                     if self.vertical_vel_mps is not None else None),
                 "crab_deg": (round(self.crab_deg, 1) if self.crab_deg is not None else None),
                 "dead_reckoning": self.dead_reckoning,
+                "velocity_measured": self.velocity_measured,
             },
             "depth_m": round(self.depth_m, 1),
             "imu": asdict(self.imu) if self.imu else None,

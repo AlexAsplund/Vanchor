@@ -112,14 +112,35 @@ def test_crab_positive_when_track_is_to_starboard() -> None:
 
 
 def test_crab_none_below_min_sog() -> None:
-    """Crab is undefined (None) when nearly stationary."""
-    fusion = NavFusion(crab_min_sog_mps=0.5)
+    """Crab is undefined (None) when below the (measured-velocity) threshold."""
+    fusion = NavFusion(crab_min_sog_measured_mps=0.5)  # this fix carries a vector
     fusion.update_compass(0.0)
     origin = GeoPoint(59.0, 18.0)
     fusion.update_gps(origin, now=0.0, vel_n_mps=0.1, vel_e_mps=0.1)  # sog ~0.14
     state = fusion.step(now=0.0)
     assert state.sog_mps is not None and state.sog_mps < 0.5
     assert state.crab_deg is None
+
+
+def test_measured_velocity_unlocks_low_speed_crab() -> None:
+    """The capability a real 3D velocity unlocks: at a low speed where a DERIVED
+    velocity yields no crab, a MEASURED velocity vector still does."""
+    origin = GeoPoint(59.0, 18.0)
+    # Derived (SOG/COG) at 0.2 m/s -> below the 0.3 derived threshold -> None.
+    f1 = NavFusion()
+    f1.update_compass(0.0)
+    f1.update_gps(origin, now=0.0, sog_mps=0.2, cog_deg=45.0)
+    s1 = f1.step(now=0.0)
+    assert s1.crab_deg is None and s1.velocity_measured is False
+    # Same 0.2 m/s as a measured vector -> above the 0.05 measured threshold -> crab.
+    f2 = NavFusion()
+    f2.update_compass(0.0)
+    f2.update_gps(origin, now=0.0,
+                  vel_n_mps=0.2 * math.cos(math.radians(45)),
+                  vel_e_mps=0.2 * math.sin(math.radians(45)))
+    s2 = f2.step(now=0.0)
+    assert s2.velocity_measured is True
+    assert s2.crab_deg is not None and abs(s2.crab_deg - 45.0) < 1.0
 
 
 def test_crab_none_without_heading() -> None:

@@ -61,6 +61,25 @@ class GpsFix:
     h_acc_m: float | None = None     # horizontal position accuracy estimate (m)
     s_acc_mps: float | None = None   # speed accuracy estimate (m/s)
 
+    # Source-agnostic capability flags: downstream (nav.fusion) activates the
+    # richer behaviour off WHAT the fix carries, not which driver produced it --
+    # so a UBX M9N, a future GNSS module, a SignalK bridge or the sim all light up
+    # the same path just by filling these fields.
+    @property
+    def has_velocity(self) -> bool:
+        """A measured horizontal NED ground-velocity vector is present."""
+        return self.vel_n_mps is not None and self.vel_e_mps is not None
+
+    @property
+    def has_3d_velocity(self) -> bool:
+        """A full 3D NED velocity (incl. vertical) is present."""
+        return self.has_velocity and self.vel_d_mps is not None
+
+    @property
+    def has_accuracy(self) -> bool:
+        """Per-fix accuracy estimate(s) are present (for gating/weighting)."""
+        return self.h_acc_m is not None or self.s_acc_mps is not None
+
 
 @dataclass(frozen=True)
 class ImuSample:

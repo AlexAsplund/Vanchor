@@ -158,7 +158,7 @@ class Navigator:
         now = self._mono_fn()
         self.fusion.update_gps(
             fix.point, now,
-            vel_n_mps=fix.vel_n_mps, vel_e_mps=fix.vel_e_mps,
+            vel_n_mps=fix.vel_n_mps, vel_e_mps=fix.vel_e_mps, vel_d_mps=fix.vel_d_mps,
             cog_deg=fix.cog_deg, sog_mps=fix.sog_knots * 0.5144444,
         )
         self._apply_fusion(now)
@@ -171,8 +171,10 @@ class Navigator:
         self.state.yaw_rate_dps = fs.yaw_rate_dps
         self.state.ground_vel_n_mps = fs.ground_vel_n_mps
         self.state.ground_vel_e_mps = fs.ground_vel_e_mps
+        self.state.vertical_vel_mps = fs.vertical_vel_mps
         self.state.crab_deg = fs.crab_deg
         self.state.dead_reckoning = fs.dead_reckoning
+        self.state.velocity_measured = fs.velocity_measured
 
     # ------------------------------------------------------------------ #
     # GPS offset calibration (#45)

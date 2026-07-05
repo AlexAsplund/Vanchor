@@ -221,6 +221,10 @@ class SensorConfig:
     # from whatever sensors are present; heading/position/control are unchanged.
     # On by default (cheap + useful); set false to skip the filter entirely.
     fusion_enabled: bool = True
+    # Make the SIMULATED GPS emit a rich fix with a MEASURED velocity vector (like
+    # a UBX receiver) instead of NMEA RMC -- exercises the capability-gated fusion
+    # path end-to-end in the sim. Off by default (keeps the sim's NMEA behaviour).
+    gps_velocity: bool = False
     # Sensor-anomaly protection (spike rejection).
     position_jump_max_m: float = 15.0
     heading_jump_max_deg: float = 30.0

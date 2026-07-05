@@ -60,10 +60,15 @@ class FusionState:
     yaw_rate_dps: float | None
     ground_vel_n_mps: float | None
     ground_vel_e_mps: float | None
+    vertical_vel_mps: float | None
     sog_mps: float | None
     crab_deg: float | None
     dead_reckoning: bool
     position: GeoPoint | None
+    # True when the ground velocity came from a MEASURED velocity vector (a real
+    # 3D-velocity source) rather than being derived from SOG/COG or position
+    # deltas -- lets consumers trust it (and the crab) at low speed.
+    velocity_measured: bool = False
 
 
 class NavFusion:
@@ -81,6 +86,7 @@ class NavFusion:
         vel_tau_s: float = 2.0,
         dr_timeout_s: float = 2.0,
         crab_min_sog_mps: float = 0.3,
+        crab_min_sog_measured_mps: float = 0.05,
     ) -> None:
         """Configure the filter.
 
@@ -96,12 +102,20 @@ class NavFusion:
                 filter declares ``dead_reckoning`` and coasts the position on the
                 last known ground velocity.
             crab_min_sog_mps: Speed-over-ground (m/s) below which course, and
-                therefore crab, is undefined and reported as ``None``.
+                therefore crab, is undefined and reported as ``None`` -- when the
+                velocity is DERIVED (from SOG/COG or position deltas, noisy at low
+                speed).
+            crab_min_sog_measured_mps: The lower SOG threshold used when the fix
+                supplied a MEASURED velocity vector (a real receiver Kalman
+                velocity is trustworthy near-stationary), so crab stays valid to
+                much lower speeds -- this is the extra functionality a 3D velocity
+                unlocks.
         """
         self.heading_gain = heading_gain
         self.vel_tau_s = vel_tau_s
         self.dr_timeout_s = dr_timeout_s
         self.crab_min_sog_mps = crab_min_sog_mps
+        self.crab_min_sog_measured_mps = crab_min_sog_measured_mps
 
         # Fused heading (deg, [0, 360)); None until a compass seeds it.
         self._heading: float | None = None
@@ -110,6 +124,10 @@ class NavFusion:
         # Low-passed NED ground velocity (m/s); None until GPS provides it.
         self._vel_n: float | None = None
         self._vel_e: float | None = None
+        # Vertical (down) velocity, and whether the latest fix carried a MEASURED
+        # velocity vector (vs a derived one). Drives the capability-gated features.
+        self._vel_d: float | None = None
+        self._velocity_measured: bool = False
         # Last GPS fix position + the ``now`` it arrived at (None => no fix yet).
         self._position: GeoPoint | None = None
         self._last_gps_time: float | None = None
@@ -153,6 +171,7 @@ class NavFusion:
         *,
         vel_n_mps: float | None = None,
         vel_e_mps: float | None = None,
+        vel_d_mps: float | None = None,
         cog_deg: float | None = None,
         sog_mps: float | None = None,
     ) -> None:
@@ -163,7 +182,15 @@ class NavFusion:
         derived from the position delta since the previous fix. The velocity is
         low-passed toward that target (seeded directly on the first sample).
         Records ``now`` as the last GPS time, which clears dead reckoning.
+
+        Whether ``(vel_n, vel_e)`` was supplied is remembered as
+        ``velocity_measured`` and unlocks the low-speed crab threshold -- the
+        capability activates purely on the fix carrying a real velocity vector,
+        regardless of which source produced it. ``vel_d`` (vertical velocity) is
+        passed straight through.
         """
+        self._velocity_measured = vel_n_mps is not None and vel_e_mps is not None
+        self._vel_d = vel_d_mps
         prev_point = self._position
         prev_time = self._last_gps_time
 
@@ -253,7 +280,12 @@ class NavFusion:
         crab: float | None = None
         if self._vel_n is not None and self._vel_e is not None:
             sog = math.hypot(self._vel_n, self._vel_e)
-            if sog >= self.crab_min_sog_mps and self._heading is not None:
+            # A measured velocity vector is trustworthy near-stationary, so crab
+            # stays valid to a much lower speed -- the capability a real 3D
+            # velocity unlocks over a COG-derived one.
+            crab_min = (self.crab_min_sog_measured_mps if self._velocity_measured
+                        else self.crab_min_sog_mps)
+            if sog >= crab_min and self._heading is not None:
                 course = normalize_deg(math.degrees(math.atan2(self._vel_e, self._vel_n)))
                 crab = angle_difference(self._heading, course)
 
@@ -262,8 +294,10 @@ class NavFusion:
             yaw_rate_dps=self._yaw_rate,
             ground_vel_n_mps=self._vel_n,
             ground_vel_e_mps=self._vel_e,
+            vertical_vel_mps=self._vel_d,
             sog_mps=sog,
             crab_deg=crab,
             dead_reckoning=dead_reckoning,
             position=position,
+            velocity_measured=self._velocity_measured,
         )

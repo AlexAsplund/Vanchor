@@ -1433,7 +1433,8 @@ class Runtime:
             gps = self._build_serial_gps(cfg)
         elif src["gps"] == "sim":
             gps = SimGps(simulator.truth, self.bus, update_hz=cfg.sensors.gps_hz,
-                         position_noise_m=cfg.sensors.gps_noise_m)
+                         position_noise_m=cfg.sensors.gps_noise_m,
+                         emit_velocity=cfg.sensors.gps_velocity)
         elif registry.has("gps", src["gps"]):
             # A pluggable GPS driver (e.g. the UBX "ublox" M9N). Build eagerly but
             # resiliently -- a failure must not crash startup (mirrors compass).
