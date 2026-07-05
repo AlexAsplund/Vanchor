@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a2] — 2026-07-05
+
+- **Per-device Debug view** (Settings → Devices). Every device class now has a
+  `debug()` that reports its most recent RAW data in human-readable form, surfaced
+  by a 🐞 Debug button per device that live-streams it (polls every 0.5 s). The
+  u-blox view shows `fix_type` vs `gnssFixOK`, the NED velocity vector and the
+  accuracy estimates, so a marginal/no-fix state is diagnosable at a glance.
+- **Fix:** `test_device_gating` no longer persists to the repo's
+  `vanchor_data/devices.json` (its `set_device_config` calls could clobber a live
+  device config).
+
 ## [1.5.0a1] — 2026-07-05
 
 - **"Boat shown on map" setting** (Settings → Simulator). Choose which boat the
