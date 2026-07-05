@@ -119,8 +119,8 @@ MANIFEST = ConnectorManifest(
 
 
 def _httpx_send(url: str, body: bytes, headers: dict) -> int:
-    """Default transport: a blocking httpx POST.  Never raises — returns 0 on
-    any exception so the flush loop treats it as a failure and retries."""
+    """Default transport: a blocking httpx POST.  Re-raises transport errors;
+    the caller (_do_flush) catches and keeps the part for retry."""
     try:
         import httpx  # optional; available in the project venv
 
@@ -205,6 +205,9 @@ class MetricsConnector(Connector):
         self._last_flush_result: str = "never"
         self._last_flush_log_mono: float = -999999.0
 
+        # Rotation state
+        self._rotation_pending: bool = False
+
         # Task
         self._flush_task: asyncio.Task[None] | None = None
 
@@ -212,11 +215,14 @@ class MetricsConnector(Connector):
 
     async def start(self, ctx: ConnectorContext) -> None:
         """Subscribe to telemetry and start the flush loop."""
+        # Guard against double-start: cancel any existing flush task
+        if self._flush_task is not None:
+            self._flush_task.cancel()
         self._buf_dir.mkdir(parents=True, exist_ok=True)
         self._seq = self._next_seq()
         self._open_new_part()
         ctx.subscribe("telemetry", self._on_telemetry)
-        self._flush_task = asyncio.get_event_loop().create_task(self._flush_loop())
+        self._flush_task = asyncio.create_task(self._flush_loop())
         logger.info("metrics connector started; buffer=%s url=%s", self._buf_dir, self._url or "(none)")
 
     async def stop(self) -> None:
@@ -272,12 +278,16 @@ class MetricsConnector(Connector):
             pass
         finally:
             self._fh = None
+            self._current_part = None
 
     async def _rotate_current(self) -> None:
         """Close the current part (completing it) and open a new one."""
-        self._close_current_part()
-        self._enforce_cap()
-        self._open_new_part()
+        try:
+            self._close_current_part()
+            self._enforce_cap()
+            self._open_new_part()
+        finally:
+            self._rotation_pending = False
 
     def _completed_parts(self) -> list[Path]:
         """Return all part files EXCEPT the currently-open one, oldest first."""
@@ -335,11 +345,14 @@ class MetricsConnector(Connector):
             return
         self._sample_count += 1
         # Check if rotation is needed; schedule async rotation from sync context
-        if _safe_size(self._current_part) >= _ROTATION_BYTES:  # type: ignore[arg-type]
+        # Guard with _rotation_pending to prevent multiple rotations in the same loop turn
+        if not self._rotation_pending and _safe_size(self._current_part) >= _ROTATION_BYTES:  # type: ignore[arg-type]
+            self._rotation_pending = True
             try:
                 asyncio.get_running_loop().create_task(self._rotate_current())
             except RuntimeError:
-                pass  # no running loop; rotation deferred to next flush
+                self._rotation_pending = False  # reset if no running loop
+                pass  # rotation deferred to next flush
 
     # ─── Flush loop ─────────────────────────────────────────────────────────
 
@@ -382,6 +395,16 @@ class MetricsConnector(Connector):
             except OSError as exc:
                 logger.warning("metrics: could not read part %s: %s", part.name, exc)
                 error_count += 1
+                continue
+
+            # Skip empty parts: if size is <= bare gzip header (30 bytes), delete instead of posting
+            if len(body) < 30:
+                try:
+                    part.unlink(missing_ok=True)
+                    logger.debug("metrics: deleted empty part %s (size %d)", part.name, len(body))
+                    sent_count += 1
+                except OSError as exc:
+                    logger.warning("metrics: could not delete empty part %s: %s", part.name, exc)
                 continue
 
             try:

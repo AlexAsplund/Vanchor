@@ -213,6 +213,10 @@ async def test_flush_deletes_on_200(tmp_path: Path) -> None:
         # Rotate to make the part completed
         await conn._rotate_current()
         await conn._do_flush()
+        # Check before stop() so _current_part is not None
+        buf = tmp_path / "metrics_buffer"
+        completed = [p for p in buf.glob("*.ndjson.gz") if p != conn._current_part]
+        assert completed == [], "completed part should be deleted after 200"
     finally:
         await conn.stop()
 
@@ -223,19 +227,12 @@ async def test_flush_deletes_on_200(tmp_path: Path) -> None:
     assert headers.get("Content-Type") == "application/x-ndjson"
 
     # gunzip and parse NDJSON
-    records = json.loads(gzip.decompress(body).decode("utf-8").strip().replace("\n", ",\n").join(["[", "]"]))
-    # simpler parse:
     lines = gzip.decompress(body).decode("utf-8").strip().split("\n")
     records = [json.loads(l) for l in lines if l.strip()]
     assert len(records) == 2
     assert all("t" in r for r in records)
     assert all("mode" in r for r in records)
     assert all("depth_points" not in r for r in records)
-
-    # Completed part should be deleted
-    buf = tmp_path / "metrics_buffer"
-    completed = [p for p in buf.glob("*.ndjson.gz") if p != conn._current_part]
-    assert completed == [], "completed part should be deleted after 200"
 
 
 @pytest.mark.asyncio
