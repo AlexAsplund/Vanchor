@@ -98,11 +98,16 @@ def test_none_is_a_valid_device_source():
 
 
 def test_serial_ports_are_enumerated():
-    # Auto-detect returns a list of {path, description}; never raises.
+    # Auto-detect returns {path, description, stable}; never raises. Stable
+    # (by-id) entries sort first so the recommended bind is on top.
     ports = _rt().list_serial_ports()
     assert isinstance(ports, list)
     for p in ports:
-        assert "path" in p and "description" in p
+        assert {"path", "description", "stable"} <= set(p)
+    stables = [i for i, p in enumerate(ports) if p["stable"]]
+    unstables = [i for i, p in enumerate(ports) if not p["stable"]]
+    if stables and unstables:
+        assert max(stables) < min(unstables)  # all stable entries precede raw ones
 
 
 def test_a_source_can_be_reset_to_auto_null():

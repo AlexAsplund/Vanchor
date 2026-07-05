@@ -1046,27 +1046,50 @@ class Runtime:
         return self._SENSOR_SOURCES + tuple(registry.sources("compass"))
 
     def list_serial_ports(self) -> list[dict]:
-        """Serial ports present on the host, for the device-config UI to suggest
-        instead of making the user type ``/dev/tty...`` paths. Each is
-        ``{path, description}``; ``by-id`` symlinks are preferred (stable across
-        reboots). Best-effort: falls back to a glob if pyserial isn't available,
-        and never raises."""
+        """Bindable serial ports for the device-config UI to suggest.
+
+        For each device we surface BOTH ways to bind it, so the user can pick
+        what suits: the **stable** ``/dev/serial/by-id/...`` symlink (survives
+        reboots + replugging -- recommended) AND the raw ``/dev/ttyUSB0`` path
+        (simple, but the kernel can renumber it). Each entry is
+        ``{path, description, stable}``, stable (by-id) first. Best-effort: falls
+        back to a glob if pyserial is unavailable, and never raises."""
+        import glob
+        import os
+        # realpath(device) -> its stable /dev/serial/by-id symlink, if any.
+        by_id: dict[str, str] = {}
+        for link in sorted(glob.glob("/dev/serial/by-id/*")):
+            try:
+                by_id[os.path.realpath(link)] = link
+            except OSError:
+                pass
         out: list[dict] = []
+        seen: set[str] = set()
+
+        def _add(path: str, desc: str, stable: bool) -> None:
+            if path and path not in seen:
+                seen.add(path)
+                out.append({"path": path, "description": desc, "stable": stable})
+
         try:
             from serial.tools import list_ports
             for p in list_ports.comports():
+                dev = p.device
                 desc = (p.description or "").strip()
-                out.append({"path": p.device,
-                            "description": desc if desc and desc != "n/a" else p.device})
+                desc = desc if desc and desc != "n/a" else os.path.basename(dev)
+                stable_link = by_id.get(os.path.realpath(dev)) if dev else None
+                if stable_link:
+                    _add(stable_link, f"{desc} - stable USB ID", True)
+                _add(dev, desc, False)
         except Exception:  # noqa: BLE001 - pyserial absent / odd platform -> glob
-            import glob
-            seen: set[str] = set()
             for pat in ("/dev/serial/by-id/*", "/dev/ttyUSB*", "/dev/ttyACM*",
                         "/dev/ttyAMA*", "/dev/ttyS*", "/dev/tty.*", "/dev/cu.*"):
                 for dev in sorted(glob.glob(pat)):
-                    if dev not in seen:
-                        seen.add(dev)
-                        out.append({"path": dev, "description": dev})
+                    stable = "/serial/by-id/" in dev
+                    label = os.path.basename(dev) + (" - stable USB ID" if stable else "")
+                    _add(dev, label, stable)
+        # Stable (by-id) entries first so the recommended choice is on top.
+        out.sort(key=lambda e: (not e["stable"], e["path"]))
         return out
 
     def device_config(self) -> dict:
