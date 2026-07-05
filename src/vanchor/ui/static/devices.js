@@ -1643,19 +1643,23 @@
       "margin-top:10px;padding:10px 12px;border-radius:var(--r-sm,6px);" +
       "background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.08);";
 
-    const consentTitle = document.createElement("div");
-    consentTitle.className = "hint";
-    consentTitle.innerHTML = "This allows <b>" + esc(label) + "</b> to:";
+    if (grantLines.length > 0) {
+      const consentTitle = document.createElement("div");
+      consentTitle.className = "hint";
+      consentTitle.innerHTML = "This allows <b>" + esc(label) + "</b> to:";
 
-    const consentUl = document.createElement("ul");
-    consentUl.style.cssText = "margin: 6px 0 8px; padding-left: 18px;";
-    grantLines.forEach((line) => {
-      const li = document.createElement("li");
-      li.className = "hint";
-      li.style.marginBottom = "2px";
-      li.textContent = typeof line === "string" ? line : String(line);
-      consentUl.appendChild(li);
-    });
+      const consentUl = document.createElement("ul");
+      consentUl.style.cssText = "margin: 6px 0 8px; padding-left: 18px;";
+      grantLines.forEach((line) => {
+        const li = document.createElement("li");
+        li.className = "hint";
+        li.style.marginBottom = "2px";
+        li.textContent = typeof line === "string" ? line : String(line);
+        consentUl.appendChild(li);
+      });
+
+      consentBlock.append(consentTitle, consentUl);
+    }
 
     const consentBtnRow = document.createElement("div");
     consentBtnRow.className = "btn-row";
@@ -1669,7 +1673,7 @@
     cancelBtn.textContent = "Cancel";
     consentBtnRow.append(enableBtn, cancelBtn);
 
-    consentBlock.append(consentTitle, consentUl, consentBtnRow);
+    consentBlock.append(consentBtnRow);
     row.appendChild(consentBlock);
 
     // Per-row status feedback line.
@@ -1700,7 +1704,7 @@
         setStatus("Disabling…", "busy");
         postArm(name, false).then((res) => {
           toggle.disabled = false;
-          if (!res || res.ok === false) {
+          if (!res || !res.ok) {
             toggle.checked = isArmed || needsReconsent;   // revert on error
             setStatus("Failed: " + ((res && res.error) || "unknown"), "err");
             return;
@@ -1730,7 +1734,7 @@
       setStatus("Enabling…", "busy");
       postArm(name, true).then((res) => {
         toggle.disabled = false;
-        if (!res || res.ok === false) {
+        if (!res || !res.ok) {
           toggle.checked = false;
           setStatus("Failed: " + ((res && res.error) || "unknown"), "err");
           return;
@@ -1788,12 +1792,7 @@
   // ---- load / degrade ------------------------------------------------------ //
 
   function showUnavailable() {
-    const u = $("conn-unavailable");
-    const body = $("conn-body");
-    if (u) u.classList.remove("hidden");
-    if (body) body.classList.add("hidden");
-    const state = $("conn-state");
-    if (state) state.textContent = "n/a";
+    card.classList.add("hidden");
   }
 
   function setBadge(txt) {
