@@ -352,7 +352,6 @@ class MetricsConnector(Connector):
                 asyncio.get_running_loop().create_task(self._rotate_current())
             except RuntimeError:
                 self._rotation_pending = False  # reset if no running loop
-                pass  # rotation deferred to next flush
 
     # ─── Flush loop ─────────────────────────────────────────────────────────
 
@@ -388,6 +387,7 @@ class MetricsConnector(Connector):
 
         sent_count = 0
         error_count = 0
+        skipped_empty = 0
 
         for part in parts:
             try:
@@ -397,15 +397,21 @@ class MetricsConnector(Connector):
                 error_count += 1
                 continue
 
-            # Skip empty parts: if size is <= bare gzip header (30 bytes), delete instead of posting
-            if len(body) < 30:
-                try:
-                    part.unlink(missing_ok=True)
-                    logger.debug("metrics: deleted empty part %s (size %d)", part.name, len(body))
-                    sent_count += 1
-                except OSError as exc:
-                    logger.warning("metrics: could not delete empty part %s: %s", part.name, exc)
-                continue
+            # Skip empty parts: gunzip and check if the content is blank.
+            # A gzip file produced by gzip.open("wt") with nothing written is ~41 bytes
+            # (header + FNAME field + empty deflate stream + trailer), so a byte-size
+            # threshold would never fire.  Structural decompression is the reliable check.
+            try:
+                if gzip.decompress(body).strip() == b"":  # empty part (e.g. rotate-then-stop)
+                    try:
+                        part.unlink(missing_ok=True)
+                        logger.debug("metrics: deleted empty part %s (structural check)", part.name)
+                        skipped_empty += 1
+                    except OSError as exc:
+                        logger.warning("metrics: could not delete empty part %s: %s", part.name, exc)
+                    continue
+            except Exception:  # noqa: BLE001 — undecodable -> treat as data, let POST path handle it
+                pass
 
             try:
                 status = self._send(self._url, body, headers)
@@ -440,7 +446,10 @@ class MetricsConnector(Connector):
 
         self._last_flush_wall = self._wall()
         if error_count == 0 and sent_count > 0:
-            self._last_flush_result = f"ok ({sent_count} parts sent)"
+            skip_note = f", {skipped_empty} empty deleted" if skipped_empty else ""
+            self._last_flush_result = f"ok ({sent_count} parts sent{skip_note})"
+        elif skipped_empty > 0 and sent_count == 0 and error_count == 0:
+            self._last_flush_result = f"ok ({skipped_empty} empty parts deleted)"
         elif sent_count > 0:
             self._last_flush_result = f"partial ({sent_count} sent, {error_count} failed)"
         elif error_count > 0 and sent_count == 0:

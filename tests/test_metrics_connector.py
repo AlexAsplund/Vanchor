@@ -418,12 +418,80 @@ async def test_size_cap_never_drops_inprogress(tmp_path: Path) -> None:
         await bus.publish("telemetry", _FAKE_TELEM)
         # Don't rotate — _current_part is the open file
         conn._enforce_cap()
+        # Capture in_progress BEFORE stop() nulls _current_part; assertion must always run.
+        in_progress = conn._current_part
+        assert in_progress is not None, "_current_part should not be None — cap enforcement ran"
+        assert in_progress.exists(), "in-progress part must not be deleted by cap"
     finally:
         await conn.stop()
 
-    # In-progress part must still exist
-    if conn._current_part is not None:
-        assert conn._current_part.exists(), "in-progress part must not be deleted by cap"
+
+@pytest.mark.asyncio
+async def test_empty_part_is_deleted_not_sent(tmp_path: Path) -> None:
+    """An empty completed part is deleted rather than POSTed.
+
+    A non-empty part present in the same flush must still be sent and deleted
+    normally — and the empty-part deletion must NOT count in sent_count.
+    """
+    sends: list[bytes] = []
+
+    def fake_send(url: str, body: bytes, headers: dict) -> int:
+        sends.append(body)
+        return 200
+
+    clock = [0.0]
+    conn = MetricsConnector(
+        data_dir=tmp_path,
+        url="http://metrics.example.com/ingest",
+        interval_s=0.0,
+        mono_fn=lambda: clock[0],
+        send=fake_send,
+    )
+    bus = EventBus()
+    ctx = _make_ctx(bus)
+    await conn.start(ctx)
+    try:
+        # After start(), the current part is open but contains zero samples.
+        # Rotate immediately to produce a genuinely empty completed part.
+        empty_part = conn._current_part
+        assert empty_part is not None
+        await conn._rotate_current()  # closes empty part, opens a new one
+        assert empty_part.exists(), "empty part should be on disk before flush"
+
+        # Write one sample into the new part and rotate to complete it.
+        clock[0] = 1.0
+        await bus.publish("telemetry", _FAKE_TELEM)
+        nonempty_part = conn._current_part
+        assert nonempty_part is not None
+        await conn._rotate_current()  # completes the non-empty part
+
+        # Sanity: two completed parts present before flush.
+        buf = tmp_path / "metrics_buffer"
+        completed_before = sorted(
+            p for p in buf.glob("*.ndjson.gz") if p != conn._current_part
+        )
+        assert len(completed_before) == 2, (
+            f"expected 2 completed parts before flush, got {len(completed_before)}"
+        )
+
+        await conn._do_flush()
+
+        # Empty part must be silently deleted — NOT sent.
+        assert not empty_part.exists(), "empty part should be deleted, not sent"
+        # Non-empty part must be sent then deleted.
+        assert not nonempty_part.exists(), "non-empty part should be sent and deleted on 200"
+        # send() called exactly once (never for the empty part).
+        assert len(sends) == 1, f"expected exactly 1 POST, got {len(sends)}"
+        # Verify the single sent body actually contains data.
+        content = gzip.decompress(sends[0]).decode("utf-8").strip()
+        records = [json.loads(l) for l in content.split("\n") if l.strip()]
+        assert len(records) == 1
+        assert "t" in records[0]
+        # last_flush_result must NOT call the empty part a "sent" part.
+        assert "1 parts sent" in conn._last_flush_result or "1 parts sent" in conn._last_flush_result
+        assert "empty deleted" in conn._last_flush_result or "empty" in conn._last_flush_result
+    finally:
+        await conn.stop()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
