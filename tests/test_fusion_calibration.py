@@ -96,7 +96,44 @@ def test_interference_tuner_measures_heading_drift_vs_thrust():
     assert cal.motor_interference_slope is not None and abs(cal.motor_interference_slope - 8.0) < 1.0
     # score: 8 deg drift over a 20 deg "unusable" scale -> ~60/100
     assert cal.motor_interference_score is not None and abs(cal.motor_interference_score - 60) <= 3
-    assert warnings == []
+    # steering was static here -> thrust-only fit + a servo-not-measured warning
+    assert cal.motor_interference_sin is None
+    assert any("servo" in w.lower() for w in warnings)
+
+
+def test_interference_2d_fit_recovers_thrust_and_servo_terms():
+    import math
+    A, B, C = 4.0, 3.0, -2.0        # drift = |thrust|*(A + B*sin(steer) + C*cos(steer))
+    buf = CaptureBuffer()
+    buf.add_heading(90.0, cog=None, sog=0.0, thrust=0.0, steer=0.0, gyro=0.0, t=0.0)  # rest baseline
+    t = 0.3
+    for thr in (0.2, 0.4, 0.6, 0.8, 1.0):
+        for steer in (-30.0, -15.0, 0.0, 15.0, 30.0):
+            s = math.radians(steer)
+            drift = thr * (A + B * math.sin(s) + C * math.cos(s))
+            buf.add_heading((90.0 + drift) % 360, cog=None, sog=0.0,
+                            thrust=thr, steer=steer, gyro=0.0, t=t)
+            t += 0.3
+    cal, warnings = tune(buf, "interference")
+    assert abs(cal.motor_interference_slope - A) < 0.3
+    assert abs(cal.motor_interference_sin - B) < 0.3    # servo term recovered
+    assert abs(cal.motor_interference_cos - C) < 0.3
+    assert warnings == []                                # steering swept -> no warning
+
+
+def test_navigator_applies_servo_dependent_interference_comp():
+    import math
+    from vanchor.core.models import MotorCommand
+    st = NavigationState()
+    nav = Navigator(st, bus=None, mono_fn=lambda: 0.0, fusion=NavFusion())
+    nav.apply_calibration(FusionCalibration(
+        motor_interference_slope=4.0, motor_interference_sin=3.0,
+        motor_interference_cos=0.0, interference_comp_enabled=True))
+    st.motor_command = MotorCommand(thrust=1.0, steering=1.0)   # full thrust, hard over
+    s = math.radians(1.0 * st.max_steer_angle_deg)
+    expected = 1.0 * (4.0 + 3.0 * math.sin(s))                   # servo term included
+    nav.handle_sentence(nmea.encode_hdt(100.0))
+    assert abs(st.interference_comp_deg - expected) < 1e-6
 
 
 def test_interference_score_bounds():

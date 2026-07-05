@@ -76,9 +76,13 @@ class Navigator:
         # capture is running.
         self._gyro_bias = 0.0
         self._heading_offset = 0.0     # compass/IMU mounting yaw offset (align capture)
-        # EXPERIMENTAL motor-interference remedy: subtract slope*|thrust| from the
-        # heading in real time. Off (slope 0 / disabled) until enabled.
+        # EXPERIMENTAL motor-interference remedy: subtract
+        # |thrust|*(slope + sin_c*sin(steer) + cos_c*cos(steer)) from the heading in
+        # real time -- the sin/cos terms follow the servo as it rotates the motor.
+        # Off (all-zero / disabled) until enabled.
         self._interference_slope = 0.0
+        self._interference_sin = 0.0
+        self._interference_cos = 0.0
         self._interference_comp = False
         self._capture: CaptureBuffer | None = None
         self._cap_gyro = 0.0           # gyro-integrated heading during a capture (ref)
@@ -197,6 +201,8 @@ class Navigator:
         self._gyro_bias = cal.gyro_bias_dps or 0.0
         self._heading_offset = cal.heading_offset_deg or 0.0
         self._interference_slope = cal.motor_interference_slope or 0.0
+        self._interference_sin = cal.motor_interference_sin or 0.0
+        self._interference_cos = cal.motor_interference_cos or 0.0
         self._interference_comp = bool(cal.interference_comp_enabled)
         if self.fusion is not None:
             overrides = cal.gain_overrides()
@@ -420,8 +426,14 @@ class Navigator:
                 # 0.0 until calibrated, so an un-calibrated boat is unchanged. Plus
                 # the EXPERIMENTAL motor-interference remedy (subtract the measured
                 # drift for the current thrust); 0.0 unless explicitly enabled.
-                comp = (self._interference_slope * abs(self.state.motor_command.thrust)
-                        if self._interference_comp else 0.0)
+                comp = 0.0
+                if self._interference_comp:
+                    thr = abs(self.state.motor_command.thrust)
+                    steer_rad = math.radians(self.state.motor_command.steering
+                                             * self.state.max_steer_angle_deg)
+                    comp = thr * (self._interference_slope
+                                  + self._interference_sin * math.sin(steer_rad)
+                                  + self._interference_cos * math.cos(steer_rad))
                 self.state.interference_comp_deg = comp
                 corrected = (true_deg + self._heading_offset - comp) % 360.0
                 self.state.heading_deg = corrected
@@ -433,6 +445,7 @@ class Navigator:
                         cog=cur_fix.cog_deg if cur_fix is not None else None,
                         sog=self.state.sog_knots * 0.5144444,
                         thrust=self.state.motor_command.thrust,
+                        steer=self.state.motor_command.steering * self.state.max_steer_angle_deg,
                         gyro=self._cap_gyro, t=now)
                 if self.fusion is not None:
                     self.fusion.update_compass(corrected)

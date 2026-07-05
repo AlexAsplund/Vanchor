@@ -647,8 +647,8 @@
       instr: "Keep the boat STILL with the motor OFF." },
     align: { label: "Align heading", ms: 15000,
       instr: "Drive STRAIGHT at a steady cruise speed." },
-    interference: { label: "Measure noise", ms: 15000,
-      instr: "Tie the bow off so the boat CAN'T rotate, then slowly ramp the motor from 0 toward full." },
+    interference: { label: "Measure noise", ms: 20000,
+      instr: "Tie the bow off so the boat can't rotate. Slowly ramp the motor from 0 toward full AND sweep the steering left↔right through its range." },
   };
   const SEQUENCE = ["still", "align", "interference"];
 
@@ -758,6 +758,23 @@
     scoreBox.classList.remove("hidden");
   }
 
+  // Servo-term status: motor_interference_sin/cos are both non-null once the
+  // steering sweep was measured. Hidden unless an interference sweep ran at all.
+  function renderServo(host, cal) {
+    if (!host) return;
+    const ran = cal && (cal.motor_interference_score != null
+      || cal.motor_interference_deg != null
+      || cal.motor_interference_sin != null
+      || cal.motor_interference_cos != null);
+    if (!ran) { host.classList.add("hidden"); host.textContent = ""; return; }
+    const measured = cal.motor_interference_sin != null && cal.motor_interference_cos != null;
+    host.className = "hint" + (measured ? " ok" : "");
+    host.textContent = measured
+      ? "Servo compensation: measured"
+      : "Servo compensation: not measured — sweep the steering too";
+    host.classList.remove("hidden");
+  }
+
   // Render motor-interference mitigation advice (verbatim, from the backend) as a
   // "What to do about it" list. Given visual weight (tinted callout) when the
   // score is poor; kept low-key/collapsed when it's good. Hidden if no advice.
@@ -825,6 +842,7 @@
       else readout.textContent = "Not calibrated — using defaults.";
     }
     if (reset) reset.classList.toggle("hidden", !(cal && typeof cal === "object"));
+    renderServo($("dev-calib-saved-servo"), cal);
     // Mitigation advice for the saved interference score (empty -> hidden).
     renderRecs($("dev-calib-saved-recs"), data && data.recommendations,
       cal && cal.motor_interference_score);
@@ -1013,12 +1031,16 @@
     if (acts) acts.classList.toggle("hidden", seq.active);
     const isInterference = proposalMode === "interference";
     showScore(isInterference ? cal : null);
-    // Mitigation advice sits under the score gauge (interference mode only).
+    // Servo-term status + mitigation advice sit under the score gauge
+    // (interference mode only).
+    const servoHost = $("dev-calib-servo");
     const recsHost = $("dev-calib-recs");
     if (isInterference) {
+      renderServo(servoHost, cal);
       renderRecs(recsHost, recs, cal && cal.motor_interference_score);
-    } else if (recsHost) {
-      recsHost.classList.add("hidden");
+    } else {
+      if (servoHost) servoHost.classList.add("hidden");
+      if (recsHost) recsHost.classList.add("hidden");
     }
     if (cal && typeof cal === "object") {
       renderCal(body, cal, MODE_FIELDS[proposalMode]);
@@ -1034,6 +1056,8 @@
     if (wrap) wrap.classList.add("hidden");
     const scoreBox = $("dev-calib-score");
     if (scoreBox) scoreBox.classList.add("hidden");
+    const servoHost = $("dev-calib-servo");
+    if (servoHost) servoHost.classList.add("hidden");
     const recsHost = $("dev-calib-recs");
     if (recsHost) recsHost.classList.add("hidden");
     proposal = null;

@@ -38,6 +38,7 @@ _MOVING_SPEED_MPS = 0.5         # mean speed above which the boat wasn't "still"
 _ALIGN_MIN_SOG_MPS = 0.7        # a fix must be moving this fast to bound the course
 _ALIGN_MIN_FRAMES = 10
 _INTERF_MIN_THRUST_RANGE = 0.2  # thrust must sweep at least this much to be usable
+_INTERF_MIN_STEER_RANGE = 20.0  # steer (deg) must sweep this much to fit the servo term
 _INTERF_UNUSABLE_DEG = 20.0     # heading drift (deg) at which the compass scores 0
 
 # The NavFusion gain fields a calibration may override.
@@ -62,7 +63,12 @@ class FusionCalibration:
     heading_offset_deg: float | None = None
     # interference: diagnostics (not auto-applied)
     motor_interference_deg: float | None = None          # max heading drift over the sweep
-    motor_interference_slope: float | None = None        # deg per unit thrust (the remedy coeff)
+    # Remedy model: correction = |thrust| * (slope + sin_coeff*sin(steer) + cos_coeff*cos(steer)).
+    # slope is the thrust-only term (backward compatible); the sin/cos terms are the
+    # SERVO contribution -- as the servo rotates the motor, its field direction turns.
+    motor_interference_slope: float | None = None        # deg per unit thrust (steer-independent)
+    motor_interference_sin: float | None = None          # servo term (deg/thrust) * sin(steer)
+    motor_interference_cos: float | None = None          # servo term (deg/thrust) * cos(steer)
     motor_interference_score: int | None = None          # 0 (unusable) .. 100 (no interference)
     # EXPERIMENTAL: apply -slope*|thrust| to the heading in real time to undo the
     # motor's pull. None => unchanged; a dedicated toggle sets it True/False so a
@@ -130,9 +136,9 @@ class CaptureBuffer:
         self._stamp(t)
 
     def add_heading(self, heading: float, *, cog: float | None, sog: float,
-                    thrust: float, gyro: float, t: float) -> None:
+                    thrust: float, gyro: float, t: float, steer: float = 0.0) -> None:
         self.frames.append({"heading": heading, "cog": cog, "sog": sog,
-                            "thrust": thrust, "gyro": gyro})
+                            "thrust": thrust, "steer": steer, "gyro": gyro})
         self._stamp(t)
 
     @property
@@ -189,13 +195,41 @@ def _pos_sigma_m(pos: list[tuple[float, float]]) -> float | None:
 
 def _slope(xs: list[float], ys: list[float]) -> float:
     """Least-squares slope dy/dx (0 if x has no spread)."""
-    n = len(xs)
     mx = statistics.fmean(xs)
     my = statistics.fmean(ys)
     den = sum((x - mx) ** 2 for x in xs)
     if den <= 1e-12:
         return 0.0
     return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
+
+
+def _solve3(m: list[list[float]], v: list[float]) -> tuple[float, float, float]:
+    """Solve a 3x3 linear system by Gaussian elimination with partial pivoting."""
+    a = [row[:] + [v[i]] for i, row in enumerate(m)]
+    for col in range(3):
+        piv = max(range(col, 3), key=lambda r: abs(a[r][col]))
+        a[col], a[piv] = a[piv], a[col]
+        if abs(a[col][col]) < 1e-12:
+            continue
+        for r in range(3):
+            if r != col:
+                f = a[r][col] / a[col][col]
+                for k in range(col, 4):
+                    a[r][k] -= f * a[col][k]
+    return tuple(a[i][3] / a[i][i] if abs(a[i][i]) > 1e-12 else 0.0 for i in range(3))  # type: ignore[return-value]
+
+
+def _fit_interference(thr: list[float], steer_rad: list[float],
+                      dev: list[float]) -> tuple[float, float, float]:
+    """Least-squares fit of dev ~= |thrust|*(A + B*sin(steer) + C*cos(steer)),
+    returning (A, B, C). Features are thrust-scaled so the model is 0 at 0 thrust."""
+    feats = [[t, t * math.sin(s), t * math.cos(s)] for t, s in zip(thr, steer_rad)]
+    m = [[sum(feats[k][i] * feats[k][j] for k in range(len(feats))) for j in range(3)]
+         for i in range(3)]
+    for i in range(3):
+        m[i][i] += 1e-6  # tiny ridge for numerical safety
+    rhs = [sum(feats[k][i] * dev[k] for k in range(len(feats))) for i in range(3)]
+    return _solve3(m, rhs)
 
 
 # -- tuners --------------------------------------------------------------- #
@@ -272,7 +306,22 @@ def tune_interference(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]
     devs = [(d + 180.0) % 360.0 - 180.0 for d in devs]  # wrap to [-180, 180)
     max_dev = max(abs(d) for d in devs)
     cal.motor_interference_deg = round(max_dev, 2)
-    cal.motor_interference_slope = round(_slope(thrusts, devs), 2)
+
+    # Fit the remedy model. If the SERVO (steer) swept enough, fit the full
+    # thrust + steer model so the correction follows the motor as it rotates;
+    # otherwise fall back to the thrust-only slope and say the servo term is unknown.
+    steers = [float(f.get("steer", 0.0)) for f in frames]
+    if max(steers) - min(steers) >= _INTERF_MIN_STEER_RANGE:
+        a, b, c = _fit_interference(thrusts, [math.radians(s) for s in steers], devs)
+        cal.motor_interference_slope = round(a, 3)
+        cal.motor_interference_sin = round(b, 3)
+        cal.motor_interference_cos = round(c, 3)
+    else:
+        cal.motor_interference_slope = round(_slope(thrusts, devs), 3)
+        warnings.append("Steering didn't vary, so the servo's contribution wasn't "
+                        "measured -- sweep the steering through its range while you "
+                        "ramp thrust to compensate for the servo too.")
+
     # Quality score: 100 = the motor doesn't move the compass at all; 0 = it moves
     # it by _INTERF_UNUSABLE_DEG or more (heading that corrupt is unusable for a
     # heading-critical spot-lock). Linear between.
