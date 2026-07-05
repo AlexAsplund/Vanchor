@@ -75,7 +75,9 @@ class Navigator:
         # ``fusion`` directly. All no-ops until a calibration is applied / a
         # capture is running.
         self._gyro_bias = 0.0
+        self._heading_offset = 0.0     # compass/IMU mounting yaw offset (align capture)
         self._capture: CaptureBuffer | None = None
+        self._cap_gyro = 0.0           # gyro-integrated heading during a capture (ref)
         # Local magnetic declination (degrees East-positive). Applied to MAGNETIC
         # headings (HDM/HDG with reference="M") to yield true before the control
         # stack uses state.heading_deg. True headings (HDT/HDG fully corrected,
@@ -135,11 +137,12 @@ class Navigator:
         now = self._mono_fn()
         self.state.imu = sample
         self.state.imu_received_mono = now
+        dt = (now - self._last_imu_mono) if self._last_imu_mono is not None else 0.0
+        self._last_imu_mono = now
         if self._capture is not None:
             self._capture.add_imu(sample.gz, now)   # RAW rate -> measures the bias
+            self._cap_gyro += sample.gz * dt        # magnetics-free heading reference
         if self.fusion is not None:
-            dt = (now - self._last_imu_mono) if self._last_imu_mono is not None else 0.0
-            self._last_imu_mono = now
             # Feed the bias-corrected rate (calibration removes the resting offset).
             self.fusion.update_imu(sample.gz - self._gyro_bias, dt)
             self._apply_fusion(now)
@@ -185,9 +188,10 @@ class Navigator:
 
     # -- fusion calibration (still-capture system-ID; see nav.calibration) --- #
     def apply_calibration(self, cal: FusionCalibration) -> None:
-        """Apply a calibration live: subtract the gyro bias and set the fusion
-        gains (a ``None`` override resets that gain to the NavFusion default)."""
-        self._gyro_bias = cal.gyro_bias_dps
+        """Apply a calibration live: gyro-bias + mounting heading offset + fusion
+        gains (a ``None`` field reverts to the default)."""
+        self._gyro_bias = cal.gyro_bias_dps or 0.0
+        self._heading_offset = cal.heading_offset_deg or 0.0
         if self.fusion is not None:
             overrides = cal.gain_overrides()
             defaults = NavFusion()  # fresh instance carries the default gains
@@ -197,6 +201,7 @@ class Navigator:
     def start_capture(self) -> None:
         """Begin buffering raw sensor samples for a calibration capture."""
         self._capture = CaptureBuffer()
+        self._cap_gyro = 0.0
 
     def stop_capture(self) -> CaptureBuffer | None:
         """End the capture and return its buffer (None if none was running)."""
@@ -405,12 +410,21 @@ class Navigator:
                 true_deg = parsed.heading_deg
             if self.guard.check_heading(true_deg):
                 now = self._mono_fn()
-                self.state.heading_deg = true_deg
+                # Compass/IMU mounting yaw offset (align calibration) applied here;
+                # 0.0 until calibrated, so an un-calibrated boat is unchanged.
+                corrected = (true_deg + self._heading_offset) % 360.0
+                self.state.heading_deg = corrected
                 self.state.heading_received_mono = now
                 if self._capture is not None:
-                    self._capture.add_heading(true_deg, now)
+                    cur_fix = self.state.fix
+                    self._capture.add_heading(
+                        true_deg,   # RAW heading -> align measures the true offset
+                        cog=cur_fix.cog_deg if cur_fix is not None else None,
+                        sog=self.state.sog_knots * 0.5144444,
+                        thrust=self.state.motor_command.thrust,
+                        gyro=self._cap_gyro, t=now)
                 if self.fusion is not None:
-                    self.fusion.update_compass(true_deg)
+                    self.fusion.update_compass(corrected)
                     self._apply_fusion(now)
                 # The real compass just reported: record it and resume steering on
                 # it, dropping any COG fallback that was in effect.

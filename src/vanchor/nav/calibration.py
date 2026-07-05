@@ -1,17 +1,24 @@
-"""Fusion calibration: capture the boat's sensor noise while it sits still and
-tune the GNSS/INS filter (nav.fusion) to it.
+"""Fusion calibration: short capture passes that measure this boat's sensors and
+tune the GNSS/INS filter (nav.fusion) to them. A *system-ID* flow, separate from
+the one-time boat-setup wizard -- re-run when a sensor moves.
 
-This is a small *system-ID* pass, separate from the one-time boat-setup wizard: a
-short still capture (motor off) measures the gyro bias and the per-sensor noise,
-from which we derive boat-specific fusion gains instead of the hand-picked
-defaults. Everything here is pure/deterministic (no clock, no I/O except the
-JSON load/save helpers); the runtime injects timestamps.
+Three capture MODES, each a different guided manoeuvre analysed from the same
+recorded channels:
 
-The mappings from measured noise to gains are deliberately simple, monotonic and
-clamped -- documented heuristics, not a formal optimum: noisier velocity -> more
-smoothing + higher crab thresholds; noisier compass -> a gentler complementary
-blend (trust the gyro more). A calibration with a field left ``None`` means "keep
-the NavFusion default", so a partial capture never makes things worse.
+* ``still``  -- boat stationary, motor off. Measures gyro bias + per-sensor noise
+  and derives the fusion gains from it.
+* ``align``  -- drive straight at cruise. The steady difference between the
+  compass heading and the GNSS course-over-ground is the compass/IMU **mounting
+  yaw offset** (leeway is small on a straight run), applied as a heading offset.
+* ``interference`` -- hold heading fixed (tie the bow off) and ramp motor thrust.
+  How far the magnetic heading drifts from the magnetics-free gyro reference as
+  thrust rises quantifies the **motor's magnetic interference** (a diagnostic:
+  "your compass moves N° at full thrust" -> maybe go dual-antenna).
+
+All pure/deterministic (no clock/I/O beyond the JSON helpers). A calibration field
+left ``None`` keeps the NavFusion default, and captures MERGE (running ``align``
+after ``still`` keeps the tuned gains and adds the offset), so a partial capture
+never regresses anything.
 """
 from __future__ import annotations
 
@@ -19,14 +26,19 @@ import contextlib
 import json
 import math
 import statistics
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
-from ..core.geo import EARTH_RADIUS_M
+from ..core.geo import EARTH_RADIUS_M, angle_difference, normalize_deg
 
 CALIBRATION_FILE = "fusion_cal.json"
-_MIN_SAMPLES = 20                       # below this the capture is too short to trust
-_MOVING_SPEED_MPS = 0.5                 # mean speed above which the boat wasn't "still"
+CAPTURE_MODES = ("still", "align", "interference")
+_MIN_SAMPLES = 20               # below this the capture is too short to trust
+_MOVING_SPEED_MPS = 0.5         # mean speed above which the boat wasn't "still"
+_ALIGN_MIN_SOG_MPS = 0.7        # a fix must be moving this fast to bound the course
+_ALIGN_MIN_FRAMES = 10
+_INTERF_MIN_THRUST_RANGE = 0.2  # thrust must sweep at least this much to be usable
+_INTERF_UNUSABLE_DEG = 20.0     # heading drift (deg) at which the compass scores 0
 
 # The NavFusion gain fields a calibration may override.
 GAIN_KEYS = ("heading_gain", "vel_tau_s", "dr_timeout_s",
@@ -35,29 +47,44 @@ GAIN_KEYS = ("heading_gain", "vel_tau_s", "dr_timeout_s",
 
 @dataclass
 class FusionCalibration:
-    """A per-boat fusion calibration: a gyro-bias correction, optional tuned
-    gains (``None`` => use the NavFusion default) and the measured noise the
-    tuning came from (for display/provenance)."""
+    """Per-boat fusion calibration. Every field is optional (``None`` => keep the
+    NavFusion default / unmeasured), so results from different capture modes
+    merge cleanly."""
 
-    gyro_bias_dps: float = 0.0
-    # Tuned NavFusion gains (None => default).
+    # still: bias correction + tuned gains
+    gyro_bias_dps: float | None = None
     heading_gain: float | None = None
     vel_tau_s: float | None = None
     dr_timeout_s: float | None = None
     crab_min_sog_mps: float | None = None
     crab_min_sog_measured_mps: float | None = None
-    # Measured noise this calibration was derived from.
+    # align: compass/IMU mounting yaw offset (added to the heading)
+    heading_offset_deg: float | None = None
+    # interference: diagnostics (not auto-applied)
+    motor_interference_deg: float | None = None          # max heading drift over the sweep
+    motor_interference_slope: float | None = None        # deg per unit thrust
+    motor_interference_score: int | None = None          # 0 (unusable) .. 100 (no interference)
+    # measured noise (provenance / display)
     gps_pos_sigma_m: float | None = None
     gps_vel_sigma_mps: float | None = None
     heading_sigma_deg: float | None = None
     yaw_rate_sigma_dps: float | None = None
-    # Provenance.
+    # last-capture provenance
     samples: int = 0
     duration_s: float = 0.0
 
     def gain_overrides(self) -> dict:
-        """The non-None gain fields, as NavFusion constructor/attribute kwargs."""
+        """The non-None gain fields, as NavFusion attribute kwargs."""
         return {k: getattr(self, k) for k in GAIN_KEYS if getattr(self, k) is not None}
+
+    def merged_with(self, other: FusionCalibration) -> FusionCalibration:
+        """A copy with ``other``'s explicitly-measured (non-None) fields layered
+        on top -- so each capture updates only what it measured."""
+        updates = {k: v for k, v in asdict(other).items()
+                   if v is not None and k not in ("samples", "duration_s")}
+        updates["samples"] = other.samples
+        updates["duration_s"] = other.duration_s
+        return replace(self, **updates)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -69,14 +96,16 @@ class FusionCalibration:
 
 
 class CaptureBuffer:
-    """Accumulates raw sensor samples during a still capture, per channel (each
-    sensor arrives at its own rate, so channels are independent lists)."""
+    """Accumulates raw samples during a capture. Per-channel scalar lists for the
+    still-mode noise, plus a time-ordered list of heading *frames* (each carries
+    the concurrent course, speed, thrust and gyro-integrated heading) for the
+    align/interference analyses."""
 
     def __init__(self) -> None:
-        self.yaw_rate: list[float] = []           # raw gyro yaw rate (deg/s)
-        self.vel: list[tuple[float, float]] = []   # (vel_n, vel_e) m/s when present
-        self.pos: list[tuple[float, float]] = []   # (lat, lon)
-        self.heading: list[float] = []             # compass heading (deg)
+        self.yaw_rate: list[float] = []            # raw gyro yaw rate (deg/s)
+        self.vel: list[tuple[float, float]] = []    # (vel_n, vel_e) m/s when present
+        self.pos: list[tuple[float, float]] = []    # (lat, lon)
+        self.frames: list[dict] = []                # per compass update, see add_heading
         self._t0: float | None = None
         self._t1: float | None = None
 
@@ -96,9 +125,15 @@ class CaptureBuffer:
             self.vel.append((vel_n, vel_e))
         self._stamp(t)
 
-    def add_heading(self, heading_deg: float, t: float) -> None:
-        self.heading.append(heading_deg)
+    def add_heading(self, heading: float, *, cog: float | None, sog: float,
+                    thrust: float, gyro: float, t: float) -> None:
+        self.frames.append({"heading": heading, "cog": cog, "sog": sog,
+                            "thrust": thrust, "gyro": gyro})
         self._stamp(t)
+
+    @property
+    def headings(self) -> list[float]:
+        return [f["heading"] for f in self.frames]
 
     @property
     def duration_s(self) -> float:
@@ -108,15 +143,25 @@ class CaptureBuffer:
 
     @property
     def count(self) -> int:
-        return len(self.yaw_rate) + len(self.pos) + len(self.heading)
+        return len(self.yaw_rate) + len(self.pos) + len(self.frames)
 
 
+# -- helpers -------------------------------------------------------------- #
 def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
+def _round_opt(x: float | None, n: int) -> float | None:
+    return round(x, n) if x is not None else None
+
+
+def _circular_mean_deg(angles: list[float]) -> float:
+    s = statistics.fmean(math.sin(math.radians(a)) for a in angles)
+    c = statistics.fmean(math.cos(math.radians(a)) for a in angles)
+    return math.degrees(math.atan2(s, c))
+
+
 def _circular_std_deg(angles: list[float]) -> float | None:
-    """Circular standard deviation (deg) of a set of headings."""
     if len(angles) < 2:
         return None
     s = statistics.fmean(math.sin(math.radians(a)) for a in angles)
@@ -128,7 +173,6 @@ def _circular_std_deg(angles: list[float]) -> float | None:
 
 
 def _pos_sigma_m(pos: list[tuple[float, float]]) -> float | None:
-    """Combined N/E scatter (m) of a set of lat/lon points about their centroid."""
     if len(pos) < 2:
         return None
     lat0 = statistics.fmean(p[0] for p in pos)
@@ -139,17 +183,24 @@ def _pos_sigma_m(pos: list[tuple[float, float]]) -> float | None:
     return math.hypot(statistics.pstdev(north), statistics.pstdev(east))
 
 
-def tune(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]:
-    """Derive a :class:`FusionCalibration` from a still-capture buffer, plus any
-    warnings (too few samples, boat wasn't still)."""
+def _slope(xs: list[float], ys: list[float]) -> float:
+    """Least-squares slope dy/dx (0 if x has no spread)."""
+    n = len(xs)
+    mx = statistics.fmean(xs)
+    my = statistics.fmean(ys)
+    den = sum((x - mx) ** 2 for x in xs)
+    if den <= 1e-12:
+        return 0.0
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den
+
+
+# -- tuners --------------------------------------------------------------- #
+def tune_still(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]:
+    """Gyro bias + per-sensor noise -> fusion gains."""
     warnings: list[str] = []
     cal = FusionCalibration(samples=buf.count, duration_s=round(buf.duration_s, 1))
-
     if buf.count < _MIN_SAMPLES:
-        warnings.append(
-            f"Only {buf.count} samples captured -- keep the boat still and "
-            "capture longer for a reliable calibration."
-        )
+        warnings.append(f"Only {buf.count} samples -- keep the boat still and capture longer.")
 
     if len(buf.yaw_rate) >= 2:
         cal.gyro_bias_dps = round(statistics.fmean(buf.yaw_rate), 4)
@@ -158,21 +209,16 @@ def tune(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]:
     if len(buf.vel) >= 2:
         sn = statistics.pstdev([v[0] for v in buf.vel])
         se = statistics.pstdev([v[1] for v in buf.vel])
-        cal.gps_vel_sigma_mps = round(math.hypot(sn, se) / math.sqrt(2), 4)  # per-axis RMS
-        mean_speed = math.hypot(
-            statistics.fmean(v[0] for v in buf.vel),
-            statistics.fmean(v[1] for v in buf.vel),
-        )
+        cal.gps_vel_sigma_mps = round(math.hypot(sn, se) / math.sqrt(2), 4)
+        mean_speed = math.hypot(statistics.fmean(v[0] for v in buf.vel),
+                                statistics.fmean(v[1] for v in buf.vel))
         if mean_speed > _MOVING_SPEED_MPS:
-            warnings.append(
-                f"The boat was moving (~{mean_speed:.1f} m/s) during the capture; "
-                "hold it still with the motor off and re-run."
-            )
+            warnings.append(f"The boat was moving (~{mean_speed:.1f} m/s); hold it "
+                            "still with the motor off and re-run.")
 
     cal.gps_pos_sigma_m = _round_opt(_pos_sigma_m(buf.pos), 3)
-    cal.heading_sigma_deg = _round_opt(_circular_std_deg(buf.heading), 3)
+    cal.heading_sigma_deg = _round_opt(_circular_std_deg(buf.headings), 3)
 
-    # noise -> gains (monotonic, clamped heuristics)
     if cal.gps_vel_sigma_mps is not None:
         v = cal.gps_vel_sigma_mps
         cal.vel_tau_s = round(_clamp(0.5 + 8.0 * v, 0.5, 5.0), 2)
@@ -180,12 +226,62 @@ def tune(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]:
         cal.crab_min_sog_measured_mps = round(_clamp(2.0 * v, 0.03, 0.2), 3)
     if cal.heading_sigma_deg is not None:
         cal.heading_gain = round(_clamp(0.15 / (1.0 + cal.heading_sigma_deg), 0.02, 0.15), 3)
-
     return cal, warnings
 
 
-def _round_opt(x: float | None, n: int) -> float | None:
-    return round(x, n) if x is not None else None
+def tune_align(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]:
+    """Straight-run compass-vs-course -> mounting yaw offset."""
+    warnings: list[str] = []
+    cal = FusionCalibration(samples=buf.count, duration_s=round(buf.duration_s, 1))
+    moving = [f for f in buf.frames
+              if f["cog"] is not None and f["sog"] >= _ALIGN_MIN_SOG_MPS]
+    if len(moving) < _ALIGN_MIN_FRAMES:
+        warnings.append("Not enough steady motion -- drive straight at cruise speed "
+                        "for ~15 s and re-run.")
+        return cal, warnings
+    # offset such that heading + offset ~= course (small leeway on a straight run)
+    diffs = [angle_difference(f["heading"], f["cog"]) for f in moving]
+    cal.heading_offset_deg = round(_circular_mean_deg(diffs), 2)
+    spread = _circular_std_deg([f["heading"] for f in moving])
+    if spread is not None and spread > 8.0:
+        warnings.append(f"Heading varied a lot (~{spread:.0f}°) -- hold a straight "
+                        "course so the offset isn't polluted by turns.")
+    return cal, warnings
+
+
+def tune_interference(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]:
+    """Thrust sweep -> how far the magnetic heading drifts from the gyro reference."""
+    warnings: list[str] = []
+    cal = FusionCalibration(samples=buf.count, duration_s=round(buf.duration_s, 1))
+    frames = buf.frames
+    if len(frames) < _ALIGN_MIN_FRAMES:
+        warnings.append("Too few samples -- ramp the motor slowly over ~15 s and re-run.")
+        return cal, warnings
+    thrusts = [abs(f["thrust"]) for f in frames]
+    if max(thrusts) - min(thrusts) < _INTERF_MIN_THRUST_RANGE:
+        warnings.append("Thrust barely changed -- ramp it from 0 toward full and re-run.")
+        return cal, warnings
+    # (compass - gyro) offset relative to its value at the start of the sweep:
+    # the gyro is magnetics-free, so a growing offset is interference, not a real turn.
+    base = angle_difference(frames[0]["gyro"], frames[0]["heading"])
+    devs = [angle_difference(f["gyro"], f["heading"]) - base for f in frames]
+    devs = [(d + 180.0) % 360.0 - 180.0 for d in devs]  # wrap to [-180, 180)
+    max_dev = max(abs(d) for d in devs)
+    cal.motor_interference_deg = round(max_dev, 2)
+    cal.motor_interference_slope = round(_slope(thrusts, devs), 2)
+    # Quality score: 100 = the motor doesn't move the compass at all; 0 = it moves
+    # it by _INTERF_UNUSABLE_DEG or more (heading that corrupt is unusable for a
+    # heading-critical spot-lock). Linear between.
+    cal.motor_interference_score = round(100 * _clamp(1.0 - max_dev / _INTERF_UNUSABLE_DEG, 0.0, 1.0))
+    return cal, warnings
+
+
+def tune(buf: CaptureBuffer, mode: str) -> tuple[FusionCalibration, list[str]]:
+    if mode == "align":
+        return tune_align(buf)
+    if mode == "interference":
+        return tune_interference(buf)
+    return tune_still(buf)
 
 
 # -- persistence ---------------------------------------------------------- #
@@ -198,8 +294,7 @@ def load_calibration(data_dir: str | Path) -> FusionCalibration | None:
 
 
 def save_calibration(data_dir: str | Path, cal: FusionCalibration) -> None:
-    path = Path(data_dir) / CALIBRATION_FILE
-    path.write_text(json.dumps(cal.to_dict(), indent=2))
+    (Path(data_dir) / CALIBRATION_FILE).write_text(json.dumps(cal.to_dict(), indent=2))
 
 
 def clear_calibration(data_dir: str | Path) -> None:

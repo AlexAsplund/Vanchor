@@ -1139,26 +1139,34 @@ class Runtime:
             "enabled": self.navigator.fusion is not None,
         }
 
-    def start_fusion_capture(self) -> dict:
+    def start_fusion_capture(self, mode: str = "still") -> dict:
+        from .nav.calibration import CAPTURE_MODES
         if self.navigator.fusion is None:
             return {"ok": False, "error": "fusion is disabled"}
+        if mode not in CAPTURE_MODES:
+            return {"ok": False, "error": f"unknown mode {mode!r}"}
+        self._capture_mode = mode
         self.navigator.start_capture()
-        return {"ok": True, "capturing": True}
+        return {"ok": True, "capturing": True, "mode": mode}
 
     def stop_fusion_capture(self) -> dict:
         from .nav.calibration import tune
         buf = self.navigator.stop_capture()
         if buf is None:
             return {"ok": False, "error": "no capture was running"}
-        cal, warnings = tune(buf)
-        return {"ok": True, "calibration": cal.to_dict(), "warnings": warnings}
+        mode = getattr(self, "_capture_mode", "still")
+        cal, warnings = tune(buf, mode)
+        return {"ok": True, "mode": mode, "calibration": cal.to_dict(), "warnings": warnings}
 
     def save_fusion_calibration(self, data: dict) -> dict:
         from .nav.calibration import FusionCalibration, save_calibration
-        cal = FusionCalibration.from_dict(data)
-        save_calibration(self.config.data_dir, cal)
-        self._fusion_cal = cal
-        self.navigator.apply_calibration(cal)
+        # Merge into the existing calibration so each capture mode updates only
+        # what it measured (still -> gains, align -> offset, ...).
+        incoming = FusionCalibration.from_dict(data)
+        merged = (self._fusion_cal or FusionCalibration()).merged_with(incoming)
+        save_calibration(self.config.data_dir, merged)
+        self._fusion_cal = merged
+        self.navigator.apply_calibration(merged)
         return {"ok": True}
 
     def reset_fusion_calibration(self) -> dict:

@@ -922,9 +922,10 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         return runtime.fusion_calibration()
 
     @app.post("/api/fusion/calibrate/start")
-    async def start_fusion_capture() -> dict:
-        """Begin a still capture (boat stationary, motor off)."""
-        return runtime.start_fusion_capture()
+    async def start_fusion_capture(payload: dict | None = None) -> dict:
+        """Begin a capture. Body ``{mode}`` -- ``still`` (default) / ``align`` /
+        ``interference``."""
+        return runtime.start_fusion_capture((payload or {}).get("mode", "still"))
 
     @app.post("/api/fusion/calibrate/stop")
     async def stop_fusion_capture() -> dict:
