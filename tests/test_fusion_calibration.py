@@ -111,6 +111,34 @@ def test_interference_score_bounds():
     assert tune(huge, "interference")[0].motor_interference_score == 0
 
 
+def test_interference_recommendations_scale_with_severity():
+    from vanchor.nav.calibration import interference_recommendations
+    assert interference_recommendations(None) == []
+    good = interference_recommendations(90)
+    assert len(good) == 1 and "well sited" in good[0].lower()
+    moderate = " ".join(interference_recommendations(60)).lower()
+    assert "farther from the motor" in moderate and "twist" in moderate
+    assert "mu-metal" not in moderate and "dual-antenna" not in moderate
+    severe = " ".join(interference_recommendations(30)).lower()
+    assert "mu-metal" in severe and "faraday" in severe        # honest shielding physics
+    assert "dual-antenna" in severe and "software compensation" in severe
+
+
+def test_stop_and_get_carry_interference_recommendations(tmp_path):
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    from vanchor.core.models import MotorCommand
+    rt.start_fusion_capture("interference")
+    for i in range(40):                                        # ramp thrust, big drift
+        t = i / 39.0
+        rt.navigator.state.motor_command = MotorCommand(thrust=t)  # set before the sample
+        rt.navigator.handle_sentence(nmea.encode_hdt((90.0 + 30.0 * t) % 360))
+    stop = rt.stop_fusion_capture()
+    assert stop["mode"] == "interference" and stop["recommendations"]
+    assert any("dual-antenna" in r for r in stop["recommendations"])  # severe -> escalated
+
+
 def test_calibration_merge_keeps_each_modes_measurement():
     still = FusionCalibration(gyro_bias_dps=0.1, vel_tau_s=2.5)
     align = FusionCalibration(heading_offset_deg=-6.0)

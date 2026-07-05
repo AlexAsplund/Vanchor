@@ -276,6 +276,46 @@ def tune_interference(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]
     return cal, warnings
 
 
+def interference_recommendations(score: int | None) -> list[str]:
+    """Ordered mitigation actions for a motor-interference score (0-100), most
+    to least worthwhile, escalating as the score worsens. Empty if not measured."""
+    if score is None:
+        return []
+    if score >= 85:
+        return ["Well sited -- the motor barely moves the compass. No action needed."]
+    recs = [
+        "Move the compass/IMU farther from the motor and its power cables: the "
+        "magnetic field falls off with the cube of distance, so even a few extra "
+        "centimetres help a lot. Mount it high and as far forward as practical.",
+        "Route the motor's power cables away from the compass, and twist the +/- "
+        "pair together so their opposing magnetic fields largely cancel.",
+        "Keep the compass clear of ferrous metal and the battery (hard/soft-iron).",
+    ]
+    if score < 70:
+        recs.append(
+            "Re-run the HWT901B's own magnetometer calibration in place, so its "
+            "internal hard/soft-iron correction accounts for the fixed metal around it.")
+    if score < 55:
+        recs.append(
+            "Add magnetic shielding: a mu-metal (high-permeability) shroud around "
+            "the compass or motor redirects the DC magnetic field. Note a plain "
+            "conductive Faraday cage blocks RF/electrical noise but NOT a static "
+            "magnetic field -- use mu-metal for that.")
+        recs.append(
+            "Bond the motor and electronics to a clean common ground: this cuts "
+            "electrical (ground-loop/EMI) noise, though the DC field from motor "
+            "current is best fixed by distance + cable routing above.")
+    if score < 40:
+        recs.append(
+            "The drift is repeatable with thrust, so a software compensation "
+            "(subtract the measured deg/thrust from the heading) can partly correct "
+            "it once the physical fixes are done.")
+        recs.append(
+            "If it stays this bad, switch to a magnetics-free heading source -- a "
+            "dual-antenna GNSS compass is immune to the motor entirely.")
+    return recs
+
+
 def tune(buf: CaptureBuffer, mode: str) -> tuple[FusionCalibration, list[str]]:
     if mode == "align":
         return tune_align(buf)

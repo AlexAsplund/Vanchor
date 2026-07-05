@@ -143,6 +143,8 @@
             <div id="dev-calib-disabled" class="hint err hidden">Turn on the fusion filter to calibrate the sensors.</div>
 
             <div id="dev-calib-readout" class="hint"></div>
+            <!-- Mitigation advice for the SAVED interference score (GET). -->
+            <div id="dev-calib-saved-recs" class="hidden"></div>
 
             <!-- Guided sequence panel ("Calibrate all") — runs the three modes
                  step-by-step. Hidden unless a sequence is active. -->
@@ -176,6 +178,8 @@
                 <div class="hint">0 = unusable · 100 = no interference</div>
                 <div id="dev-calib-score-sub" class="hint"></div>
               </div>
+              <!-- Mitigation advice from the stop response (interference mode). -->
+              <div id="dev-calib-recs" class="hidden"></div>
               <div id="dev-calib-proposal-body" class="hint"></div>
               <div class="btn-row" id="dev-calib-proposal-actions">
                 <button id="dev-calib-apply" class="btn-primary" type="button">Apply &amp; save</button>

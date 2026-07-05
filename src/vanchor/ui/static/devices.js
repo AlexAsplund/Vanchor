@@ -625,10 +625,12 @@
  * Contract (must match the backend):
  *   GET  /api/fusion/calibration ->
  *     { calibration:{…}|null, capturing:bool, capture_samples:int,
- *       capture_seconds:float, enabled:bool }
+ *       capture_seconds:float, enabled:bool, recommendations:[str] }
+ *       (recommendations = mitigation advice for the SAVED interference score.)
  *   POST /api/fusion/calibrate/start  body { mode } (still|align|interference)
  *        -> { ok:true, capturing:true }  (ok:false if fusion off)
- *   POST /api/fusion/calibrate/stop   -> { ok:true, mode, calibration:{…}, warnings:[str] }
+ *   POST /api/fusion/calibrate/stop   -> { ok:true, mode, calibration:{…}, warnings:[str],
+ *                                          recommendations:[str] (interference mode) }
  *                                        or { ok:false, error:str }
  *   POST /api/fusion/calibrate/save   body { calibration:{…} } -> { ok:true }
  *   POST /api/fusion/calibrate/reset  -> { ok:true }
@@ -756,6 +758,57 @@
     scoreBox.classList.remove("hidden");
   }
 
+  // Render motor-interference mitigation advice (verbatim, from the backend) as a
+  // "What to do about it" list. Given visual weight (tinted callout) when the
+  // score is poor; kept low-key/collapsed when it's good. Hidden if no advice.
+  function renderRecs(host, recs, score) {
+    if (!host) return;
+    host.innerHTML = "";
+    host.className = "";
+    const list = Array.isArray(recs)
+      ? recs.filter((s) => typeof s === "string" && s.trim()) : [];
+    if (!list.length) { host.classList.add("hidden"); return; }
+    const s = Number(score);
+    const good = Number.isFinite(s) && s > 75;
+    const color = scoreColor(s);
+
+    const ul = document.createElement("ul");
+    ul.style.margin = "6px 0 0";
+    ul.style.paddingLeft = "18px";
+    list.forEach((t) => {
+      const li = document.createElement("li");
+      li.textContent = t;
+      li.style.marginBottom = "3px";
+      ul.appendChild(li);
+    });
+
+    if (good) {
+      // Low-key: a collapsed disclosure — the actions barely matter here.
+      const det = document.createElement("details");
+      det.className = "hint";
+      const sum = document.createElement("summary");
+      sum.textContent = "What to do about it";
+      det.append(sum, ul);
+      host.className = "hint";
+      host.appendChild(det);
+    } else {
+      // Prominent: a colour-tinted callout — this is when the actions matter.
+      const callout = document.createElement("div");
+      callout.style.borderLeft = "3px solid " + color;
+      callout.style.background = "color-mix(in srgb, " + color + " 12%, transparent)";
+      callout.style.borderRadius = "var(--r-sm)";
+      callout.style.padding = "8px 10px";
+      callout.style.marginTop = "8px";
+      const h = document.createElement("div");
+      h.textContent = "What to do about it";
+      h.style.fontWeight = "700";
+      h.style.color = color;
+      callout.append(h, ul);
+      host.appendChild(callout);
+    }
+    host.classList.remove("hidden");
+  }
+
   // Reflect the current (saved) calibration + fusion-enabled state in the UI.
   function renderState(data) {
     enabled = !!(data && data.enabled);
@@ -772,6 +825,9 @@
       else readout.textContent = "Not calibrated — using defaults.";
     }
     if (reset) reset.classList.toggle("hidden", !(cal && typeof cal === "object"));
+    // Mitigation advice for the saved interference score (empty -> hidden).
+    renderRecs($("dev-calib-saved-recs"), data && data.recommendations,
+      cal && cal.motor_interference_score);
   }
 
   // ---- capture lifecycle ------------------------------------------------
@@ -877,7 +933,7 @@
           return;
         }
         proposal = j.calibration || null;
-        showProposal(j.calibration, j.warnings, j.mode || activeMode);
+        showProposal(j.calibration, j.warnings, j.mode || activeMode, j.recommendations);
         if (seq.active) {
           setStatus("Review the result, then confirm to save & continue.", "ok");
           setSeqButtons("review");
@@ -891,7 +947,7 @@
       });
   }
 
-  function showProposal(cal, warnings, mode) {
+  function showProposal(cal, warnings, mode, recs) {
     proposalMode = MODES[mode] ? mode : activeMode;
     const wrap = $("dev-calib-proposal");
     const body = $("dev-calib-proposal-body");
@@ -904,7 +960,15 @@
     }
     // In a guided sequence the seq panel owns the confirm/skip buttons.
     if (acts) acts.classList.toggle("hidden", seq.active);
-    showScore(proposalMode === "interference" ? cal : null);
+    const isInterference = proposalMode === "interference";
+    showScore(isInterference ? cal : null);
+    // Mitigation advice sits under the score gauge (interference mode only).
+    const recsHost = $("dev-calib-recs");
+    if (isInterference) {
+      renderRecs(recsHost, recs, cal && cal.motor_interference_score);
+    } else if (recsHost) {
+      recsHost.classList.add("hidden");
+    }
     if (cal && typeof cal === "object") {
       renderCal(body, cal, MODE_FIELDS[proposalMode]);
     } else if (body) {
@@ -919,6 +983,8 @@
     if (wrap) wrap.classList.add("hidden");
     const scoreBox = $("dev-calib-score");
     if (scoreBox) scoreBox.classList.add("hidden");
+    const recsHost = $("dev-calib-recs");
+    if (recsHost) recsHost.classList.add("hidden");
     proposal = null;
   }
 

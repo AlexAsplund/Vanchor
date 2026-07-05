@@ -1130,13 +1130,16 @@ class Runtime:
     # -- fusion calibration (still-capture system-ID; see nav.calibration) --- #
     def fusion_calibration(self) -> dict:
         """Saved calibration + live capture status (for GET)."""
+        from .nav.calibration import interference_recommendations
         capturing, samples, seconds = self.navigator.capture_status()
+        score = self._fusion_cal.motor_interference_score if self._fusion_cal else None
         return {
             "calibration": self._fusion_cal.to_dict() if self._fusion_cal else None,
             "capturing": capturing,
             "capture_samples": samples,
             "capture_seconds": seconds,
             "enabled": self.navigator.fusion is not None,
+            "recommendations": interference_recommendations(score),
         }
 
     def start_fusion_capture(self, mode: str = "still") -> dict:
@@ -1154,9 +1157,13 @@ class Runtime:
         buf = self.navigator.stop_capture()
         if buf is None:
             return {"ok": False, "error": "no capture was running"}
+        from .nav.calibration import interference_recommendations
         mode = getattr(self, "_capture_mode", "still")
         cal, warnings = tune(buf, mode)
-        return {"ok": True, "mode": mode, "calibration": cal.to_dict(), "warnings": warnings}
+        out = {"ok": True, "mode": mode, "calibration": cal.to_dict(), "warnings": warnings}
+        if mode == "interference":
+            out["recommendations"] = interference_recommendations(cal.motor_interference_score)
+        return out
 
     def save_fusion_calibration(self, data: dict) -> dict:
         from .nav.calibration import FusionCalibration, save_calibration
