@@ -1,15 +1,24 @@
 """Device-availability gating: a "Not connected" (source "none") device disables
 the modes/functions that need it — in telemetry (for the UI) and in the
 controller (which refuses to engage them)."""
+import tempfile
+
 from vanchor.app import Runtime
 from vanchor.core.config import load
 from vanchor.core.models import ControlModeName
 from vanchor.core import capabilities
 from vanchor.hardware.interfaces import NullMotor
 
+# Isolate the data dir once for the module: several tests here call
+# set_device_config(), which PERSISTS -- without this they would write the repo's
+# real vanchor_data/devices.json and clobber a live device config.
+_ISOLATED_DATA_DIR = tempfile.mkdtemp(prefix="vanchor-gating-")
+
 
 def _rt():
-    return Runtime(load(None))
+    cfg = load(None)
+    cfg.data_dir = _ISOLATED_DATA_DIR
+    return Runtime(cfg)
 
 
 # --- the capabilities map (pure) ------------------------------------------- #
