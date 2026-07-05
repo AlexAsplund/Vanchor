@@ -106,7 +106,7 @@ The steering end is a 3D-printable **worm-gear steering servo** — a small
 gearmotor turns a worm that swings the trolling-motor shaft (self-locking, so it
 holds a heading with the motor idle), with an **AS5600** magnetic encoder for
 absolute angle feedback. STLs, an assembly gallery, and build/waterproofing notes
-are in [`cad/`](cad/). *(Also prototype-stage — not yet water-tight.)*
+live in the dedicated [vanchor-cad](https://github.com/AlexAsplund/vanchor-cad) repo — the current revision is sealed (twin lip seals + silicone-gasket lid) and fully 3D-printable.
 
 ## Screenshots
 
