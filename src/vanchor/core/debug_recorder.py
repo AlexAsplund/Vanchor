@@ -14,7 +14,10 @@ power-loss may lose the un-fsynced tail of the open part only). Replay/download
 transparently concatenate the parts (gzip members concatenate into one stream).
 
 Each NDJSON line is ``{"t": <unix seconds>, "kind": "telemetry|nmea|command|log|
-meta", "data": ...}``. Log lines are captured by attaching a logging handler to
+device_debug|meta", "data": ...}``. ``device_debug`` records ``{kind: debug_str}``
+for every device ~1 Hz -- capturing raw device state (incl. a UBX GPS, which does
+not go through the per-sentence ``nmea`` capture). Log lines are captured by
+attaching a logging handler to
 the root logger for the duration of the recording. ``write`` is guarded by a lock
 because logs can arrive from worker threads (e.g. blocking serial reads).
 """

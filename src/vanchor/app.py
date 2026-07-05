@@ -3034,6 +3034,13 @@ class Runtime:
             text = f"debug() raised: {type(exc).__name__}: {exc}"
         return {"ok": True, "kind": kind, "source": src, "debug": text}
 
+    def all_device_debug(self) -> dict:
+        """``{kind: debug_string}`` for every device -- recorded into a debug
+        session so raw device data is preserved (notably the UBX GPS, which
+        bypasses the per-sentence ``nmea`` capture)."""
+        return {kind: self.device_debug(kind).get("debug", "")
+                for kind in ("gps", "compass", "depth", "motor", "battery")}
+
     def telemetry(self) -> dict:
         """Build a PURE telemetry snapshot -- no side effects.
 

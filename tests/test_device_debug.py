@@ -33,6 +33,28 @@ def test_device_debug_never_raises_even_before_any_data(tmp_path):
         rt.device_debug(kind)  # must not raise
 
 
+def test_all_device_debug_covers_every_device(tmp_path):
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    d = rt.all_device_debug()
+    assert set(d) == {"gps", "compass", "depth", "motor", "battery"}
+    assert all(isinstance(v, str) and v for v in d.values())
+
+
+def test_debug_recorder_captures_device_debug(tmp_path):
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    rt.debug.start("devtest", 1000.0)
+    try:
+        rt.debug.write("device_debug", rt.all_device_debug(), 1001.0)
+        counts = rt.debug.status()["counts"]
+    finally:
+        rt.debug.stop()
+    assert counts.get("device_debug", 0) >= 1   # the new kind was recorded
+
+
 def test_device_debug_endpoint(tmp_path):
     cfg = load(None)
     cfg.data_dir = str(tmp_path)

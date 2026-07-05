@@ -295,6 +295,8 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         period = 1.0 / telemetry_hz
         frame_n = 0
         broadcast_seq = 0
+        dev_tick = 0
+        dev_every = max(1, round(telemetry_hz))  # per-device raw snapshot ~1 Hz
         while True:
             try:
                 snapshot = runtime.telemetry()
@@ -316,6 +318,16 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                     await asyncio.to_thread(
                         runtime.debug.write, "telemetry", snapshot, time.time()
                     )
+                    # Per-device raw-data snapshots (device debug()), throttled to
+                    # ~1 Hz -- captures raw device state incl. the UBX GPS, which
+                    # bypasses the per-sentence 'nmea' capture.
+                    dev_tick += 1
+                    if dev_tick >= dev_every:
+                        dev_tick = 0
+                        await asyncio.to_thread(
+                            runtime.debug.write, "device_debug",
+                            runtime.all_device_debug(), time.time()
+                        )
                 if clients:
                     frame_n += 1
                     broadcast_seq += 1
