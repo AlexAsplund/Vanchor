@@ -32,6 +32,12 @@ class Sensor(abc.ABC):
     @abc.abstractmethod
     async def stop(self) -> None: ...
 
+    def debug(self) -> str:  # pragma: no cover - overridden per device
+        """A human-readable snapshot of this device's most recent RAW data, for
+        the Devices -> Debug live view. Overridden by each concrete device; must
+        be safe to call at any time and never raise."""
+        return f"{type(self).__name__}: no debug data available"
+
 
 class MotorController(abc.ABC):
     """Accepts actuator-level motor commands.
@@ -54,6 +60,10 @@ class MotorController(abc.ABC):
 
     async def stop(self) -> None:  # pragma: no cover - trivial default
         return None
+
+    def debug(self) -> str:  # pragma: no cover - overridden per device
+        """Human-readable snapshot of the latest raw motor command/state."""
+        return f"{type(self).__name__}: no debug data available"
 
 
 class NullMotor(MotorController):
@@ -125,3 +135,18 @@ class BatteryMonitor(abc.ABC):
     def health(self) -> dict:  # pragma: no cover - trivial default
         """``{"ok": bool, "detail": str}`` — overridden by drivers that can fault."""
         return {"ok": True, "detail": ""}
+
+    def debug(self) -> str:
+        """Human-readable snapshot of the latest raw battery reading. Default
+        formats :meth:`snapshot`; drivers may override with raw register values."""
+        try:
+            s = self.snapshot()
+        except Exception as exc:  # noqa: BLE001
+            return f"{type(self).__name__}: snapshot error ({exc})"
+        return (f"{type(self).__name__}\n"
+                f"  voltage : {s.get('voltage_v')} V\n"
+                f"  current : {s.get('current_a')} A\n"
+                f"  draw    : {s.get('draw_w')} W\n"
+                f"  soc     : {s.get('soc_pct')} %\n"
+                f"  range   : {s.get('range_m')} m\n"
+                f"  ttf     : {s.get('time_to_empty_s')} s")

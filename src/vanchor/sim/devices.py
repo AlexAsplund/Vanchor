@@ -13,6 +13,7 @@ import asyncio
 import logging
 import math
 import random
+import time
 from typing import Callable
 
 from ..core import events
@@ -85,6 +86,10 @@ class SimMotorController(MotorController):
         self._requested = MotorCommand()
         self._applied_thrust: float = 0.0
         self._reverse_hold_remaining: float = 0.0
+        # --- debug capture (Devices -> Debug live view) -------------------- #
+        # How many commands have been applied, and when the last one landed.
+        self._apply_count: int = 0
+        self._last_apply_monotonic: float | None = None
 
     def configure(
         self,
@@ -123,6 +128,8 @@ class SimMotorController(MotorController):
             if prev_sign != 0 and new_sign != 0 and prev_sign != new_sign:
                 self._reverse_hold_remaining = self._reverse_delay_s
         self._requested = command
+        self._apply_count += 1
+        self._last_apply_monotonic = time.monotonic()
 
     def step(self, dt: float) -> None:
         """Advance actuation shaping by *dt* seconds of simulator time.
@@ -164,6 +171,28 @@ class SimMotorController(MotorController):
             thrust=self._applied_thrust,
             steering=self._requested.steering,
         )
+
+    def debug(self) -> str:
+        cls = type(self).__name__
+        try:
+            if self._apply_count == 0:
+                return f"{cls}: waiting for data…"
+            req = self._requested
+            lines = [
+                cls,
+                f"  requested : thrust={req.thrust:+.3f}  steering={req.steering:+.3f}",
+            ]
+            if self._shaping_enabled():
+                # Shaping is on: the applied thrust differs from the request.
+                cmd = self.command
+                lines.append(
+                    f"  applied   : thrust={cmd.thrust:+.3f}  steering={cmd.steering:+.3f}"
+                )
+                lines.append(f"  rev hold  : {self._reverse_hold_remaining:.2f} s")
+            lines.append(f"  count     : {self._apply_count}")
+            return "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001 - debug must never raise
+            return f"{cls}: debug error ({exc})"
 
 
 class SimServo(Actuator):
@@ -226,6 +255,13 @@ class SimGps(Sensor):
         self.fault_garbage = False
         self.fault_latency_s = 0.0
         self._latency_buf: list[tuple[float, str]] = []
+        # --- debug capture (Devices -> Debug live view) -------------------- #
+        # The last thing _loop actually emitted: an RMC sentence (NMEA path) or a
+        # rich GpsFix (emit_velocity path). Kept purely for the live debug view.
+        self._last_sentence: str | None = None
+        self._last_fix: GpsFix | None = None
+        self._rx_count: int = 0
+        self._last_emit_monotonic: float | None = None
 
     def set_fault(self, name: str, enabled: bool = True, **params) -> bool:
         """Toggle a named GPS fault (see :data:`GPS_FAULTS`). Returns ``True`` if
@@ -301,6 +337,66 @@ class SimGps(Sensor):
             h_acc_m=self.position_noise_m, s_acc_mps=0.05,
         )
 
+    def _note_emit(self, *, sentence: str | None = None, fix: GpsFix | None = None) -> None:
+        """Record the last item _loop emitted, for the live debug view."""
+        self._last_sentence = sentence
+        self._last_fix = fix
+        self._rx_count += 1
+        self._last_emit_monotonic = time.monotonic()
+
+    def _active_faults(self) -> list[str]:
+        """Human-readable list of the faults currently injected (for debug())."""
+        active: list[str] = []
+        if self.fault_dropout:
+            active.append("dropout/eof")
+        if self.fault_glitch:
+            active.append(f"glitch {self.fault_glitch_m:g} m")
+        if self.fault_garbage:
+            active.append("garbage")
+        if self.fault_latency_s > 0.0:
+            active.append(f"latency {self.fault_latency_s:g} s")
+        return active
+
+    def debug(self) -> str:
+        cls = type(self).__name__
+        try:
+            faults = self._active_faults()
+            fault_line = f"\n  fault   : {', '.join(faults)}" if faults else ""
+            if self._last_fix is not None:
+                f = self._last_fix
+                vn, ve, vd = f.vel_n_mps or 0.0, f.vel_e_mps or 0.0, f.vel_d_mps or 0.0
+                return (
+                    f"{cls}\n"
+                    f"  lat/lon : {f.point.lat:.6f}, {f.point.lon:.6f} °\n"
+                    f"  sog/cog : {f.sog_knots:.2f} kn / {f.cog_deg:.1f} °\n"
+                    f"  vel NED : n={vn:+.2f} e={ve:+.2f} d={vd:+.2f} m/s\n"
+                    f"  count   : {self._rx_count}"
+                    f"{fault_line}"
+                )
+            if self._last_sentence is not None:
+                try:
+                    parsed = nmea.parse(self._last_sentence)
+                except Exception:  # noqa: BLE001 - garbage sentence, show it raw
+                    parsed = None
+                if isinstance(parsed, nmea.RMC):
+                    return (
+                        f"{cls}\n"
+                        f"  lat/lon : {parsed.point.lat:.6f}, {parsed.point.lon:.6f} °\n"
+                        f"  sog/cog : {parsed.sog_knots:.2f} kn / {parsed.cog_deg:.1f} °\n"
+                        f"  raw     : {self._last_sentence}\n"
+                        f"  count   : {self._rx_count}"
+                        f"{fault_line}"
+                    )
+                return (
+                    f"{cls}\n"
+                    f"  raw     : {self._last_sentence}\n"
+                    f"  count   : {self._rx_count}"
+                    f"{fault_line}"
+                )
+            return f"{cls}: waiting for data…"
+        except Exception as exc:  # noqa: BLE001 - debug must never raise
+            return f"{cls}: debug error ({exc})"
+
     async def start(self) -> None:
         self._task = asyncio.ensure_future(self._loop())
 
@@ -324,7 +420,9 @@ class SimGps(Sensor):
                     now = loop.time()
                     if self.emit_velocity:
                         # Rich-fix path (velocity-capable receiver stand-in).
-                        await self.bus.publish(events.GPS_FIX_IN, self.sample_fix())
+                        fix = self.sample_fix()
+                        self._note_emit(fix=fix)
+                        await self.bus.publish(events.GPS_FIX_IN, fix)
                     elif self.fault_latency_s > 0.0:
                         # Baud-saturation model: buffer this fix and only release
                         # ones that are at least fault_latency_s old, so fresh
@@ -333,9 +431,12 @@ class SimGps(Sensor):
                         cutoff = now - self.fault_latency_s
                         while self._latency_buf and self._latency_buf[0][0] <= cutoff:
                             _, due = self._latency_buf.pop(0)
+                            self._note_emit(sentence=due)
                             await self.bus.publish(events.NMEA_IN, due)
                     else:
-                        await self.bus.publish(events.NMEA_IN, self.sample())
+                        sentence = self.sample()
+                        self._note_emit(sentence=sentence)
+                        await self.bus.publish(events.NMEA_IN, sentence)
             except Exception:
                 logger.exception("SimGps publish error; continuing")
             delay = next_deadline - loop.time()
@@ -365,11 +466,38 @@ class SimDepthSounder(Sensor):
         self.noise_m = noise_m
         self._rng = random.Random(seed)
         self._task: asyncio.Task | None = None
+        # --- debug capture (Devices -> Debug live view) -------------------- #
+        # The last depth emitted (m) and the boat position it was sampled at.
+        self._last_depth_m: float | None = None
+        self._last_point = None
+        self._rx_count: int = 0
+        self._last_emit_monotonic: float | None = None
 
     def sample(self, truth: BoatState | None = None) -> str:
         truth = truth or self.get_truth()
         depth = self.bathymetry.depth_at(truth.point) + self._rng.gauss(0.0, self.noise_m)
-        return nmea.encode_dpt(max(0.0, depth))
+        depth = max(0.0, depth)
+        self._last_depth_m = depth
+        self._last_point = truth.point
+        self._rx_count += 1
+        self._last_emit_monotonic = time.monotonic()
+        return nmea.encode_dpt(depth)
+
+    def debug(self) -> str:
+        cls = type(self).__name__
+        try:
+            if self._last_depth_m is None:
+                return f"{cls}: waiting for data…"
+            p = self._last_point
+            pos = f"{p.lat:.6f}, {p.lon:.6f} °" if p is not None else "unknown"
+            return (
+                f"{cls}\n"
+                f"  depth   : {self._last_depth_m:.2f} m\n"
+                f"  at      : {pos}\n"
+                f"  count   : {self._rx_count}"
+            )
+        except Exception as exc:  # noqa: BLE001 - debug must never raise
+            return f"{cls}: debug error ({exc})"
 
     async def start(self) -> None:
         self._task = asyncio.ensure_future(self._loop())
@@ -427,6 +555,13 @@ class SimCompass(Sensor):
         self.fault_freeze = False
         self.fault_garbage = False
         self._frozen_heading: float | None = None
+        # --- debug capture (Devices -> Debug live view) -------------------- #
+        # The last heading emitted (numeric, or None + raw string when garbage)
+        # and the last IMU sample produced.
+        self._last_heading_deg: float | None = None
+        self._last_heading_raw: str | None = None
+        self._last_imu: ImuSample | None = None
+        self._last_emit_monotonic: float | None = None
 
     def set_fault(self, name: str, enabled: bool = True, **params) -> bool:
         """Toggle a named compass fault (see :data:`COMPASS_FAULTS`). Returns
@@ -443,15 +578,56 @@ class SimCompass(Sensor):
 
     def sample(self, truth: BoatState | None = None) -> str:
         truth = truth or self.get_truth()
+        self._last_emit_monotonic = time.monotonic()
         if self.fault_garbage:
+            self._last_heading_deg = None
+            self._last_heading_raw = _GARBAGE_NMEA
             return _GARBAGE_NMEA
         if self.fault_freeze:
             # Latch the first heading seen under the fault and hold it forever.
             if self._frozen_heading is None:
                 self._frozen_heading = truth.heading_deg
-            return nmea.encode_hdm(self._frozen_heading)
+            sentence = nmea.encode_hdm(self._frozen_heading)
+            self._last_heading_deg = self._frozen_heading
+            self._last_heading_raw = sentence
+            return sentence
         heading = truth.heading_deg + self._rng.gauss(0.0, self.heading_noise_deg)
-        return nmea.encode_hdm(heading)
+        sentence = nmea.encode_hdm(heading)
+        self._last_heading_deg = heading
+        self._last_heading_raw = sentence
+        return sentence
+
+    def debug(self) -> str:
+        cls = type(self).__name__
+        try:
+            if self._last_heading_raw is None and self._last_imu is None:
+                return f"{cls}: waiting for data…"
+            lines = [cls]
+            if self._last_heading_deg is not None:
+                lines.append(f"  heading : {self._last_heading_deg:.1f} °")
+            elif self._last_heading_raw is not None:
+                lines.append(f"  heading : (raw) {self._last_heading_raw}")
+            imu = self._last_imu
+            if imu is not None:
+                lines.append(
+                    f"  accel   : ax={imu.ax:+.3f} ay={imu.ay:+.3f} az={imu.az:+.3f} m/s²"
+                )
+                lines.append(
+                    f"  gyro    : gx={imu.gx:+.3f} gy={imu.gy:+.3f} gz={imu.gz:+.3f} °/s"
+                )
+                lines.append(
+                    f"  att     : roll={imu.roll_deg:+.2f} pitch={imu.pitch_deg:+.2f} °"
+                )
+            faults = []
+            if self.fault_freeze:
+                faults.append("freeze")
+            if self.fault_garbage:
+                faults.append("garbage")
+            if faults:
+                lines.append(f"  fault   : {', '.join(faults)}")
+            return "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001 - debug must never raise
+            return f"{cls}: debug error ({exc})"
 
     def imu_sample(self, truth: BoatState, dt: float) -> ImuSample:
         """A flat-water simulated IMU: yaw rate from the heading change, ~1 g
@@ -477,6 +653,7 @@ class SimCompass(Sensor):
             self._sea_t += max(0.0, dt)
             motion = self.sea_state.sample(self._sea_t)
             sample = self.sea_state.apply_to_imu(sample, motion)
+        self._last_imu = sample
         return sample
 
     async def start(self) -> None:

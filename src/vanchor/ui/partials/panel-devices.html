@@ -21,25 +21,41 @@
             <label class="dev-srcrow">
               <span>GPS</span>
               <select id="dev-src-gps" data-kind="gps"></select>
+              <button type="button" class="btn-ghost" id="dev-debug-gps" data-debug="gps" title="Live raw data">🐞 Debug</button>
             </label>
             <label class="dev-srcrow">
               <span>Compass</span>
               <select id="dev-src-compass" data-kind="sensor"></select>
+              <button type="button" class="btn-ghost" id="dev-debug-compass" data-debug="compass" title="Live raw data">🐞 Debug</button>
             </label>
             <label class="dev-srcrow">
               <span>Depth</span>
               <select id="dev-src-depth" data-kind="sensor"></select>
+              <button type="button" class="btn-ghost" id="dev-debug-depth" data-debug="depth" title="Live raw data">🐞 Debug</button>
             </label>
             <label class="dev-srcrow">
               <span>Motor</span>
               <select id="dev-src-motor" data-kind="motor"></select>
+              <button type="button" class="btn-ghost" id="dev-debug-motor" data-debug="motor" title="Live raw data">🐞 Debug</button>
             </label>
             <label class="dev-srcrow">
               <span>Battery</span>
               <select id="dev-src-battery" data-kind="battery"></select>
+              <button type="button" class="btn-ghost" id="dev-debug-battery" data-debug="battery" title="Live raw data">🐞 Debug</button>
             </label>
           </div>
           <div class="hint">Auto = follows the Mode above. NMEA = from a phone/plotter over NMEA. Both = drive the sim boat + the real servo, for bench-testing.</div>
+
+          <!-- Shared live raw-data viewer (one device at a time). Opened by the
+               per-device 🐞 Debug buttons; polls GET /api/devices/{kind}/debug. -->
+          <div id="dev-debug-viewer" class="hidden">
+            <div class="ctx-sub" id="dev-debug-title">Raw data</div>
+            <pre id="dev-debug-out" style="white-space: pre; overflow: auto; max-height: 240px; margin: 4px 0; padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.35); font-size: 11px; line-height: 1.4; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;"></pre>
+            <div class="btn-row">
+              <span class="hint"><span id="dev-debug-dot" style="color: var(--accent-2); opacity: 0.25;">●</span> <span id="dev-debug-meta"></span></span>
+              <button type="button" class="btn-ghost" id="dev-debug-close">Close</button>
+            </div>
+          </div>
 
           <div id="dev-serial" class="hidden">
             <div class="ctx-sub">Serial ports</div>

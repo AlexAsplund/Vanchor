@@ -46,6 +46,10 @@ class UbloxGps(Sensor):
         # Per-device health for the telemetry block (mirrors the serial devices).
         self.healthy = False
         self.last_data_monotonic: float | None = None
+        # Latest RAW decode for the Devices -> Debug live view.
+        self._last_pvt: ubx.NavPvt | None = None
+        self._last_pvt_monotonic: float | None = None
+        self._frames_received = 0
 
     async def start(self) -> None:
         self._stop = False
@@ -107,7 +111,15 @@ class UbloxGps(Sensor):
 
     async def _emit(self, payload: bytes) -> None:
         pvt = ubx.decode_nav_pvt(payload)
-        if pvt is None or not pvt.valid:
+        if pvt is None:
+            return
+        # Capture the raw decode BEFORE the validity gate so the Debug view can
+        # show a "3D fix but gnssFixOK=0" state (a dropped-here fix is still the
+        # most recent raw reading).
+        self._last_pvt = pvt
+        self._last_pvt_monotonic = time.monotonic()
+        self._frames_received += 1
+        if not pvt.valid:
             return
         self.healthy = True
         self.last_data_monotonic = time.monotonic()
@@ -119,6 +131,31 @@ class UbloxGps(Sensor):
         )
         if self.bus is not None:
             await self.bus.publish(events.GPS_FIX_IN, fix)
+
+    def debug(self) -> str:
+        pvt = self._last_pvt
+        if pvt is None:
+            return f"{type(self).__name__}: waiting for data…"
+        try:
+            age = ("?" if self._last_pvt_monotonic is None
+                   else f"{time.monotonic() - self._last_pvt_monotonic:.1f}")
+            return (
+                f"{type(self).__name__}\n"
+                f"  frames   : {self._frames_received} (last {age}s ago)\n"
+                # fix_type vs valid side-by-side: a 3D fix with valid=False is the
+                # gnssFixOK=0 case (valid = gnssFixOK and fix_type>=2).
+                f"  fix_type : {pvt.fix_type} (0=none 2=2D 3=3D)  "
+                f"valid(gnssFixOK): {pvt.valid}\n"
+                f"  num_sv   : {pvt.num_sv}\n"
+                f"  lat/lon  : {pvt.lat:.7f}, {pvt.lon:.7f} °\n"
+                f"  vel N/E/D: {pvt.vel_n_mps:.2f} / {pvt.vel_e_mps:.2f} / "
+                f"{pvt.vel_d_mps:.2f} m/s\n"
+                f"  sog/cog  : {pvt.sog_knots:.2f} kn / {pvt.cog_deg:.1f} °\n"
+                f"  hAcc/sAcc: {pvt.h_acc_m:.2f} m / {pvt.s_acc_mps:.2f} m/s\n"
+                f"  healthy  : {self.healthy}"
+            )
+        except Exception as exc:  # noqa: BLE001 - debug view must never raise
+            return f"{type(self).__name__}: debug error ({exc})"
 
 
 def _build(runtime: Any, cfg: Any) -> UbloxGps:

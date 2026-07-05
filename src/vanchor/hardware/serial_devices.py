@@ -312,6 +312,11 @@ class _SerialNmeaSensor(Sensor):
         self.transport = transport
         self.bus = bus
         self._task: asyncio.Task | None = None
+        # --- debug capture (Devices -> Debug live view) -------------------- #
+        # A small ring buffer of the most recent RAW NMEA lines read off the
+        # port, plus a received count. One debug() below serves both subclasses.
+        self._recent_lines: deque[str] = deque(maxlen=6)
+        self._rx_count: int = 0
         self._sup = _SerialReadSupervisor(
             transport,
             self._handle_line,
@@ -333,8 +338,29 @@ class _SerialNmeaSensor(Sensor):
         line = line.strip()
         if not line:
             return
+        self._recent_lines.append(line)
+        self._rx_count += 1
         if self.bus is not None:
             await self.bus.publish(events.NMEA_IN, line)
+
+    def debug(self) -> str:
+        # Shared by SerialGps + SerialCompass; type(self).__name__ names each.
+        cls = type(self).__name__
+        try:
+            port = getattr(self.transport, "port", None) or repr(self.transport)
+            if not self._recent_lines:
+                return f"{cls}: waiting for data…"
+            lines = [
+                cls,
+                f"  port    : {port}",
+                f"  healthy : {self.healthy}",
+                f"  count   : {self._rx_count}",
+                "  recent  :",
+            ]
+            lines.extend(f"    {raw}" for raw in self._recent_lines)
+            return "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001 - debug must never raise
+            return f"{cls}: debug error ({exc})"
 
     async def start(self) -> None:
         await self.transport.open()
@@ -477,6 +503,12 @@ class SerialMotorController(MotorController):
         )
         # Rate-limit for the "write while transport down" warning in flush().
         self._last_write_warn: float = 0.0
+        # --- debug capture (Devices -> Debug live view) -------------------- #
+        # The last raw ``CMD`` frame handed to the transport, whether the write
+        # landed, and a monotonic stamp. The last applied command is _command.
+        self._last_frame: str | None = None
+        self._last_frame_ok: bool = False
+        self._last_frame_monotonic: float | None = None
 
     @property
     def healthy(self) -> bool:
@@ -507,6 +539,33 @@ class SerialMotorController(MotorController):
 
     def apply(self, command: MotorCommand) -> None:
         self._command = command.clamped()
+
+    def debug(self) -> str:
+        cls = type(self).__name__
+        try:
+            if self._last_frame is None:
+                return f"{cls}: waiting for data…"
+            cmd = self._command
+            status = "ok" if self._last_frame_ok else "write failed (link down)"
+            lines = [
+                cls,
+                f"  command : thrust={cmd.thrust:+.3f}  steering={cmd.steering:+.3f}",
+                f"  frame   : {self._last_frame!r} ({status})",
+                f"  healthy : {self.healthy}",
+            ]
+            if self.last_feedback is not None:
+                fb = self.last_feedback
+                lines.append(
+                    f"  steer fb: angle={fb.angle_deg:.1f}° ok={fb.ok} wrap={fb.wrap_pct:.0f}%"
+                )
+            if self.last_engine_status is not None:
+                es = self.last_engine_status
+                lines.append(
+                    f"  engine  : pwm={es.pwm} dir={es.direction} state={es.state}"
+                )
+            return "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001 - debug must never raise
+            return f"{cls}: debug error ({exc})"
 
     async def start(self) -> None:
         await self.transport.open()
@@ -634,12 +693,15 @@ class SerialMotorController(MotorController):
             self._seq = (self._seq + 1) % self.SEQ_MODULO
             seq = self._seq
             line = f"{line} {seq}"
+        self._last_frame = line
+        self._last_frame_monotonic = _time.monotonic()
         try:
             await self.transport.write_line(line)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._sup.healthy = False
+            self._last_frame_ok = False
             now = _time.monotonic()
             if now - self._last_write_warn >= 5.0:
                 logger.warning(
@@ -649,6 +711,7 @@ class SerialMotorController(MotorController):
                 )
                 self._last_write_warn = now
         else:
+            self._last_frame_ok = True
             if seq is not None:
                 self._recent_sent.append(seq)
 

@@ -191,6 +191,9 @@ class INA226BatteryMonitor(BatteryMonitor):
         self._ok = True
         self._detail = ""
         self._task: asyncio.Task | None = None
+        # Latest RAW read bookkeeping for the Devices -> Debug live view.
+        self._reads = 0
+        self._last_read_monotonic: float | None = None
 
     # -- SoC seeding from resting voltage (inverse of the sim voltage curve) -- #
     def _soc_from_voltage(self, v: float) -> float:
@@ -219,6 +222,8 @@ class INA226BatteryMonitor(BatteryMonitor):
         self._detail = ""
         self.voltage_v = v
         self.current_a = i
+        self._reads += 1
+        self._last_read_monotonic = self._now()
         if self.soc_pct is None:
             self.soc_pct = self._soc_from_voltage(v)
 
@@ -282,6 +287,26 @@ class INA226BatteryMonitor(BatteryMonitor):
             "range_m": round(self.range_m, 1),
             "time_to_empty_s": None if tte == float("inf") else round(tte, 1),
         }
+
+    def debug(self) -> str:
+        if self._last_read_monotonic is None:
+            return f"{type(self).__name__}: waiting for data…"
+        try:
+            age = f"{self._now() - self._last_read_monotonic:.1f}"
+            soc = "unknown" if self.soc_pct is None else f"{self.soc_pct:.1f}"
+            h = self.health()
+            return (
+                f"{type(self).__name__}\n"
+                f"  reads    : {self._reads} (last {age}s ago)\n"
+                f"  bus V    : {self.voltage_v:.2f} V\n"
+                f"  current  : {self.current_a:.2f} A\n"
+                f"  power    : {self.draw_w:.1f} W\n"
+                f"  soc      : {soc} %\n"
+                f"  avg draw : {self._avg_current_a:.2f} A\n"
+                f"  health   : {'ok' if h['ok'] else 'FAULT'} {h['detail']}".rstrip()
+            )
+        except Exception as exc:  # noqa: BLE001 - debug view must never raise
+            return f"{type(self).__name__}: debug error ({exc})"
 
     def health(self) -> dict:
         return {"ok": self._ok, "detail": self._detail}

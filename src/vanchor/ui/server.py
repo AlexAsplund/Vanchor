@@ -915,6 +915,12 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         of the user hand-typing ``/dev/tty...`` (OpenPlotter-style auto-detect)."""
         return {"ports": runtime.list_serial_ports()}
 
+    @app.get("/api/devices/{kind}/debug")
+    async def device_debug(kind: str) -> dict:
+        """Human-readable raw-data snapshot for one device (gps/compass/depth/
+        motor/battery) -- polled by the Devices -> Debug live view."""
+        return runtime.device_debug(kind)
+
     # -- fusion calibration (still-capture sensor system-ID) ------------- #
     @app.get("/api/fusion/calibration")
     async def get_fusion_calibration() -> dict:

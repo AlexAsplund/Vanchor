@@ -3006,6 +3006,23 @@ class Runtime:
                          "healthy": _healthy(dev)}
         return out
 
+    def device_debug(self, kind: str) -> dict:
+        """Human-readable raw-data snapshot for one device (Devices -> Debug).
+        Returns ``{ok, kind, source, debug}``; ``ok:false`` if no such device."""
+        dev = {"gps": self.gps, "compass": self.compass,
+               "depth": self.depth_sounder, "motor": self.controller.motor,
+               "battery": getattr(self, "battery_monitor", None)}.get(kind)
+        if dev is None:
+            return {"ok": False, "kind": kind,
+                    "debug": f"No {kind} device is active (source is 'none' or unbuilt)."}
+        src = (self.config.hardware.battery_source if kind == "battery"
+               else self.config.hardware.source(kind))
+        try:
+            text = dev.debug()
+        except Exception as exc:  # noqa: BLE001 - debug must never break the UI
+            text = f"debug() raised: {type(exc).__name__}: {exc}"
+        return {"ok": True, "kind": kind, "source": src, "debug": text}
+
     def telemetry(self) -> dict:
         """Build a PURE telemetry snapshot -- no side effects.
 

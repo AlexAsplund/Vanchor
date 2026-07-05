@@ -212,6 +212,10 @@ class HWT901BCompass(Sensor):
         self.estimator = HeadingOffsetEstimator()
         self.last_heading_deg: float | None = None
         self._task: asyncio.Task | None = None
+        # Latest RAW reading for the Devices -> Debug live view.
+        self._last_magnetic_deg: float | None = None
+        self._last_declination_deg: float = 0.0
+        self._last_imu: ImuSample | None = None
 
     async def start(self) -> None:
         self._task = asyncio.ensure_future(self._loop())
@@ -260,11 +264,16 @@ class HWT901BCompass(Sensor):
         # more immediate straight-line gate than the COG-difference fallback.
         g = getattr(state, "angular_velocity", None)
         yaw_rate = g.z if g is not None else None
-        heading = normalize_deg(magnetic + self._current_declination(magnetic, dt, yaw_rate))
+        declination = self._current_declination(magnetic, dt, yaw_rate)
+        heading = normalize_deg(magnetic + declination)
         self.last_heading_deg = heading
-        if self.bus is not None:
-            imu = _imu_from_state(state)
-            if imu is not None:
+        # Capture the raw reading for the Debug view (kept even if there's no bus).
+        self._last_magnetic_deg = magnetic
+        self._last_declination_deg = declination
+        imu = _imu_from_state(state)
+        if imu is not None:
+            self._last_imu = imu
+            if self.bus is not None:
                 await self.bus.publish(events.IMU_IN, imu)
         return nmea.encode_hdt(heading)
 
@@ -280,6 +289,30 @@ class HWT901BCompass(Sensor):
             except Exception:  # pragma: no cover - defensive
                 logger.exception("hwt901b compass loop error")
             await asyncio.sleep(period)
+
+    def debug(self) -> str:
+        if self.last_heading_deg is None or self._last_magnetic_deg is None:
+            return f"{type(self).__name__}: waiting for data…"
+        try:
+            imu = self._last_imu
+            lines = [
+                f"{type(self).__name__}",
+                f"  heading   : {self.last_heading_deg:.1f} ° true "
+                f"({self._last_magnetic_deg:.1f} ° magnetic)",
+                f"  declin.   : {self._last_declination_deg:+.1f} ° "
+                f"(mode {self.declination_mode})",
+            ]
+            if imu is not None:
+                lines += [
+                    f"  accel     : {imu.ax:.2f} / {imu.ay:.2f} / {imu.az:.2f} m/s²",
+                    f"  gyro      : {imu.gx:.1f} / {imu.gy:.1f} / {imu.gz:.1f} °/s",
+                    f"  roll/pitch: {imu.roll_deg:.1f} / {imu.pitch_deg:.1f} °",
+                ]
+            else:
+                lines.append("  imu       : (no accel/gyro sample yet)")
+            return "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001 - debug view must never raise
+            return f"{type(self).__name__}: debug error ({exc})"
 
     # -- device-specific settings menu (rendered generically by the UI) ---- #
     def device_menu(self) -> dict:

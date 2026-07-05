@@ -1284,3 +1284,131 @@
     if (card.open && !loaded) load();
   });
 })();
+
+/* Device debug viewer — a per-device "🐞 Debug" button next to each source select
+ * opens ONE shared panel that live-streams that device's raw data by polling
+ * GET /api/devices/{kind}/debug (kind ∈ gps|compass|depth|motor|battery) ~2×/s.
+ *
+ * Switching devices stops the old poll and starts the new; Close and collapsing
+ * the card both stop it — the interval is cleared on every exit path so it can't
+ * leak. Degrades gracefully: {ok:false} / fetch errors show the message text, and
+ * a few consecutive failures stop the poll with a "stream ended" note.
+ *
+ * Contract:
+ *   GET /api/devices/{kind}/debug ->
+ *     { ok:true,  kind, source, debug:"<multi-line text>" }  or
+ *     { ok:false, kind, debug:"No … device is active…" }
+ */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const card = $("devices-card");
+  const viewer = $("dev-debug-viewer");
+  const grid = document.querySelector(".dev-srcgrid");
+  if (!card || !viewer) return;
+
+  const KINDS = { gps: 1, compass: 1, depth: 1, motor: 1, battery: 1 };
+  const POLL_MS = 500;
+  const MAX_FAILS = 3;   // stop after this many consecutive failures
+
+  let curKind = null;
+  let timer = null;
+  let fails = 0;
+
+  function stopPoll() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function setOut(txt) {
+    const out = $("dev-debug-out");
+    if (out) out.textContent = txt == null ? "" : String(txt);
+  }
+
+  function setMeta(txt) {
+    const m = $("dev-debug-meta");
+    if (m) m.textContent = txt || "";
+  }
+
+  function nowStr() {
+    return new Date().toTimeString().slice(0, 8);
+  }
+
+  // Brief "live" pulse on the status dot each successful update.
+  function pulse() {
+    const dot = $("dev-debug-dot");
+    if (!dot) return;
+    dot.style.opacity = "1";
+    setTimeout(() => { if (dot) dot.style.opacity = "0.25"; }, 160);
+  }
+
+  function render(kind, j) {
+    const title = $("dev-debug-title");
+    if (title) {
+      const src = j && j.source ? j.source : "";
+      title.textContent = "Raw data — " + kind + (src ? " (" + src + ")" : "");
+    }
+    // Show whatever text the backend gave (raw snapshot, or the ok:false message).
+    setOut(j && j.debug != null ? j.debug : "(no data)");
+  }
+
+  function onFail() {
+    fails += 1;
+    if (fails >= MAX_FAILS) {
+      stopPoll();
+      setMeta("stream ended (" + nowStr() + ")");
+    } else {
+      setMeta("connection problem…");
+    }
+  }
+
+  function poll() {
+    const kind = curKind;
+    if (!kind) return;
+    fetch("/api/devices/" + kind + "/debug")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (kind !== curKind) return;   // switched/closed mid-request
+        if (!j) { onFail(); return; }
+        fails = 0;
+        render(kind, j);
+        setMeta("updated " + nowStr());
+        pulse();
+      })
+      .catch(() => { if (kind === curKind) onFail(); });
+  }
+
+  function openDebug(kind) {
+    if (!KINDS[kind]) return;
+    stopPoll();               // never leak the previous poll on switch
+    curKind = kind;
+    fails = 0;
+    viewer.classList.remove("hidden");
+    const title = $("dev-debug-title");
+    if (title) title.textContent = "Raw data — " + kind;
+    setOut("…");
+    setMeta("");
+    poll();                   // immediate first snapshot
+    timer = setInterval(poll, POLL_MS);
+  }
+
+  function closeDebug() {
+    stopPoll();
+    curKind = null;
+    viewer.classList.add("hidden");
+  }
+
+  // Debug buttons (delegated on the sources grid). preventDefault stops the
+  // enclosing <label> from re-focusing its select.
+  if (grid) grid.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-debug]");
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openDebug(b.dataset.debug);
+  });
+
+  const closeBtn = $("dev-debug-close");
+  if (closeBtn) closeBtn.addEventListener("click", closeDebug);
+
+  // Never leak a poll: stop when the card is collapsed.
+  card.addEventListener("toggle", () => { if (!card.open) closeDebug(); });
+})();
