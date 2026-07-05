@@ -130,6 +130,7 @@ def test_get_returns_config_and_options(client):
     assert data["restart_required"] is False
     assert data["options"] == {
         "sensor": ["sim", "serial", "nmea", "none"],  # "none" = Not connected
+        "gps": ["sim", "serial", "nmea", "none", "ublox"],  # + registered ublox (UBX) driver
         "compass": ["sim", "serial", "nmea", "none", "hwt901b"],  # + registered drivers
         "motor": ["sim", "serial", "both", "none"],
         "battery": ["sim", "none", "ina226"],  # sim/none built-in + registered ina226 driver

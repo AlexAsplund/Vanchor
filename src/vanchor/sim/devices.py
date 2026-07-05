@@ -18,7 +18,7 @@ from typing import Callable
 from ..core import events
 from ..core.events import EventBus
 from ..core.geo import angle_difference, mps_to_knots, offset_meters
-from ..core.models import BoatState, ImuSample, MotorCommand
+from ..core.models import BoatState, GpsFix, ImuSample, MotorCommand
 from ..hardware.interfaces import Actuator, MotorController, Sensor
 from ..nav import nmea
 
@@ -201,11 +201,17 @@ class SimGps(Sensor):
         # SensorConfig.gps_noise_m. Keeps the autopilot from chasing phantom XTE.
         position_noise_m: float = 0.35,
         seed: int | None = 1234,
+        emit_velocity: bool = False,
     ) -> None:
         self.get_truth = get_truth
         self.bus = bus
         self.update_hz = update_hz
         self.position_noise_m = position_noise_m
+        # When True, publish a rich GpsFix carrying the NED ground-velocity vector
+        # (like a UBX receiver) instead of an NMEA RMC -- so the sim exercises the
+        # SAME capability-gated fusion path as real UBX hardware, proving the
+        # activation is driven by the fix's contents, not the driver.
+        self.emit_velocity = emit_velocity
         self._rng = random.Random(seed)
         self._task: asyncio.Task | None = None
         # --- fault-injection knobs (#37); all OFF by default ---------------- #
@@ -270,6 +276,31 @@ class SimGps(Sensor):
             cog = truth.heading_deg
         return nmea.encode_rmc(noisy, sog_knots=mps_to_knots(sog_mps), cog_deg=cog)
 
+    def sample_fix(self, truth: BoatState | None = None) -> GpsFix:
+        """Build one rich GpsFix from ground truth, carrying the MEASURED NED
+        ground-velocity vector (pure, for the ``emit_velocity`` path and tests).
+
+        This is the sim standing in for a velocity-capable receiver: the fix
+        includes ``vel_n``/``vel_e`` (and ``vel_d=0`` -- the sim is 2D) plus small
+        accuracy estimates, so the fusion's capability-gated features light up
+        exactly as they would for a real UBX M9N. Honours the ``glitch`` fault."""
+        truth = truth or self.get_truth()
+        noisy = offset_meters(
+            truth.point,
+            self._rng.gauss(0.0, self.position_noise_m),
+            self._rng.gauss(0.0, self.position_noise_m),
+        )
+        if self.fault_glitch:
+            noisy = offset_meters(noisy, self.fault_glitch_m, self.fault_glitch_m)
+        sog_mps = math.hypot(truth.ground_ve, truth.ground_vn)
+        cog = (math.degrees(math.atan2(truth.ground_ve, truth.ground_vn)) % 360.0
+               if sog_mps > 0.05 else truth.heading_deg)
+        return GpsFix(
+            point=noisy, sog_knots=mps_to_knots(sog_mps), cog_deg=cog, valid=True,
+            vel_n_mps=truth.ground_vn, vel_e_mps=truth.ground_ve, vel_d_mps=0.0,
+            h_acc_m=self.position_noise_m, s_acc_mps=0.05,
+        )
+
     async def start(self) -> None:
         self._task = asyncio.ensure_future(self._loop())
 
@@ -291,7 +322,10 @@ class SimGps(Sensor):
                 # dropout / EOF: publish nothing so the navigator's fix ages out.
                 if not self.fault_dropout and self.bus is not None:
                     now = loop.time()
-                    if self.fault_latency_s > 0.0:
+                    if self.emit_velocity:
+                        # Rich-fix path (velocity-capable receiver stand-in).
+                        await self.bus.publish(events.GPS_FIX_IN, self.sample_fix())
+                    elif self.fault_latency_s > 0.0:
                         # Baud-saturation model: buffer this fix and only release
                         # ones that are at least fault_latency_s old, so fresh
                         # fixes always arrive stale.

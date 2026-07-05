@@ -216,6 +216,15 @@ class SensorConfig:
     # The app forces 0.0 when the compass is the SIMULATOR (a zero-declination,
     # true-heading world) so sim behaviour is unchanged regardless of this default.
     magnetic_declination_deg: float | None = None
+    # GNSS/INS fusion (M9N UBX velocity + HWT901B IMU). Additive: it only fills the
+    # extra state.fusion_* fields (yaw rate, ground velocity, crab, dead-reckoning)
+    # from whatever sensors are present; heading/position/control are unchanged.
+    # On by default (cheap + useful); set false to skip the filter entirely.
+    fusion_enabled: bool = True
+    # Make the SIMULATED GPS emit a rich fix with a MEASURED velocity vector (like
+    # a UBX receiver) instead of NMEA RMC -- exercises the capability-gated fusion
+    # path end-to-end in the sim. Off by default (keeps the sim's NMEA behaviour).
+    gps_velocity: bool = False
     # Sensor-anomaly protection (spike rejection).
     position_jump_max_m: float = 15.0
     heading_jump_max_deg: float = 30.0

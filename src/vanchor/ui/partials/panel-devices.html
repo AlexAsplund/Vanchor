@@ -20,7 +20,7 @@
           <div class="dev-srcgrid">
             <label class="dev-srcrow">
               <span>GPS</span>
-              <select id="dev-src-gps" data-kind="sensor"></select>
+              <select id="dev-src-gps" data-kind="gps"></select>
             </label>
             <label class="dev-srcrow">
               <span>Compass</span>
@@ -132,6 +132,84 @@
           <!-- Device-specific settings/actions rendered from each active device's
                device_menu() (e.g. the HWT901B compass: declination, calibration). -->
           <div id="dev-menus"></div>
+
+          <!-- Sensor calibration (fusion) — records sensor noise while the boat
+               sits still, then tunes the GNSS/INS fusion filter. Lazy-loads GET
+               /api/fusion/calibration on the card's first open; hidden if 404. -->
+          <div id="dev-calib" class="hidden">
+            <div class="ctx-sub">Sensor calibration</div>
+            <div class="hint">Records your sensors' noise while the boat sits <b>completely still with the motor off</b>, then tunes the fusion filter to match. Re-run it whenever you move or replace a sensor.</div>
+
+            <div id="dev-calib-disabled" class="hint err hidden">Turn on the fusion filter to calibrate the sensors.</div>
+
+            <div id="dev-calib-readout" class="hint"></div>
+            <!-- Servo-term status for the SAVED interference model. -->
+            <div id="dev-calib-saved-servo" class="hint hidden"></div>
+            <!-- Mitigation advice for the SAVED interference score (GET). -->
+            <div id="dev-calib-saved-recs" class="hidden"></div>
+
+            <!-- EXPERIMENTAL: real-time software remedy that subtracts the
+                 measured motor-interference drift. Only useful once an
+                 interference sweep has produced a drift model. -->
+            <div id="dev-calib-comp" class="hidden">
+              <label class="switch"><input type="checkbox" id="dev-calib-comp-toggle" /><span class="track"></span> Apply interference compensation <span class="badge">Experimental</span></label>
+              <div id="dev-calib-comp-need" class="hint hidden">Run an interference sweep first — there's no drift model to apply yet.</div>
+              <div class="hint">Experimental: subtracts the measured drift for the current thrust. First-order only — it doesn't yet account for the motor's steering angle, and won't fix a physically bad install.</div>
+            </div>
+
+            <!-- Guided sequence panel ("Calibrate all") — runs the three modes
+                 step-by-step. Hidden unless a sequence is active. -->
+            <div id="dev-calib-seq" class="hidden">
+              <div class="ctx-sub">Guided calibration <span id="dev-calib-seq-step" class="badge"></span></div>
+              <div id="dev-calib-seq-instr" class="hint"></div>
+              <div class="btn-row">
+                <button id="dev-calib-seq-start" class="btn-primary" type="button">Ready — start</button>
+                <button id="dev-calib-seq-confirm" class="btn-primary hidden" type="button">Confirm &amp; save → next</button>
+                <button id="dev-calib-seq-skip" class="btn-ghost" type="button">Skip step</button>
+                <button id="dev-calib-seq-cancel" class="btn-ghost" type="button">Cancel</button>
+                <button id="dev-calib-seq-done" class="btn-primary hidden" type="button">Done</button>
+              </div>
+            </div>
+
+            <!-- Live capture progress (shown only while capturing). -->
+            <div id="dev-calib-progress" class="hidden">
+              <div id="dev-calib-instr" class="hint"></div>
+              <div class="calib-bar"><div class="calib-fill" id="dev-calib-fill"></div></div>
+              <div class="hint">Capturing… <b><span id="dev-calib-samples">0</span></b> samples (<span id="dev-calib-pct">0</span>%)</div>
+            </div>
+
+            <!-- Proposed calibration after a capture (shown only on stop). -->
+            <div id="dev-calib-proposal" class="hidden">
+              <div class="ctx-sub">Proposed calibration</div>
+              <div id="dev-calib-warnings" class="hint err hidden"></div>
+              <!-- Motor-interference quality headline (interference mode only). -->
+              <div id="dev-calib-score" class="hidden">
+                <div class="ctx-sub">Motor interference quality</div>
+                <div><b id="dev-calib-score-num" style="font-size:36px;font-variant-numeric:tabular-nums;">—</b> <span class="muted">/ 100</span></div>
+                <div class="hint">0 = unusable · 100 = no interference</div>
+                <div id="dev-calib-score-sub" class="hint"></div>
+              </div>
+              <!-- Servo-term status (steering sweep measured or not). -->
+              <div id="dev-calib-servo" class="hint hidden"></div>
+              <!-- Mitigation advice from the stop response (interference mode). -->
+              <div id="dev-calib-recs" class="hidden"></div>
+              <div id="dev-calib-proposal-body" class="hint"></div>
+              <div class="btn-row" id="dev-calib-proposal-actions">
+                <button id="dev-calib-apply" class="btn-primary" type="button">Apply &amp; save</button>
+                <button id="dev-calib-discard" class="btn-ghost" type="button">Discard</button>
+              </div>
+            </div>
+
+            <div class="btn-row" id="dev-calib-modes">
+              <button id="dev-calib-all" class="btn-primary" type="button">Calibrate all…</button>
+              <button id="dev-calib-still" class="btn-ghost" type="button" data-mode="still">Still (30 s)</button>
+              <button id="dev-calib-align" class="btn-ghost" type="button" data-mode="align">Align heading (15 s)</button>
+              <button id="dev-calib-interference" class="btn-ghost" type="button" data-mode="interference">Measure noise (15 s)</button>
+              <button id="dev-calib-reset" class="btn-ghost hidden" type="button">Reset to defaults</button>
+            </div>
+            <button id="dev-calib-stop" class="btn-ghost hidden" type="button">Stop now</button>
+            <div id="dev-calib-status" class="hint"></div>
+          </div>
         </div>
       </details>
 

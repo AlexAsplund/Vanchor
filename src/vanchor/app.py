@@ -169,6 +169,12 @@ def _thrust_yaw_ff_norm(cfg: AppConfig) -> float:
     return bc.thrust_yaw_ff_angle() / math.radians(bc.max_steer_angle_deg)
 
 
+def _make_fusion():
+    """A GNSS/INS complementary fusion filter (M9N UBX + HWT901B IMU)."""
+    from .nav.fusion import NavFusion
+    return NavFusion()
+
+
 def _build_battery_config(cfg: AppConfig):
     """Map the app `battery:` config onto the sim battery model (#60)."""
     from .sim.battery import BatteryConfig as SimBatteryConfig
@@ -341,7 +347,15 @@ class Runtime:
                 and cfg.hardware.source("compass") == "sim"
                 else cfg.sensors.magnetic_declination_deg
             ),
+            # GNSS/INS fusion (additive) when enabled -- fills the state.fusion_*
+            # fields from whatever sensors are present; None disables the filter.
+            fusion=(_make_fusion() if cfg.sensors.fusion_enabled else None),
         )
+        # Apply a persisted fusion calibration (still-capture system-ID), if any.
+        from .nav.calibration import load_calibration
+        self._fusion_cal = load_calibration(cfg.data_dir)
+        if self._fusion_cal is not None:
+            self.navigator.apply_calibration(self._fusion_cal)
         self.controller = Controller(
             self.state,
             motor,
@@ -1045,6 +1059,12 @@ class Runtime:
         from .hardware import registry
         return self._SENSOR_SOURCES + tuple(registry.sources("compass"))
 
+    def _gps_sources(self) -> tuple:
+        """Built-in GPS sources + any registered GPS driver sources (e.g.
+        ``ublox`` = the UBX M9N driver)."""
+        from .hardware import registry
+        return self._SENSOR_SOURCES + tuple(registry.sources("gps"))
+
     def list_serial_ports(self) -> list[dict]:
         """Bindable serial ports for the device-config UI to suggest.
 
@@ -1107,6 +1127,78 @@ class Runtime:
         out.sort(key=lambda e: (not e["stable"], e["path"]))
         return out
 
+    # -- fusion calibration (still-capture system-ID; see nav.calibration) --- #
+    def fusion_calibration(self) -> dict:
+        """Saved calibration + live capture status (for GET)."""
+        from .nav.calibration import interference_recommendations
+        capturing, samples, seconds = self.navigator.capture_status()
+        cal = self._fusion_cal
+        score = cal.motor_interference_score if cal else None
+        return {
+            "calibration": cal.to_dict() if cal else None,
+            "capturing": capturing,
+            "capture_samples": samples,
+            "capture_seconds": seconds,
+            "enabled": self.navigator.fusion is not None,
+            "recommendations": interference_recommendations(score),
+            # experimental motor-interference remedy state
+            "interference_comp_enabled": bool(cal.interference_comp_enabled) if cal else False,
+            "has_interference_model": bool(cal and cal.motor_interference_slope is not None),
+        }
+
+    def set_interference_compensation(self, enabled: bool) -> dict:
+        """EXPERIMENTAL: toggle the real-time motor-interference heading remedy
+        (needs an interference calibration to have any effect)."""
+        from .nav.calibration import FusionCalibration, save_calibration
+        cal = self._fusion_cal or FusionCalibration()
+        cal.interference_comp_enabled = bool(enabled)
+        save_calibration(self.config.data_dir, cal)
+        self._fusion_cal = cal
+        self.navigator.apply_calibration(cal)
+        return {"ok": True, "enabled": bool(enabled),
+                "has_model": cal.motor_interference_slope is not None}
+
+    def start_fusion_capture(self, mode: str = "still") -> dict:
+        from .nav.calibration import CAPTURE_MODES
+        if self.navigator.fusion is None:
+            return {"ok": False, "error": "fusion is disabled"}
+        if mode not in CAPTURE_MODES:
+            return {"ok": False, "error": f"unknown mode {mode!r}"}
+        self._capture_mode = mode
+        self.navigator.start_capture()
+        return {"ok": True, "capturing": True, "mode": mode}
+
+    def stop_fusion_capture(self) -> dict:
+        from .nav.calibration import tune
+        buf = self.navigator.stop_capture()
+        if buf is None:
+            return {"ok": False, "error": "no capture was running"}
+        from .nav.calibration import interference_recommendations
+        mode = getattr(self, "_capture_mode", "still")
+        cal, warnings = tune(buf, mode)
+        out = {"ok": True, "mode": mode, "calibration": cal.to_dict(), "warnings": warnings}
+        if mode == "interference":
+            out["recommendations"] = interference_recommendations(cal.motor_interference_score)
+        return out
+
+    def save_fusion_calibration(self, data: dict) -> dict:
+        from .nav.calibration import FusionCalibration, save_calibration
+        # Merge into the existing calibration so each capture mode updates only
+        # what it measured (still -> gains, align -> offset, ...).
+        incoming = FusionCalibration.from_dict(data)
+        merged = (self._fusion_cal or FusionCalibration()).merged_with(incoming)
+        save_calibration(self.config.data_dir, merged)
+        self._fusion_cal = merged
+        self.navigator.apply_calibration(merged)
+        return {"ok": True}
+
+    def reset_fusion_calibration(self) -> dict:
+        from .nav.calibration import FusionCalibration, clear_calibration
+        clear_calibration(self.config.data_dir)
+        self._fusion_cal = None
+        self.navigator.apply_calibration(FusionCalibration())
+        return {"ok": True}
+
     def device_config(self) -> dict:
         """Current device/hardware config + the selectable options.
 
@@ -1120,6 +1212,7 @@ class Runtime:
             "sim_motor": asdict(self.config.sim_motor),  # actuation shaping (#36)
             "options": {
                 "sensor": list(self._SENSOR_SOURCES),
+                "gps": list(self._gps_sources()),
                 "compass": list(self._compass_sources()),
                 "motor": list(self._MOTOR_SOURCES),
                 "battery": list(self._battery_sources()),
@@ -1162,7 +1255,12 @@ class Runtime:
         hw = HardwareConfig(**asdict(self.config.hardware))
         for dev in ("gps", "compass", "depth"):
             key = f"{dev}_source"
-            allowed = self._compass_sources() if dev == "compass" else self._SENSOR_SOURCES
+            if dev == "compass":
+                allowed = self._compass_sources()
+            elif dev == "gps":
+                allowed = self._gps_sources()
+            else:
+                allowed = self._SENSOR_SOURCES
             if hw_in.get(key) is not None and hw_in[key] not in allowed:
                 raise ValueError(
                     f"{key} must be one of {allowed} (got {hw_in[key]!r})"
@@ -1412,7 +1510,18 @@ class Runtime:
             gps = self._build_serial_gps(cfg)
         elif src["gps"] == "sim":
             gps = SimGps(simulator.truth, self.bus, update_hz=cfg.sensors.gps_hz,
-                         position_noise_m=cfg.sensors.gps_noise_m)
+                         position_noise_m=cfg.sensors.gps_noise_m,
+                         emit_velocity=cfg.sensors.gps_velocity)
+        elif registry.has("gps", src["gps"]):
+            # A pluggable GPS driver (e.g. the UBX "ublox" M9N). Build eagerly but
+            # resiliently -- a failure must not crash startup (mirrors compass).
+            try:
+                gps = registry.build_device("gps", src["gps"], self, cfg)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "gps source %r could not be built (%s); running without GPS. "
+                    "Change it in Settings -> Devices.", src["gps"], exc)
+                gps = None
         if src["compass"] == "serial":
             compass = self._build_serial_compass(cfg)
         elif src["compass"] == "sim":

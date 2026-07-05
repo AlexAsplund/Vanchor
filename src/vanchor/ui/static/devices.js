@@ -37,6 +37,7 @@
     serial: "Serial (wired)",
     nmea: "NMEA (from phone/plotter)",
     hwt901b: "HWT901B AHRS",
+    ublox: "u-blox M9N (UBX)",
     none: "Not connected",
   };
   const MOTOR_LABELS = {
@@ -55,13 +56,14 @@
   // Fallbacks if the backend omits `options`.
   const DEFAULT_OPTS = {
     sensor: ["sim", "serial", "nmea", "none"],
+    gps: ["sim", "serial", "nmea", "none", "ublox"],
     compass: ["sim", "serial", "nmea", "hwt901b", "none"],
     motor: ["sim", "serial", "both", "none"],
     battery: ["sim", "none", "ina226"],
   };
 
   const SRC_FIELDS = [
-    { id: "dev-src-gps", key: "gps_source", kind: "sensor" },
+    { id: "dev-src-gps", key: "gps_source", kind: "gps" },
     { id: "dev-src-compass", key: "compass_source", kind: "compass" },
     { id: "dev-src-depth", key: "depth_source", kind: "sensor" },
     { id: "dev-src-motor", key: "motor_source", kind: "motor" },
@@ -601,6 +603,683 @@
   });
 
   // Lazy: fetch only on the card's first open.
+  card.addEventListener("toggle", () => {
+    if (card.open && !loaded) load();
+  });
+})();
+
+/* Sensor calibration (fusion) — a self-contained subsection of the Devices card.
+ *
+ * Records the boat's sensor noise/behaviour, then tunes the GNSS/INS fusion
+ * filter to it. THREE capture modes, each individually runnable, each with its
+ * own manoeuvre + duration:
+ *   still        (~30 s) — boat still, motor off  -> gyro bias + noise -> gains
+ *   align        (~15 s) — drive straight         -> compass/IMU mounting offset
+ *   interference (~15 s) — bow tied, ramp motor    -> motor-magnetism quality score
+ * "Calibrate all…" runs the three step-by-step for initial setup.
+ *
+ * Lazy-loads GET /api/fusion/calibration on the card's first open; if that 404s
+ * (backend without this flow) the whole section stays hidden and no errors
+ * surface — same graceful-degrade pattern as above.
+ *
+ * Contract (must match the backend):
+ *   GET  /api/fusion/calibration ->
+ *     { calibration:{…}|null, capturing:bool, capture_samples:int,
+ *       capture_seconds:float, enabled:bool, recommendations:[str] }
+ *       (recommendations = mitigation advice for the SAVED interference score.)
+ *   POST /api/fusion/calibrate/start  body { mode } (still|align|interference)
+ *        -> { ok:true, capturing:true }  (ok:false if fusion off)
+ *   POST /api/fusion/calibrate/stop   -> { ok:true, mode, calibration:{…}, warnings:[str],
+ *                                          recommendations:[str] (interference mode) }
+ *                                        or { ok:false, error:str }
+ *   POST /api/fusion/calibrate/save   body { calibration:{…} } -> { ok:true }
+ *   POST /api/fusion/calibrate/reset  -> { ok:true }
+ */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const card = $("devices-card");
+  const box = $("dev-calib");
+  if (!card || !box || !window.VA) return;
+
+  // Per-mode manoeuvre + capture duration (client-side auto-stop `ms`).
+  const MODES = {
+    still: { label: "Still", ms: 30000,
+      instr: "Keep the boat STILL with the motor OFF." },
+    align: { label: "Align heading", ms: 15000,
+      instr: "Drive STRAIGHT at a steady cruise speed." },
+    interference: { label: "Measure noise", ms: 20000,
+      instr: "Tie the bow off so the boat can't rotate. Slowly ramp the motor from 0 toward full AND sweep the steering left↔right through its range." },
+  };
+  const SEQUENCE = ["still", "align", "interference"];
+
+  // Fields shown in the readout / proposal, in order. `d` = decimal places.
+  const FIELDS = [
+    { key: "gyro_bias_dps", label: "Gyro bias", unit: "°/s", d: 3 },
+    { key: "heading_gain", label: "Heading gain", unit: "", d: 3 },
+    { key: "vel_tau_s", label: "Velocity τ", unit: "s", d: 2 },
+    { key: "dr_timeout_s", label: "Dead-reckoning timeout", unit: "s", d: 1 },
+    { key: "crab_min_sog_mps", label: "Crab min SOG", unit: "m/s", d: 2 },
+    { key: "crab_min_sog_measured_mps", label: "Crab min SOG (measured)", unit: "m/s", d: 2 },
+    { key: "gps_pos_sigma_m", label: "GPS position σ", unit: "m", d: 2 },
+    { key: "gps_vel_sigma_mps", label: "GPS velocity σ", unit: "m/s", d: 3 },
+    { key: "heading_sigma_deg", label: "Heading σ", unit: "°", d: 2 },
+    { key: "yaw_rate_sigma_dps", label: "Yaw-rate σ", unit: "°/s", d: 3 },
+    { key: "heading_offset_deg", label: "Heading offset", unit: "°", d: 1 },
+    { key: "motor_interference_deg", label: "Interference drift", unit: "°", d: 1 },
+    { key: "motor_interference_slope", label: "Interference slope", unit: "°/thrust", d: 3 },
+    { key: "motor_interference_score", label: "Interference quality", unit: "/100", d: 0 },
+    { key: "samples", label: "Samples", unit: "", d: 0 },
+    { key: "duration_s", label: "Duration", unit: "s", d: 1 },
+  ];
+  const FIELD_BY_KEY = {};
+  FIELDS.forEach((f) => { FIELD_BY_KEY[f.key] = f; });
+
+  // Which fields each mode's proposal shows (the score is a separate headline,
+  // so interference's body omits it to avoid duplication).
+  const MODE_FIELDS = {
+    still: ["gyro_bias_dps", "heading_gain", "vel_tau_s", "dr_timeout_s",
+      "crab_min_sog_mps", "crab_min_sog_measured_mps", "gps_pos_sigma_m",
+      "gps_vel_sigma_mps", "heading_sigma_deg", "yaw_rate_sigma_dps",
+      "samples", "duration_s"],
+    align: ["heading_offset_deg", "samples", "duration_s"],
+    interference: ["motor_interference_slope", "samples", "duration_s"],
+  };
+
+  let loaded = false;
+  let enabled = false;      // fusion on?
+  let capturing = false;    // a capture is in flight
+  let activeMode = "still"; // mode of the in-flight / last capture
+  let proposalMode = "still";
+  let proposal = null;      // last stop() result awaiting Apply/Discard/Confirm
+  let pollTimer = null;
+  let stopTimer = null;
+  let startedAt = 0;
+  const seq = { active: false, idx: 0, saved: {} };  // "Calibrate all" state
+
+  function setStatus(msg, kind) {
+    const el = $("dev-calib-status");
+    if (!el) return;
+    el.textContent = msg || "";
+    el.className = "hint" + (kind ? " " + kind : "");
+  }
+
+  function fmt(v, d) {
+    const n = Number(v);
+    if (v == null || !Number.isFinite(n)) return "—";
+    return d != null ? n.toFixed(d) : String(n);
+  }
+
+  // Render the labelled numbers of a calibration object as text rows. `keys`
+  // limits/orders which fields to show (defaults to all present FIELDS).
+  function renderCal(host, cal, keys) {
+    if (!host || !cal) return;
+    host.innerHTML = "";
+    const list = keys ? keys.map((k) => FIELD_BY_KEY[k]).filter(Boolean) : FIELDS;
+    list.forEach((f) => {
+      if (cal[f.key] == null) return;
+      const row = document.createElement("div");
+      row.className = "dev-srcrow";
+      const lab = document.createElement("span");
+      lab.textContent = f.label;
+      const val = document.createElement("b");
+      val.textContent = fmt(cal[f.key], f.d) + (f.unit ? " " + f.unit : "");
+      row.append(lab, val);
+      host.appendChild(row);
+    });
+  }
+
+  // Motor-interference quality colour band: red <40, amber 40-75, green >75.
+  function scoreColor(s) {
+    if (!Number.isFinite(s)) return "var(--muted)";
+    if (s < 40) return "var(--stop)";
+    if (s <= 75) return "#e0a13a";
+    return "var(--accent-2)";
+  }
+
+  // Prominent 0-100 quality headline (interference mode). Pass null to hide.
+  function showScore(cal) {
+    const scoreBox = $("dev-calib-score");
+    if (!scoreBox) return;
+    if (!cal || cal.motor_interference_score == null) {
+      scoreBox.classList.add("hidden");
+      return;
+    }
+    const s = Number(cal.motor_interference_score);
+    const num = $("dev-calib-score-num");
+    if (num) {
+      num.textContent = Number.isFinite(s) ? String(Math.round(s)) : "—";
+      num.style.color = scoreColor(s);
+    }
+    const sub = $("dev-calib-score-sub");
+    if (sub) {
+      sub.textContent = cal.motor_interference_deg != null
+        ? fmt(cal.motor_interference_deg, 1) + "° heading drift at full thrust" : "";
+    }
+    scoreBox.classList.remove("hidden");
+  }
+
+  // Servo-term status: motor_interference_sin/cos are both non-null once the
+  // steering sweep was measured. Hidden unless an interference sweep ran at all.
+  function renderServo(host, cal) {
+    if (!host) return;
+    const ran = cal && (cal.motor_interference_score != null
+      || cal.motor_interference_deg != null
+      || cal.motor_interference_sin != null
+      || cal.motor_interference_cos != null);
+    if (!ran) { host.classList.add("hidden"); host.textContent = ""; return; }
+    const measured = cal.motor_interference_sin != null && cal.motor_interference_cos != null;
+    host.className = "hint" + (measured ? " ok" : "");
+    host.textContent = measured
+      ? "Servo compensation: measured"
+      : "Servo compensation: not measured — sweep the steering too";
+    host.classList.remove("hidden");
+  }
+
+  // Render motor-interference mitigation advice (verbatim, from the backend) as a
+  // "What to do about it" list. Given visual weight (tinted callout) when the
+  // score is poor; kept low-key/collapsed when it's good. Hidden if no advice.
+  function renderRecs(host, recs, score) {
+    if (!host) return;
+    host.innerHTML = "";
+    host.className = "";
+    const list = Array.isArray(recs)
+      ? recs.filter((s) => typeof s === "string" && s.trim()) : [];
+    if (!list.length) { host.classList.add("hidden"); return; }
+    const s = Number(score);
+    const good = Number.isFinite(s) && s > 75;
+    const color = scoreColor(s);
+
+    const ul = document.createElement("ul");
+    ul.style.margin = "6px 0 0";
+    ul.style.paddingLeft = "18px";
+    list.forEach((t) => {
+      const li = document.createElement("li");
+      li.textContent = t;
+      li.style.marginBottom = "3px";
+      ul.appendChild(li);
+    });
+
+    if (good) {
+      // Low-key: a collapsed disclosure — the actions barely matter here.
+      const det = document.createElement("details");
+      det.className = "hint";
+      const sum = document.createElement("summary");
+      sum.textContent = "What to do about it";
+      det.append(sum, ul);
+      host.className = "hint";
+      host.appendChild(det);
+    } else {
+      // Prominent: a colour-tinted callout — this is when the actions matter.
+      const callout = document.createElement("div");
+      callout.style.borderLeft = "3px solid " + color;
+      callout.style.background = "color-mix(in srgb, " + color + " 12%, transparent)";
+      callout.style.borderRadius = "var(--r-sm)";
+      callout.style.padding = "8px 10px";
+      callout.style.marginTop = "8px";
+      const h = document.createElement("div");
+      h.textContent = "What to do about it";
+      h.style.fontWeight = "700";
+      h.style.color = color;
+      callout.append(h, ul);
+      host.appendChild(callout);
+    }
+    host.classList.remove("hidden");
+  }
+
+  // Reflect the current (saved) calibration + fusion-enabled state in the UI.
+  function renderState(data) {
+    enabled = !!(data && data.enabled);
+    const cal = data && data.calibration;
+    const readout = $("dev-calib-readout");
+    const reset = $("dev-calib-reset");
+    const disabled = $("dev-calib-disabled");
+
+    if (disabled) disabled.classList.toggle("hidden", enabled);
+
+    if (readout) {
+      readout.className = "hint";
+      if (cal && typeof cal === "object") renderCal(readout, cal);
+      else readout.textContent = "Not calibrated — using defaults.";
+    }
+    if (reset) reset.classList.toggle("hidden", !(cal && typeof cal === "object"));
+    renderServo($("dev-calib-saved-servo"), cal);
+    // Mitigation advice for the saved interference score (empty -> hidden).
+    renderRecs($("dev-calib-saved-recs"), data && data.recommendations,
+      cal && cal.motor_interference_score);
+    renderComp(data);
+  }
+
+  // Experimental interference-compensation switch. Reflects GET state; disabled
+  // (greyed, with a hint) until an interference sweep has produced a drift model.
+  // Hidden entirely on backends that don't report the field.
+  function renderComp(data) {
+    const wrap = $("dev-calib-comp");
+    if (!wrap) return;
+    const has = !!(data && "interference_comp_enabled" in data);
+    wrap.classList.toggle("hidden", !has);
+    if (!has) return;
+    const hasModel = !!(data && data.has_interference_model);
+    const tog = $("dev-calib-comp-toggle");
+    if (tog) {
+      tog.checked = !!data.interference_comp_enabled;
+      tog.disabled = !hasModel;
+      const sw = tog.closest(".switch");
+      if (sw) sw.classList.toggle("dev-dim", !hasModel);
+    }
+    const need = $("dev-calib-comp-need");
+    if (need) need.classList.toggle("hidden", hasModel);
+  }
+
+  function onCompToggle() {
+    const tog = $("dev-calib-comp-toggle");
+    if (!tog) return;
+    const want = tog.checked;
+    tog.disabled = true;
+    setStatus(want ? "Enabling compensation…" : "Disabling compensation…", "busy");
+    fetch("/api/fusion/interference-comp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: want }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          tog.checked = !want;     // revert the control on rejection
+          tog.disabled = false;
+          setStatus((j && j.error) || "Couldn't change compensation.", "err");
+          return;
+        }
+        setStatus(j.enabled ? "Interference compensation on." : "Interference compensation off.", "ok");
+        load();  // re-sync full state (enabled + model availability)
+      })
+      .catch(() => {
+        tog.checked = !want;       // revert on network failure
+        tog.disabled = false;
+        setStatus("Couldn't change compensation.", "err");
+      });
+  }
+
+  // ---- capture lifecycle ------------------------------------------------
+
+  function captureMs() {
+    return (MODES[activeMode] && MODES[activeMode].ms) || 30000;
+  }
+
+  function showCapturing(on) {
+    capturing = on;
+    const prog = $("dev-calib-progress");
+    const stop = $("dev-calib-stop");
+    if (prog) prog.classList.toggle("hidden", !on);
+    if (stop) stop.classList.toggle("hidden", !on);
+    // Lock the mode buttons + the sequence's Ready/Skip while capturing.
+    const modes = $("dev-calib-modes");
+    if (modes) modes.querySelectorAll("button").forEach((b) => { b.disabled = on; });
+    ["dev-calib-seq-start", "dev-calib-seq-skip"].forEach((id) => {
+      const b = $(id); if (b) b.disabled = on;
+    });
+    if (!on) {
+      const fill = $("dev-calib-fill");
+      if (fill) fill.style.width = "0%";
+    }
+  }
+
+  function updateProgress(samples) {
+    const s = $("dev-calib-samples");
+    if (s && samples != null && Number.isFinite(Number(samples))) {
+      s.textContent = String(samples);
+    }
+    const pct = startedAt
+      ? Math.max(0, Math.min(100, ((Date.now() - startedAt) / captureMs()) * 100))
+      : 0;
+    const fill = $("dev-calib-fill");
+    if (fill) fill.style.width = pct.toFixed(0) + "%";
+    const p = $("dev-calib-pct");
+    if (p) p.textContent = String(Math.round(pct));
+  }
+
+  function clearTimers() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+  }
+
+  function poll() {
+    fetch("/api/fusion/calibration")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j) return;
+        if (capturing) updateProgress(j.capture_samples);
+        // If the backend says capture ended on its own, stop cleanly.
+        if (capturing && j.capturing === false) doStop();
+      })
+      .catch(() => {});
+  }
+
+  function doStart(mode) {
+    mode = MODES[mode] ? mode : "still";
+    if (!enabled) {
+      setStatus("Fusion is off — turn it on to calibrate.", "err");
+      return;
+    }
+    if (capturing) return;   // guard double-start
+    activeMode = mode;
+    hideProposal();
+    const instr = $("dev-calib-instr");
+    if (instr) instr.textContent = MODES[mode].instr;
+    setStatus("Starting…", "busy");
+    fetch("/api/fusion/calibrate/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          setStatus((j && j.error) || "Couldn't start — is fusion on?", "err");
+          return;
+        }
+        startedAt = Date.now();
+        showCapturing(true);
+        updateProgress(0);
+        setStatus("Capturing — " + MODES[mode].instr, "busy");
+        clearTimers();
+        pollTimer = setInterval(poll, 1000);
+        stopTimer = setTimeout(doStop, captureMs());
+      })
+      .catch(() => setStatus("Couldn't start calibration.", "err"));
+  }
+
+  function doStop() {
+    clearTimers();
+    if (!capturing) return;    // guard double-stop (timer + manual + poll)
+    showCapturing(false);
+    setStatus("Analysing…", "busy");
+    fetch("/api/fusion/calibrate/stop", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          setStatus((j && j.error) || "Calibration failed.", "err");
+          proposal = null;
+          return;
+        }
+        proposal = j.calibration || null;
+        showProposal(j.calibration, j.warnings, j.mode || activeMode, j.recommendations);
+        if (seq.active) {
+          setStatus("Review the result, then confirm to save & continue.", "ok");
+          setSeqButtons("review");
+        } else {
+          setStatus("Capture complete — review the proposal below.", "ok");
+        }
+      })
+      .catch(() => {
+        setStatus("Calibration failed.", "err");
+        proposal = null;
+      });
+  }
+
+  function showProposal(cal, warnings, mode, recs) {
+    proposalMode = MODES[mode] ? mode : activeMode;
+    const wrap = $("dev-calib-proposal");
+    const body = $("dev-calib-proposal-body");
+    const warn = $("dev-calib-warnings");
+    const acts = $("dev-calib-proposal-actions");
+    if (warn) {
+      const list = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+      warn.classList.toggle("hidden", list.length === 0);
+      warn.textContent = list.length ? "⚠ " + list.join("  ⚠ ") : "";
+    }
+    // In a guided sequence the seq panel owns the confirm/skip buttons.
+    if (acts) acts.classList.toggle("hidden", seq.active);
+    const isInterference = proposalMode === "interference";
+    showScore(isInterference ? cal : null);
+    // Servo-term status + mitigation advice sit under the score gauge
+    // (interference mode only).
+    const servoHost = $("dev-calib-servo");
+    const recsHost = $("dev-calib-recs");
+    if (isInterference) {
+      renderServo(servoHost, cal);
+      renderRecs(recsHost, recs, cal && cal.motor_interference_score);
+    } else {
+      if (servoHost) servoHost.classList.add("hidden");
+      if (recsHost) recsHost.classList.add("hidden");
+    }
+    if (cal && typeof cal === "object") {
+      renderCal(body, cal, MODE_FIELDS[proposalMode]);
+    } else if (body) {
+      body.innerHTML = "";
+      body.textContent = "No calibration produced.";
+    }
+    if (wrap) wrap.classList.remove("hidden");
+  }
+
+  function hideProposal() {
+    const wrap = $("dev-calib-proposal");
+    if (wrap) wrap.classList.add("hidden");
+    const scoreBox = $("dev-calib-score");
+    if (scoreBox) scoreBox.classList.add("hidden");
+    const servoHost = $("dev-calib-servo");
+    if (servoHost) servoHost.classList.add("hidden");
+    const recsHost = $("dev-calib-recs");
+    if (recsHost) recsHost.classList.add("hidden");
+    proposal = null;
+  }
+
+  // POST save; resolves true on success, false otherwise (never rejects).
+  function postSave(cal) {
+    return fetch("/api/fusion/calibrate/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ calibration: cal }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => !!(j && j.ok !== false))
+      .catch(() => false);
+  }
+
+  function doApply() {
+    if (!proposal) { hideProposal(); return; }
+    setStatus("Saving…", "busy");
+    postSave(proposal).then((ok) => {
+      if (!ok) { setStatus("Save failed.", "err"); return; }
+      hideProposal();
+      setStatus("Calibration saved.", "ok");
+      load();  // refresh the saved-state readout
+    });
+  }
+
+  function doReset() {
+    setStatus("Resetting…", "busy");
+    fetch("/api/fusion/calibrate/reset", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || j.ok === false) {
+          setStatus((j && j.error) || "Reset failed.", "err");
+          return;
+        }
+        hideProposal();
+        setStatus("Reset to defaults.", "ok");
+        load();
+      })
+      .catch(() => setStatus("Reset failed.", "err"));
+  }
+
+  // ---- guided "Calibrate all" sequence ----------------------------------
+
+  function setSeqButtons(state) {
+    const vis = {
+      start: state === "ready",
+      confirm: state === "review",
+      skip: state === "ready" || state === "review",
+      cancel: state !== "done",
+      done: state === "done",
+    };
+    Object.keys(vis).forEach((k) => {
+      const b = $("dev-calib-seq-" + k);
+      if (b) b.classList.toggle("hidden", !vis[k]);
+    });
+  }
+
+  function startSequence() {
+    if (!enabled) {
+      setStatus("Fusion is off — turn it on to calibrate.", "err");
+      return;
+    }
+    if (capturing) return;
+    seq.active = true; seq.idx = 0; seq.saved = {};
+    const modes = $("dev-calib-modes");
+    if (modes) modes.classList.add("hidden");
+    const panel = $("dev-calib-seq");
+    if (panel) panel.classList.remove("hidden");
+    setStatus("");
+    renderSeqStep();
+  }
+
+  function renderSeqStep() {
+    if (seq.idx >= SEQUENCE.length) { finishSequence(); return; }
+    const mode = SEQUENCE[seq.idx];
+    const badge = $("dev-calib-seq-step");
+    if (badge) badge.textContent = "Step " + (seq.idx + 1) + "/" + SEQUENCE.length + " · " + MODES[mode].label;
+    const instr = $("dev-calib-seq-instr");
+    if (instr) instr.textContent = MODES[mode].instr + "  (" + Math.round(MODES[mode].ms / 1000) + " s)";
+    hideProposal();
+    setSeqButtons("ready");
+  }
+
+  function seqStart() {
+    if (seq.idx < SEQUENCE.length) doStart(SEQUENCE[seq.idx]);
+  }
+
+  function seqConfirm() {
+    if (!proposal) { seqAdvance(); return; }
+    const mode = proposalMode;
+    setStatus("Saving…", "busy");
+    postSave(proposal).then((ok) => {
+      if (!ok) { setStatus("Save failed — retry or skip this step.", "err"); return; }
+      seq.saved[mode] = proposal;
+      seqAdvance();
+    });
+  }
+
+  function seqSkip() {
+    if (capturing) return;
+    seqAdvance();
+  }
+
+  function seqAdvance() {
+    hideProposal();
+    seq.idx += 1;
+    renderSeqStep();
+  }
+
+  function seqCancel() {
+    endSequence();
+    setStatus("Guided calibration cancelled.", "");
+    load();
+  }
+
+  function endSequence() {
+    if (capturing) {  // abort any in-flight capture on the backend too
+      clearTimers();
+      showCapturing(false);
+      fetch("/api/fusion/calibrate/stop", { method: "POST" }).catch(() => {});
+    }
+    seq.active = false;
+    const panel = $("dev-calib-seq");
+    if (panel) panel.classList.add("hidden");
+    const modes = $("dev-calib-modes");
+    if (modes) modes.classList.remove("hidden");
+    hideProposal();
+  }
+
+  function finishSequence() {
+    const st = seq.saved.still, al = seq.saved.align, itf = seq.saved.interference;
+    const parts = [];
+    parts.push(st ? "✓ Gyro bias & gains set." : "• Still: skipped.");
+    parts.push(al && al.heading_offset_deg != null
+      ? "✓ Heading offset " + fmt(al.heading_offset_deg, 1) + "°."
+      : "• Align: skipped.");
+    parts.push(itf && itf.motor_interference_score != null
+      ? "✓ Interference quality " + Math.round(itf.motor_interference_score) + "/100."
+      : "• Noise: skipped.");
+    const badge = $("dev-calib-seq-step");
+    if (badge) badge.textContent = "Complete";
+    const instr = $("dev-calib-seq-instr");
+    if (instr) instr.textContent = parts.join("  ");
+    hideProposal();
+    setSeqButtons("done");
+    setStatus("Guided calibration complete.", "ok");
+  }
+
+  // ---- load -------------------------------------------------------------
+
+  function load() {
+    fetch("/api/fusion/calibration")
+      .then((r) => {
+        if (!r.ok) return null;   // 404 / older backend -> stay hidden
+        return r.json();
+      })
+      .then((data) => {
+        if (!data || typeof data !== "object" || !("enabled" in data)) {
+          box.classList.add("hidden");
+          return;
+        }
+        box.classList.remove("hidden");
+        renderState(data);
+        // Resume the UI if a capture is already running (e.g. after a reload).
+        if (data.capturing && !capturing) {
+          startedAt = startedAt || Date.now();
+          showCapturing(true);
+          updateProgress(data.capture_samples);
+          const instr = $("dev-calib-instr");
+          if (instr) instr.textContent = "Capture in progress — follow the on-boat instruction.";
+          setStatus("Capturing…", "busy");
+          clearTimers();
+          pollTimer = setInterval(poll, 1000);
+          // No auto-stop timer: we don't know when this capture began.
+        }
+        loaded = true;
+      })
+      .catch(() => { box.classList.add("hidden"); });
+  }
+
+  // ---- wiring -----------------------------------------------------------
+
+  // Per-mode buttons (delegated on the row via data-mode) + "Calibrate all".
+  const modesRow = $("dev-calib-modes");
+  if (modesRow) modesRow.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-mode]");
+    if (b) doStart(b.dataset.mode);
+  });
+  const allBtn = $("dev-calib-all");
+  if (allBtn) allBtn.addEventListener("click", startSequence);
+
+  const stopBtn = $("dev-calib-stop");
+  if (stopBtn) stopBtn.addEventListener("click", doStop);
+  const applyBtn = $("dev-calib-apply");
+  if (applyBtn) applyBtn.addEventListener("click", doApply);
+  const discardBtn = $("dev-calib-discard");
+  if (discardBtn) discardBtn.addEventListener("click", () => {
+    hideProposal();
+    setStatus("Discarded.", "");
+  });
+  const resetBtn = $("dev-calib-reset");
+  if (resetBtn) resetBtn.addEventListener("click", doReset);
+
+  const compTog = $("dev-calib-comp-toggle");
+  if (compTog) compTog.addEventListener("change", onCompToggle);
+
+  // Guided-sequence controls.
+  const seqStartBtn = $("dev-calib-seq-start");
+  if (seqStartBtn) seqStartBtn.addEventListener("click", seqStart);
+  const seqConfirmBtn = $("dev-calib-seq-confirm");
+  if (seqConfirmBtn) seqConfirmBtn.addEventListener("click", seqConfirm);
+  const seqSkipBtn = $("dev-calib-seq-skip");
+  if (seqSkipBtn) seqSkipBtn.addEventListener("click", seqSkip);
+  const seqCancelBtn = $("dev-calib-seq-cancel");
+  if (seqCancelBtn) seqCancelBtn.addEventListener("click", seqCancel);
+  const seqDoneBtn = $("dev-calib-seq-done");
+  if (seqDoneBtn) seqDoneBtn.addEventListener("click", () => { endSequence(); load(); });
+
+  // Lazy: fetch on the card's first open (mirrors the config section above).
   card.addEventListener("toggle", () => {
     if (card.open && !loaded) load();
   });
