@@ -4,6 +4,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a1] — 2026-07-05
+
+- **"Boat shown on map" setting** (Settings → Simulator). Choose which boat the
+  map draws when a real GPS *and* the simulator are both active: **Auto** (the
+  default — shows the real GPS whenever the GPS source is real hardware, else the
+  sim boat), **Simulator**, or **Real GPS**. Fixes a real GPS + sim-actuation
+  setup showing the boat at the sim start instead of your actual position.
+
 ## [1.5.0a0] — 2026-07-05
 
 - **GNSS/INS sensor fusion (u-blox M9N UBX + HWT901B IMU).** A new UBX GPS driver

@@ -66,6 +66,17 @@
   const depthShowBox = $("depth-show");
   if (depthShowBox) depthShowBox.addEventListener("change", () => VA.map.setDepthShow(depthShowBox.checked));
 
+  // ===== map boat source (sim vs real GPS) =================================
+  const boatSourceSel = $("map-boat-source");
+  if (boatSourceSel) {
+    try { boatSourceSel.value = localStorage.getItem("mapBoatSource") || "auto"; } catch (e) { /* ignore */ }
+    boatSourceSel.addEventListener("change", () => {
+      const v = boatSourceSel.value || "auto";
+      try { localStorage.setItem("mapBoatSource", v); } catch (e) { /* ignore */ }
+      window.dispatchEvent(new CustomEvent("va:boatsource", { detail: v }));
+    });
+  }
+
   // Sonar cone angle (#47): drives the depth-dot footprint sizing. The slider
   // writes an override into VA.sonarCone (localStorage-backed); telemetry supplies
   // the default when no override is set. We reflect the effective angle on first

@@ -17,6 +17,16 @@
   const VA = window.VA;
   const ctx = VA.mapCtx;
   const map = ctx.map;
+
+  // Which boat to draw when BOTH a sim boat (truth) and a real GPS fix exist
+  // (Settings -> Simulator -> "Boat shown on map"): "auto" (real GPS when the GPS
+  // source is real hardware, else the sim boat), "sim", or "gps". localStorage-
+  // backed; settings.js dispatches "va:boatsource" on change.
+  let _boatSource = "auto";
+  try { _boatSource = localStorage.getItem("mapBoatSource") || "auto"; } catch (e) { /* ignore */ }
+  window.addEventListener("va:boatsource", function (e) {
+    _boatSource = (e && e.detail) || "auto";
+  });
   const START = ctx.START;
   const follow = ctx.follow;
   const { BOAT_DESIGNS, BOW_X, BOW_Y, boatDiv, updateMotorIndicator } = ctx.boatIcon;
@@ -235,9 +245,17 @@
   // heading so the boat still renders on a real boat (truth is sim-only).
   VA.onTelemetry(function renderBoat(t) {
     const truth = t.truth;
-    const lat = truth ? truth.lat : (t.position ? t.position.lat : null);
-    const lon = truth ? truth.lon : (t.position ? t.position.lon : null);
-    const hdg = truth && Number.isFinite(truth.heading_deg) ? truth.heading_deg : t.heading_deg;
+    // Boat-source setting: prefer the real GPS fix over the sim boat per the
+    // user's choice. "auto" = real GPS whenever the GPS source is real hardware.
+    const gpsReal = !!(t.devices && t.devices.gps && t.devices.gps.source
+                       && t.devices.gps.source !== "sim");
+    const preferGps = _boatSource === "gps" ? true
+      : _boatSource === "sim" ? false : gpsReal;
+    const useTruth = !!truth && !(preferGps && t.position);
+    const src = useTruth ? truth : (t.position || truth);
+    const lat = src ? src.lat : null;
+    const lon = src ? src.lon : null;
+    const hdg = useTruth && Number.isFinite(truth.heading_deg) ? truth.heading_deg : t.heading_deg;
     if (lat !== null && lon !== null && Number.isFinite(lat) && Number.isFinite(lon)) {
       boatMarker.setLatLng([lat, lon]);
       updateModeBadge(t, lat, lon);

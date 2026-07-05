@@ -4,6 +4,15 @@
       <details class="card sim-only hidden" id="sim-card">
         <summary>Simulator <span class="badge">SIM</span></summary>
         <div class="hint">Environment forcing &amp; teleport — simulation only.</div>
+        <div class="ctx-sub">Map</div>
+        <div class="row">
+          <label for="map-boat-source" title="When a real GPS and the simulator are both active, which boat the map shows. Auto uses the real GPS whenever the GPS source is real hardware.">Boat shown on map</label>
+          <select id="map-boat-source">
+            <option value="auto">Auto (real GPS if wired)</option>
+            <option value="sim">Simulator</option>
+            <option value="gps">Real GPS</option>
+          </select>
+        </div>
         <div class="ctx-sub">Boat</div>
         <div class="hint">Pick a preset hull/motor for the simulated boat.</div>
         <div class="btn-row">
