@@ -134,6 +134,9 @@ def test_get_returns_config_and_options(client):
         "compass": ["sim", "serial", "nmea", "none", "hwt901b"],  # + registered drivers
         "motor": ["sim", "serial", "both", "none"],
         "battery": ["sim", "none", "ina226"],  # sim/none built-in + registered ina226 driver
+        # Split-channel sources: "both" is a combined concept, not per-channel.
+        "steering": ["sim", "serial", "none"],
+        "thrust": ["sim", "serial", "none"],
     }
     assert isinstance(data["menus"], list)  # active device menus (sim => empty)
     # Driver menu schemas by source, shown on selection (hwt901b ships one):

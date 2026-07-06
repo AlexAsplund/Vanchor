@@ -18,12 +18,27 @@ today's object graph exactly.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from ..core.config import HardwareConfig
 
 # The framing keys that must match when two channels share a serial port.
 _FRAMING_KEYS = ("baud", "bytesize", "parity", "stopbits")
+
+
+def _normalize_port(port: str) -> str:
+    """Resolve symlinks for Unix device paths so ``/dev/ttyUSB2`` and its
+    ``/dev/serial/by-id/…`` alias compare as equal.
+
+    Non-Unix paths (e.g. ``COM3`` on Windows) are returned unchanged.
+    """
+    if port.startswith("/"):
+        try:
+            return os.path.realpath(port)
+        except OSError:
+            pass
+    return port
 
 
 @dataclass(frozen=True)
@@ -67,13 +82,15 @@ def _framing(link: dict) -> tuple:
 def _same_endpoint(a: dict, b: dict) -> bool:
     """Whether two links resolve to the SAME physical device.
 
-    Same source, and — for serial-backed sources — the same port. Framing equality
+    Same source, and — for serial-backed sources — the same port after
+    resolving any symlinks (``/dev/serial/by-id/…`` and ``/dev/ttyUSB2``
+    pointing to the same device must not be opened twice). Framing equality
     on a shared port is enforced separately (a mismatch is an error, not a "no").
     """
     if a["source"] != b["source"]:
         return False
     if _has_serial(a):
-        return a["port"] == b["port"]
+        return _normalize_port(a["port"]) == _normalize_port(b["port"])
     return True  # sim==sim, none==none share the one (sim / null) device
 
 
@@ -83,21 +100,26 @@ def plan_motor_links(hw: HardwareConfig) -> LinkPlan:
     Raises ``ValueError`` when both channels resolve to the SAME serial port but
     with mismatched framing — they would collapse to one combined controller, so
     the framing must agree.
+
+    Ports are normalised via ``os.path.realpath`` before comparison so that
+    ``/dev/ttyUSB2`` and a ``/dev/serial/by-id/…`` symlink to the same device
+    resolve as the same endpoint (Constraint 2 deferred-review note).
     """
     steering = hw.channel_link("steering")
     thrust = hw.channel_link("thrust")
 
     # Safety guard (Constraint 2): never open the same serial port twice with
     # conflicting framing. If both channels touch a serial endpoint on the same
-    # port, their framing MUST match.
+    # (normalised) port, their framing MUST match.
     if (
         _has_serial(steering)
         and _has_serial(thrust)
-        and steering["port"] == thrust["port"]
+        and _normalize_port(steering["port"]) == _normalize_port(thrust["port"])
         and _framing(steering) != _framing(thrust)
     ):
         raise ValueError(
-            f"steering and thrust channels share a port ({steering['port']!r}); "
+            f"steering and thrust channels share a port "
+            f"({_normalize_port(steering['port'])!r}); "
             f"framing must match (they resolve to the combined controller): "
             f"steering={_framing(steering)} vs thrust={_framing(thrust)}"
         )
