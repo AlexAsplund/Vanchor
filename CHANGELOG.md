@@ -4,6 +4,31 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Connector framework** (`src/vanchor/connectors/`, `docs/connectors.md`): pluggable
+  external integrations under a permission-manifest trust model — default-deny
+  allowlists, plain-language **user consent** in Settings → Devices → Connectors
+  (re-consent on any manifest change), control-as-capability routed through the same
+  governed command path as the app (STOP always flows, granted or not). Ships four
+  connectors: **nmea-tcp** (the retrofitted bridge), **metrics** (offline-first
+  store-and-forward telemetry export for a boat without internet), **nmea2000**
+  (PGN codec + CAN seam; position/COG-SOG/heading/depth ingress, position egress —
+  bench-verify flagged), and **rf-remote** (the control-grant reference: governed
+  thrust/steer with an active-driver deadman that neutralizes via STOP and never
+  disturbs an autonomous anchor hold on radio loss). Built subagent-driven with
+  per-task adversarial reviews + a whole-branch safety review.
+  The **nmea2000** connector also speaks the N2K **thruster** family (PGN 128006/128008):
+  it always broadcasts the motor's own thruster status, and — opt-in via the
+  `thruster_control` setting, which changes the manifest hash and forces re-consent —
+  accepts 128006 thruster commands through the governed path with an rf-remote-style
+  Command-Timeout deadman, an OFF→thrust-0 mapping, and a self-frame loopback guard.
+  **Connector settings** (Task 8): every connector exposes a typed settings schema
+  editable live via `POST /api/connectors/{name}/settings` and a ⚙ Settings inline
+  form in the Connectors card. Saves are live-applied (stop → rebuild → start); secrets
+  masked as `"•••"` in responses (stored plain-text); the thruster-control
+  manifest-change exception surfaces `needs_reconsent` and re-arms the consent flow.
+  The nmea-tcp boot host/port re-sync is suppressed after a user-explicit settings save
+  (`user_edited` guard).
+
 ## [1.5.0a2] — 2026-07-05
 
 - **Per-device Debug view** (Settings → Devices). Every device class now has a

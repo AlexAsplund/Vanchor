@@ -229,4 +229,30 @@
         </div>
       </details>
 
+      <!-- Connectors consent panel. Lazy-loads GET /api/connectors on first
+           open (devices.js IIFE). Hidden gracefully on 404 / older backend
+           that lacks the connector framework. -->
+      <details class="card" id="conn-card">
+        <summary>Connectors <span id="conn-state" class="badge"></span></summary>
+        <div class="hint">Pluggable integrations that bridge the app to external systems. Each connector declares the permissions it needs — you consent individually before it runs.</div>
+
+        <div id="conn-body" class="hidden">
+          <!-- Connector rows rendered by the connectors IIFE in devices.js. -->
+          <div id="conn-list"></div>
+
+          <!-- Shared live debug viewer (one connector at a time). Opened by
+               each connector's 🐞 Debug button; polls
+               GET /api/connectors/{name}/debug every 500 ms.
+               Parallel to the device debug viewer — different DOM ids. -->
+          <div id="conn-debug-viewer" class="hidden">
+            <div class="ctx-sub" id="conn-debug-title">Connector debug</div>
+            <pre id="conn-debug-out" style="white-space: pre; overflow: auto; max-height: 240px; margin: 4px 0; padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.35); font-size: 11px; line-height: 1.4; font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;"></pre>
+            <div class="btn-row">
+              <span class="hint"><span id="conn-debug-dot" style="color: var(--accent-2); opacity: 0.25;">●</span> <span id="conn-debug-meta"></span></span>
+              <button type="button" class="btn-ghost" id="conn-debug-close">Close</button>
+            </div>
+          </div>
+        </div>
+      </details>
+
       </section><!-- /devices -->

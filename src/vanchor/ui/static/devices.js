@@ -1412,3 +1412,646 @@
   // Never leak a poll: stop when the card is collapsed.
   card.addEventListener("toggle", () => { if (!card.open) closeDebug(); });
 })();
+
+/* Connectors consent UI — pluggable integrations (Devices panel).
+ *
+ * Lazy-loads GET /api/connectors on the card's first <details> toggle;
+ * hides the "Connectors" card silently on 404 / older backend.
+ *
+ * Consent flow: enabling a connector shows an inline confirm block —
+ * "This allows <label> to:" with grant_lines bullets + Enable / Cancel.
+ * ONLY the Enable button POSTs {enabled:true}. Disabling POSTs immediately
+ * with no confirm. needs_reconsent shows a badge; clicking it re-runs the
+ * consent flow. The toggle running the consent flow can never skip it.
+ *
+ * Debug viewer: parallel to the device viewer above — different DOM ids,
+ * same 500 ms poll / one-at-a-time / no-leak pattern.
+ *
+ * Contract:
+ *   GET  /api/connectors ->
+ *     { connectors: [{name, label, description, grant_lines, control,
+ *                     armed, needs_reconsent, running, status}] }
+ *   POST /api/connectors/{name}/arm  body { enabled: bool }
+ *     -> { ok, running }  or  { ok:false, error }
+ *   GET  /api/connectors/{name}/debug  -> { ok, name, debug }
+ */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const card = $("conn-card");
+  if (!card) return;
+
+  const POLL_MS = 500;
+  const MAX_FAILS = 3;
+
+  let loaded = false;
+
+  // ---- connector debug viewer (one connector at a time) ----------------- //
+
+  let curDebugName = null;
+  let debugTimer = null;
+  let debugFails = 0;
+
+  function stopDebugPoll() {
+    if (debugTimer) { clearInterval(debugTimer); debugTimer = null; }
+  }
+
+  function setDebugOut(txt) {
+    const el = $("conn-debug-out");
+    if (el) el.textContent = txt == null ? "" : String(txt);
+  }
+
+  function setDebugMeta(txt) {
+    const el = $("conn-debug-meta");
+    if (el) el.textContent = txt || "";
+  }
+
+  function nowStr() {
+    return new Date().toTimeString().slice(0, 8);
+  }
+
+  function debugPulse() {
+    const dot = $("conn-debug-dot");
+    if (!dot) return;
+    dot.style.opacity = "1";
+    setTimeout(() => { if (dot) dot.style.opacity = "0.25"; }, 160);
+  }
+
+  function onDebugFail() {
+    debugFails += 1;
+    if (debugFails >= MAX_FAILS) {
+      stopDebugPoll();
+      setDebugMeta("stream ended (" + nowStr() + ")");
+    } else {
+      setDebugMeta("connection problem…");
+    }
+  }
+
+  function pollDebug() {
+    const name = curDebugName;
+    if (!name) return;
+    fetch("/api/connectors/" + encodeURIComponent(name) + "/debug")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (name !== curDebugName) return;   // switched / closed mid-flight
+        if (!j) { onDebugFail(); return; }
+        debugFails = 0;
+        const title = $("conn-debug-title");
+        if (title) title.textContent = "Debug — " + (j.name || name);
+        setDebugOut(j.debug != null ? j.debug : "(no data)");
+        setDebugMeta("updated " + nowStr());
+        debugPulse();
+      })
+      .catch(() => { if (name === curDebugName) onDebugFail(); });
+  }
+
+  function openDebug(name) {
+    stopDebugPoll();               // never leak the previous poll on switch
+    curDebugName = name;
+    debugFails = 0;
+    const viewer = $("conn-debug-viewer");
+    if (viewer) viewer.classList.remove("hidden");
+    const title = $("conn-debug-title");
+    if (title) title.textContent = "Debug — " + name;
+    setDebugOut("…");
+    setDebugMeta("");
+    pollDebug();                   // immediate first snapshot
+    debugTimer = setInterval(pollDebug, POLL_MS);
+  }
+
+  function closeDebug() {
+    stopDebugPoll();
+    curDebugName = null;
+    const viewer = $("conn-debug-viewer");
+    if (viewer) viewer.classList.add("hidden");
+  }
+
+  // ---- connector row rendering ------------------------------------------ //
+
+  // POST /api/connectors/{name}/arm — resolves to {ok, ...} or {ok:false,error}.
+  function postArm(name, enabled) {
+    return fetch("/api/connectors/" + encodeURIComponent(name) + "/arm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    })
+      .then((r) => r.json())
+      .catch(() => ({ ok: false, error: "network error" }));
+  }
+
+  // Minimal HTML-escape for label text inside innerHTML (belt+suspenders).
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // POST /api/connectors/{name}/settings — resolves to {ok,...} or {ok:false,error}.
+  function postSettings(name, values) {
+    return fetch("/api/connectors/" + encodeURIComponent(name) + "/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    })
+      .then((r) => {
+        if (r.status === 404) return { ok: false, error: "settings_not_supported", status: 404 };
+        return r.json();
+      })
+      .catch(() => ({ ok: false, error: "network error" }));
+  }
+
+  // Build the settings form DOM for one connector. Returns the form container div.
+  // Each input gets data-settings-key and data-settings-type for value collection.
+  function buildSettingsForm(schema, currentSettings) {
+    const form = document.createElement("div");
+    (schema || []).forEach((field) => {
+      const key = field.key || "";
+      const ftype = field.type || "str";
+      const fLabel = field.label || key;
+      const fHint = field.hint || "";
+      const fPlaceholder = field.placeholder || "";
+      const isSecret = !!field.secret;
+      const fDefault = field.default !== undefined ? field.default : "";
+      const storedVal = (currentSettings && currentSettings[key] !== undefined)
+        ? currentSettings[key] : fDefault;
+
+      const rowEl = document.createElement("div");
+      rowEl.className = "dev-srcrow";
+      rowEl.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:4px;";
+
+      const spanEl = document.createElement("span");
+      spanEl.textContent = fLabel;
+      spanEl.style.cssText = "min-width:120px;font-size:13px;";
+
+      var inputEl;
+      if (ftype === "bool") {
+        const switchWrap = document.createElement("label");
+        switchWrap.className = "switch";
+        inputEl = document.createElement("input");
+        inputEl.type = "checkbox";
+        inputEl.checked = !!storedVal;
+        const trackEl = document.createElement("span");
+        trackEl.className = "track";
+        switchWrap.append(inputEl, trackEl);
+        rowEl.append(spanEl, switchWrap);
+      } else {
+        inputEl = document.createElement("input");
+        inputEl.autocomplete = "off";
+        inputEl.spellcheck = false;
+        inputEl.style.cssText = "flex:1;min-width:0;";
+        if (ftype === "int") {
+          inputEl.type = "number";
+          inputEl.step = "1";
+          inputEl.value = String(storedVal !== "" ? storedVal : "");
+        } else if (ftype === "float") {
+          inputEl.type = "number";
+          inputEl.step = "any";
+          inputEl.value = String(storedVal !== "" ? storedVal : "");
+        } else if (isSecret) {
+          inputEl.type = "password";
+          inputEl.autocomplete = "new-password";
+          // "•••" = value is set but hidden; send it back as-is to leave unchanged.
+          inputEl.value = String(storedVal);
+          if (!storedVal && fPlaceholder) inputEl.placeholder = fPlaceholder;
+        } else {
+          inputEl.type = "text";
+          inputEl.value = String(storedVal);
+          if (fPlaceholder) inputEl.placeholder = fPlaceholder;
+        }
+        rowEl.append(spanEl, inputEl);
+      }
+      inputEl.dataset.settingsKey = key;
+      inputEl.dataset.settingsType = ftype;
+      form.appendChild(rowEl);
+
+      if (fHint) {
+        const hintEl = document.createElement("div");
+        hintEl.className = "hint";
+        hintEl.style.cssText = "margin: 0 0 6px 128px; font-size: 11px;";
+        hintEl.textContent = fHint;
+        form.appendChild(hintEl);
+      }
+    });
+    return form;
+  }
+
+  // Collect values from a settings form. Returns {key: value, ...}.
+  function collectFormValues(form, schema) {
+    var values = {};
+    (schema || []).forEach((field) => {
+      const key = field.key || "";
+      const ftype = field.type || "str";
+      const inputEl = form.querySelector("[data-settings-key=\"" + key + "\"]");
+      if (!inputEl) return;
+      if (ftype === "bool") {
+        values[key] = !!inputEl.checked;
+      } else if (ftype === "int") {
+        values[key] = inputEl.value !== "" ? parseInt(inputEl.value, 10) : 0;
+      } else if (ftype === "float") {
+        values[key] = inputEl.value !== "" ? parseFloat(inputEl.value) : 0;
+      } else {
+        values[key] = inputEl.value;   // includes "•••" for unchanged secrets
+      }
+    });
+    return values;
+  }
+
+  function renderConnector(c) {
+    const name = c && typeof c.name === "string" ? c.name : "";
+    const label = c && typeof c.label === "string" ? c.label : name;
+    const description = c && typeof c.description === "string" ? c.description : "";
+    const grantLines = Array.isArray(c.grant_lines) ? c.grant_lines : [];
+    const isControl = !!c.control;
+    const isArmed = !!c.armed;
+    const needsReconsent = !!c.needs_reconsent;
+    const isRunning = !!c.running;
+    const schema = Array.isArray(c.settings_schema) ? c.settings_schema : [];
+    const currentSettings = (c.settings && typeof c.settings === "object") ? c.settings : {};
+    const hasSettings = schema.length > 0;
+
+    const row = document.createElement("div");
+    row.dataset.connName = name;
+    row.style.cssText = "padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.06);";
+
+    // ---- header: status dot · label · badges · spacer · settings · debug · toggle ----
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex; align-items:center; gap:8px; flex-wrap:wrap;";
+
+    const statusDot = document.createElement("span");
+    statusDot.title = isRunning ? "running" : "not running";
+    statusDot.style.cssText = "font-size:10px; flex-shrink:0; color:" +
+      (isRunning ? "var(--accent-2, #3ecf8e)" : "rgba(255,255,255,0.28)") + ";";
+    statusDot.textContent = "●";   // ●
+
+    const lbl = document.createElement("b");
+    lbl.textContent = label;
+
+    // "⚠ Can control the motor" — only for control:true connectors.
+    const ctrlBadge = document.createElement("span");
+    ctrlBadge.className = "badge" + (isControl ? "" : " hidden");
+    if (isControl) {
+      ctrlBadge.style.cssText =
+        "background:rgba(255,60,60,0.15);color:#ff6060;" +
+        "border:1px solid rgba(255,60,60,0.35);";
+    }
+    ctrlBadge.textContent = "⚠ Can control the motor";
+
+    // "permissions changed — re-approve" badge.
+    const reconsentBadge = document.createElement("span");
+    reconsentBadge.className = "badge" + (needsReconsent ? "" : " hidden");
+    if (needsReconsent) {
+      reconsentBadge.style.cssText =
+        "background:rgba(224,161,58,0.15);color:#e0a13a;" +
+        "border:1px solid rgba(224,161,58,0.35);cursor:pointer;";
+    }
+    reconsentBadge.title = "Permissions changed — click to re-approve";
+    reconsentBadge.textContent = "permissions changed — re-approve";
+
+    const spacer = document.createElement("span");
+    spacer.style.flex = "1";
+
+    // ⚙ Settings button — shown only when the connector has a schema.
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.className = "btn-ghost" + (hasSettings ? "" : " hidden");
+    settingsBtn.title = "Configure settings";
+    settingsBtn.textContent = "⚙ Settings";   // ⚙
+
+    const debugBtn = document.createElement("button");
+    debugBtn.type = "button";
+    debugBtn.className = "btn-ghost";
+    debugBtn.title = "Live debug data";
+    debugBtn.textContent = "🐞 Debug";   // 🐞
+
+    const switchLbl = document.createElement("label");
+    switchLbl.className = "switch";
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.checked = isArmed || needsReconsent;
+    const track = document.createElement("span");
+    track.className = "track";
+    switchLbl.append(toggle, track);
+
+    header.append(statusDot, lbl, ctrlBadge, reconsentBadge, spacer, settingsBtn, debugBtn, switchLbl);
+    row.appendChild(header);
+
+    // Description hint
+    if (description) {
+      const desc = document.createElement("div");
+      desc.className = "hint";
+      desc.style.marginTop = "4px";
+      desc.textContent = description;
+      row.appendChild(desc);
+    }
+
+    // Grant lines — always visible so the user knows what was consented to.
+    if (grantLines.length) {
+      const ul = document.createElement("ul");
+      ul.className = "hint";
+      ul.style.cssText = "margin: 6px 0 0; padding-left: 18px;";
+      grantLines.forEach((line) => {
+        const li = document.createElement("li");
+        li.textContent = typeof line === "string" ? line : String(line);
+        ul.appendChild(li);
+      });
+      row.appendChild(ul);
+    }
+
+    // ---- inline consent confirm block (hidden until Enable is triggered) ----
+    const consentBlock = document.createElement("div");
+    consentBlock.className = "hidden";
+    consentBlock.style.cssText =
+      "margin-top:10px;padding:10px 12px;border-radius:var(--r-sm,6px);" +
+      "background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.08);";
+
+    if (grantLines.length > 0) {
+      const consentTitle = document.createElement("div");
+      consentTitle.className = "hint";
+      consentTitle.innerHTML = "This allows <b>" + esc(label) + "</b> to:";
+
+      const consentUl = document.createElement("ul");
+      consentUl.style.cssText = "margin: 6px 0 8px; padding-left: 18px;";
+      grantLines.forEach((line) => {
+        const li = document.createElement("li");
+        li.className = "hint";
+        li.style.marginBottom = "2px";
+        li.textContent = typeof line === "string" ? line : String(line);
+        consentUl.appendChild(li);
+      });
+
+      consentBlock.append(consentTitle, consentUl);
+    }
+
+    const consentBtnRow = document.createElement("div");
+    consentBtnRow.className = "btn-row";
+    const enableBtn = document.createElement("button");
+    enableBtn.type = "button";
+    enableBtn.className = "btn-primary";
+    enableBtn.textContent = "Enable";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "btn-ghost";
+    cancelBtn.textContent = "Cancel";
+    consentBtnRow.append(enableBtn, cancelBtn);
+
+    consentBlock.append(consentBtnRow);
+    row.appendChild(consentBlock);
+
+    // ---- inline settings panel (hidden until ⚙ Settings is clicked) --------
+    const settingsPanel = document.createElement("div");
+    settingsPanel.className = "hidden";
+    settingsPanel.style.cssText =
+      "margin-top:10px;padding:10px 12px;border-radius:var(--r-sm,6px);" +
+      "background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.08);";
+
+    const settingsTitle = document.createElement("div");
+    settingsTitle.className = "ctx-sub";
+    settingsTitle.style.marginBottom = "8px";
+    settingsTitle.textContent = "Settings";
+    settingsPanel.appendChild(settingsTitle);
+
+    // The form is rebuilt when Cancel resets it; keep a mutable reference.
+    var settingsForm = buildSettingsForm(schema, currentSettings);
+    settingsPanel.appendChild(settingsForm);
+
+    const settingsBtnRow = document.createElement("div");
+    settingsBtnRow.className = "btn-row";
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "btn-primary";
+    saveBtn.textContent = "Save";
+    const cancelSettingsBtn = document.createElement("button");
+    cancelSettingsBtn.type = "button";
+    cancelSettingsBtn.className = "btn-ghost";
+    cancelSettingsBtn.textContent = "Cancel";
+    settingsBtnRow.append(saveBtn, cancelSettingsBtn);
+    settingsPanel.appendChild(settingsBtnRow);
+
+    const settingsStatusEl = document.createElement("div");
+    settingsStatusEl.className = "hint";
+    settingsStatusEl.style.minHeight = "1.2em";
+    settingsPanel.appendChild(settingsStatusEl);
+
+    row.appendChild(settingsPanel);
+
+    // Per-row status feedback line (for arm/disarm flow).
+    const statusEl = document.createElement("div");
+    statusEl.className = "hint";
+    statusEl.style.minHeight = "1.2em";
+    row.appendChild(statusEl);
+
+    // ---- helpers -----------------------------------------------------------
+
+    function setStatus(msg, kind) {
+      statusEl.textContent = msg || "";
+      statusEl.className = "hint" + (kind ? " " + kind : "");
+    }
+
+    function setSettingsStatus(msg, kind) {
+      settingsStatusEl.textContent = msg || "";
+      settingsStatusEl.className = "hint" + (kind ? " " + kind : "");
+    }
+
+    function showConsentBlock() { consentBlock.classList.remove("hidden"); }
+    function hideConsentBlock() { consentBlock.classList.add("hidden"); }
+
+    function showSettingsPanel() {
+      hideConsentBlock();
+      settingsPanel.classList.remove("hidden");
+    }
+    function hideSettingsPanel() { settingsPanel.classList.add("hidden"); }
+
+    // ---- event wiring ------------------------------------------------------
+
+    // Toggle change — two paths: enable (consent required) or disable (immediate).
+    toggle.addEventListener("change", () => {
+      const wantsOn = toggle.checked;
+      if (!wantsOn) {
+        // Disable: always immediate, no confirm flow.
+        hideConsentBlock();
+        hideSettingsPanel();
+        toggle.disabled = true;
+        setStatus("Disabling…", "busy");
+        postArm(name, false).then((res) => {
+          toggle.disabled = false;
+          if (!res || !res.ok) {
+            toggle.checked = isArmed || needsReconsent;   // revert on error
+            setStatus("Failed: " + ((res && res.error) || "unknown"), "err");
+            return;
+          }
+          toggle.checked = false;
+          reconsentBadge.classList.add("hidden");
+          setStatus("Disabled.", "");
+          setTimeout(load, 400);
+        });
+      } else {
+        // Enable: show consent flow; NEVER POST without the confirm step.
+        toggle.checked = false;   // revert visual until confirmed
+        hideSettingsPanel();
+        showConsentBlock();
+        setStatus("", "");
+      }
+    });
+
+    // Reconsent badge click: surface the consent flow for re-approval.
+    reconsentBadge.addEventListener("click", () => {
+      showConsentBlock();
+    });
+
+    // Consent "Enable" — the ONLY path that POSTs {enabled:true}.
+    enableBtn.addEventListener("click", () => {
+      hideConsentBlock();
+      toggle.disabled = true;
+      setStatus("Enabling…", "busy");
+      postArm(name, true).then((res) => {
+        toggle.disabled = false;
+        if (!res || !res.ok) {
+          toggle.checked = false;
+          setStatus("Failed: " + ((res && res.error) || "unknown"), "err");
+          return;
+        }
+        toggle.checked = true;
+        reconsentBadge.classList.add("hidden");
+        setStatus(res.running
+          ? "Enabled and running."
+          : "Enabled (starting up…).", "ok");
+        setTimeout(load, 600);
+      });
+    });
+
+    // Consent "Cancel" — close the block, restore the toggle's prior state.
+    cancelBtn.addEventListener("click", () => {
+      hideConsentBlock();
+      toggle.checked = isArmed || needsReconsent;
+      setStatus("", "");
+    });
+
+    // ⚙ Settings button — toggle the settings panel.
+    settingsBtn.addEventListener("click", () => {
+      if (settingsPanel.classList.contains("hidden")) {
+        hideConsentBlock();
+        showSettingsPanel();
+        setSettingsStatus("", "");
+      } else {
+        hideSettingsPanel();
+      }
+    });
+
+    // Settings "Save" — collect values and POST.
+    saveBtn.addEventListener("click", () => {
+      const values = collectFormValues(settingsForm, schema);
+      saveBtn.disabled = true;
+      cancelSettingsBtn.disabled = true;
+      setSettingsStatus("Saving…", "busy");
+      postSettings(name, values).then((res) => {
+        saveBtn.disabled = false;
+        cancelSettingsBtn.disabled = false;
+        if (!res) { setSettingsStatus("No response.", "err"); return; }
+        if (res.error === "settings_not_supported") {
+          // Endpoint doesn't exist (old backend) — hide the button permanently.
+          settingsBtn.classList.add("hidden");
+          hideSettingsPanel();
+          setSettingsStatus("", "");
+          return;
+        }
+        if (!res.ok) {
+          setSettingsStatus("Error: " + (res.error || "unknown"), "err");
+          return;
+        }
+        // Success.
+        hideSettingsPanel();
+        if (res.needs_reconsent) {
+          setStatus("Saved. Re-approval required — permissions changed.", "warn");
+          setTimeout(load, 400);
+        } else {
+          setStatus("Settings saved.", "ok");
+          setTimeout(load, 400);
+        }
+      });
+    });
+
+    // Settings "Cancel" — hide and reset form to original values.
+    cancelSettingsBtn.addEventListener("click", () => {
+      // Rebuild the form from the original stored values (discard dirty edits).
+      settingsPanel.removeChild(settingsForm);
+      settingsForm = buildSettingsForm(schema, currentSettings);
+      settingsPanel.insertBefore(settingsForm, settingsBtnRow);
+      setSettingsStatus("", "");
+      hideSettingsPanel();
+    });
+
+    // Debug button — toggle the shared viewer open/closed for this connector.
+    debugBtn.addEventListener("click", () => {
+      if (curDebugName === name) {
+        closeDebug();
+      } else {
+        openDebug(name);
+        const viewer = $("conn-debug-viewer");
+        if (viewer) viewer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    });
+
+    return row;
+  }
+
+  // ---- list rendering ------------------------------------------------------ //
+
+  function renderConnectors(list) {
+    const host = $("conn-list");
+    if (!host) return;
+    host.innerHTML = "";
+    const items = Array.isArray(list) ? list : [];
+    if (!items.length) {
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.textContent = "No connectors registered.";
+      host.appendChild(hint);
+      return;
+    }
+    items.forEach((c) => {
+      if (!c || typeof c.name !== "string") return;
+      host.appendChild(renderConnector(c));
+    });
+  }
+
+  // ---- load / degrade ------------------------------------------------------ //
+
+  function showUnavailable() {
+    card.classList.add("hidden");
+  }
+
+  function setBadge(txt) {
+    const b = $("conn-state");
+    if (b) b.textContent = txt || "";
+  }
+
+  function load() {
+    fetch("/api/connectors")
+      .then((r) => {
+        if (r.status === 404) { showUnavailable(); return null; }
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((data) => {
+        if (!data) return;   // 404 already handled
+        const list = Array.isArray(data.connectors) ? data.connectors : [];
+        const body = $("conn-body");
+        if (body) body.classList.remove("hidden");
+        renderConnectors(list);
+        const nArmed = list.filter((c) => !!c.armed).length;
+        setBadge(list.length ? nArmed + "/" + list.length + " armed" : "");
+        loaded = true;
+      })
+      .catch(() => { showUnavailable(); });
+  }
+
+  // ---- wiring -------------------------------------------------------------- //
+
+  const closeBtn = $("conn-debug-close");
+  if (closeBtn) closeBtn.addEventListener("click", closeDebug);
+
+  // Lazy: fetch only on the card's first open; stop debug on collapse.
+  card.addEventListener("toggle", () => {
+    if (card.open && !loaded) load();
+    if (!card.open) closeDebug();   // never leak the poll
+  });
+})();

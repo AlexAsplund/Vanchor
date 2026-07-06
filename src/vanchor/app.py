@@ -64,6 +64,12 @@ logger = logging.getLogger("vanchor.app")
 # hardware/drivers/). A new driver adds itself here just by existing.
 load_drivers()
 
+# Populate the pluggable connector registry (self-registering modules under
+# connectors/). A new connector adds itself here just by existing.
+from .connectors import load_connectors  # noqa: E402
+
+load_connectors()
+
 # Modes that count as "underway / making way" for the lost-connection failsafe
 # (#64): every guided behaviour except idle manual and station-keeping anchor.
 _UNDERWAY_MODES = frozenset(
@@ -113,6 +119,32 @@ async def _stop_motor(motor) -> None:
             await res
     except Exception:  # noqa: BLE001 - shutdown/swap must not be blocked
         logger.debug("motor stop failed (best-effort)")
+
+
+def _mask_connector_settings(schema: list, stored: dict) -> dict:
+    """Build a display-safe settings dict from ``schema`` and ``stored`` values.
+
+    For each field in ``schema``:
+    - The value is taken from ``stored`` if present, else from the field's
+      ``default``.
+    - Secret fields (``secret: True``) are masked: ``"•••"`` when the stored
+      value is non-empty, ``""`` when it is empty/absent.
+    - Internal runtime keys (``data_dir``, ``user_edited``) are never included.
+
+    Returns a ``{key: value}`` dict covering every schema field.
+    """
+    result: dict = {}
+    for field in schema:
+        key = field.get("key")
+        if not key:
+            continue
+        default = field.get("default", "")
+        val = stored.get(key, default)
+        if field.get("secret"):
+            result[key] = "•••" if val else ""
+        else:
+            result[key] = val
+    return result
 
 
 def _overlay_menu_values(schema: dict, saved: dict) -> dict:
@@ -315,7 +347,6 @@ class Runtime:
         # --- devices: simulated and/or real serial hardware (per-device) -- #
         # Built via _construct_devices so the SAME logic powers a live reload
         # (reload_devices) when the device config changes — no process restart.
-        self.nmea_tcp = None
         self._environment = environment      # reused when devices are rebuilt live
         self._sim_task: "asyncio.Task | None" = None
         dev = self._construct_devices(cfg)
@@ -451,12 +482,78 @@ class Runtime:
         # to engage them). See vanchor.core.capabilities.
         self.controller.device_connected = self._device_connected_map(cfg)
 
-        if cfg.nmea_tcp.enabled:
-            from .nav.nmea_net import NmeaTcpServer
+        # --- Connector framework (consent-gated bus bridges) -------------- #
+        # Load persisted grants (connectors.json) and prepare the running set.
+        # Back-compat: if cfg.nmea_tcp.enabled is set and no explicit grant for
+        # 'nmea-tcp' exists, auto-arm it once (write the grant) so the old
+        # devices.json flag keeps working without a user re-consent step.
+        from .connectors.registry import (
+            armed as _conn_armed,
+            load_grants as _load_grants,
+            needs_reconsent as _conn_needs_reconsent,
+            save_grants as _save_grants,
+            spec as _conn_spec,
+        )
+        from .connectors.base import manifest_hash as _manifest_hash
 
-            self.nmea_tcp = NmeaTcpServer(
-                self.bus, host=cfg.nmea_tcp.host, port=cfg.nmea_tcp.port
-            )
+        self._connector_grants: dict = _load_grants(cfg.data_dir)
+        # Running connectors (successfully started): name -> Connector instance.
+        self.connectors: dict = {}
+
+        if cfg.nmea_tcp.enabled and "nmea-tcp" not in self._connector_grants:
+            sp = _conn_spec("nmea-tcp")
+            if sp is not None:
+                try:
+                    _tmp = sp.build(
+                        {"host": cfg.nmea_tcp.host, "port": cfg.nmea_tcp.port}
+                    )
+                    self._connector_grants["nmea-tcp"] = {
+                        "enabled": True,
+                        "manifest_hash": _manifest_hash(_tmp.manifest),
+                        "settings": {
+                            "host": cfg.nmea_tcp.host,
+                            "port": cfg.nmea_tcp.port,
+                        },
+                    }
+                    _save_grants(cfg.data_dir, self._connector_grants)
+                    logger.info(
+                        "nmea-tcp connector auto-armed (legacy nmea_tcp.enabled=True)"
+                    )
+                except Exception:
+                    logger.exception(
+                        "failed to auto-arm nmea-tcp connector; legacy TCP disabled"
+                    )
+
+        # Re-sync nmea-tcp host/port from cfg if a grant already exists but
+        # its settings differ (e.g. nmea_tcp.port changed in devices.json
+        # after the grant was first written at auto-arm time).  Grant settings
+        # are written once and never updated otherwise, so a cfg edit + restart
+        # would silently use the stale port without this re-sync.
+        # The enabled flag is intentionally left untouched: an explicit user
+        # disable must survive across restarts.
+        if "nmea-tcp" in self._connector_grants:
+            _g = self._connector_grants["nmea-tcp"]
+            _g_settings = _g.get("settings", {})
+            # Only resync host/port from cfg when the grant was NOT explicitly
+            # edited via the settings API (user_edited=True means the user
+            # intentionally chose different values; don't clobber them on restart).
+            if not _g_settings.get("user_edited") and (
+                _g_settings.get("host") != cfg.nmea_tcp.host
+                or _g_settings.get("port") != cfg.nmea_tcp.port
+            ):
+                _old_host = _g_settings.get("host")
+                _old_port = _g_settings.get("port")
+                _new_settings = {**_g_settings, "host": cfg.nmea_tcp.host, "port": cfg.nmea_tcp.port}
+                self._connector_grants["nmea-tcp"] = {**_g, "settings": _new_settings}
+                _save_grants(cfg.data_dir, self._connector_grants)
+                logger.info(
+                    "nmea-tcp grant host/port resynced from cfg "
+                    "(was %s:%s, now %s:%s)",
+                    _old_host,
+                    _old_port,
+                    cfg.nmea_tcp.host,
+                    cfg.nmea_tcp.port,
+                )
 
         # --- Trip log (#66): per-outing track + stats, persisted to disk. - #
         self.trip = TripLog(
@@ -3041,6 +3138,312 @@ class Runtime:
         return {kind: self.device_debug(kind).get("debug", "")
                 for kind in ("gps", "compass", "depth", "motor", "battery")}
 
+    # ------------------------------------------------------------------ #
+    # Connector framework (consent-gated bus bridges)
+    # ------------------------------------------------------------------ #
+
+    def _make_connector_sink(self, name: str):
+        """Return a command sink for connector ``name``.
+
+        The sink wraps :meth:`handle_command` with
+        :meth:`record_command` attribution (Constraint 4).  Exceptions
+        (including any residual :exc:`PermissionError`) are caught,
+        logged, and attributed as ``"error"`` in the audit ring — they
+        NEVER propagate to ``handle_command`` (which would not know what
+        to do with them).
+        """
+        def _sink(cmd: dict) -> None:
+            ctype = cmd.get("type")
+            try:
+                self.handle_command(cmd)
+                self.record_command(ctype, f"connector:{name}", "accepted")
+            except Exception as exc:  # noqa: BLE001 - sink must never propagate
+                self.record_command(ctype, f"connector:{name}", "error", str(exc))
+        return _sink
+
+    def connector_status(self) -> list[dict]:
+        """Status of every *registered* connector (not just armed ones).
+
+        Each entry: ``{name, label, description, grant_lines, control,
+        armed, needs_reconsent, running, status, settings, settings_schema}``.
+
+        ``settings`` contains current values from the grant store merged over
+        schema defaults.  Secret fields are masked as ``"•••"`` when set or
+        ``""`` when unset.  Internal keys (``data_dir``, ``user_edited``) are
+        excluded.  ``settings_schema`` is the connector's declared field list.
+        """
+        from .connectors import registry as _creg
+        from .connectors.registry import (
+            armed as _armed,
+            needs_reconsent as _needs_reconsent,
+        )
+        result: list[dict] = []
+        for name in _creg.names():
+            sp = _creg.spec(name)
+            if sp is None:  # pragma: no cover - registry invariant
+                continue
+            grant_settings = self._connector_grants.get(name, {}).get("settings", {})
+            # Inject data_dir so connectors that buffer to disk (e.g. metrics)
+            # use the runtime's data dir instead of CWD.  Grant settings win on
+            # any explicit key (e.g. a custom data_dir override).
+            settings = {"data_dir": self.config.data_dir, **grant_settings}
+            try:
+                conn_proto = _creg.build(name, settings)
+                mfst = conn_proto.manifest
+            except Exception as exc:  # noqa: BLE001 - a bad connector can't break status
+                logger.warning("connector %r failed to build for status: %s", name, exc)
+                continue
+            running_conn = self.connectors.get(name)
+            try:
+                st = running_conn.status() if running_conn is not None else {}
+            except Exception:  # noqa: BLE001 - status must never raise
+                st = {}
+            # Build the masked settings dict from the schema + grant store.
+            schema = getattr(conn_proto, "settings_schema", []) or []
+            masked_settings = _mask_connector_settings(schema, grant_settings)
+            result.append({
+                "name": name,
+                "label": mfst.label,
+                "description": mfst.description,
+                "grant_lines": list(mfst.grant_lines),
+                "control": bool(mfst.control),
+                "armed": _armed(name, mfst, self._connector_grants),
+                "needs_reconsent": _needs_reconsent(name, mfst, self._connector_grants),
+                "running": running_conn is not None,
+                "status": st,
+                "settings": masked_settings,
+                "settings_schema": schema,
+            })
+        return result
+
+    async def set_connector_armed(self, name: str, enabled: bool) -> dict:
+        """Persist the grant, then live-start or stop the connector.
+
+        Returns ``{ok, running}`` on success; ``{ok:False, error:...}`` when
+        ``name`` is unknown or the connector fails to build."""
+        from .connectors import registry as _creg
+        from .connectors.base import manifest_hash as _mhash
+        from .connectors.context import ConnectorContext
+        from .connectors.registry import save_grants as _save_grants
+
+        if not _creg.has(name):
+            return {"ok": False, "error": f"unknown connector {name!r}"}
+
+        grant_settings = self._connector_grants.get(name, {}).get("settings", {})
+        # Inject data_dir so connectors that buffer to disk use the runtime's
+        # data dir; grant settings override if they carry an explicit key.
+        settings = {"data_dir": self.config.data_dir, **grant_settings}
+        try:
+            conn = _creg.build(name, settings)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"failed to build connector: {exc}"}
+
+        # Persist the grant with the CURRENT manifest hash (consent).
+        self._connector_grants[name] = {
+            "enabled": bool(enabled),
+            "manifest_hash": _mhash(conn.manifest),
+            "settings": settings,
+        }
+        _save_grants(self.config.data_dir, self._connector_grants)
+
+        if enabled:
+            if name not in self.connectors:
+                sink = self._make_connector_sink(name)
+                ctx = ConnectorContext(
+                    self.bus, conn.manifest, sink, mono_fn=self._mono_fn
+                )
+                try:
+                    await conn.start(ctx)
+                    self.connectors[name] = conn
+                    logger.info("connector %r armed and started", name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "connector %r failed to start after arming: %s", name, exc
+                    )
+                    return {
+                        "ok": True, "running": False,
+                        "error": f"started failed: {exc}",
+                    }
+        else:
+            existing = self.connectors.pop(name, None)
+            if existing is not None:
+                try:
+                    await existing.stop()
+                    logger.info("connector %r disarmed and stopped", name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "connector %r failed to stop cleanly: %s", name, exc
+                    )
+
+        return {"ok": True, "running": name in self.connectors}
+
+    async def set_connector_settings(self, name: str, values: dict) -> dict:
+        """Validate, persist, and live-apply new settings for connector ``name``.
+
+        The ``values`` dict is validated against the connector's
+        ``settings_schema``:
+
+        * Unknown keys (not in the schema) → ``{ok: False, error: ...}`` (400).
+        * A masked secret value ``"•••"`` means *keep the stored value
+          unchanged* — it is **never** written literally.
+        * Values are type-coerced according to the field's ``type``.
+        * The merge is additive: existing stored keys not covered by the schema
+          (or not present in ``values``) survive unchanged.
+        * The internal ``user_edited: true`` flag is set so the nmea-tcp
+          boot re-sync does not clobber explicitly chosen host/port values.
+
+        If the connector is **running**, live-applies the change:
+        stop → rebuild with new settings → start.  A failing restart is logged
+        and the connector is left not-running (never crashes the runtime).
+
+        If the new settings change the connector's **manifest** (e.g. flipping
+        ``thruster_control`` on the nmea2000 connector), the connector is
+        stopped and the response includes ``needs_reconsent: true`` — the UI
+        should surface the re-consent flow.
+        """
+        from .connectors import registry as _creg
+        from .connectors.base import manifest_hash as _mhash
+        from .connectors.context import ConnectorContext
+        from .connectors.registry import save_grants as _save_grants
+
+        if not _creg.has(name):
+            return {"ok": False, "error": f"unknown connector {name!r}"}
+
+        current_grant = self._connector_grants.get(name, {})
+        stored_settings = current_grant.get("settings", {})
+        settings_for_proto = {"data_dir": self.config.data_dir, **stored_settings}
+        try:
+            proto = _creg.build(name, settings_for_proto)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"failed to build connector: {exc}"}
+
+        schema: list = getattr(proto, "settings_schema", []) or []
+        schema_keys: set = {f["key"] for f in schema if f.get("key")}
+
+        # Reject unknown keys
+        for key in values:
+            if key not in schema_keys:
+                return {"ok": False, "error": f"unknown setting key {key!r}"}
+
+        # Type-coerce values; skip masked secrets (they mean "unchanged")
+        coerced: dict = {}
+        for field in schema:
+            key = field.get("key")
+            if not key or key not in values:
+                continue
+            raw = values[key]
+            # Masked secret = "leave the stored value alone"
+            if field.get("secret") and raw == "•••":
+                continue
+            ftype = field.get("type", "str")
+            try:
+                if ftype == "int":
+                    coerced[key] = int(raw)
+                elif ftype == "float":
+                    coerced[key] = float(raw)
+                elif ftype == "bool":
+                    if isinstance(raw, bool):
+                        coerced[key] = raw
+                    else:
+                        coerced[key] = str(raw).lower() in ("true", "1", "yes", "on")
+                else:
+                    coerced[key] = str(raw)
+            except (ValueError, TypeError) as exc:
+                return {"ok": False, "error": f"invalid value for {key!r}: {exc}"}
+
+        # Merge into existing stored settings, preserving unknown/internal keys.
+        # user_edited is updated; data_dir is not user-visible.
+        new_stored = dict(stored_settings)
+        new_stored.update(coerced)
+        new_stored["user_edited"] = True
+
+        # Build with new settings to detect a manifest change (e.g. thruster_control).
+        new_settings_full = {"data_dir": self.config.data_dir, **new_stored}
+        try:
+            new_proto = _creg.build(name, new_settings_full)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"failed to build with new settings: {exc}"}
+
+        new_manifest_hash = _mhash(new_proto.manifest)
+        old_manifest_hash = current_grant.get("manifest_hash", "")
+        manifest_changed = bool(old_manifest_hash) and (new_manifest_hash != old_manifest_hash)
+        was_enabled = bool(current_grant.get("enabled", False))
+        needs_reconsent_flag = manifest_changed and was_enabled
+
+        # Persist — the manifest_hash in the grant stays as-is (only
+        # set_connector_armed updates it; that's the consent step).
+        self._connector_grants[name] = {
+            **current_grant,
+            "settings": new_stored,
+        }
+        _save_grants(self.config.data_dir, self._connector_grants)
+
+        # Live-apply when the connector is running.
+        running_conn = self.connectors.get(name)
+        if running_conn is not None:
+            # Always stop the current instance first.
+            self.connectors.pop(name, None)
+            try:
+                await running_conn.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "connector %r stop failed during settings update: %s", name, exc
+                )
+            if manifest_changed:
+                # Manifest changed → connector is disarmed (hash mismatch);
+                # don't restart it.  The user must re-consent.
+                logger.info(
+                    "connector %r stopped after manifest-changing settings update "
+                    "(needs_reconsent=True)", name
+                )
+            else:
+                # Rebuild + restart with new settings.
+                try:
+                    new_conn = _creg.build(name, new_settings_full)
+                    sink = self._make_connector_sink(name)
+                    ctx = ConnectorContext(
+                        self.bus, new_conn.manifest, sink, mono_fn=self._mono_fn
+                    )
+                    await new_conn.start(ctx)
+                    self.connectors[name] = new_conn
+                    logger.info("connector %r restarted with new settings", name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "connector %r failed to restart with new settings: %s; "
+                        "left not-running",
+                        name, exc,
+                    )
+
+        return {
+            "ok": True,
+            "needs_reconsent": needs_reconsent_flag,
+            "running": name in self.connectors,
+        }
+
+    def connector_debug(self, name: str) -> dict:
+        """Human-readable debug string for connector ``name``.
+
+        Returns ``{ok, name, debug}``; ``ok:False`` if the connector is
+        not known or not running (mirroring :meth:`device_debug`)."""
+        from .connectors import registry as _creg
+
+        if not _creg.has(name):
+            return {
+                "ok": False, "name": name,
+                "debug": f"unknown connector {name!r}",
+            }
+        conn = self.connectors.get(name)
+        if conn is None:
+            return {
+                "ok": False, "name": name,
+                "debug": f"connector {name!r} is not running",
+            }
+        try:
+            text = conn.debug()
+        except Exception as exc:  # noqa: BLE001 - debug must never break the UI
+            text = f"debug() raised: {type(exc).__name__}: {exc}"
+        return {"ok": True, "name": name, "debug": text}
+
     def telemetry(self) -> dict:
         """Build a PURE telemetry snapshot -- no side effects.
 
@@ -3249,13 +3652,6 @@ class Runtime:
             self.watchdog.start()
         except Exception:
             logger.exception("hardware watchdog failed to start; continuing without it")
-        if self.nmea_tcp is not None:
-            # A taken NMEA-TCP port must not crash the whole app on boot.
-            try:
-                await self.nmea_tcp.start()
-                logger.info("NMEA TCP server listening on port %s", self.nmea_tcp.bound_port)
-            except Exception:
-                logger.exception("NMEA TCP server failed to start; continuing without it")
         # A serial device that won't open (e.g. an unplugged GPS or a renamed
         # port) must NOT take the whole app down on boot — log it and carry on so
         # the UI stays reachable to fix the device config (which reloads live).
@@ -3289,7 +3685,51 @@ class Runtime:
         # failsafe, trip accumulation + depth checkpointing. Runs regardless of
         # replay mode and client count (findings M2/H4/#7).
         self._tasks.append(asyncio.ensure_future(self._run_supervisor()))
+        # Start armed connectors (after devices are up so the bus is ready).
+        # A connector that fails to build or start is logged and skipped;
+        # it NEVER crashes the whole app (mirror the compass-driver resilience).
+        await self._start_armed_connectors()
         logger.info("runtime started (model=%s, hardware=%s)", self.config.sim.model, self.config.hardware.enabled)
+
+    async def _start_armed_connectors(self) -> None:
+        """Build and start every ARMED connector.
+
+        Idempotent: only starts connectors not already in
+        :attr:`connectors`. A connector that fails to build or start is
+        logged and skipped — NEVER crashes startup."""
+        from .connectors import registry as _creg
+        from .connectors.base import manifest_hash as _mhash
+        from .connectors.context import ConnectorContext
+        from .connectors.registry import armed as _armed
+
+        for name in _creg.names():
+            if name in self.connectors:
+                continue  # already running (e.g. after set_connector_armed)
+            grant_settings = self._connector_grants.get(name, {}).get("settings", {})
+            # Inject data_dir so connectors that buffer to disk use the
+            # runtime's data dir; grant settings override if explicitly set.
+            settings = {"data_dir": self.config.data_dir, **grant_settings}
+            try:
+                conn = _creg.build(name, settings)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "connector %r failed to build at startup: %s; skipping", name, exc
+                )
+                continue
+            if not _armed(name, conn.manifest, self._connector_grants):
+                continue
+            sink = self._make_connector_sink(name)
+            ctx = ConnectorContext(
+                self.bus, conn.manifest, sink, mono_fn=self._mono_fn
+            )
+            try:
+                await conn.start(ctx)
+                self.connectors[name] = conn
+                logger.info("connector %r started", name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "connector %r failed to start: %s; skipping", name, exc
+                )
 
     async def stop(self) -> None:
         self.debug.stop()
@@ -3310,8 +3750,12 @@ class Runtime:
         if bm is not None:
             with contextlib.suppress(Exception):
                 await bm.stop()
-        if self.nmea_tcp is not None:
-            await self.nmea_tcp.stop()
+        # Stop all running connectors (best-effort so one bad connector can't
+        # block the rest of shutdown).
+        for cname, conn in list(self.connectors.items()):
+            with contextlib.suppress(Exception):
+                await conn.stop()
+        self.connectors.clear()
         # De-assert the hardware watchdog line (#44): stopping the heartbeat is
         # itself the safe state (relay drops). Best-effort so shutdown never hangs.
         with contextlib.suppress(Exception):

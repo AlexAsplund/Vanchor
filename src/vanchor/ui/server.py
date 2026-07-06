@@ -328,6 +328,19 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                             runtime.debug.write, "device_debug",
                             runtime.all_device_debug(), time.time()
                         )
+                        # Per-connector debug snapshots (~1 Hz, same throttle).
+                        running_connectors = dict(runtime.connectors)
+                        if running_connectors:
+                            connector_dbg = {}
+                            for _cname, _conn in running_connectors.items():
+                                try:
+                                    connector_dbg[_cname] = _conn.debug()
+                                except Exception:  # noqa: BLE001
+                                    connector_dbg[_cname] = "(debug error)"
+                            await asyncio.to_thread(
+                                runtime.debug.write, "connector_debug",
+                                connector_dbg, time.time()
+                            )
                 if clients:
                     frame_n += 1
                     broadcast_seq += 1
@@ -932,6 +945,51 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         """Human-readable raw-data snapshot for one device (gps/compass/depth/
         motor/battery) -- polled by the Devices -> Debug live view."""
         return runtime.device_debug(kind)
+
+    # -- connector framework -------------------------------------------- #
+    @app.get("/api/connectors")
+    async def list_connectors() -> dict:
+        """List every registered connector with its status + consent state."""
+        return {"connectors": runtime.connector_status()}
+
+    @app.post("/api/connectors/{name}/arm")
+    async def arm_connector(name: str, payload: dict) -> Response:
+        """Enable or disable a connector. Body ``{enabled: bool}``.
+
+        Returns ``{ok, running}`` on success; ``{ok:False, error:...}`` with
+        status 400 when the connector name is unknown."""
+        enabled = bool((payload or {}).get("enabled", False))
+        result = await runtime.set_connector_armed(name, enabled)
+        if not result.get("ok"):
+            return Response(
+                content=json.dumps(result),
+                media_type="application/json",
+                status_code=400,
+            )
+        return Response(content=json.dumps(result), media_type="application/json")
+
+    @app.post("/api/connectors/{name}/settings")
+    async def set_connector_settings(name: str, payload: dict) -> Response:
+        """Update persisted settings for a connector and live-apply them.
+
+        Body is ``{key: value, ...}`` matching the connector's
+        ``settings_schema``.  Unknown keys → 400.  A masked secret value
+        ``"•••"`` leaves the stored secret unchanged.  Returns
+        ``{ok, running, needs_reconsent?}`` on success or
+        ``{ok:False, error:...}`` with status 400 on validation failure."""
+        result = await runtime.set_connector_settings(name, payload or {})
+        if not result.get("ok"):
+            return Response(
+                content=json.dumps(result),
+                media_type="application/json",
+                status_code=400,
+            )
+        return Response(content=json.dumps(result), media_type="application/json")
+
+    @app.get("/api/connectors/{name}/debug")
+    async def connector_debug(name: str) -> dict:
+        """Human-readable debug snapshot for a running connector."""
+        return runtime.connector_debug(name)
 
     # -- fusion calibration (still-capture sensor system-ID) ------------- #
     @app.get("/api/fusion/calibration")
