@@ -41,9 +41,12 @@ def _rt(**hw_overrides) -> Runtime:
 
 
 def _split_rt() -> Runtime:
-    """A runtime with a split motor plan: steering=sim, thrust=serial (Task 3
-    placeholder -> None). The serial channel logs a Task-3 warning and is not
-    built; the sim channel IS built.  This is the canonical split test rig."""
+    """A runtime with a split motor plan: steering=sim, thrust=serial.
+
+    Both channels are built: the sim steering channel and a
+    SerialThrustChannel pointing at a non-existent port.  The thrust channel
+    starts unhealthy (the port never opens) but IS constructed.
+    """
     return _rt(
         steering_source="sim",
         thrust_source="serial",
@@ -122,11 +125,14 @@ def test_split_plan_builds_split_motor():
 
 
 def test_split_steering_sim_channel_is_built():
-    """The sim steering channel is built; the serial thrust channel is None (Task 3)."""
+    """The sim steering channel is built; the serial thrust channel is also built (Task 3)."""
+    from vanchor.hardware.serial_channels import SerialThrustChannel
     rt = _split_rt()
     motor = rt.controller.motor
     assert motor.steering is not None, "sim steering channel should be built"
-    assert motor.thrust is None, "serial thrust channel is Task-3 placeholder -> None"
+    assert isinstance(motor.thrust, SerialThrustChannel), (
+        "serial thrust channel should be a SerialThrustChannel after Task 3"
+    )
 
 
 def test_split_sim_channel_debug_never_raises():
@@ -200,16 +206,28 @@ def test_failing_channel_appears_unhealthy_in_device_status():
 
 
 def test_failing_channel_gates_mode_with_channel_named():
-    """When thrust is unavailable (serial Task-3 placeholder), MANUAL is gated
-    with reason naming 'Thrust' (not just 'Motor')."""
-    rt = _split_rt()
+    """When thrust build fails (channel not built), MANUAL is gated with reason
+    naming 'Thrust' (not just 'Motor').  We simulate the build failure by
+    patching _build_split_channel to return None for the thrust channel."""
+    from unittest.mock import patch
+
+    original_build = Runtime._build_split_channel
+
+    def _patched_build(self, name, link, sim_motor, sim_state, cfg):
+        if name == "thrust":
+            return None  # simulate a build failure
+        return original_build(self, name, link, sim_motor, sim_state, cfg)
+
+    with patch.object(Runtime, "_build_split_channel", _patched_build):
+        rt = _split_rt()
+
     rt.controller.device_connected = rt._device_connected_map(rt.config)
     ma = rt.telemetry()["mode_availability"]
-    # MANUAL requires "motor" (combined roll-up) and "thrust" (channel).
-    # Steering is connected; motor roll-up = True. Thrust = serial/None -> False.
+    # Steering is connected; motor roll-up = True. Thrust = None -> False.
     assert ma["manual"]["available"] is False
     assert "Thrust" in ma["manual"]["reason"], (
-        f"Expected reason to name 'Thrust', got {ma['manual']['reason']!r}")
+        f"Expected reason to name 'Thrust', got {ma['manual']['reason']!r}"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────── #
@@ -266,12 +284,15 @@ def test_device_debug_steering_works_in_split_build():
     assert "Steering" in r["debug"] or "steering" in r["debug"].lower()
 
 
-def test_device_debug_thrust_returns_not_built_when_placeholder():
+def test_device_debug_thrust_channel_built_after_task3():
+    """After Task 3, the serial thrust channel IS built -> ok:True with debug output."""
     rt = _split_rt()
     r = rt.device_debug("thrust")
-    # Serial placeholder -> channel not built -> ok:False with descriptive message
-    assert r["ok"] is False
-    assert "thrust" in r["debug"].lower() or "not" in r["debug"].lower()
+    # Serial channel is now built (Task 3); debug returns ok:True.
+    assert r["ok"] is True
+    assert r["source"] == "serial"
+    # Channel has not been started so it is in "waiting for data" state.
+    assert "Thrust" in r["debug"] or "waiting" in r["debug"].lower() or "Serial" in r["debug"]
 
 
 def test_device_debug_channel_kind_fails_gracefully_on_combined():

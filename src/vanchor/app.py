@@ -1696,7 +1696,25 @@ class Runtime:
             return None
         try:
             src = link["source"]
-            if src in ("sim", "both"):
+            if src == "sim":
+                if sim_motor is None:
+                    logger.warning(
+                        "split %s channel needs a sim motor but none was created; "
+                        "add a sim-capable device to the config", name)
+                    return None
+                if sim_state is None:
+                    return None  # should not happen; guard anyway
+                if name == "thrust":
+                    return _SimThrustChannel(sim_motor, sim_state)
+                return _SimSteeringChannel(sim_motor, sim_state)
+            elif src == "both":
+                # tee-per-channel (drive sim boat AND a physical board on the same
+                # axis) is out of scope for Task 3. A combined "both" config uses
+                # _TeeMotor in _construct_devices and never reaches this path; a
+                # genuinely split "both" config downgrades to sim-only here.
+                logger.warning(
+                    "split %s channel: source 'both' (tee-per-channel) is not yet "
+                    "implemented; downgrading to sim-only", name)
                 if sim_motor is None:
                     logger.warning(
                         "split %s channel needs a sim motor but none was created; "
@@ -1708,11 +1726,21 @@ class Runtime:
                     return _SimThrustChannel(sim_motor, sim_state)
                 return _SimSteeringChannel(sim_motor, sim_state)
             elif src == "serial":
-                # Task 3: serial split channels are not yet implemented.
-                logger.warning(
-                    "split serial channels arrive in Task 3; "
-                    "%s channel will not be active", name)
-                return None
+                from .hardware.serial_channels import (
+                    SerialSteeringChannel,
+                    SerialThrustChannel,
+                )
+                from .hardware.serial_link import PySerialTransport
+                transport = PySerialTransport(
+                    link["port"],
+                    baudrate=link["baud"],
+                    bytesize=link["bytesize"],
+                    parity=link["parity"],
+                    stopbits=link["stopbits"],
+                )
+                if name == "thrust":
+                    return SerialThrustChannel(transport)
+                return SerialSteeringChannel(transport)
             else:
                 logger.warning(
                     "unknown source %r for split %s channel; skipping", src, name)
