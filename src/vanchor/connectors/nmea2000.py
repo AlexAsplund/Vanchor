@@ -24,8 +24,10 @@ Bridges a CAN bus running NMEA 2000 to the Vanchor event bus:
   ``egress_interval_s`` (default 0.5 s = 2 Hz) the last received telemetry
   frame is encoded as PGN 129025 (position) and PGN 129026 (COG/SOG) and
   written to the transport. Frames are skipped when ``position`` is ``None``.
-  COG is taken from ``heading_deg`` (the closest approximation in the telemetry
-  dict; no dedicated COG key is present).
+  COG is derived from the fusion ``ground_vel_n_mps`` / ``ground_vel_e_mps``
+  vector when present (truest over-ground direction); falls back to
+  ``heading_deg`` (% 360 to avoid u16 NA sentinel overflow) when no velocity
+  data is available.
 
 **Reconnect** on transport errors: mirrors the serial-device reconnect loop.
 Open failures back off 2 s; read loop errors back off ``reconnect_delay_s``
@@ -224,7 +226,7 @@ class _SocketCanTransport(CanTransport):  # pragma: no cover
 
     async def recv(self) -> tuple[int, bytes]:  # pragma: no cover
         if self._use_python_can and self._bus is not None:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             msg = await loop.run_in_executor(None, self._bus.recv, 1.0)
             if msg is None:
                 raise EOFError("CAN timeout / no frame")
@@ -257,7 +259,7 @@ class _SocketCanTransport(CanTransport):  # pragma: no cover
                 data=data,
                 is_extended_id=True,
             )
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._bus.send, msg)
             return
         import struct  # noqa: PLC0415
@@ -382,6 +384,10 @@ class Nmea2000Connector(Connector):
                     exc,
                     self._reconnect_delay,
                 )
+                try:
+                    await self._transport.close()
+                except Exception:  # noqa: BLE001
+                    pass
                 await asyncio.sleep(self._reconnect_delay)
 
     async def _read_loop(self) -> None:
@@ -490,9 +496,14 @@ class Nmea2000Connector(Connector):
             if lat is None or lon is None:
                 continue
             sog_knots = float(telem.get("sog_knots") or 0.0)
-            heading_deg = float(telem.get("heading_deg") or 0.0)
             sog_mps = sog_knots / _MPS_TO_KNOTS
-            cog_rad = math.radians(heading_deg)
+            fusion = telem.get("fusion") or {}
+            gvn = fusion.get("ground_vel_n_mps")
+            gve = fusion.get("ground_vel_e_mps")
+            if gvn is not None and gve is not None and (abs(gvn) > 1e-9 or abs(gve) > 1e-9):
+                cog_rad = math.atan2(gve, gvn) % (2 * math.pi)
+            else:
+                cog_rad = math.radians(float(telem.get("heading_deg") or 0.0) % 360.0)
             try:
                 pos_data = n2k.encode_129025(lat, lon)
                 cogsog_data = n2k.encode_129026(0xFF, 0, cog_rad, sog_mps)

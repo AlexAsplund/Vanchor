@@ -29,7 +29,7 @@ from vanchor.connectors.nmea2000 import (
 )
 from vanchor.core.events import EventBus
 from vanchor.core.models import GpsFix
-from vanchor.nav import n2k
+from vanchor.nav import n2k, nmea
 from vanchor.nav.n2k import (
     Pgn127250,
     Pgn128267,
@@ -457,11 +457,13 @@ async def test_ingress_heading_publishes_hdt() -> None:
 
         assert len(sentences) == 1
         s = sentences[0]
-        assert "HDT" in s
-        assert "*" in s  # has checksum
-        # The heading should be approximately 90 deg
-        # $HCHDT,90.0,T*XX
-        assert "90." in s or "89." in s  # approx 90 deg
+        # Validate the sentence via vanchor's own parser (checksum verified)
+        parsed = nmea.parse(s, require_checksum=True)
+        assert isinstance(parsed, nmea.Heading), f"expected Heading, got {parsed!r}"
+        assert parsed.reference == "T"
+        # hdg_raw = int(π/2 / 1e-4) = 15707 → 15707 * 1e-4 rad = 1.5707 rad ≈ 90.0°
+        expected_deg = math.degrees(hdg_raw * 1e-4) % 360.0
+        assert parsed.heading_deg == pytest.approx(expected_deg, abs=0.1)
     finally:
         await conn.stop()
 
@@ -494,9 +496,13 @@ async def test_ingress_depth_publishes_dpt() -> None:
 
         assert len(sentences) == 1
         s = sentences[0]
-        assert "DPT" in s
-        assert "*" in s
-        assert "5.00" in s or "5.0" in s
+        # Validate the sentence via vanchor's own parser (checksum verified)
+        parsed = nmea.parse(s, require_checksum=True)
+        assert isinstance(parsed, nmea.Depth), f"expected Depth, got {parsed!r}"
+        # depth_raw=500 → 5.00 m below transducer; offset_raw=300 → 0.300 m
+        # _parse_dpt sums depth + offset → 5.300 m
+        expected_depth_m = depth_raw * 0.01 + offset_raw * 0.001
+        assert parsed.depth_m == pytest.approx(expected_depth_m, abs=0.001)
     finally:
         await conn.stop()
 
@@ -576,6 +582,103 @@ async def test_egress_throttle_at_most_2hz() -> None:
         )
         # Should not have sent more than ~2 position frames in 0.6 s at 0.5 s interval
         assert pos_frames <= 2
+    finally:
+        await conn.stop()
+
+
+@pytest.mark.asyncio
+async def test_egress_cog_from_fusion_ground_velocity() -> None:
+    """Egress with fusion ground-velocity vector → 129026 COG = atan2(gve, gvn)."""
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(transport, egress_interval_s=0.05)
+    bus = EventBus()
+    ctx = _make_ctx(bus)
+
+    await conn.start(ctx)
+    try:
+        gvn, gve = 1.0, 1.0  # NE diagonal: atan2(1, 1) = π/4 rad
+        telem = {
+            "position": {"lat": 47.5, "lon": -122.3},
+            "sog_knots": 5.0,
+            "heading_deg": 270.0,  # heading differs from COG to confirm fusion is used
+            "fusion": {"ground_vel_n_mps": gvn, "ground_vel_e_mps": gve},
+        }
+        await bus.publish("telemetry", telem)
+        await asyncio.sleep(0.12)
+
+        # Find the 129026 frame
+        frames_129026 = [(cid, data) for cid, data in transport.sent if unpack_id(cid)[1] == 129026]
+        assert frames_129026, "no 129026 frame sent"
+        _, cogsog_data = frames_129026[-1]
+        decoded = decode_129026(cogsog_data)
+        assert decoded is not None
+        assert decoded.cog_rad is not None
+
+        expected_cog_rad = math.atan2(gve, gvn) % (2 * math.pi)
+        assert decoded.cog_rad == pytest.approx(expected_cog_rad, abs=1e-4)
+    finally:
+        await conn.stop()
+
+
+@pytest.mark.asyncio
+async def test_egress_cog_fallback_to_heading_when_no_fusion() -> None:
+    """Egress without fusion velocity → 129026 COG falls back to heading_deg."""
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(transport, egress_interval_s=0.05)
+    bus = EventBus()
+    ctx = _make_ctx(bus)
+
+    await conn.start(ctx)
+    try:
+        telem = {
+            "position": {"lat": 47.5, "lon": -122.3},
+            "sog_knots": 3.0,
+            "heading_deg": 135.0,
+            # no "fusion" key
+        }
+        await bus.publish("telemetry", telem)
+        await asyncio.sleep(0.12)
+
+        frames_129026 = [(cid, data) for cid, data in transport.sent if unpack_id(cid)[1] == 129026]
+        assert frames_129026, "no 129026 frame sent"
+        _, cogsog_data = frames_129026[-1]
+        decoded = decode_129026(cogsog_data)
+        assert decoded is not None
+        assert decoded.cog_rad is not None
+
+        expected_cog_rad = math.radians(135.0 % 360.0)
+        assert decoded.cog_rad == pytest.approx(expected_cog_rad, abs=1e-4)
+    finally:
+        await conn.stop()
+
+
+@pytest.mark.asyncio
+async def test_egress_cog_fallback_heading_720_is_valid_not_na() -> None:
+    """heading_deg=720.0 fallback must encode a valid COG (not the u16 NA 0xFFFF)."""
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(transport, egress_interval_s=0.05)
+    bus = EventBus()
+    ctx = _make_ctx(bus)
+
+    await conn.start(ctx)
+    try:
+        telem = {
+            "position": {"lat": 47.5, "lon": -122.3},
+            "sog_knots": 0.0,
+            "heading_deg": 720.0,  # must be reduced mod 360 before converting
+        }
+        await bus.publish("telemetry", telem)
+        await asyncio.sleep(0.12)
+
+        frames_129026 = [(cid, data) for cid, data in transport.sent if unpack_id(cid)[1] == 129026]
+        assert frames_129026, "no 129026 frame sent"
+        _, cogsog_data = frames_129026[-1]
+        decoded = decode_129026(cogsog_data)
+        assert decoded is not None
+        # cog_rad must NOT be None (i.e. must not decode as the 0xFFFF NA sentinel)
+        assert decoded.cog_rad is not None, "COG decoded as NA — mod 360 was not applied"
+        # 720 % 360 = 0 → cog_rad should be 0.0
+        assert decoded.cog_rad == pytest.approx(0.0, abs=1e-4)
     finally:
         await conn.stop()
 
