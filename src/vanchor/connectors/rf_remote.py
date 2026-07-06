@@ -22,10 +22,18 @@ the REAL ones :meth:`Controller.handle_command` accepts (verified against
 **Expiry deadman (the safety heart).** The remote is expected to stream STICK
 updates continuously. A watchdog on the injectable monotonic clock watches for
 *radio silence*: if the last STICK is older than ``expiry_s`` (default 1.0 s)
-AND the last submitted stick was non-zero, it submits exactly ONE zero
-thrust/steer command and then stays quiet until sticks resume (which re-arms
-it). A transport EOF/error likewise submits the zero command, then reconnects
-with exponential backoff (mirroring the serial-device reader).
+AND the remote is the ACTIVE driver (the ``_last_stick_nonzero`` latch is set),
+it submits exactly ONE neutralizing ``{"type": "stop"}`` and then stays quiet
+until sticks resume (which re-arms it). A transport EOF/error likewise
+neutralizes — but ONLY when that same active-driver latch is set — then
+reconnects with exponential backoff (mirroring the serial-device reader).
+
+The latch is a genuine *active-driver* flag: a non-zero STICK arms it, and any
+successfully submitted mode BUTTON (STOP / ANCHOR / MANUAL) DISARMS it, because
+a mode button hands control to the autopilot or is itself a neutral state — the
+deadman must not fire against a mode the remote is no longer driving. The
+neutralizer is a ``stop`` (not a manual-zero) so it is guaranteed to reach the
+motor even if the control grant was revoked mid-session (Global Constraint 3).
 
 **The grant is enforced by the context, not here.** The connector always *tries*
 ``ctx.submit_command``; a :exc:`PermissionError` (ungranted) is caught, counted
@@ -52,9 +60,19 @@ logger = logging.getLogger("vanchor.connectors.rf_remote")
 # Throttle window (seconds) for repeated denied-command warnings.
 _DENY_LOG_INTERVAL = 5.0
 
-# The one command the deadman (and an EOF) submits to stop motion while staying
-# in manual mode — the "zero thrust/steer command" of the brief.
+# The manual-mode engage command carried by ``BTN MANUAL`` — a zeroed manual
+# command (there is no standalone "set mode manual"). This is a control-grant
+# command, NOT the neutralizer.
 _ZERO_CMD: dict = {"type": "manual", "thrust": 0.0, "steering": 0.0}
+
+# The command the deadman fire AND the (gated) EOF path submit to neutralize the
+# boat. It is a plain ``{"type": "stop"}`` deliberately (FIX 3): stop is
+# guaranteed to flow through ``ctx.submit_command`` even if the control grant is
+# revoked mid-session (Global Constraint 3), and it zeroes thrust + enters MANUAL
+# via the governed path. With the active-driver gating of FIX 1/2 it can only
+# fire when the remote WAS the active manual driver, so its mode effect is
+# equivalent to the old manual-zero — but it can no longer be silently denied.
+_NEUTRALIZE_CMD: dict = {"type": "stop"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -251,15 +269,34 @@ class RfRemoteConnector(Connector):
             return
         which = parts[1].upper()
         if which == "STOP":
-            self._submit({"type": "stop"})
+            submitted = self._submit({"type": "stop"})
         elif which == "ANCHOR":
-            self._submit({"type": "anchor_hold"})
+            submitted = self._submit({"type": "anchor_hold"})
         elif which == "MANUAL":
             # No standalone "set mode manual" command exists; the "manual"
             # command IS the manual-mode engage — send it zeroed.
-            self._submit(dict(_ZERO_CMD))
+            submitted = self._submit(dict(_ZERO_CMD))
         else:
             self._dropped += 1
+            return
+        if submitted:
+            # FIX 1 (disarm on hand-off): every successfully submitted mode
+            # button DISARMS the deadman. The deadman only guards the case where
+            # the remote is the ACTIVE driver; a mode button either hands control
+            # to the autopilot (anchor) or is itself a neutral state (stop /
+            # manual-engage). Without this, a stale stick latch would let the
+            # watchdog yank the boat out of an autonomous anchor hold.
+            self._disarm_deadman()
+
+    def _disarm_deadman(self) -> None:
+        """Clear the active-driver latch and its timestamp.
+
+        After this the deadman is idle until a new non-zero stick re-arms it (see
+        :meth:`_process_stick`). Used by the mode-button hand-off (FIX 1) and by
+        the gated EOF path (FIX 2).
+        """
+        self._last_stick_nonzero = False
+        self._last_stick_mono = None
 
     def _process_stick(self, parts: list[str]) -> None:
         if len(parts) != 3:
@@ -299,10 +336,11 @@ class RfRemoteConnector(Connector):
             age = self._mono() - self._last_stick_mono
             if age < self._expiry_s:
                 return
-            # Fire exactly one zero command, then disarm until sticks resume.
-            self._last_stick_nonzero = False
+            # Fire exactly one neutralizer, then disarm until sticks resume.
+            # FIX 3: the neutralizer is a guaranteed-path {"type": "stop"}.
             self._expiry_fired = True
-            self._submit(dict(_ZERO_CMD))
+            self._disarm_deadman()
+            self._submit(dict(_NEUTRALIZE_CMD))
         except Exception as exc:  # noqa: BLE001 - the deadman must never crash
             logger.warning("rf-remote: deadman check error: %s", exc)
 
@@ -347,8 +385,25 @@ class RfRemoteConnector(Connector):
                 logger.debug("rf-remote: garbage line discarded: %s", exc)
                 continue
             except Exception as exc:  # noqa: BLE001 - EOF or transport error
-                logger.warning("rf-remote: link lost (%s); zeroing + reconnecting", exc)
-                self._submit(dict(_ZERO_CMD))
+                # FIX 2 (EOF gating): neutralize ONLY if the remote is currently
+                # the ACTIVE driver — i.e. the deadman is armed. A control-INPUT
+                # link loss must not disturb an autonomous mode the remote isn't
+                # driving (e.g. an anchor hold engaged via BTN ANCHOR). This
+                # deliberately amends the original brief's UNCONDITIONAL wording;
+                # the spec-owner adjudicated that an input-only link drop should
+                # not yank an autonomously-anchored boat into manual. Then disarm
+                # (FIX 4: the cleared latch means no path can double-fire — the
+                # concurrent watchdog now sees an idle deadman).
+                if self._last_stick_nonzero:
+                    logger.warning(
+                        "rf-remote: link lost (%s); neutralizing + reconnecting", exc
+                    )
+                    self._disarm_deadman()
+                    self._submit(dict(_NEUTRALIZE_CMD))
+                else:
+                    logger.warning(
+                        "rf-remote: link lost (%s); not active driver, reconnecting", exc
+                    )
                 await self._reconnect()
                 continue
             self._process_line(line)
