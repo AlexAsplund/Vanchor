@@ -435,7 +435,7 @@ class Runtime:
                 idle_deadband_m=cfg.control.anchor_idle_deadband_m,
                 boat_max_speed_mps=cfg.boat.max_speed_mps,
                 # Vectored / azimuth station-keeping (#35): opt-in wide-azimuth
-                # spot lock. Defaults (False + 35 deg) keep behaviour unchanged.
+                # anchor hold. Defaults (False + 35 deg) keep behaviour unchanged.
                 vectored=cfg.control.station_keep_vectored,
                 vector_azimuth_deg=cfg.control.station_keep_azimuth_deg,
                 # Mirror the helm's mount polarity so the vectored law's physical
@@ -804,18 +804,18 @@ class Runtime:
         # boat -- keep the helm's sign in step so switching profiles never leaves
         # the autopilot steering backwards.
         self.controller.helm.steer_sign = 1.0 if b.thruster_x_m() >= 0 else -1.0
-        # The learned spot-lock mirrors the mount sign too (the Helm still owns
+        # The learned anchor mode mirrors the mount sign too (the Helm still owns
         # the actual command flip; the mode uses this for mount awareness +
         # telemetry) -- keep it in step on every profile change.
         ml = self.controller.modes.get(ControlModeName.ANCHOR_ML)
         if ml is not None and hasattr(ml, "steer_sign"):
             ml.steer_sign = self.controller.helm.steer_sign
-        # "Leffe" (pure full-azimuth learned mode) mirrors the mount sign too. Both
+        # "Leif" (pure full-azimuth learned mode) mirrors the mount sign too. Both
         # learned modes rescale their wide-azimuth steering to the boat's mechanical
         # range live from state.max_steer_angle_deg, so no azimuth sync is needed.
-        leffe = self.controller.modes.get(ControlModeName.ANCHOR_LEFFE)
-        if leffe is not None and hasattr(leffe, "steer_sign"):
-            leffe.steer_sign = self.controller.helm.steer_sign
+        leif = self.controller.modes.get(ControlModeName.ANCHOR_LEIF)
+        if leif is not None and hasattr(leif, "steer_sign"):
+            leif.steer_sign = self.controller.helm.steer_sign
         # Lateral-offset thrust-yaw feed-forward follows the geometry/trim live so
         # changing the offset (or the calibrated trim) updates compensation now.
         self.controller.helm.thrust_yaw_ff = _thrust_yaw_ff_norm(self.config)
@@ -3589,9 +3589,9 @@ class Runtime:
             "period_s": round(self.state.trolling_period_s, 1),
             "phase": round(trolling_mode.phase, 3),
         }
-        # Learned spot-lock (#34): the live residual-decay guardrail + polarity
+        # Learned anchor mode (#34): the live residual-decay guardrail + polarity
         # bookkeeping, so a degraded hybrid falling back to its PID floor is
-        # visible (spotlock_quality itself is in state.to_dict()).
+        # visible (hold_quality itself is in state.to_dict()).
         ml_mode = ctrl.modes.get(ControlModeName.ANCHOR_ML)
         if ml_mode is not None:
             payload["anchor_ml"] = {

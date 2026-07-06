@@ -1,4 +1,4 @@
-"""Work Area mode: travel to each spot, HOLD position (spot-lock), then advance
+"""Work Area mode: travel to each spot, HOLD position (position hold), then advance
 on the on-screen button and/or a dwell timer; loop/patrol cycle the spots; each
 spot may carry a desired hold heading.
 """

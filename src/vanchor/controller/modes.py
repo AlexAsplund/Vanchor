@@ -217,7 +217,7 @@ class AnchorConfig:
 
 
 class AnchorHoldMode(ControlMode):
-    """Virtual anchor ("Spot-Lock"): hold position with reverse thrust + braking.
+    """Virtual anchor: hold position with reverse thrust + braking.
 
     A PD controller on the (ground) distance to the mark: ``kp`` pulls toward the
     anchor, ``kd`` brakes using the GPS closing speed so the boat doesn't
@@ -264,7 +264,7 @@ class AnchorHoldMode(ControlMode):
         self.commanded_azimuth_deg = 0.0
         # NOTE: the environmental-drift estimate is NOT reset here. It now lives in
         # the persistent, controller-owned WindCurrentEstimator (published on
-        # ``state.est_drift_*``), so Spot-Lock engages already knowing the set
+        # ``state.est_drift_*``), so the anchor hold engages already knowing the set
         # instead of relearning it over ~10 s on every activation.
 
     def _filtered_position(self, raw: GeoPoint) -> GeoPoint:
@@ -700,14 +700,14 @@ class WorkAreaConfig:
 
 class WorkAreaMode(ControlMode):
     """Work an area spot by spot: travel to ``state.waypoints[active]``, HOLD
-    position there (active spot-lock) while the user works, then advance to the
+    position there (an active position hold) while the user works, then advance to the
     next spot -- after ``dwell_s`` ("timed" advance) and/or when the user taps
     "Go to next spot" (``state.work_next_requested``). ``route_loop`` cycles the
     spots; ``route_patrol`` runs them there-and-back; otherwise the boat holds the
     final spot once the route is done.
 
     Travel reuses the waypoint leg logic (cross-track + forward/reverse helm); the
-    hold delegates to AnchorHoldMode (spot-lock). Dwell time is accumulated from
+    hold delegates to AnchorHoldMode (the position hold). Dwell time is accumulated from
     ``dt`` so the deterministic harness drives it without a wall clock.
     """
 
@@ -779,7 +779,7 @@ class WorkAreaMode(ControlMode):
                 return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
 
         if self._phase == "hold":
-            sp = self._anchor.update(state, dt)  # spot-lock; sets distance_to_anchor_m
+            sp = self._anchor.update(state, dt)  # position hold; sets distance_to_anchor_m
             self._dwell_elapsed += dt
             timed = self.config.advance == "timed"
             want_advance = state.work_next_requested or (

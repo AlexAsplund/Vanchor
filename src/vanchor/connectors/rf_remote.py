@@ -9,7 +9,7 @@ directly.
 Line protocol (newline-delimited text over :class:`SerialTransport`):
 
 * ``BTN STOP``               -> ``{"type": "stop"}``            (always accepted)
-* ``BTN ANCHOR``             -> ``{"type": "anchor_hold"}``     (spot-lock here)
+* ``BTN ANCHOR``             -> ``{"type": "anchor_hold"}``     (anchor hold here)
 * ``BTN MANUAL``             -> ``{"type": "manual", "thrust": 0.0, "steering": 0.0}``
 * ``STICK <thrust> <steer>`` -> ``{"type": "manual", "thrust": t, "steering": s}``
   with both floats clamped to ``[-1, 1]``; a non-finite value is rejected.
@@ -84,7 +84,7 @@ MANIFEST = ConnectorManifest(
     label="RF Remote",
     description=(
         "A physical RF/serial handset that can drive the motor (thrust + "
-        "steering) and switch modes (STOP, anchor spot-lock, manual). Commands "
+        "steering) and switch modes (STOP, anchor position hold, manual). Commands "
         "go through the same governed path as the app and expire after 1 s of "
         "radio silence, so a dropped link stops the boat."
     ),
@@ -94,7 +94,7 @@ MANIFEST = ConnectorManifest(
     grant_lines=(
         "Control the motor (thrust + steering) — commands go through the same "
         "governed path as the app and expire after 1 s of radio silence",
-        "Engage modes: STOP, anchor (spot-lock), manual",
+        "Engage modes: STOP, anchor (position hold), manual",
     ),
 )
 

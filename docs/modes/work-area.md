@@ -3,7 +3,7 @@
 > Hop the boat across a set of fishing/work spots, holding station on each, and advance when you're ready.
 
 **What it does** — Work Area visits a set of **spots** one at a time. It travels
-to the active spot, then **holds position there** (a virtual anchor / spot-lock)
+to the active spot, then **holds position there** (virtual anchor hold)
 while you fish or work. When you're done, it advances to the next spot — either
 on your command (Manual) or after a set dwell time (Timed). Optionally it can
 hold a chosen heading at each spot, and loop or patrol the whole set.
@@ -115,7 +115,7 @@ hold itself uses the standard anchor radius (about **5 m** by default — see
 
 - **STOP always overrides.** The hardware/UI STOP cuts propulsion and drops out
   of Work Area regardless of phase (travelling or holding).
-- The hold at each spot is an **active spot-lock** (the same virtual anchor used
+- The hold at each spot is an **active anchor hold** (the same virtual anchor used
   by [Anchor hold](anchor-hold.md)): the motor keeps working to fight wind and
   current drift, so expect the prop to run intermittently even while "parked."
 - Loop and Patrol keep the boat working **indefinitely** — it won't stop on its

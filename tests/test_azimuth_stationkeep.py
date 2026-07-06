@@ -1,7 +1,7 @@
 """Vectored / azimuth station-keeping (#35).
 
 The trolling motor can rotate far past the autopilot's +/-35 deg band. The
-opt-in vectored spot-lock exploits that: it computes the ground-frame thrust
+opt-in vectored anchor hold exploits that: it computes the ground-frame thrust
 direction that nulls position error + estimated drift and swings the motor
 AZIMUTH toward it (via a direct ManualSetpoint, bypassing the helm's autopilot
 steering cap), instead of re-orienting the hull first.
@@ -13,7 +13,7 @@ GPS/compass at 5 Hz) for the baseline and the vectored law, and check:
 * default config (flag off) is bit-for-bit today's behaviour, capped at 35 deg;
 * in a steady beam set the vectored hold beats the baseline on RMS radial
   error and % time in radius (both raw truth-distance and the #34
-  SpotLockQuality metric);
+  HoldQuality metric);
 * enabling it is stable: bounded heading (no spin-out), stays on station, and
   it genuinely commands azimuths beyond the 35 deg band;
 * calm water degrades to the same idle behaviour as the baseline;
@@ -68,7 +68,7 @@ def _run_hold(
     thruster_x_m: float = 1.7,
     helm_steer_sign: float = 1.0,
 ):
-    """Drop a spot-lock at t=2 s in a steady set and record the whole run.
+    """Drop an anchor hold at t=2 s in a steady set and record the whole run.
 
     Wired like the app: the sim boat maps steering [-1,1] onto the FULL
     +/-180 deg head, the helm scales guided steering to 35/180 (the autopilot
@@ -197,9 +197,9 @@ def test_vectored_beats_baseline_in_beam_set():
     assert vec["rms_m"] < 0.75 * base["rms_m"]
     assert vec["max_dist_m"] < base["max_dist_m"]
     assert vec["pct_in_radius"] >= base["pct_in_radius"]
-    # Same story on the shared #34 SpotLockQuality metric (perceived distance).
-    assert vec_state.spotlock_rms_m < base_state.spotlock_rms_m
-    assert vec_state.spotlock_pct_in_radius >= base_state.spotlock_pct_in_radius
+    # Same story on the shared #34 HoldQuality metric (perceived distance).
+    assert vec_state.hold_rms_m < base_state.hold_rms_m
+    assert vec_state.hold_pct_in_radius >= base_state.hold_pct_in_radius
 
 
 def test_vectored_beats_baseline_in_stronger_set():
@@ -291,9 +291,9 @@ def test_vectored_stern_beats_baseline(current):
     assert vec["rms_m"] < 0.6 * base["rms_m"]
     assert vec["max_dist_m"] < base["max_dist_m"]
     assert vec["pct_in_radius"] >= base["pct_in_radius"]
-    # Same story on the shared #34 SpotLockQuality metric (perceived distance).
-    assert vec_state.spotlock_rms_m < base_state.spotlock_rms_m
-    assert vec_state.spotlock_pct_in_radius >= base_state.spotlock_pct_in_radius
+    # Same story on the shared #34 HoldQuality metric (perceived distance).
+    assert vec_state.hold_rms_m < base_state.hold_rms_m
+    assert vec_state.hold_pct_in_radius >= base_state.hold_pct_in_radius
 
 
 def test_vectored_stern_uses_the_wider_azimuth():

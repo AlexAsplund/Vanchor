@@ -138,8 +138,8 @@ An opt-in **Daylight** high-contrast theme keeps it readable in direct sun (dark
 
 | | |
 |:---:|:---:|
-| ![Route](docs/images/mode-route.png) | ![Anchor / Spot-Lock](docs/images/mode-anchor.png) |
-| **Route** — build a path or tap "take me here"; smart water-only routing, with Loop / Patrol | **Anchor / Spot-Lock** — drop a virtual anchor and hold the spot, with a nudge jog |
+| ![Route](docs/images/mode-route.png) | ![Anchor hold](docs/images/mode-anchor.png) |
+| **Route** — build a path or tap "take me here"; smart water-only routing, with Loop / Patrol | **Anchor hold** — drop a virtual anchor and hold the spot, with a nudge jog |
 | ![Work Area](docs/images/mode-work-area.png) | ![Trolling](docs/images/mode-trolling.png) |
 | **Work Area** — visit a set of spots, hold at each, advance on a timer or the big button | **Trolling** — a sinusoidal S-curve weave at a held speed |
 
@@ -149,8 +149,8 @@ An opt-in **Daylight** high-contrast theme keeps it readable in direct sun (dark
 
 **Navigation & control**
 
-- **Virtual GPS anchoring (spot-lock)** — drop a virtual anchor and hold the spot,
-  with heading-aware drift anticipation and a *spot-lock jog* to nudge the hold point.
+- **Virtual GPS anchoring (position hold)** — drop a virtual anchor and hold the spot,
+  with heading-aware drift anticipation and an *anchor jog* to nudge the hold point.
 - **Autopilot heading-hold** — set a compass heading and hold it.
 - **Waypoint navigation** with cross-track correction and predictive drift
   compensation (crabs into wind/current so the *ground* track stays true).
@@ -164,7 +164,7 @@ An opt-in **Daylight** high-contrast theme keeps it readable in direct sun (dark
   — on a **dwell timer** or a big on-screen **"Go to next spot"** button — with an
   optional **per-spot hold heading**, and loop / there-and-back patrol over the set.
 - **Cruise control** (hold knots) and **% engine-power** throttle.
-- **Pause / resume / stop** mid-route; **record-a-track / replay / BackTrack**; GPX import.
+- **Pause / resume / stop** mid-route; **record-a-track / replay / retrace**; GPX import.
 
 **Fishing modes**
 

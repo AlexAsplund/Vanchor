@@ -9,7 +9,7 @@ use it, and exactly which on-screen controls drive it.
 ## Station-keeping & basics
 - **[Manual](manual.md)** — direct thrust + steering; you're the helm.
 - **[Heading hold](heading-hold.md)** — hold a compass heading like a real autopilot.
-- **[Anchor hold / Spot-Lock](anchor-hold.md)** — drop a virtual anchor and hold the
+- **[Anchor hold](anchor-hold.md)** — drop a virtual anchor and hold the
   spot (with drift anticipation, a nudge jog, and an optional learned "Smart" variant).
 - **[Drift](drift.md)** — hold a heading while drifting at a gentle target speed.
 

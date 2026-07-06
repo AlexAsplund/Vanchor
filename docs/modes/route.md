@@ -49,7 +49,7 @@ panel.
 
 *Pause / Resume / Stop* — while navigating, the nav bar in the dock shows
 **Pause**, **Resume**, and **Stop**:
-- **Pause** holds position (spot-locks where you are) and remembers the route and
+- **Pause** holds position (anchors where you are) and remembers the route and
   your progress, speed and throttle.
 - **Resume** picks the route back up exactly where it left off.
 - **Stop** ends navigation immediately and drops to Manual (and clears any

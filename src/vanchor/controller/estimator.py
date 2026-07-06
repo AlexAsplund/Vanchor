@@ -4,7 +4,7 @@ A small, dependency-free estimator of the boat's *environmental drift velocity*
 -- the part of its ground motion NOT explained by its own thrust (the combined
 set/leeway of current + wind). It used to live privately inside
 :class:`~vanchor.controller.modes.AnchorHoldMode`, where it reset every time
-Spot-Lock engaged, forcing the boat to relearn the environment over ~10 s on each
+the anchor hold engaged, forcing the boat to relearn the environment over ~10 s on each
 activation. It is now promoted to a **persistent service** owned by the
 :class:`~vanchor.controller.controller.Controller`: fed every control tick in
 *every* mode, so the estimate is always warm. Consumers read it off the shared
@@ -14,7 +14,7 @@ activation. It is now promoted to a **persistent service** owned by the
   holds against a beam set (tightening low-speed legs where the cross-track
   feedback gain saturates).
 * Drift mode gets a real **drift axis** to reason about.
-* Anchor-hold / Spot-Lock engages already knowing the drift (no relearn delay).
+* The anchor hold engages already knowing the drift (no relearn delay).
 
 Method
 ------

@@ -183,7 +183,7 @@ def test_deadman_does_not_fire_when_last_stick_was_zero(bus: EventBus) -> None:
 def test_btn_anchor_disarms_deadman(bus: EventBus) -> None:
     """FIX 1: a mode button hands control off, so it must DISARM the deadman.
 
-    Hazard: STICK arms the latch, BTN ANCHOR puts the boat in spot-lock, radio
+    Hazard: STICK arms the latch, BTN ANCHOR puts the boat in anchor hold, radio
     goes quiet — the stale latch must NOT let the watchdog yank the boat out of
     its autonomous anchor hold with a neutralizing command.
     """

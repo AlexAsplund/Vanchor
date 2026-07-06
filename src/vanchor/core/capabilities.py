@@ -28,7 +28,7 @@ MODE_REQUIRES: dict[ControlModeName, tuple[str, ...]] = {
     ControlModeName.MANUAL: ("motor",),
     ControlModeName.ANCHOR_HOLD: ("motor", "gps"),
     ControlModeName.ANCHOR_ML: ("motor", "gps"),
-    ControlModeName.ANCHOR_LEFFE: ("motor", "gps"),
+    ControlModeName.ANCHOR_LEIF: ("motor", "gps"),
     ControlModeName.HEADING_HOLD: ("motor", "compass"),
     ControlModeName.WAYPOINT: ("motor", "gps"),
     ControlModeName.WORK_AREA: ("motor", "gps"),

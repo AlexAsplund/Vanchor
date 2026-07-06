@@ -68,7 +68,7 @@ route back — a there-and-back patrol); these surface as `route_loop` /
 `route_patrol` in telemetry.
 
 **Work Area mode** (`ControlModeName.WORK_AREA`): visit each spot, hold position
-there (spot-lock), then advance. `work_area` starts it —
+there, then advance. `work_area` starts it —
 `{type:"work_area", waypoints:[{name,lat,lon,heading?}...], advance:"manual"|"timed",
 dwell_s, loop?, patrol?, throttle?}`. Each spot's optional `heading` is the boat
 orientation to hold there (best-effort). `advance:"manual"` waits for the

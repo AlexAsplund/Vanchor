@@ -18,7 +18,7 @@ class ControlModeName(str, Enum):
     MANUAL = "manual"
     ANCHOR_HOLD = "anchor_hold"
     ANCHOR_ML = "anchor_ml"  # learned (tiny-NN) station-keeper (hybrid: PID + residual)
-    ANCHOR_LEFFE = "anchor_leffe"  # "Leffe" -- pure learned, full-azimuth (experimental)
+    ANCHOR_LEIF = "anchor_leif"  # "Leif" -- pure learned, full-azimuth (experimental)
     HEADING_HOLD = "heading_hold"
     WAYPOINT = "waypoint"
     WORK_AREA = "work_area"  # visit spots, hold at each, advance (timed/manual)
@@ -115,7 +115,7 @@ class HeadingReading:
 class Waypoint:
     name: str
     point: GeoPoint
-    # Optional desired boat heading (deg) to hold while spot-locked here in Work
+    # Optional desired boat heading (deg) to hold while holding here in Work
     # Area mode. None = don't force a heading (the boat weathervanes naturally).
     heading: float | None = None
 

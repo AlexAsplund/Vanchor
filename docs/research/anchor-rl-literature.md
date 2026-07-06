@@ -1,7 +1,7 @@
 # Anchor-policy RL: literature review and approach audit
 
 **Scope.** This report surveys the scientific literature relevant to the
-Vanchor-NG anchor (station-keeping / "spot-lock") learning experiment, then
+Vanchor-NG anchor (station-keeping / virtual anchor) learning experiment, then
 audits our actual code against it and gives prioritized, concrete
 recommendations. It closes with a verdict on our empirical single-thruster
 energy finding.
@@ -568,7 +568,7 @@ near-unanimous about. Lowest-risk first step: feed the existing
 back to the spot (it cannot idle), so energy/thrust stays high; aggressive
 energy-penalty shaping consistently wrecked the hold (~57% / 15 m) while the
 holding-first reward reaches ~80% / ~6 m. We concluded the energy cost is largely
-inherent to single-thruster spot-lock.
+inherent to single-thruster station-keeping.
 
 **Verdict: the science backs the *conditional* claim, and refines the strong
 one.**
@@ -607,8 +607,8 @@ one.**
   far. But the *magnitude* of the energy cost is substantially reducible by
   (a) weathervaning to a bow-into-disturbance heading and (b) a tolerance
   dead-band, neither of which our current reward encourages. The right framing for
-  the report: **"high energy is inherent to *naive drive-back* spot-lock, not to
-  single-thruster spot-lock."** The fact that our *energy penalty* failed is
+  the report: **"high energy is inherent to *naive drive-back* station-keeping, not to
+  single-thruster station-keeping."** The fact that our *energy penalty* failed is
   predicted by theory; the conclusion to draw is not "give up on energy" but
   "save energy by reformulating the task (weathervane + dead-band), and get
   smoothness via an action-rate regularizer — not by penalizing thrust against a

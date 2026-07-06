@@ -42,7 +42,7 @@ unobserved wind/current from the recent motion trend.
 def pid_base(e_fwd, e_lat, vg_fwd, vg_lat, kp=0.12, kd=0.6, deadband=0.8)
 ```
 
-Robust spot-lock base law (the AnchorHoldMode behaviour), from body-frame
+Robust anchor hold base law (the AnchorHoldMode behaviour), from body-frame
 anchor error + ground velocity -> (thrust, steering). Idles inside a deadband;
 otherwise drives toward the mark, BACKING straight up when the mark is astern
 (instead of looping around, the naive-PID divergence). The shared base for the
@@ -56,7 +56,7 @@ training env AND the deployed hybrid mode, so they match exactly.
 class AnchorMLMode()
 ```
 
-Hybrid learned spot-lock: a robust PID base plus a small bounded learned
+Hybrid learned anchor hold: a robust PID base plus a small bounded learned
 residual -- ``command = clip(pid_base + 0.3 * net(obs))``. The base (deadband
 idle, drive-to-mark, reverse-when-astern) provides robustness and the
 idle-at-rest guarantee; the tiny net (trained on the real deployment sensor
@@ -256,7 +256,7 @@ below this, no significant drift to point into
 class AnchorHoldMode(ControlMode)
 ```
 
-Virtual anchor ("Spot-Lock"): hold position with reverse thrust + braking.
+Virtual anchor (position hold): hold position with reverse thrust + braking.
 
 A PD controller on the (ground) distance to the mark: ``kp`` pulls toward the
 anchor, ``kd`` brakes using the GPS closing speed so the boat doesn't
@@ -357,14 +357,14 @@ class WorkAreaMode(ControlMode)
 ```
 
 Work an area spot by spot: travel to ``state.waypoints[active]``, HOLD
-position there (active spot-lock) while the user works, then advance to the
+position there (active anchor hold) while the user works, then advance to the
 next spot -- after ``dwell_s`` ("timed" advance) and/or when the user taps
 "Go to next spot" (``state.work_next_requested``). ``route_loop`` cycles the
 spots; ``route_patrol`` runs them there-and-back; otherwise the boat holds the
 final spot once the route is done.
 
 Travel reuses the waypoint leg logic (cross-track + forward/reverse helm); the
-hold delegates to AnchorHoldMode (spot-lock). Dwell time is accumulated from
+hold delegates to AnchorHoldMode. Dwell time is accumulated from
 ``dt`` so the deterministic harness drives it without a wall clock.
 
 <a id="vanchor.controller.modes.FollowApbConfig"></a>

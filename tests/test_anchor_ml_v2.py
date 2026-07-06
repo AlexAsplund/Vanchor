@@ -105,7 +105,7 @@ def _rig_stern_boat(h: Harness) -> None:
 
 def test_stern_mount_boat_holds_station_with_anchor_ml():
     """End-to-end: a STERN-mounted boat (helm steer_sign -1) running the hybrid
-    learned spot-lock under wind + current stays inside the watch circle -- the
+    learned anchor hold under wind + current stays inside the watch circle -- the
     Helm's mount flip applies to the whole hybrid command, so the residual
     cannot destabilise a stern boat."""
     env = Environment(current_speed=0.3, current_dir=90.0, wind_speed=4.0, wind_dir=120.0)

@@ -1,4 +1,4 @@
-# Learned station-keeping (Smart & Leffe)
+# Learned station-keeping (Smart & Leif)
 
 Vanchor's "virtual anchor" holds the boat on a mark. Three station-keepers ship,
 in increasing order of ambition:
@@ -7,7 +7,7 @@ in increasing order of ambition:
 |---|---|---|---|
 | **Anchor** (`anchor_hold`) | Hand-tuned PID | `pid(err, vel)` | itself |
 | **Smart** (`anchor_ml`) | **Hybrid: PID + learned residual, full-azimuth** | `clip(pid + 0.3·net)` rescaled to the boat's swing | PID base + residual-decay guardrail |
-| **Leffe 🍺** (`anchor_leffe`) | **Pure learned, full-azimuth** (experimental) | `clip(net)` rescaled to the boat's swing | none (opt-in research mode) |
+| **Leif** (`anchor_leif`) | **Pure learned, full-azimuth** (experimental) | `clip(net)` rescaled to the boat's swing | none (opt-in research mode) |
 
 All three produce a `ManualSetpoint(thrust, steering)` and drive `state.anchor`.
 
@@ -19,8 +19,8 @@ Both learned modes run the same architecture: a **~1.6k-parameter tanh MLP**
 thrust/steering, distance) stacked over a **history of 4 frames**. Inference is
 a handful of numpy matmuls — **numpy-only, no torch, no GPU at runtime** — so it
 runs on the Pi identically to how it was trained. The weights live in
-`src/vanchor/controller/anchor_policy.json` (Smart) and `anchor_leffe.json`
-(Leffe), each ~33 KB of JSON.
+`src/vanchor/controller/anchor_policy.json` (Smart) and `anchor_leif.json`
+(Leif), each ~33 KB of JSON.
 
 ## How they're trained
 
@@ -44,7 +44,7 @@ Two knobs make the current generation:
   generalises *past* the cap (see the numbers below).
 
 Smart trains as a **residual** (`--steer-range 120`, no `--pure`, ~1600 gens);
-Leffe trains **pure** (`--pure --steer-range 120`, from scratch, ~2600 gens).
+Leif trains **pure** (`--pure --steer-range 120`, from scratch, ~2600 gens).
 
 ## Deployment fidelity: azimuth rescaling
 
@@ -72,7 +72,7 @@ fraction of the settled second half inside the circle; higher is better.
 |---|---|---|---|---|---|
 | PID | 82.4% | 99.8% | 79.5% | 40.3% | 5.63 m |
 | Smart — old ±35° hybrid | 81.3% | 99.5% | 76.6% | 38.7% | 6.40 m |
-| **Leffe** (pure + azimuth) | 73.7% | 87.8% | **98.2%** | 18.7% | 5.26 m |
+| **Leif** (pure + azimuth) | 73.7% | 87.8% | **98.2%** | 18.7% | 5.26 m |
 | **Smart** (hybrid + azimuth) | **90.6%** | **100.0%** | **100.0%** | **59.5%** | **4.52 m** |
 
 **Full regime (0–12 m/s, incl. un-holdable):** Smart (hybrid + azimuth) holds
@@ -85,7 +85,7 @@ training with no strong-wind regression.
   hybrid on every mount and both regimes, tighter mean distance, without
   thrashing the motor — and it keeps the safety floor (worst case = PID). This
   is the shipped default.
-- **Leffe proved the hypothesis but isn't the daily driver.** A *pure* policy
+- **Leif proved the hypothesis but isn't the daily driver.** A *pure* policy
   given the full azimuth learns a superb stern hold (98.2%, beating even PID's
   79.5%), confirming the vectoring headroom is real — but with no PID base it
   regresses on the easy bow (87.8%) and near-uncontrollable center (18.7%)
@@ -102,14 +102,14 @@ training with no strong-wind regression.
 python -m experiments.anchor_policy.train --steer-range 120 --history 4 \
   --wind-cap 6 --current-cap 0.6 --gust-cap 1.5 --gens 1600 --workers 18
 
-# Leffe (pure + full azimuth)
+# Leif (pure + full azimuth)
 python -m experiments.anchor_policy.train --pure --steer-range 120 --history 4 \
   --wind-cap 6 --current-cap 0.6 --gust-cap 1.5 --gens 2600 --workers 18
 ```
 
 Ship a trained checkpoint by copying `best_policy.json` to
-`src/vanchor/controller/anchor_policy.json` (Smart) or `anchor_leffe.json`
-(Leffe) and stamping `train_azimuth_deg` into it.
+`src/vanchor/controller/anchor_policy.json` (Smart) or `anchor_leif.json`
+(Leif) and stamping `train_azimuth_deg` into it.
 
 > **Future speedup.** ES is embarrassingly parallel; vectorising the Fossen sim
 > in JAX/CuPy would let the whole population roll out on a GPU (the box has a

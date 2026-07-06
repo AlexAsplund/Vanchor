@@ -83,11 +83,11 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   both bow and stern** (PID: bow 99.8%, stern 79.5%), tighter mean distance,
   without thrashing the motor — and the residual-decay guardrail still floors
   it to the PID base if it ever underperforms.
-- **"Leffe 🍺"** — an experimental *pure* full-azimuth learned anchor mode (no
+- **"Leif"** — an experimental *pure* full-azimuth learned anchor mode (no
   PID base) selectable from the Anchor panel (with an info-icon tooltip). It
   holds a stern mount exceptionally tight (~98% in-radius) but runs the motor
   hot and has no PID fallback — a fun research mode. The boat mode badge now
-  distinguishes the keeper (Anchor / Anchor · Smart / Anchor · Leffe 🍺).
+  distinguishes the keeper (Anchor / Anchor · Smart / Anchor · Leif).
 - Anchor training tooling gained `--pure`, `--steer-range`, and condition-cap
   flags (the recipe behind the above).
 
@@ -176,7 +176,7 @@ safety floor verified intact by a whole-branch review.
 
 - **Wind/current estimator service (#27)** — persistent Controller-owned estimator
   (never reset on mode change) drives waypoint crab feedforward (mean |XTE|
-  10.7 m → 0.47 m on a beam set), spot-lock preload, and the Drift-mode axis.
+  10.7 m → 0.47 m on a beam set), anchor hold preload, and the Drift-mode axis.
 - **Depth-aware routing (#30)** — `DepthMap.shallow_polygons()` (contours +
   soundings) hard-subtracted from navigable water with a soft-penalty band and a
   trap-safe fallback; on by default when `min_depth_m > 0`.
@@ -189,7 +189,7 @@ safety floor verified intact by a whole-branch review.
   fewer visibility tests (216k → 27k on a near-cap basin), routes provably
   identical to an independent eager oracle.
 - **ML anchor v2 (#34)** — mount/steer-sign correctness, a runtime residual-decay
-  guardrail (never worse than the PID base), a spot-lock quality metric
+  guardrail (never worse than the PID base), a hold quality metric
   (RMS error / % in radius) in telemetry, and an offline `finetune.py`.
 - **Vectored/azimuth station-keeping (#35, opt-in)** — vectors thrust against the
   set using the full rotation instead of the ±35° band; beam-set RMS 3.29 m →
@@ -219,7 +219,7 @@ safety floor verified intact by a whole-branch review.
 
 Ground-up software-first rewrite that supersedes the original Vanchor (0.1-alpha):
 Fossen 3-DOF physics, serial HAL, safety governor, observability, the full Tier
-1–3 GPS trolling-motor feature set (spot-lock jog, cruise, track replay, drift,
+1–3 GPS trolling-motor feature set (anchor jog, cruise, track replay, drift,
 chart-tap goto, contour follow) plus Work Area survey and a learned ML anchor.
 Subsequently hardened by a full-project review (supervised control loop, motor
 lifecycle, sensor staleness, link/fix failsafes, CI, columnar depth-chart store

@@ -79,7 +79,7 @@ versioned capability API to be safe).
   location if asked, user owns their data).
 - **Depth charts:** the cmapper GeoJSON import path is a natural first *data*
   pack — shared bathymetry with live chart-vs-sounder divergence alerts (#45).
-- **ML anchor policies:** `anchor_policy.json` / `anchor_leffe.json` are already
+- **ML anchor policies:** `anchor_policy.json` / `anchor_leif.json` are already
   just weights — a trained tune for a particular hull is a trivial data pack.
 
 ## Rough phasing

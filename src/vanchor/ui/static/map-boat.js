@@ -51,7 +51,7 @@
   // tapping the boat opens its vitals + an "Anchor here" action.
   const MODE_META = {
     manual: ["🕹", "Manual"], anchor_hold: ["⚓", "Anchor"],
-    anchor_ml: ["⚓", "Anchor · Smart"], anchor_leffe: ["⚓", "Anchor · Leffe 🍺"],
+    anchor_ml: ["⚓", "Anchor · Smart"], anchor_leif: ["⚓", "Anchor · Leif"],
     heading_hold: ["🧭", "Heading"], waypoint: ["📍", "Route"], follow_apb: ["🛰", "Follow APB"],
     drift: ["🌀", "Drift"], orbit: ["🔄", "Orbit"], contour: ["📈", "Contour"],
     trolling: ["🎣", "Trolling"], stop: ["■", "Stopped"],
