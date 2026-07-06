@@ -81,11 +81,11 @@ _CRUISING_MODES = frozenset(
 _JOG_OFFSETS = {"forward": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
 
 # Modes that actively station-keep on ``state.anchor`` (they refresh
-# ``state.distance_to_anchor_m`` every tick) -- the spot-lock quality metric is
+# ``state.distance_to_anchor_m`` every tick) -- the hold quality metric is
 # accumulated only while one of these is holding, so PID anchor-hold and the
 # learned anchor_ml can be compared on the same yardstick.
-_SPOTLOCK_MODES = frozenset({ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML,
-                             ControlModeName.ANCHOR_LEFFE})
+_HOLD_MODES = frozenset({ControlModeName.ANCHOR_HOLD, ControlModeName.ANCHOR_ML,
+                         ControlModeName.ANCHOR_LEIF})
 
 # Command types that engage a control mode -> the mode they enter, so the
 # device-availability gate can refuse one whose required device is Not connected.
@@ -93,7 +93,7 @@ _CTYPE_MODE = {
     "manual": ControlModeName.MANUAL,
     "anchor_hold": ControlModeName.ANCHOR_HOLD,
     "anchor_ml": ControlModeName.ANCHOR_ML,
-    "anchor_leffe": ControlModeName.ANCHOR_LEFFE,
+    "anchor_leif": ControlModeName.ANCHOR_LEIF,
     "heading_hold": ControlModeName.HEADING_HOLD,
     "goto": ControlModeName.WAYPOINT,
     "load_route": ControlModeName.WAYPOINT,
@@ -155,8 +155,8 @@ class GainSchedule:
         return self.mult_lo == 1.0 and self.mult_hi == 1.0
 
 
-class SpotLockQuality:
-    """Rolling spot-lock quality metric (#34): RMS radial error (m) and % of
+class HoldQuality:
+    """Rolling anchor hold quality metric (#34): RMS radial error (m) and % of
     time within the anchor radius, over an exponentially-weighted trailing
     window of ``window_s`` seconds.
 
@@ -371,7 +371,7 @@ class Controller:
 
         # Persistent wind/current (drift) estimator: ONE instance, fed every
         # control tick in EVERY mode, so the environmental drift estimate is
-        # always warm. It NEVER resets on a mode change -- so Spot-Lock, waypoint
+        # always warm. It NEVER resets on a mode change -- so anchor hold, waypoint
         # crab feed-forward and drift mode all engage already knowing the set,
         # instead of relearning it. Its estimate is published onto ``state`` for
         # any mode (and the HUD) to read.
@@ -419,7 +419,7 @@ class Controller:
             ControlModeName.ORBIT: OrbitMode(orbit_config),
             ControlModeName.TROLLING: TrollingMode(trolling_config),
         }
-        # Learned spot-lock (optional): registered only if the shipped tiny-NN
+        # Learned anchor hold (optional): registered only if the shipped tiny-NN
         # model loads, so a missing/invalid model never breaks startup -- the
         # mode simply isn't offered. It mirrors the helm's steer_sign (thruster
         # mount polarity) so it stays mount-aware; app._apply_boat_specs keeps
@@ -435,18 +435,18 @@ class Controller:
         except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
             logger.warning("anchor_ml mode unavailable: %s", exc)
         try:
-            from .anchor_ml import AnchorLeffeMode
+            from .anchor_ml import AnchorLeifMode
 
-            self.modes[ControlModeName.ANCHOR_LEFFE] = AnchorLeffeMode(  # type: ignore[assignment]  # duck-typed mode, not a ControlMode subclass
+            self.modes[ControlModeName.ANCHOR_LEIF] = AnchorLeifMode(  # type: ignore[assignment]  # duck-typed mode, not a ControlMode subclass
                 steer_sign=self.helm.steer_sign
             )
         except Exception as exc:  # noqa: BLE001 - any load error -> mode absent
-            logger.warning("anchor_leffe (Leffe) mode unavailable: %s", exc)
-        # Spot-lock quality metric (#34): rolling RMS radial error + % time in
+            logger.warning("anchor_leif mode unavailable: %s", exc)
+        # Hold quality metric (#34): rolling RMS radial error + % time in
         # radius while an anchor mode is holding. Reset whenever the anchor mark
         # changes; paused when not station-keeping.
-        self.spotlock = SpotLockQuality(window_s=60.0)
-        self._spotlock_anchor: GeoPoint | None = None
+        self.hold_quality = HoldQuality(window_s=60.0)
+        self._hold_anchor: GeoPoint | None = None
         self.safety = SafetyGovernor(safety_config)
         self.safety_status = SafetyStatus()
         self._last_fix_seq = state.fix_seq
@@ -493,9 +493,9 @@ class Controller:
         self.state.motor_command = command
         self.motor.apply(command)
 
-        # Spot-lock quality (#34): accumulate while an anchor mode is holding
+        # Hold quality (#34): accumulate while an anchor mode is holding
         # (the mode refreshed state.distance_to_anchor_m just above).
-        self._update_spotlock(dt)
+        self._update_hold_quality(dt)
 
         # Breadcrumb the boat's path if a track recording is in progress.
         self.track.maybe_record(self.state.position)
@@ -515,8 +515,8 @@ class Controller:
                 self.handle_command({"type": "stop"})
         return command
 
-    def _update_spotlock(self, dt: float) -> None:
-        """Feed the spot-lock quality tracker (#34) from the shared state.
+    def _update_hold_quality(self, dt: float) -> None:
+        """Feed the hold quality tracker (#34) from the shared state.
 
         Accumulates only while an anchor mode is actively holding a mark (both
         the PID hold and the learned hold, so they are directly comparable);
@@ -527,23 +527,23 @@ class Controller:
         """
         st = self.state
         if st.anchor is None:
-            if self._spotlock_anchor is not None:
-                self.spotlock.reset()
-                self._spotlock_anchor = None
-                st.spotlock_rms_m = 0.0
-                st.spotlock_pct_in_radius = 0.0
-                st.spotlock_holding_s = 0.0
+            if self._hold_anchor is not None:
+                self.hold_quality.reset()
+                self._hold_anchor = None
+                st.hold_rms_m = 0.0
+                st.hold_pct_in_radius = 0.0
+                st.hold_holding_s = 0.0
             return
-        if st.mode not in _SPOTLOCK_MODES or st.position is None:
+        if st.mode not in _HOLD_MODES or st.position is None:
             return  # paused: anchor set but not actively station-keeping
-        if st.anchor != self._spotlock_anchor:
-            self.spotlock.reset()
-            self._spotlock_anchor = st.anchor
-        self.spotlock.update(st.distance_to_anchor_m, st.anchor_radius_m, dt)
-        st.spotlock_rms_m = self.spotlock.rms_m
-        st.spotlock_pct_in_radius = self.spotlock.pct_in_radius
-        st.spotlock_window_s = self.spotlock.window_s
-        st.spotlock_holding_s = self.spotlock.elapsed_s
+        if st.anchor != self._hold_anchor:
+            self.hold_quality.reset()
+            self._hold_anchor = st.anchor
+        self.hold_quality.update(st.distance_to_anchor_m, st.anchor_radius_m, dt)
+        st.hold_rms_m = self.hold_quality.rms_m
+        st.hold_pct_in_radius = self.hold_quality.pct_in_radius
+        st.hold_window_s = self.hold_quality.window_s
+        st.hold_holding_s = self.hold_quality.elapsed_s
 
     def _sensor_ages(self) -> tuple[float | None, float | None]:
         """(heading_age_s, depth_age_s) since each input was last ingested, or
@@ -665,7 +665,7 @@ class Controller:
                 self.state.anchor_heading = self.state.heading_deg
                 self.set_mode(ControlModeName.ANCHOR_HOLD)
             elif ctype == "anchor_ml":
-                # Learned spot-lock: same mark-setting as anchor_hold, but driven by
+                # Learned anchor hold: same mark-setting as anchor_hold, but driven by
                 # the tiny NN. Falls back to the PID mode if the model isn't loaded.
                 anchor = command.get("anchor")
                 if anchor:
@@ -680,10 +680,10 @@ class Controller:
                     if ControlModeName.ANCHOR_ML in self.modes
                     else ControlModeName.ANCHOR_HOLD
                 )
-            elif ctype == "anchor_leffe":
-                # "Leffe": the pure full-azimuth learned station-keeper. Same
+            elif ctype == "anchor_leif":
+                # "Leif": the pure full-azimuth learned station-keeper. Same
                 # mark-setting as anchor_hold; falls back to the hybrid, then PID,
-                # if the Leffe model isn't loaded.
+                # if the Leif model isn't loaded.
                 anchor = command.get("anchor")
                 if anchor:
                     self.state.anchor = GeoPoint(float(anchor["lat"]), float(anchor["lon"]))
@@ -693,8 +693,8 @@ class Controller:
                     self.state.anchor_radius_m = float(command["radius_m"])
                 self.state.anchor_heading = self.state.heading_deg
                 self.set_mode(
-                    ControlModeName.ANCHOR_LEFFE
-                    if ControlModeName.ANCHOR_LEFFE in self.modes
+                    ControlModeName.ANCHOR_LEIF
+                    if ControlModeName.ANCHOR_LEIF in self.modes
                     else (ControlModeName.ANCHOR_ML
                           if ControlModeName.ANCHOR_ML in self.modes
                           else ControlModeName.ANCHOR_HOLD)
@@ -755,7 +755,7 @@ class Controller:
                 self.set_mode(ControlModeName.WAYPOINT)
             elif ctype == "work_area":
                 # Work Area: spots = waypoints (each with optional hold heading); visit
-                # each, spot-lock + hold, advance on the "next spot" button and/or a
+                # each, hold position, advance on the "next spot" button and/or a
                 # dwell timer. loop/patrol cycle the spots like a route.
                 wps = command.get("waypoints", [])
                 self.state.waypoints = [
@@ -879,7 +879,7 @@ class Controller:
 
     # -- Tier-1 features ------------------------------------------------- #
     def _jog(self, command: dict) -> None:
-        """Spot-Lock Jog: nudge the anchor boat-relative (fwd/back/left/right)."""
+        """Anchor jog: nudge the anchor boat-relative (fwd/back/left/right)."""
         if self.state.anchor is None:
             logger.warning("jog ignored: no anchor set")
             return

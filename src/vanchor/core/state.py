@@ -140,7 +140,7 @@ class NavigationState:
     # --- Work Area mode: visit spots, hold at each, then advance. -------- #
     # The spots are state.waypoints; active_waypoint is the current spot. While
     # holding, the UI shows a big "Go to next spot" button (driven by work_holding).
-    work_holding: bool = False             # currently spot-locked at a spot
+    work_holding: bool = False             # currently holding position at a spot
     work_dwell_remaining_s: float = 0.0    # countdown to auto-advance (timed mode)
     work_next_requested: bool = False      # transient: the "next spot" button press
 
@@ -167,15 +167,15 @@ class NavigationState:
     stationkeep_vectored: bool = False
     stationkeep_azimuth_deg: float = 0.0
 
-    # --- Spot-lock quality metric (#34) ----------------------------------- #
+    # --- Hold quality metric (#34) --------------------------------------- #
     # Rolling holding-quality numbers, updated by the controller every tick an
     # anchor mode (PID anchor_hold OR learned anchor_ml) is station-keeping:
     # RMS radial error and % of time within the anchor radius over a trailing
     # ~window_s. Reset when the mark is cleared/moved; frozen while paused.
-    spotlock_rms_m: float = 0.0
-    spotlock_pct_in_radius: float = 0.0
-    spotlock_window_s: float = 60.0
-    spotlock_holding_s: float = 0.0  # holding time accumulated (caps at window)
+    hold_rms_m: float = 0.0
+    hold_pct_in_radius: float = 0.0
+    hold_window_s: float = 60.0
+    hold_holding_s: float = 0.0  # holding time accumulated (caps at window)
 
     # Diagnostics surfaced to the UI so a human can see *why* the controller
     # is doing what it is doing.
@@ -188,7 +188,7 @@ class NavigationState:
     # Shared wind/current estimator's learned environmental drift velocity (world
     # frame), published every control tick by the persistent
     # ``WindCurrentEstimator`` and consumed by waypoint crab feed-forward, drift
-    # mode and Spot-Lock. ``est_drift_mps`` / ``est_drift_dir`` are the magnitude
+    # mode and anchor hold. ``est_drift_mps`` / ``est_drift_dir`` are the magnitude
     # and the compass direction the drift pushes TOWARD; east/north are the
     # components; ``settled`` gates feed-forward consumers (they fall back to pure
     # feedback until it is True); ``confidence`` is a 0..1 quality signal.
@@ -282,11 +282,11 @@ class NavigationState:
                 "vectored": self.stationkeep_vectored,
                 "azimuth_deg": round(self.stationkeep_azimuth_deg, 1),
             },
-            "spotlock_quality": {
-                "rms_m": round(self.spotlock_rms_m, 2),
-                "pct_in_radius": round(self.spotlock_pct_in_radius, 1),
-                "window_s": self.spotlock_window_s,
-                "holding_s": round(self.spotlock_holding_s, 1),
+            "hold_quality": {
+                "rms_m": round(self.hold_rms_m, 2),
+                "pct_in_radius": round(self.hold_pct_in_radius, 1),
+                "window_s": self.hold_window_s,
+                "holding_s": round(self.hold_holding_s, 1),
             },
             "distance_to_waypoint_m": round(self.distance_to_waypoint_m, 2),
             "cross_track_m": round(self.cross_track_m, 2),

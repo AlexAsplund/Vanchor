@@ -3,7 +3,7 @@
 An alternative to the plain-NMEA GPS: it configures the receiver for marine use
 (10 Hz, sea dynamic model, UBX-NAV-PVT out, NMEA off) and parses NAV-PVT, which
 carries the **NED ground-velocity vector + per-fix accuracy** that NMEA can't --
-the data the GNSS/INS fusion (nav.fusion) uses for a tighter spot-lock. Publishes
+the data the GNSS/INS fusion (nav.fusion) uses for a tighter anchor hold. Publishes
 a rich :class:`GpsFix` on :data:`events.GPS_FIX_IN`.
 
 Selectable as ``gps_source: ublox`` via the driver registry (#43) -- purely

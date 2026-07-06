@@ -10,8 +10,8 @@ testing. Expect rough edges and breaking changes before 1.0 stabilises.
 
 ## What's new (the headline feature set)
 
-- **Virtual GPS anchoring (spot-lock)** with heading-aware drift anticipation and
-  a spot-lock jog.
+- **Virtual GPS anchoring (position hold)** with heading-aware drift anticipation and
+  an anchor jog.
 - **Autopilot heading-hold** and **waypoint navigation** with cross-track
   correction and predictive drift (wind/current) compensation.
 - **Smart "take me here" water routing** — water-only routes around land/islands

@@ -298,7 +298,7 @@ class ControlConfig:
     waypoint_xte_gain: float = 2.0
 
     # Tier-1 features.
-    jog_increment_m: float = 1.5  # Spot-Lock Jog step (~5 ft)
+    jog_increment_m: float = 1.5  # anchor-jog step (~5 ft)
     cruise_kp: float = 0.64  # Cruise Control (constant SOG) PID (auto-tuned)
     cruise_ki: float = 0.25
     track_min_distance_m: float = 5.0  # record a breadcrumb every N metres
@@ -992,7 +992,7 @@ control:
   anchor_kd: 0.6              # braking thrust per (m/s) closing speed (enables reverse)
   anchor_radius_m: 5.0
   anchor_idle_deadband_m: 0.8 # idle within this band of the mark (avoids GPS-noise hunting)
-  # Vectored / azimuth station-keeping (#35): opt-in. While spot-locked, swing the
+  # Vectored / azimuth station-keeping (#35): opt-in. While holding at anchor, swing the
   # motor azimuth up to station_keep_azimuth_deg off the bow (beyond the autopilot's
   # band) to push straight against the set. Off by default; only affects anchor hold.
   station_keep_vectored: false
@@ -1000,7 +1000,7 @@ control:
   waypoint_throttle: 0.6
   waypoint_arrival_m: 5.0
   waypoint_xte_gain: 2.0
-  jog_increment_m: 1.5        # Spot-Lock Jog step (~5 ft)
+  jog_increment_m: 1.5        # anchor-jog step (~5 ft)
   cruise_kp: 0.64             # Cruise Control (constant speed-over-ground) PID
   cruise_ki: 0.25
   track_min_distance_m: 5.0   # record a breadcrumb every N metres

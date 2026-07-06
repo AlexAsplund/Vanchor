@@ -1,6 +1,6 @@
-# Anchor hold / Spot-Lock
+# Anchor hold
 
-> Drop a virtual anchor and let the boat hold that GPS spot — the "Spot-Lock" of a real GPS trolling motor.
+> Drop a virtual anchor and let the boat hold that GPS spot — the virtual-anchor feature of commercial GPS trolling motors.
 
 **What it does** — Anchor hold keeps the boat near a fixed **anchor mark** using
 the trolling motor. A PD controller on the GPS distance to the mark pulls the
@@ -26,7 +26,7 @@ exactly like a real GPS trolling motor. The heading shown is the one captured
 when you dropped the anchor.
 
 **Smart (learned) variant — `anchor_ml`.** There's an optional learned
-spot-lock: a tiny neural net (~1.6k params, pure numpy) trained offline that adds
+anchor hold: a tiny neural net (~1.6k params, pure numpy) trained offline that adds
 a small bounded correction on top of the same PID base — `command = clip(pid_base
 + 0.3·net)`. The robust PID base (dead-band idle, drive-to-mark, reverse-when-
 astern) guarantees the worst case is just normal anchor-hold, while the residual
@@ -52,7 +52,7 @@ Tap **Drop anchor here** to anchor at your current spot. Changing the radius (or
 the hold-heading toggle) while anchored re-applies to the existing mark rather
 than re-dropping. Tap **Stop** to release.
 
-**Jog (Spot-Lock Jog).** The D-pad moves the anchor a small step (default 1.5 m)
+**Anchor jog.** The D-pad moves the anchor a small step (default 1.5 m)
 in a *boat-relative* direction — forward, back, left, right relative to the
 current heading — so you can creep the hold point onto the fish without
 re-dropping. Jog is ignored if no anchor is set.

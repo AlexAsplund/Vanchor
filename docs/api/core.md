@@ -508,7 +508,7 @@ idle within this band of the mark (no hunting)
 
 #### jog\_increment\_m
 
-Spot-Lock Jog step (~5 ft)
+Anchor jog step (~5 ft)
 
 <a id="vanchor.core.config.ControlConfig.cruise_kp"></a>
 
@@ -1604,7 +1604,7 @@ target speed-over-ground for Drift mode
 
 #### work\_holding
 
-currently spot-locked at a spot
+currently holding position at a spot
 
 <a id="vanchor.core.state.NavigationState.work_dwell_remaining_s"></a>
 

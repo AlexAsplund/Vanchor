@@ -34,7 +34,7 @@ _OBS_DIM = 8
 
 
 def pid_base(e_fwd, e_lat, vg_fwd, vg_lat, kp=0.12, kd=0.6, deadband=0.8):
-    """Robust spot-lock base law (the AnchorHoldMode behaviour), from body-frame
+    """Robust anchor hold base law (the AnchorHoldMode behaviour), from body-frame
     anchor error + ground velocity -> (thrust, steering). Idles inside a deadband;
     otherwise drives toward the mark, BACKING straight up when the mark is astern
     (instead of looping around, the naive-PID divergence). The shared base for the
@@ -80,7 +80,7 @@ class _TinyMLP:
 
 
 class AnchorMLMode:
-    """Hybrid learned spot-lock: a robust PID base plus a small bounded learned
+    """Hybrid learned anchor hold: a robust PID base plus a small bounded learned
     residual -- ``command = clip(pid_base + 0.3 * net(obs))``. The base (deadband
     idle, drive-to-mark, reverse-when-astern) provides robustness and the
     idle-at-rest guarantee; the tiny net (trained on the real deployment sensor
@@ -237,7 +237,7 @@ class AnchorMLMode:
     def update(self, state: NavigationState, dt: float) -> ManualSetpoint:
         # Keep the HUD range/bearing fresh AND feed the safety governor's drag
         # alarm (which reads state.distance_to_anchor_m), exactly like
-        # AnchorHoldMode -- otherwise the learned spot-lock would show stale
+        # AnchorHoldMode -- otherwise the learned anchor mode would show stale
         # distance and never trip a drag alarm.
         anchor, pos = state.anchor, state.position
         if anchor is not None and pos is not None:
@@ -275,13 +275,13 @@ class AnchorMLMode:
         return ManualSetpoint(thrust=th, steering=st)
 
 
-_LEFFE_PATH = os.path.join(os.path.dirname(__file__), "anchor_leffe.json")
+_Leif_PATH = os.path.join(os.path.dirname(__file__), "anchor_leif.json")
 
 
-class AnchorLeffeMode(AnchorMLMode):
-    """"Leffe" -- a PURE learned station-keeper (EXPERIMENTAL).
+class AnchorLeifMode(AnchorMLMode):
+    """"Leif" -- a PURE learned station-keeper (EXPERIMENTAL).
 
-    Unlike :class:`AnchorMLMode` (a bounded residual over the PID base), Leffe's
+    Unlike :class:`AnchorMLMode` (a bounded residual over the PID base), Leif's
     command IS the net output directly -- no PID scaffold. It was trained from
     scratch by Evolution Strategies with a WIDE steering swing, so it learns to
     *vector* the motor through its full rotation. Findings from the held-out
@@ -299,7 +299,7 @@ class AnchorLeffeMode(AnchorMLMode):
 
     TRAIN_AZIMUTH_DEG = 120.0
 
-    def __init__(self, model_path: str = _LEFFE_PATH, steer_sign: float = 1.0) -> None:
+    def __init__(self, model_path: str = _Leif_PATH, steer_sign: float = 1.0) -> None:
         # residual_scale is irrelevant (we don't use the PID base); the guardrail
         # is inert because update() below doesn't call it (no PID floor to decay to).
         super().__init__(model_path=model_path, residual_scale=0.0, steer_sign=steer_sign)

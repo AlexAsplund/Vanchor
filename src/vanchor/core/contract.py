@@ -32,12 +32,12 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "sensors": {"type": "object", "desc": "raw sensor snapshot (fix/heading/depth)"},
     "fusion": {"type": "object", "desc": "GNSS/INS fusion outputs (yaw rate, ground "
                "velocity, crab, dead-reckoning) when a UBX GPS + IMU are fused"},
-    # --- anchor / spot-lock ---
-    "anchor": {"type": "object|null", "desc": "the held anchor/spot-lock point {lat, lon}"},
+    # --- anchor / position hold ---
+    "anchor": {"type": "object|null", "desc": "the held anchor point {lat, lon}"},
     "anchor_radius_m": {"type": "number", "unit": "m", "desc": "watch-circle radius"},
     "anchor_heading": {"type": "number|null", "unit": "deg", "desc": "heading captured at anchor drop"},
     "distance_to_anchor_m": {"type": "number", "unit": "m", "desc": "current distance from the anchor"},
-    "spotlock_quality": {"type": "object", "desc": "hold quality metric (RMS error, % in radius)"},
+    "hold_quality": {"type": "object", "desc": "hold quality metric (RMS error, % in radius)"},
     "anchor_ml": {"type": "object", "desc": "learned station-keeper telemetry (residual scale, guard)"},
     # --- routing / waypoints ---
     "active_waypoint": {"type": "object|null", "desc": "the waypoint currently being steered to"},
@@ -98,9 +98,9 @@ TELEMETRY_FIELDS: dict[str, dict] = {
 COMMANDS: dict[str, dict] = {
     "manual": {"desc": "direct thrust+steering (manual mode)"},
     "stop": {"desc": "zero the motor immediately (always available)"},
-    "anchor_hold": {"desc": "PID spot-lock at a point"},
-    "anchor_ml": {"desc": "learned (Smart) spot-lock"},
-    "anchor_leffe": {"desc": "pure learned full-azimuth spot-lock (experimental)"},
+    "anchor_hold": {"desc": "PID position hold at a point"},
+    "anchor_ml": {"desc": "learned (Smart) position hold"},
+    "anchor_leif": {"desc": "pure learned full-azimuth position hold (experimental)"},
     "heading_hold": {"desc": "hold a compass heading"},
     "goto": {"desc": "go to a waypoint / chart-tapped point"},
     "load_route": {"desc": "load + follow a route"},
@@ -112,7 +112,7 @@ COMMANDS: dict[str, dict] = {
     "trolling": {"desc": "ground-track S-curve trolling"},
     "cruise": {"desc": "set a cruise (speed-hold) target"},
     "set_throttle": {"desc": "set a throttle percentage"},
-    "jog": {"desc": "nudge the spot-lock/anchor point"},
+    "jog": {"desc": "nudge the anchor hold point"},
     "backtrack": {"desc": "retrace the recorded track"},
     "record": {"desc": "start/stop track recording"},
     "pause_nav": {"desc": "pause the active guided navigation"},

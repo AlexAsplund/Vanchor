@@ -1,4 +1,4 @@
-"""Tests for the Tier-1 features: Spot-Lock Jog, Cruise Control, track replay."""
+"""Tests for the Tier-1 features: Anchor jog, Cruise Control, track replay."""
 
 import pytest
 
@@ -21,7 +21,7 @@ def _ctrl(heading=0.0, anchor=None, sog=0.0):
     return Controller(state, SimMotorController()), state
 
 
-# --- Spot-Lock Jog -------------------------------------------------------- #
+# --- Anchor jog ----------------------------------------------------------- #
 @pytest.mark.parametrize(
     "heading,direction,expected_bearing",
     [
@@ -81,7 +81,7 @@ def test_cruise_not_applied_in_manual():
     assert cmd.thrust == pytest.approx(0.1)  # cruise ignored in manual
 
 
-# --- Track replay / BackTrack -------------------------------------------- #
+# --- Track replay / retrace ----------------------------------------------- #
 def test_replay_and_backtrack_feed_waypoints():
     ctrl, state = _ctrl()
     from vanchor.core.geo import destination_point

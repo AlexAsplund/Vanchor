@@ -686,11 +686,11 @@ is applied by the caller (``Runtime.plan_work_spots``).
 
 Track recording: breadcrumb the boat's path, then replay or retrace it.
 
-This mirrors the "record-a-track" / "BackTrack" feature of GPS trolling motors
+This mirrors the "record-a-track" / track retrace feature of GPS trolling motors
 (Minn Kota iTracks, MotorGuide routes). A :class:`TrackRecorder` samples the
 boat's position into a list of :class:`Waypoint`s while recording; replaying
 feeds those points straight into :class:`~vanchor.controller.modes.WaypointMode`
-(forward), and BackTrack feeds them reversed.
+(forward), and the retrace command feeds them reversed.
 
 <a id="vanchor.nav.track.TrackRecorder"></a>
 

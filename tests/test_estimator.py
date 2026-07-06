@@ -2,7 +2,7 @@
 
 Covers the estimator itself (convergence, dt-scale invariance, thrust decoupling,
 turn gating, settling, no-reset-on-mode-change) and its consumers (waypoint crab
-feed-forward and Spot-Lock reading the estimate immediately on activate).
+feed-forward and anchor hold reading the estimate immediately on activate).
 """
 
 import math
@@ -113,7 +113,7 @@ def test_not_settled_after_one_sample():
 
 def test_does_not_reset_across_mode_changes():
     # The persistent estimator lives on the Controller and must survive mode
-    # switches (Spot-Lock etc. must NOT relearn the environment).
+    # switches (anchor hold etc. must NOT relearn the environment).
     state = _state(sog=1.0, cog=90.0)
     ctrl = Controller(state, SimMotorController(), bus=None)
     for _ in range(200):
@@ -222,10 +222,10 @@ def test_waypoint_crab_tightens_ground_track_vs_no_feedforward():
 
 
 # --------------------------------------------------------------------------- #
-# Spot-Lock reads the estimate immediately on activate (no relearn delay)
+# Anchor hold reads the estimate immediately on activate (no relearn delay)
 # --------------------------------------------------------------------------- #
-def test_spot_lock_uses_drift_estimate_immediately_on_activate():
-    # Pre-load a settled drift on the state; Spot-Lock (feed-forward on) must point
+def test_anchor_hold_uses_drift_estimate_immediately_on_activate():
+    # Pre-load a settled drift on the state; anchor hold (feed-forward on) must point
     # the bow INTO it on the very first update -- no ~10 s relearn.
     state = _state(heading=0.0, sog=0.0)
     state.anchor = HERE  # boat sitting on the mark, station-keeping
@@ -245,7 +245,7 @@ def test_spot_lock_uses_drift_estimate_immediately_on_activate():
     assert sp.thrust > 0.0  # holding counter-thrust, not idle
 
 
-def test_spot_lock_activate_does_not_reset_shared_estimate():
+def test_anchor_hold_activate_does_not_reset_shared_estimate():
     # Belt-and-braces: activate() has no drift-reset side effect at all.
     state = _state()
     state.est_drift_east = 0.3

@@ -49,8 +49,8 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 
 **Control modes**
 - **Manual** (thrust/steering, full ±180° swing, snap-to-zero).
-- **Anchor-hold / Spot-Lock** — heading-aware station keeping with drift
-  anticipation and **Spot-Lock Jog** (nudge the hold point).
+- **Anchor hold** — heading-aware station keeping with drift
+  anticipation and **anchor jog** (nudge the hold point).
 - **Heading-hold** autopilot.
 - **Waypoint / Route** following with cross-track correction **and predictive
   drift compensation** (crabs into wind/current so the ground track holds).
@@ -71,7 +71,7 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **Return-to-Launch** (auto-recommended on low battery), **Man-Overboard**
   (mark + return), **link-loss failsafe** (hold position if the phone drops),
   **shallow-water / geofence auto-stop**.
-- **Record-a-track / replay / BackTrack**; GPX route import.
+- **Record-a-track / replay / retrace**; GPX route import.
 
 **Sensing & data**
 - **Depth mapping** — accumulates soundings, persists across sessions, gridded

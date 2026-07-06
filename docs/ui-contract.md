@@ -17,7 +17,7 @@ Anchor / nav targets: `anchor{lat,lon}|null`, `anchor_radius_m`, `anchor_heading
 `route_complete`, `route_loop`, `route_patrol`, `drift_target_knots`,
 `est_drift_mps`, `est_drift_dir`.
 
-Work Area: `work_holding` (bool — currently spot-locked at a spot), `work_dwell_remaining_s`,
+Work Area: `work_holding` (bool — currently holding position at a spot), `work_dwell_remaining_s`,
 `work_spot_count`.
 
 Safety / nav extras: `launch{lat,lon,set}` (recorded home point), `rtl_recommended` (bool),
@@ -53,7 +53,7 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 **Motion / modes**
 - `manual {thrust(-1..1), steering(-1..1)}` · `stop {}`
 - `anchor_hold {anchor?{lat,lon}, radius_m?}` — drop anchor at current position (or supplied point)
-- `anchor_ml {anchor?{lat,lon}, radius_m?}` — ML-trained spot-lock; falls back to PID if model absent
+- `anchor_ml {anchor?{lat,lon}, radius_m?}` — ML-trained anchor hold; falls back to PID if model absent
 - `heading_hold {throttle?, heading?}` — hold a compass heading (defaults to current heading)
 - `goto {waypoints:[{lat,lon,name?},...], on_arrival?, loop?, patrol?, throttle?, active?}` — follow waypoints; `active` for live in-place edits (resume from that index without restarting)
 - `load_route {gpx, loop?, patrol?, throttle?}` — start navigation from GPX text
@@ -64,7 +64,7 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 - `contour_follow {target_depth_m, side?: deep|shallow, speed_knots?}` — hold a depth contour (isobath)
 - `orbit {center_lat, center_lon, radius_m?, direction?: cw|ccw, speed_knots?}` — loop a fixed point
 - `trolling {base_heading?, amplitude_deg?, period_s?, speed_knots?}` — sinusoidal S-curve weave
-- `work_area {waypoints:[{lat,lon,heading?,name?},...], dwell_s?, advance?: manual|timed, loop?, patrol?, throttle?}` — visit spots, spot-lock at each
+- `work_area {waypoints:[{lat,lon,heading?,name?},...], dwell_s?, advance?: manual|timed, loop?, patrol?, throttle?}` — visit spots, hold position at each
 - `next_spot {}` — advance to the next Work Area spot (manual-advance mode)
 
 **Speed / nav control**

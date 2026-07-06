@@ -265,7 +265,7 @@ def test_reverse_through_single_zero_tick_is_still_blocked():
 
 
 def test_drag_alarm_trips_in_anchor_ml_mode():
-    # The learned spot-lock (ANCHOR_ML) holds via an anchor, so it must be inside
+    # The learned anchor mode (ANCHOR_ML) holds via an anchor, so it must be inside
     # the drag-alarm net too.
     gov = _gov(drag_alarm_factor=2.0)
     st = _state(mode=ControlModeName.ANCHOR_ML, dist=11.0, radius=5.0)
@@ -355,7 +355,7 @@ def test_steer_slew_zero_means_disabled():
 def test_drag_alarm_fires_in_work_area_while_holding():
     gov = _gov(drag_alarm_factor=2.0)
     st = _state(mode=ControlModeName.WORK_AREA, dist=11.0, radius=5.0)
-    st.work_holding = True   # spot-locked at a spot
+    st.work_holding = True   # holding position at a spot
     _, status = gov.govern(MotorCommand(thrust=0.1), st, dt=0.2, fix_is_fresh=True)
     assert status.drag_alarm
 

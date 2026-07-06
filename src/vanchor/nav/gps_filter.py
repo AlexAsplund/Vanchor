@@ -4,13 +4,13 @@ A first-order low-pass on the fix position whose time constant scales with the
 receiver's reported horizontal accuracy (``hAcc``): a good fix (small hAcc) passes
 through nearly unchanged, a poor fix (large hAcc -- e.g. indoor multipath) is
 smoothed toward the running estimate. It is deliberately NOT gated on motion, so
-sustained real drift still reaches the controller (merely delayed) -- a spot-lock
-must see genuine drift to correct it.
+sustained real drift still reaches the controller (merely delayed) -- an anchor
+hold must see genuine drift to correct it.
 
 Honest limits: this attenuates high-frequency jitter and the phantom-velocity
 component, but it CANNOT remove slow multipath *wander* (a random walk that a
 causal filter can't tell from real slow drift). The complementary mitigation is to
-scale the control tolerance / spot-lock radius to hAcc rather than to fight the
+scale the control tolerance / anchor radius to hAcc rather than to fight the
 wander. Passthrough when no accuracy is reported (e.g. plain NMEA), so it is safe
 to leave enabled.
 """

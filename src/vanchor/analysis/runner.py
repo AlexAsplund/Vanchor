@@ -64,7 +64,7 @@ class Scenario:
     # --- Vectored / wide-azimuth station-keeping (#35) support ------------ #
     # All OFF/None by default, so every existing scenario builds the exact same
     # SIM boat + controller as before. Set these to let the analysis harness
-    # exercise and score the opt-in vectored spot-lock, which needs the motor's
+    # exercise and score the opt-in vectored anchor hold, which needs the motor's
     # full mechanical swing (the default sim boat only swings +/-35 deg, so a
     # Scenario otherwise cannot command a wide azimuth).
     #

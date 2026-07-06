@@ -117,7 +117,7 @@ telemetry + route snapshots, set from a `goto`/`load_route` flag):
 advance. The spots are `state.waypoints`; `active_waypoint` is the current spot.
 A two-phase machine: TRAVEL reuses the waypoint leg (cross-track + fwd/reverse);
 on arrival within `arrival_radius_m` it switches to HOLD, delegating to a private
-`AnchorHoldMode` (spot-lock). It advances when the `next_spot` button arrives
+`AnchorHoldMode`. It advances when the `next_spot` button arrives
 (`state.work_next_requested`) and/or, in `advance="timed"`, after `dwell_s`
 (accumulated from `dt`, harness-friendly); `route_loop`/`route_patrol` cycle the
 spots via the same `_wrap_or_bounce`, else it holds the final spot. Each

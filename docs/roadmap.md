@@ -6,7 +6,7 @@ The entire original roadmap shipped: Fossen 3-DOF physics, the serial HAL,
 NMEA-over-TCP, FollowAPB, GPX routes, the safety governor, observability,
 typed config, the rewritten anchor hold, the analysis/tuning framework, and
 all Tier 1–3 candidate features from the GPS trolling-motor research
-(spot-lock jog, cruise control, track replay/BackTrack, drift mode,
+(anchor jog, cruise control, track replay/retrace, drift mode,
 chart-tap goto, contour follow) plus bonus modes (Work Area survey, learned
 ML anchor). See git history and `docs/FEATURES.md` for the full inventory.
 
@@ -129,7 +129,7 @@ blockers):**
 
 27. ✅ Shared `WindCurrentEstimator` promoted to a persistent Controller service
     (fed every tick, never reset on mode change) → waypoint crab feedforward
-    (mean |XTE| 10.7 m → 0.47 m on a beam set), spot-lock preloaded with the
+    (mean |XTE| 10.7 m → 0.47 m on a beam set), anchor hold preloaded with the
     drift, Drift mode drift axis.
 28. ✅ Drift mode on signed along-axis speed; dt-scaled estimator alphas.
 29. ✅ Water-clip survey routes + concave-leg boundary routing (pragmatic vs full
@@ -145,7 +145,7 @@ blockers):**
 33. ✅ Visibility-graph speedup: lazy A* + reflex-vertex filtering, ~8× fewer
     `covers()` tests (216k → 27k), routes provably identical to an eager oracle.
 34. ✅ ML anchor v2: mount/steer-sign correctness, runtime residual-decay
-    guardrail (never worse than the PID base), spot-lock quality metric
+    guardrail (never worse than the PID base), hold quality metric
     (RMS error / % in radius) in telemetry, offline fine-tune script.
 35. ✅ Vectored/azimuth station-keeping (opt-in): pushes against the set using
     the full rotation; beam-set RMS 3.29 m → 1.29 m; default off = baseline.
@@ -155,7 +155,7 @@ past the roadmap. The default **Smart** mode is now a full-azimuth hybrid
 (PID + learned residual, trained at a 120° swing, rescaled to the boat's range),
 which strictly dominates PID and the old ±35° hybrid — 90.6% in-radius vs PID's
 82.4% (≤6 m/s), 100% on both bow and stern, with the safety floor intact. A pure
-experimental mode, **Leffe 🍺**, is also selectable. Full writeup + held-out
+experimental mode, **Leif**, is also selectable. Full writeup + held-out
 numbers + training recipe in [`docs/anchor-ml.md`](anchor-ml.md).
 
 ### Phase 5 — Simulation & testing depth

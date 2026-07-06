@@ -20,7 +20,7 @@ returns:
   "envelope_version": 3,
   "units": "angles in degrees, distances in metres, speed in knots ...",
   "telemetry": { "heading_deg": {"type": "number", "unit": "deg", "desc": "..."}, ... },
-  "commands":  { "anchor_hold": {"desc": "PID spot-lock at a point"}, ... }
+  "commands":  { "anchor_hold": {"desc": "PID position hold at a point"}, ... }
 }
 ```
 

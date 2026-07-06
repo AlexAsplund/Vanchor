@@ -11,7 +11,7 @@ for LLMs and takes precedence on implementation detail.)
 - **[FEATURES.md](FEATURES.md)** — the full feature tour (GUI, control modes,
   navigation, sensing, safety, simulation).
 - **[modes/](modes/)** — a user guide for **every autopilot mode** (manual,
-  heading-hold, anchor/spot-lock, route + smart routing, Work Area, drift, and the
+  heading-hold, anchor hold, route + smart routing, Work Area, drift, and the
   fishing patterns): what each does, when to use it, and its on-screen controls.
 - **[nav-control-api.md](nav-control-api.md)** — control & navigation backend
   contract: modes, calibration, cross-track, drift feed-forward, GPS offset.

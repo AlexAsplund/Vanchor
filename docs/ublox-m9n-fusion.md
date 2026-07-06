@@ -1,6 +1,6 @@
 # u-blox M9N (UBX) + HWT901B IMU fusion
 
-A GNSS/INS path for a tighter spot-lock, added **additively** — every existing
+A GNSS/INS path for a tighter anchor hold, added **additively** — every existing
 hardware combo (sim, serial-NMEA, NMEA-bridge, HWT-only, no-GPS) behaves exactly
 as before. It has three layers.
 
@@ -8,7 +8,7 @@ as before. It has three layers.
 The M9N speaks NMEA by default, but its native **UBX-NAV-PVT** message carries
 what NMEA can't: the **NED ground-velocity vector** (`velN/velE/velD`) and
 **per-fix accuracy** (`hAcc`, `sAcc`). The velocity vector is clean *even at ~0
-speed* — precisely the spot-lock regime where NMEA's COG is undefined.
+speed* — precisely the anchor hold regime where NMEA's COG is undefined.
 
 - `nav/ubx.py` — a pure, stdlib-only parser: frame sync + Fletcher checksum,
   `parse_stream` (resyncs past garbage, tolerates partial frames), `decode_nav_pvt`,
@@ -31,7 +31,7 @@ speed* — precisely the spot-lock regime where NMEA's COG is undefined.
 - **Ground velocity**: low-passed toward the GPS velocity vector (or derived from
   SOG/COG, or a position delta) → clean low-speed velocity.
 - **Crab / set**: `course − heading` (positive = set to starboard) → lets a
-  vectored spot-lock push against the *actual* drift, not the heading.
+  vectored anchor hold push against the *actual* drift, not the heading.
 - **Dead-reckoning**: coasts position from the last velocity through a brief GPS
   gap (under a dock/bridge), flagged `dead_reckoning`.
 

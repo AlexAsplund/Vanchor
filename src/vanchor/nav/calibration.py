@@ -324,7 +324,7 @@ def tune_interference(buf: CaptureBuffer) -> tuple[FusionCalibration, list[str]]
 
     # Quality score: 100 = the motor doesn't move the compass at all; 0 = it moves
     # it by _INTERF_UNUSABLE_DEG or more (heading that corrupt is unusable for a
-    # heading-critical spot-lock). Linear between.
+    # heading-critical anchor hold). Linear between.
     cal.motor_interference_score = round(100 * _clamp(1.0 - max_dev / _INTERF_UNUSABLE_DEG, 0.0, 1.0))
     return cal, warnings
 
