@@ -240,7 +240,7 @@
       .then((res) => (res.ok ? res.json() : null)).then((r) => {
         if (!r || r.ok === false || !Number.isFinite(r.depth_m)) return;
         if (!depthEl || !depthEl.isConnected) return;       // popup already closed
-        const src = r.source === "contour" ? " (contour)" : "";
+        const src = r.source === "sounding" ? " (sounding)" : "";
         depthEl.textContent = `🌊 Depth ~${r.depth_m.toFixed(1)} m${src}`;
         depthEl.hidden = false;
       }).catch(() => { /* no depth info -> row stays hidden */ });

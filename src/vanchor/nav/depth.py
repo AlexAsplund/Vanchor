@@ -522,11 +522,12 @@ class DepthMap:
     def depth_at(self, lat: float, lon: float, radius_m: float = 100.0) -> dict | None:
         """Best-known depth at a point, for the map long-press menu.
 
-        Prefers the nearest recorded/imported SOUNDING within ``radius_m``;
-        falls back to the nearest imported CONTOUR (isobath) vertex within the
-        same radius, so areas charted with contour lines but no spot soundings
-        still answer. Returns ``{depth_m, source: "sounding"|"contour",
-        dist_m}`` or ``None`` when nothing is within range."""
+        ALWAYS prefers the nearest imported CONTOUR (isobath) vertex within
+        ``radius_m`` -- contours are the authoritative chart data, so the readout
+        matches the lines the user sees. Falls back to the nearest recorded/
+        imported SOUNDING only where no contour is in range. Returns
+        ``{depth_m, source: "contour"|"sounding", dist_m}`` or ``None`` when
+        nothing is within range."""
         dlat = radius_m / _M_PER_DEG_LAT
         coslat = max(0.01, math.cos(math.radians(lat)))
         dlon = radius_m / (_M_PER_DEG_LAT * coslat)
@@ -534,20 +535,10 @@ class DepthMap:
 
         def dist_m(la: float, lo: float) -> float:
             return math.hypot((la - lat) * _M_PER_DEG_LAT,
-                               (lo - lon) * _M_PER_DEG_LAT * coslat)
+                              (lo - lon) * _M_PER_DEG_LAT * coslat)
 
-        # Nearest sounding inside the radius box (cheap prefilter, then exact).
+        # Nearest contour vertex inside the radius (authoritative chart depth).
         best: tuple[float, float] | None = None  # (dist, depth)
-        for la, lo, d in self.points:
-            if s <= la <= n and w <= lo <= e:
-                dm = dist_m(la, lo)
-                if dm <= radius_m and (best is None or dm < best[0]):
-                    best = (dm, d)
-        if best is not None:
-            return {"depth_m": round(best[1], 1), "source": "sounding",
-                    "dist_m": round(best[0], 1)}
-
-        # Fall back to the nearest imported contour vertex (isobath depth).
         for c in self.contours_in(bbox=(w, s, e, n), limit=200):
             d = c.get("d")
             for la, lo in c.get("pts", []):
@@ -556,6 +547,16 @@ class DepthMap:
                     best = (dm, float(d))
         if best is not None:
             return {"depth_m": round(best[1], 1), "source": "contour",
+                    "dist_m": round(best[0], 1)}
+
+        # Fall back to the nearest sounding (areas with no charted contours).
+        for la, lo, d in self.points:
+            if s <= la <= n and w <= lo <= e:
+                dm = dist_m(la, lo)
+                if dm <= radius_m and (best is None or dm < best[0]):
+                    best = (dm, d)
+        if best is not None:
+            return {"depth_m": round(best[1], 1), "source": "sounding",
                     "dist_m": round(best[0], 1)}
         return None
 

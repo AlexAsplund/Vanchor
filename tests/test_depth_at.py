@@ -10,8 +10,8 @@ def _dm():
     return dm
 
 
-def test_depth_at_prefers_nearest_sounding():
-    hit = _dm().depth_at(59.8781, 12.0301)
+def test_depth_at_uses_sounding_where_no_contours():
+    hit = _dm().depth_at(59.8781, 12.0301)      # store has no contours here
     assert hit is not None and hit["source"] == "sounding"
     assert hit["depth_m"] == 4.2 and hit["dist_m"] < 20
 
@@ -29,10 +29,11 @@ def test_depth_at_falls_back_to_contours():
     assert hit is not None and hit["source"] == "contour" and hit["depth_m"] == 3.0
 
 
-def test_depth_at_sounding_beats_contour():
-    dm = _dm()
+def test_depth_at_contour_always_beats_sounding():
+    dm = _dm()                                   # sounding 4.2 only ~14 m away
     dm.contours = ColumnarFeatures.from_arrays(
-        coords=[[59.8781, 12.0301]], offsets=[0, 1], vals=[9.9],
-        val_key="d", vtx_key="pts")
+        coords=[[59.8785, 12.0305]], offsets=[0, 1], vals=[9.9],
+        val_key="d", vtx_key="pts")              # contour farther away than the sounding
     hit = dm.depth_at(59.8781, 12.0301)
-    assert hit is not None and hit["source"] == "sounding"  # soundings preferred
+    assert hit is not None and hit["source"] == "contour"   # contours are authoritative
+    assert hit["depth_m"] == 9.9
