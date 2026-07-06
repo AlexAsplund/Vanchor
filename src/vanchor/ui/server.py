@@ -787,6 +787,12 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             None, lambda: runtime.depth_grid(cell_m, bbox=bbox, field=field)
         )
 
+    @app.get("/api/depth/at")
+    async def depth_at(lat: float, lon: float) -> dict:
+        """Best-known depth at a point (nearest sounding, else nearest imported
+        contour) — shown in the map long-press menu."""
+        return runtime.depth_at(lat, lon)
+
     @app.get("/api/depth/contours")
     async def depth_contours(
         west: float | None = None,

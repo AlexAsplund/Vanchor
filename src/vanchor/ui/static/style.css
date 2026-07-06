@@ -2327,3 +2327,9 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
 .dev-lineopts .line-fields { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; }
 .dev-lineopts .line-fields input { width: 5.5em; flex: 0 0 auto; }
 .dev-lineopts .line-fields select { flex: 1 1 0; min-width: 0; }
+
+/* Depth readout at the top of the map long-press menu (nearest sounding/contour). */
+.map-menu .mm-depth {
+  padding: 4px 8px 6px; font-size: 13px; font-weight: 600; color: var(--accent);
+  border-bottom: 1px solid var(--line); margin-bottom: 4px; text-align: center;
+}

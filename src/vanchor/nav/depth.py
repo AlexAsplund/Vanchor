@@ -519,6 +519,46 @@ class DepthMap:
         """Most recent soundings as [[lat, lon, depth], ...] for the UI."""
         return [[la, lo, d] for la, lo, d in self.points[-limit:]]
 
+    def depth_at(self, lat: float, lon: float, radius_m: float = 100.0) -> dict | None:
+        """Best-known depth at a point, for the map long-press menu.
+
+        Prefers the nearest recorded/imported SOUNDING within ``radius_m``;
+        falls back to the nearest imported CONTOUR (isobath) vertex within the
+        same radius, so areas charted with contour lines but no spot soundings
+        still answer. Returns ``{depth_m, source: "sounding"|"contour",
+        dist_m}`` or ``None`` when nothing is within range."""
+        dlat = radius_m / _M_PER_DEG_LAT
+        coslat = max(0.01, math.cos(math.radians(lat)))
+        dlon = radius_m / (_M_PER_DEG_LAT * coslat)
+        w, s, e, n = lon - dlon, lat - dlat, lon + dlon, lat + dlat
+
+        def dist_m(la: float, lo: float) -> float:
+            return math.hypot((la - lat) * _M_PER_DEG_LAT,
+                               (lo - lon) * _M_PER_DEG_LAT * coslat)
+
+        # Nearest sounding inside the radius box (cheap prefilter, then exact).
+        best: tuple[float, float] | None = None  # (dist, depth)
+        for la, lo, d in self.points:
+            if s <= la <= n and w <= lo <= e:
+                dm = dist_m(la, lo)
+                if dm <= radius_m and (best is None or dm < best[0]):
+                    best = (dm, d)
+        if best is not None:
+            return {"depth_m": round(best[1], 1), "source": "sounding",
+                    "dist_m": round(best[0], 1)}
+
+        # Fall back to the nearest imported contour vertex (isobath depth).
+        for c in self.contours_in(bbox=(w, s, e, n), limit=200):
+            d = c.get("d")
+            for la, lo in c.get("pts", []):
+                dm = dist_m(la, lo)
+                if dm <= radius_m and (best is None or dm < best[0]):
+                    best = (dm, float(d))
+        if best is not None:
+            return {"depth_m": round(best[1], 1), "source": "contour",
+                    "dist_m": round(best[0], 1)}
+        return None
+
     def contours_in(
         self,
         bbox: tuple[float, float, float, float] | None = None,

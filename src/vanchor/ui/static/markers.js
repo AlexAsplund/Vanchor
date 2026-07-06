@@ -221,6 +221,7 @@
       .setLatLng(latlng)
       .setContent(
         `<div class="map-menu">
+           <div class="mm-depth" data-depth hidden></div>
            <button class="mm-btn" data-act="marker">📍 Place marker here</button>
            <div class="mm-sep">Navigate here</div>
            <button class="mm-btn" data-act="fast">⚡ Fastest (direct)</button>
@@ -230,6 +231,19 @@
     const goto = () => VA.send({ type: "goto", waypoints: [{ name: "GOTO", lat, lon }], throttle: 0.6, on_arrival: "anchor" });
     const node = popup.getElement();
     if (!node) return;
+
+    // Depth at the pressed point (nearest sounding, else nearest contour) --
+    // fetched async like the island detect below so the menu pops instantly;
+    // stays hidden when the chart has no depth data here or the endpoint is absent.
+    const depthEl = node.querySelector("[data-depth]");
+    fetch(`/api/depth/at?lat=${lat.toFixed(7)}&lon=${lon.toFixed(7)}`)
+      .then((res) => (res.ok ? res.json() : null)).then((r) => {
+        if (!r || r.ok === false || !Number.isFinite(r.depth_m)) return;
+        if (!depthEl || !depthEl.isConnected) return;       // popup already closed
+        const src = r.source === "contour" ? " (contour)" : "";
+        depthEl.textContent = `🌊 Depth ~${r.depth_m.toFixed(1)} m${src}`;
+        depthEl.hidden = false;
+      }).catch(() => { /* no depth info -> row stays hidden */ });
     node.querySelector('[data-act="marker"]').addEventListener("click", () => {
       createMarker(lat, lon, selectedIcon); map.closePopup(popup);
     });

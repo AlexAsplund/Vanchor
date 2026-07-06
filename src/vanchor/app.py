@@ -3062,6 +3062,15 @@ class Runtime:
         grid["field"] = field
         return grid
 
+    def depth_at(self, lat: float, lon: float) -> dict:
+        """Best-known depth at a point (nearest sounding within ~100 m, else the
+        nearest imported contour vertex) for the map long-press menu.
+        ``{ok, depth_m?, source?, dist_m?}``."""
+        hit = self.depth_map.depth_at(lat, lon)
+        if hit is None:
+            return {"ok": False}
+        return {"ok": True, **hit}
+
     def depth_contours(self, bbox=None, limit: int = 20000) -> dict:
         """Imported depth contours (isobath polylines) windowed to a
         (west, south, east, north) bbox. Returns ``{ok, count, contours}`` where
