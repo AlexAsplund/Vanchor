@@ -229,6 +229,51 @@ def _build_battery_config(cfg: AppConfig):
     )
 
 
+class _NeutralChannelMotor:
+    """Hold a disabled channel at neutral (0.0) before delegating to the inner
+    motor controller.
+
+    Used for combined-plan configs where one channel source is ``"none"`` while
+    the other rides the shared serial/sim board.  The combined controller still
+    transmits both ``thrust`` and ``steering`` fields in every frame; this adapter
+    ensures the disabled field is always 0.0 regardless of what the control loop
+    computes, honouring the docstring promise in
+    :func:`~vanchor.hardware.link_plan.plan_motor_links`.
+
+    Duck-typed to the ``MotorController`` interface.
+    """
+
+    def __init__(self, inner, neutral_channel: str) -> None:
+        self._inner = inner
+        self._neutral = neutral_channel  # "steering" or "thrust"
+
+    def apply(self, command) -> None:
+        import dataclasses
+        command = dataclasses.replace(command, **{self._neutral: 0.0})
+        self._inner.apply(command)
+
+    async def flush(self) -> None:
+        flush = getattr(self._inner, "flush", None)
+        if flush is None:
+            return
+        res = flush()
+        if hasattr(res, "__await__"):
+            await res
+
+    async def start(self) -> None:
+        await _start_motor(self._inner)
+
+    async def stop(self) -> None:
+        await _stop_motor(self._inner)
+
+    def debug(self) -> str:
+        try:
+            inner_dbg = self._inner.debug()
+        except Exception:  # noqa: BLE001
+            inner_dbg = repr(self._inner)
+        return f"NeutralChannel({self._neutral}=0) -> {inner_dbg}"
+
+
 class _TeeMotor:
     """Fan one ``MotorCommand`` out to several motor controllers at once — e.g.
     drive the simulated boat AND a real steering servo for bench testing.
@@ -1811,6 +1856,12 @@ class Runtime:
                 # "sim" or any unrecognised source -> sim fallback, exactly
                 # as today (the plan passes the source string through verbatim).
                 motor = sim_motor if sim_motor is not None else NullMotor()
+            # If one channel source is "none" while the other rides the shared
+            # board, wrap the combined motor so the disabled field is always sent
+            # at neutral (0.0).  Only applies when neutral_channel is set; the
+            # plain combined path (no neutral_channel) is never wrapped.
+            if plan.neutral_channel:
+                motor = _NeutralChannelMotor(motor, plan.neutral_channel)
         else:
             # --- SPLIT path --------------------------------------------------
             # Two independent channels, each guarded (Constraint 4).
@@ -3339,6 +3390,13 @@ class Runtime:
             # Motor composite: at least one channel active
             conn["motor"] = conn["thrust"] or conn["steering"]
 
+        # Combined plan with a neutral (disabled) channel: include the disabled
+        # channel as False so anchor/vectored modes are correctly gated with
+        # "Steering/Thrust not connected".  The OMIT rule applies only to the
+        # plain combined case (no neutral_channel); here we must be explicit.
+        elif plan is not None and plan.kind == "combined" and plan.neutral_channel:
+            conn[plan.neutral_channel] = False
+
         return conn
 
     def device_status(self) -> dict:
@@ -3412,6 +3470,17 @@ class Runtime:
             out["motor"]["healthy"] = all(known) if known else None
             out["motor"]["source"] = "split"
             out["motor"]["connected"] = t_conn or s_conn
+
+        elif plan is not None and plan.kind == "combined" and plan.neutral_channel:
+            # Combined plan with a disabled channel: surface it in device_status
+            # so telemetry()'s mode_availability derivation can gate correctly.
+            # The active channel is not surfaced separately (back-compat with the
+            # plain combined case); only the DISABLED side gets an entry.
+            out[plan.neutral_channel] = {
+                "source": "none",
+                "connected": False,
+                "healthy": None,
+            }
 
         return out
 

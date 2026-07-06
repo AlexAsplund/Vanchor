@@ -474,3 +474,71 @@ def test_split_steering_none_gates_anchor_with_steering_named():
     reason = capabilities.unavailable_reason(ControlModeName.ANCHOR_HOLD, conn)
     assert reason is not None
     assert "Steering" in reason
+
+
+# ─────────────────────────────────────────────────────────────────────────── #
+# _NeutralChannelMotor: combined plan with one disabled channel               #
+# ─────────────────────────────────────────────────────────────────────────── #
+
+class _SpyMotor:
+    """Minimal motor spy that records every MotorCommand applied."""
+
+    def __init__(self) -> None:
+        self.commands: list[MotorCommand] = []
+
+    def apply(self, command: MotorCommand) -> None:
+        self.commands.append(command)
+
+    @property
+    def last(self) -> MotorCommand | None:
+        return self.commands[-1] if self.commands else None
+
+
+def _neutral_rt() -> tuple["Runtime", "_SpyMotor"]:
+    """Runtime with steering_source="none" (thrust on shared serial board).
+
+    The spy motor replaces the serial motor so the test never needs a real port.
+    """
+    spy = _SpyMotor()
+    with patch.object(Runtime, "_build_serial_motor", lambda self, c: spy):
+        rt = _rt(steering_source="none", thrust_source="serial",
+                 thrust_port="/dev/ttyFAKENEUTRAL")
+    return rt, spy
+
+
+def test_neutral_channel_builds_adapter():
+    """steering_source="none" + serial thrust -> motor is _NeutralChannelMotor."""
+    rt, _ = _neutral_rt()
+    assert type(rt.controller.motor).__name__ == "_NeutralChannelMotor"
+
+
+def test_neutral_channel_zeroes_disabled_field():
+    """apply(thrust=0.5, steering=0.7) -> inner motor sees steering=0.0."""
+    rt, spy = _neutral_rt()
+    rt.controller.motor.apply(MotorCommand(thrust=0.5, steering=0.7))
+    assert spy.last is not None
+    assert spy.last.thrust == pytest.approx(0.5)
+    assert spy.last.steering == pytest.approx(0.0), (
+        "disabled steering channel must be neutralised to 0.0"
+    )
+
+
+def test_neutral_channel_mode_availability_gates_anchor():
+    """steering_source="none" -> ANCHOR_HOLD is unavailable, reason names Steering."""
+    rt, _ = _neutral_rt()
+    rt.controller.device_connected = rt._device_connected_map(rt.config)
+    ma = rt.telemetry()["mode_availability"]
+    assert ma["anchor_hold"]["available"] is False, (
+        "anchor_hold must be gated when steering channel is disabled"
+    )
+    assert "Steering" in ma["anchor_hold"]["reason"], (
+        f"reason must name 'Steering', got {ma['anchor_hold']['reason']!r}"
+    )
+
+
+def test_neutral_channel_plain_combined_not_wrapped():
+    """Plain combined path (no neutral_channel) must NOT be wrapped in _NeutralChannelMotor."""
+    rt = _rt()  # default: combined sim, no neutral channel
+    assert type(rt.controller.motor).__name__ != "_NeutralChannelMotor", (
+        "plain combined sim motor must not be wrapped by _NeutralChannelMotor"
+    )

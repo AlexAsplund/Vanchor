@@ -791,7 +791,8 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     async def depth_at(lat: float, lon: float) -> dict:
         """Best-known depth at a point (nearest sounding, else nearest imported
         contour) — shown in the map long-press menu."""
-        return runtime.depth_at(lat, lon)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: runtime.depth_at(lat, lon))
 
     @app.get("/api/depth/contours")
     async def depth_contours(
