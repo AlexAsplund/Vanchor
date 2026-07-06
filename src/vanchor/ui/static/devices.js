@@ -51,6 +51,11 @@
     none: "None (no gauge)",
     ina226: "INA226 shunt gauge",
   };
+  const CHANNEL_LABELS = {
+    sim: "Simulated",
+    serial: "Serial (wired)",
+    none: "Not connected",
+  };
   const AUTO_LABEL = "Auto (follows mode)";
 
   // Fallbacks if the backend omits `options`.
@@ -68,6 +73,12 @@
     { id: "dev-src-depth", key: "depth_source", kind: "sensor" },
     { id: "dev-src-motor", key: "motor_source", kind: "motor" },
     { id: "dev-src-battery", key: "battery_source", kind: "battery" },
+  ];
+
+  // Split-channel source selects (inside the Advanced: split channels disclosure).
+  const SPLIT_SRC_FIELDS = [
+    { id: "dev-src-steering", key: "steering_source", kind: "steering" },
+    { id: "dev-src-thrust",   key: "thrust_source",   kind: "thrust"   },
   ];
 
   let loaded = false;
@@ -94,7 +105,9 @@
     if (!sel) return;
     const vals = (options && options[kind]) || DEFAULT_OPTS[kind] || [];
     const labels = kind === "motor" ? MOTOR_LABELS
-      : kind === "battery" ? BATTERY_LABELS : SENSOR_LABELS;
+      : kind === "battery" ? BATTERY_LABELS
+      : (kind === "steering" || kind === "thrust") ? CHANNEL_LABELS
+      : SENSOR_LABELS;
     sel.innerHTML = "";
     // Null source = Auto.
     const auto = document.createElement("option");
@@ -149,6 +162,16 @@
     if (row) row.classList.toggle("dev-dim", !(on && on.checked));
   }
 
+  // Show/hide per-channel serial settings inside the split-channels disclosure.
+  // Only shown when the corresponding source select is set to "serial".
+  function syncSplitSerial() {
+    ["steering", "thrust"].forEach(function (ch) {
+      const sel = $("dev-src-" + ch);
+      const box = $("dev-split-" + ch + "-serial");
+      if (box) box.classList.toggle("hidden", !sel || sel.value !== "serial");
+    });
+  }
+
   // ---- form <-> state ---------------------------------------------------
 
   // Mode is stored on the seg's selected button (data-on "true"/"false").
@@ -195,6 +218,9 @@
     setVal("dev-gps-port", hw.gps_port);
     setVal("dev-compass-port", hw.compass_port);
     setVal("dev-motor-port", hw.motor_port);
+    // Split channel ports — set before fillPortPicks so the pick syncs correctly.
+    setVal("dev-steering-port", hw.steering_port);
+    setVal("dev-thrust-port", hw.thrust_port);
     fillPortPicks();  // reflect the loaded ports in the dropdowns
     // Per-port serial line settings (baud + data bits + parity + stop bits).
     ["gps", "compass", "motor"].forEach((d) => {
@@ -203,6 +229,27 @@
       setVal("dev-" + d + "-parity", hw[d + "_parity"]);
       setVal("dev-" + d + "-stopbits", hw[d + "_stopbits"]);
     });
+    // Split channel framing (baud + data bits + parity + stop bits).
+    ["steering", "thrust"].forEach(function (ch) {
+      setVal("dev-" + ch + "-baud", hw[ch + "_baud"]);
+      setVal("dev-" + ch + "-bytesize", hw[ch + "_bytesize"]);
+      setVal("dev-" + ch + "-parity", hw[ch + "_parity"]);
+      setVal("dev-" + ch + "-stopbits", hw[ch + "_stopbits"]);
+    });
+
+    // Populate split-channel source selects.
+    SPLIT_SRC_FIELDS.forEach((f) => {
+      const sel = $(f.id);
+      fillSelect(sel, f.kind);
+      setSelectValue(sel, hw[f.key]);
+    });
+
+    // Auto-open/close the split channels disclosure to reflect the saved config.
+    const splitDet = $("dev-split-details");
+    if (splitDet) {
+      splitDet.open = (hw.steering_source != null || hw.thrust_source != null);
+    }
+    syncSplitSerial();
 
     // Sim-motor actuation shaping (#36) — simulator-only response tuning.
     const sm = cfg.sim_motor && typeof cfg.sim_motor === "object" ? cfg.sim_motor : {};
@@ -381,6 +428,28 @@
       const sb = num($("dev-" + d + "-stopbits") && $("dev-" + d + "-stopbits").value);
       if (sb != null) serial[d + "_stopbits"] = sb;
     });
+    // Split channel keys (steering / thrust) — ONLY included when the split-channels
+    // disclosure is open. Collapsing it leaves the payload clean so an untouched
+    // legacy config round-trips byte-identically (no extra keys).
+    const splitDet = $("dev-split-details");
+    const splitHw = {};
+    if (splitDet && splitDet.open) {
+      ["steering", "thrust"].forEach(function (ch) {
+        const s = $("dev-src-" + ch);
+        const sv = s ? s.value : "";
+        splitHw[ch + "_source"] = sv === "" ? null : sv;
+        const port = textVal("dev-" + ch + "-port");
+        if (port != null) splitHw[ch + "_port"] = port;
+        const b = num($("dev-" + ch + "-baud") && $("dev-" + ch + "-baud").value);
+        if (b != null) splitHw[ch + "_baud"] = b;
+        const bs = num($("dev-" + ch + "-bytesize") && $("dev-" + ch + "-bytesize").value);
+        if (bs != null) splitHw[ch + "_bytesize"] = bs;
+        const par = ($("dev-" + ch + "-parity") || {}).value;
+        if (par) splitHw[ch + "_parity"] = par;
+        const sb = num($("dev-" + ch + "-stopbits") && $("dev-" + ch + "-stopbits").value);
+        if (sb != null) splitHw[ch + "_stopbits"] = sb;
+      });
+    }
     return {
       hardware: {
         enabled: readEnabled(),
@@ -388,6 +457,7 @@
         compass_port: textVal("dev-compass-port"),
         motor_port: textVal("dev-motor-port"),
         ...serial,
+        ...splitHw,
         gps_source: srcVal("dev-src-gps"),
         compass_source: srcVal("dev-src-compass"),
         depth_source: srcVal("dev-src-depth"),
@@ -420,9 +490,11 @@
   // anything not auto-detected. The hidden text input stays the source of truth
   // (collect() reads it); the dropdown just writes the chosen path into it.
   const PORT_PICKS = [
-    ["dev-gps-port-pick", "dev-gps-port"],
-    ["dev-compass-port-pick", "dev-compass-port"],
-    ["dev-motor-port-pick", "dev-motor-port"],
+    ["dev-gps-port-pick",      "dev-gps-port"],
+    ["dev-compass-port-pick",  "dev-compass-port"],
+    ["dev-motor-port-pick",    "dev-motor-port"],
+    ["dev-steering-port-pick", "dev-steering-port"],
+    ["dev-thrust-port-pick",   "dev-thrust-port"],
   ];
   const PORT_CUSTOM = "__custom__";
   let serialPorts = [];
@@ -571,6 +643,12 @@
   SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
     if (sel) sel.addEventListener("change", () => { syncSerial(); refreshMenus(); });
+  });
+
+  // Split-channel source selects → toggle per-channel serial rows.
+  SPLIT_SRC_FIELDS.forEach((f) => {
+    const sel = $(f.id);
+    if (sel) sel.addEventListener("change", syncSplitSerial);
   });
 
   // Serial-port dropdowns: mirror the pick into the (source-of-truth) input.
@@ -1306,7 +1384,7 @@
   const grid = document.querySelector(".dev-srcgrid");
   if (!card || !viewer) return;
 
-  const KINDS = { gps: 1, compass: 1, depth: 1, motor: 1, battery: 1 };
+  const KINDS = { gps: 1, compass: 1, depth: 1, motor: 1, battery: 1, steering: 1, thrust: 1 };
   const POLL_MS = 500;
   const MAX_FAILS = 3;   // stop after this many consecutive failures
 
@@ -1399,6 +1477,16 @@
   // Debug buttons (delegated on the sources grid). preventDefault stops the
   // enclosing <label> from re-focusing its select.
   if (grid) grid.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-debug]");
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openDebug(b.dataset.debug);
+  });
+
+  // Also handle debug buttons inside the split-channels disclosure (steering/thrust).
+  const splitDetails = $("dev-split-details");
+  if (splitDetails) splitDetails.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-debug]");
     if (!b) return;
     e.preventDefault();
