@@ -338,6 +338,15 @@ class TestSerialSteeringChannel:
         result = ch.debug()
         assert isinstance(result, str)
 
+    async def test_flush_with_nan_value(self) -> None:
+        """flush() with _value=NaN emits a NEUTRAL frame and does not raise."""
+        t = FakeSerialTransport()
+        ch = SerialSteeringChannel(t)
+        ch._value = float("nan")  # pyright: ignore[reportPrivateUsage]
+        await t.open()
+        await ch.flush()  # must not raise
+        assert t.written == ["STEER 0"]
+
 
 # =========================================================================== #
 # SerialThrustChannel                                                          #
@@ -618,6 +627,15 @@ class TestSerialThrustChannel:
         ch._value = float("nan")  # pyright: ignore[reportPrivateUsage]
         result = ch.debug()
         assert isinstance(result, str)
+
+    async def test_flush_with_nan_value(self) -> None:
+        """flush() with _value=NaN emits a NEUTRAL frame and does not raise."""
+        t = FakeSerialTransport()
+        ch = SerialThrustChannel(t)
+        ch._value = float("nan")  # pyright: ignore[reportPrivateUsage]
+        await t.open()
+        await ch.flush()  # must not raise
+        assert t.written == ["THRUST 0 F"]
 
 
 # =========================================================================== #

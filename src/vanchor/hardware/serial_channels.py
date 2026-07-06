@@ -16,10 +16,12 @@ Write cadence
 ~~~~~~~~~~~~~
 ``flush()`` writes a frame on **every call**, mirroring the combined
 :class:`~vanchor.hardware.serial_devices.SerialMotorController` cadence. This
-keeps the firmware's 800 ms loss-of-signal watchdog fed. Transport errors are
-caught, the channel is marked unhealthy, and the command is dropped (logged
-rate-limited) so a transport-down condition never propagates out of the
-channel.
+keeps the firmware's 800 ms loss-of-signal watchdog fed. Non-finite (NaN/inf)
+internal values are silently replaced with 0.0 before formatting so a
+corrupted state can neither raise past the transport error-handler nor emit a
+malformed frame. Transport errors are caught, the channel is marked unhealthy,
+and the command is dropped (logged rate-limited) so a transport-down condition
+never propagates out of the channel.
 
 BENCH-VERIFY
 ~~~~~~~~~~~~
@@ -35,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time as _time
 
 from .serial_devices import (
@@ -133,13 +136,15 @@ class SerialSteeringChannel(MotorChannel):
     async def flush(self) -> None:
         """Write the latest steering command; catches all transport errors.
 
-        Clamps before formatting so an out-of-range internal value can never
-        produce a malformed frame.  Transport errors are caught, the channel
-        is marked unhealthy, and the command is dropped (logged rate-limited)
-        — the error must NOT propagate out so :class:`SplitMotor` can still
+        Non-finite (NaN/inf) ``_value`` is treated as 0.0 before the clamp so
+        a corrupted value can neither raise past the transport try/except nor
+        emit a malformed frame.  Transport errors are caught, the channel is
+        marked unhealthy, and the command is dropped (logged rate-limited) —
+        the error must NOT propagate out so :class:`SplitMotor` can still
         service the other channel.
         """
-        steer = min(100, max(-100, round(self._value * 100)))
+        value = self._value if math.isfinite(self._value) else 0.0
+        steer = min(100, max(-100, round(value * 100)))
         line = self._format(steer)
         self._last_frame = line
         try:
@@ -279,14 +284,16 @@ class SerialThrustChannel(MotorChannel):
     async def flush(self) -> None:
         """Write the latest thrust command; catches all transport errors.
 
-        Clamps before formatting so an out-of-range internal value can never
-        produce a malformed frame.  Transport errors are caught, the channel
-        is marked unhealthy, and the command is dropped (logged rate-limited)
-        — the error must NOT propagate out so :class:`SplitMotor` can still
+        Non-finite (NaN/inf) ``_value`` is treated as 0.0 before the clamp so
+        a corrupted value can neither raise past the transport try/except nor
+        emit a malformed frame.  Transport errors are caught, the channel is
+        marked unhealthy, and the command is dropped (logged rate-limited) —
+        the error must NOT propagate out so :class:`SplitMotor` can still
         service the other channel.
         """
-        pwm = min(255, max(0, round(abs(self._value) * 255)))
-        direction = "R" if self._value < 0 else "F"
+        value = self._value if math.isfinite(self._value) else 0.0
+        pwm = min(255, max(0, round(abs(value) * 255)))
+        direction = "R" if value < 0 else "F"
         line = self._format(pwm, direction)
         self._last_frame = line
         try:

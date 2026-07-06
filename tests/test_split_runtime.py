@@ -181,6 +181,35 @@ def test_stop_zeroes_both_even_if_one_channel_is_none():
     assert thrust_ch.last == pytest.approx(0.0)
 
 
+def test_stop_constructed_split_zeroes_both_channels():
+    """End-to-end STOP on a runtime-CONSTRUCTED split motor zeroes both channels.
+
+    Uses _split_rt() (steering=sim, thrust=serial/fake-port).  Issues STOP via
+    Runtime.handle_command, ticks the controller, then reaches into the
+    SplitMotor channels to assert both values are zero.
+    """
+    from vanchor.hardware.serial_channels import SerialThrustChannel
+
+    rt = _split_rt()
+    motor = rt.controller.motor
+    assert isinstance(motor, SplitMotor)
+    assert isinstance(motor.thrust, SerialThrustChannel)
+
+    # Apply a non-zero command directly so there is something to zero out.
+    motor.apply(MotorCommand(thrust=0.7, steering=0.5))
+    assert motor.thrust._value == pytest.approx(0.7)           # pyright: ignore[reportPrivateUsage]
+    assert motor.steering._state.steering == pytest.approx(0.5) # pyright: ignore[reportPrivateUsage]
+
+    # Issue STOP then tick the controller (which calls motor.apply with zeros).
+    rt.handle_command({"type": "stop"})
+    rt.controller.control_tick(dt=0.1)
+
+    # SerialThrustChannel stores the normalized value in _value.
+    assert motor.thrust._value == pytest.approx(0.0), "thrust must be zeroed after STOP"    # pyright: ignore[reportPrivateUsage]
+    # _SimSteeringChannel stores the value in _state.steering.
+    assert motor.steering._state.steering == pytest.approx(0.0), "steering must be zeroed after STOP"  # pyright: ignore[reportPrivateUsage]
+
+
 # ─────────────────────────────────────────────────────────────────────────── #
 # Failing channel build: runtime up, channel unhealthy, mode gated            #
 # ─────────────────────────────────────────────────────────────────────────── #
@@ -196,7 +225,7 @@ def test_failing_channel_build_runtime_stays_up():
 def test_failing_channel_appears_unhealthy_in_device_status():
     rt = _split_rt()
     status = rt.device_status()
-    # thrust channel: serial Task-3 placeholder -> not built -> unhealthy
+    # thrust channel: SerialThrustChannel IS built (Task 3) but never started -> unhealthy
     assert "thrust" in status
     assert status["thrust"]["healthy"] is False
     # steering channel: sim -> built -> healthy (None = unknown/not-applicable for sim)

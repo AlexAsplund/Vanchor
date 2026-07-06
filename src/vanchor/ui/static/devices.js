@@ -86,6 +86,12 @@
   let driverMenus = {};   // { source: menu-schema } — shown on selection
   let activeMenus = [];   // menus from the running devices (live values)
   let lastRestartRequired = false;
+  // Tracks whether each split channel had a non-null persisted source at the
+  // last render() call.  collect() uses this to gate per-channel payload keys:
+  // a previously-configured channel must still be sendable even when the user
+  // resets it back to Auto (source null).  An untouched-open disclosure with
+  // both channels null at render time sends ZERO channel keys.
+  let lastSplitRendered = { steering: false, thrust: false };
 
   function setStatus(msg, kind) {
     const el = $("dev-status");
@@ -249,6 +255,12 @@
     if (splitDet) {
       splitDet.open = (hw.steering_source != null || hw.thrust_source != null);
     }
+    // Record which channels have a persisted (non-null) source so collect() can
+    // include their keys even if the user resets to Auto after opening.
+    lastSplitRendered = {
+      steering: hw.steering_source != null,
+      thrust:   hw.thrust_source   != null,
+    };
     syncSplitSerial();
 
     // Sim-motor actuation shaping (#36) — simulator-only response tuning.
@@ -428,26 +440,32 @@
       const sb = num($("dev-" + d + "-stopbits") && $("dev-" + d + "-stopbits").value);
       if (sb != null) serial[d + "_stopbits"] = sb;
     });
-    // Split channel keys (steering / thrust) — ONLY included when the split-channels
-    // disclosure is open. Collapsing it leaves the payload clean so an untouched
-    // legacy config round-trips byte-identically (no extra keys).
+    // Split channel keys (steering / thrust) — included per-channel only when
+    // the disclosure is open AND the channel qualifies: (a) source select is
+    // non-empty (user picked something), (b) port text is non-empty (user typed
+    // a port), or (c) the channel had a persisted value at render time so the
+    // user can reset it back to Auto (source=null).  An untouched-open
+    // disclosure with both channels null at render time sends ZERO channel keys,
+    // so a legacy config round-trips byte-identically even left open.
     const splitDet = $("dev-split-details");
     const splitHw = {};
     if (splitDet && splitDet.open) {
       ["steering", "thrust"].forEach(function (ch) {
         const s = $("dev-src-" + ch);
         const sv = s ? s.value : "";
-        splitHw[ch + "_source"] = sv === "" ? null : sv;
-        const port = textVal("dev-" + ch + "-port");
-        if (port != null) splitHw[ch + "_port"] = port;
-        const b = num($("dev-" + ch + "-baud") && $("dev-" + ch + "-baud").value);
-        if (b != null) splitHw[ch + "_baud"] = b;
-        const bs = num($("dev-" + ch + "-bytesize") && $("dev-" + ch + "-bytesize").value);
-        if (bs != null) splitHw[ch + "_bytesize"] = bs;
-        const par = ($("dev-" + ch + "-parity") || {}).value;
-        if (par) splitHw[ch + "_parity"] = par;
-        const sb = num($("dev-" + ch + "-stopbits") && $("dev-" + ch + "-stopbits").value);
-        if (sb != null) splitHw[ch + "_stopbits"] = sb;
+        const portVal = textVal("dev-" + ch + "-port");
+        if (sv !== "" || portVal !== null || lastSplitRendered[ch]) {
+          splitHw[ch + "_source"] = sv === "" ? null : sv;
+          if (portVal != null) splitHw[ch + "_port"] = portVal;
+          const b = num($("dev-" + ch + "-baud") && $("dev-" + ch + "-baud").value);
+          if (b != null) splitHw[ch + "_baud"] = b;
+          const bs = num($("dev-" + ch + "-bytesize") && $("dev-" + ch + "-bytesize").value);
+          if (bs != null) splitHw[ch + "_bytesize"] = bs;
+          const par = ($("dev-" + ch + "-parity") || {}).value;
+          if (par) splitHw[ch + "_parity"] = par;
+          const sb = num($("dev-" + ch + "-stopbits") && $("dev-" + ch + "-stopbits").value);
+          if (sb != null) splitHw[ch + "_stopbits"] = sb;
+        }
       });
     }
     return {
@@ -1490,7 +1508,6 @@
     const b = e.target.closest("button[data-debug]");
     if (!b) return;
     e.preventDefault();
-    e.stopPropagation();
     openDebug(b.dataset.debug);
   });
 
@@ -1499,6 +1516,11 @@
 
   // Never leak a poll: stop when the card is collapsed.
   card.addEventListener("toggle", () => { if (!card.open) closeDebug(); });
+
+  // Also stop the debug poll when the split-channels disclosure is collapsed.
+  if (splitDetails) {
+    splitDetails.addEventListener("toggle", () => { if (!splitDetails.open) closeDebug(); });
+  }
 })();
 
 /* Connectors consent UI — pluggable integrations (Devices panel).
