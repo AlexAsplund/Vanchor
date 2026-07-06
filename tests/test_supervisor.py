@@ -249,3 +249,39 @@ def test_broadcaster_emits_frames(tmp_path):
         with c.websocket_connect("/ws") as ws:
             msg = ws.receive_json()
             assert "mode" in msg
+
+
+# --------------------------------------------------------------------------- #
+# Opt-in: continue the mission on link loss (pocket-the-phone workflow)
+# --------------------------------------------------------------------------- #
+def test_link_loss_continue_mission_keeps_guided_mode():
+    now = [1000.0]
+    rt = _underway_runtime(now)                       # HEADING_HOLD, making way
+    rt.config.safety.link_loss_timeout_s = 10.0
+    rt.config.safety.link_loss_continue_mission = True
+    rt.client_connected()
+    rt.client_disconnected()
+    now[0] = 1011.0
+    rt._supervise_once()
+    assert rt._link_failsafe_engaged                   # latched (fires once)
+    assert rt.state.mode == ControlModeName.HEADING_HOLD  # mission continues
+
+
+def test_link_loss_manual_still_stops_even_with_continue_mission():
+    """The MANUAL deadman is safety floor: the opt-in must not weaken it."""
+    from vanchor.core.models import MotorCommand
+    now = [1000.0]
+    rt = Runtime(mono_fn=lambda: now[0])
+    rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
+    rt.state.mode = ControlModeName.MANUAL
+    rt.state.motor_command = MotorCommand(thrust=0.5)  # driving by hand
+    rt.config.safety.link_loss_timeout_s = 10.0
+    rt.config.safety.link_loss_continue_mission = True
+    rt.client_connected()
+    rt.client_disconnected()
+    now[0] = 1011.0
+    rt._supervise_once()
+    assert rt._link_failsafe_engaged
+    assert rt.state.mode == ControlModeName.MANUAL     # stop lands in manual...
+    cmd = rt.controller.control_tick(0.2)              # next tick applies the stop
+    assert cmd.thrust == 0.0                           # ...with thrust CUT

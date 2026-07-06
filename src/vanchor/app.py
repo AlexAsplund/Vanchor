@@ -2380,9 +2380,16 @@ class Runtime:
         if now - self._last_client_seen < timeout:
             return False
         if self.state.mode == ControlModeName.MANUAL:
-            # Driving by hand with the link gone -> cut the motor (STOP).
+            # Driving by hand with the link gone -> cut the motor (STOP). This
+            # deadman is part of the safety floor and is NOT configurable.
             logger.warning("link lost %.0fs while driving manually; STOP (zero thrust)", timeout)
             self.controller.handle_command({"type": "stop"})
+        elif self.config.safety.link_loss_continue_mission:
+            # Opted-in unsupervised missions (pocket-the-phone workflow): keep
+            # flying the guided mode; geofence/depth/battery failsafes still
+            # apply. Logged + latched so this fires once per link loss.
+            logger.warning("link lost %.0fs while underway; continuing mission "
+                           "(safety.link_loss_continue_mission)", timeout)
         else:
             # Guided mode -> hold position (anchor-hold here).
             logger.warning("link lost %.0fs while underway; engaging hold-position", timeout)

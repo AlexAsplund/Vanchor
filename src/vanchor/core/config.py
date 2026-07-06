@@ -340,6 +340,12 @@ class SafetyConfig:
     # Lost-connection failsafe (#64): seconds with no UI client connected while
     # underway before auto-engaging anchor-hold (hold position).
     link_loss_timeout_s: float = 20.0
+    # Lost-link behaviour for GUIDED modes (routes/cruise/drift/...): default
+    # False = park-and-hold where the boat is (#64). True = keep flying the
+    # mission unsupervised (geofence / depth / battery failsafes still apply) —
+    # for the pocket-the-phone workflow. MANUAL driving always STOPS on link
+    # loss; that deadman is part of the safety floor and is NOT configurable.
+    link_loss_continue_mission: bool = False
     # --- Low-battery thrust-derating ladder (#49) ----------------------- #
     # As the battery state-of-charge falls through these rungs the maximum
     # applied thrust is capped in progressive steps (a SOFT derate) BEFORE the
@@ -1083,6 +1089,8 @@ safety:
   rtl_margin_m: 100.0        # warn when range-home nears battery range (#61)
   auto_rtl: false            # if true, auto-engage Return-to-Launch (not just recommend) (#61)
   link_loss_timeout_s: 20.0  # no-UI-client time before hold-position failsafe (#64)
+  link_loss_continue_mission: false  # true = guided modes keep flying unsupervised
+                                     # (pocket-the-phone); MANUAL always stops
   # Low-battery thrust-derating ladder (#49): as SoC falls through each
   # [soc_pct, thrust_cap] rung the max applied thrust is capped in steps (a soft
   # derate) BEFORE the lowest stage hands off to RTL. Only ever LOWERS thrust;
