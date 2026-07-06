@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import dataclasses
 import logging
 import math
 import time
@@ -61,6 +62,21 @@ _MPS_TO_KNOTS: float = 1.9438445
 
 # CAN source address we claim when sending our own frames.
 _OWN_SRC: int = 0xFF  # unclaimed / self-configurable address (N2K address claim not implemented)
+
+# The neutralizer submitted by the thruster deadman + the gated EOF path. It is a
+# plain ``{"type": "stop"}`` deliberately (mirrors rf_remote): stop is guaranteed
+# to flow through ``ctx.submit_command`` even if the control grant is revoked
+# mid-session (Global Constraint 3). With the active-driver latch it only fires
+# when a NON-ZERO thruster command was the last thing we submitted.
+_NEUTRALIZE_CMD: dict = {"type": "stop"}
+
+# Throttle window (seconds) for repeated denied-command warnings.
+_DENY_LOG_INTERVAL = 5.0
+
+# Deadman timeout clamp for the received Command Timeout field (seconds).
+_DEADMAN_MIN_S = 0.25
+_DEADMAN_MAX_S = 10.0
+_DEADMAN_DEFAULT_S = 1.0
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Manifest
@@ -84,6 +100,37 @@ MANIFEST = ConnectorManifest(
         "(at most 2 Hz)",
     ),
 )
+
+# The extra grant line the user must see + re-consent to when thruster control is
+# turned on. It is what makes the manifest hash change (see ``build_manifest``).
+_THRUSTER_GRANT_LINE = (
+    "Control the motor from NMEA 2000 thruster commands (PGN 128006) — commands "
+    "go through the governed path, time out like the app's, and STOP always "
+    "overrides"
+)
+
+
+def build_manifest(thruster_control: bool) -> ConnectorManifest:
+    """Build the connector manifest for the given ``thruster_control`` setting.
+
+    THE CONSENT MECHANISM. When ``thruster_control`` is falsy the manifest is
+    IDENTICAL to :data:`MANIFEST` — a pure, control-free data bridge whose hash
+    is unchanged from before this feature existed. When truthy it flips
+    ``control=True`` and appends :data:`_THRUSTER_GRANT_LINE`.
+
+    Because :func:`vanchor.connectors.base.manifest_hash` covers every manifest
+    field, turning thruster control on (or off) changes the hash, which disarms
+    the connector until the user re-consents having SEEN the new grant line
+    (Global Constraint 5). That re-consent — not any in-code flag — is the opt-in
+    that unlocks the ingress control path.
+    """
+    if not thruster_control:
+        return MANIFEST
+    return dataclasses.replace(
+        MANIFEST,
+        control=True,
+        grant_lines=MANIFEST.grant_lines + (_THRUSTER_GRANT_LINE,),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -304,6 +351,10 @@ class Nmea2000Connector(Connector):
         mono_fn: Callable[[], float] = time.monotonic,
         egress_interval_s: float = 0.5,
         reconnect_delay_s: float = 1.0,
+        manifest: ConnectorManifest | None = None,
+        max_steer_angle_deg: float = 35.0,
+        thruster_id: int = 0,
+        watchdog_poll_s: float = 0.1,
     ) -> None:
         self._transport: CanTransport = (
             transport if transport is not None else _SocketCanTransport()  # pragma: no cover
@@ -311,11 +362,21 @@ class Nmea2000Connector(Connector):
         self._mono = mono_fn
         self._egress_interval = egress_interval_s
         self._reconnect_delay = reconnect_delay_s
+        # Per-instance manifest (the dynamic control opt-in). Defaults to the
+        # pure data-bridge MANIFEST; ``_build`` swaps in the control manifest
+        # when the thruster_control setting is on.
+        self.manifest = manifest if manifest is not None else MANIFEST
+        # The connector cannot read the boat's state, so the max steer angle used
+        # to normalize an incoming azimuth command is a setting (state default 35°).
+        self._max_steer_angle_deg = max_steer_angle_deg if max_steer_angle_deg else 35.0
+        self._thruster_id = thruster_id
+        self._watchdog_poll_s = watchdog_poll_s
 
         # Runtime state
         self._stop: bool = False
         self._task: asyncio.Task | None = None
         self._egress_task: asyncio.Task | None = None
+        self._watchdog_task: asyncio.Task | None = None
         self._ctx: ConnectorContext | None = None
 
         # Ingress pairing state
@@ -325,14 +386,32 @@ class Nmea2000Connector(Connector):
         # Egress state
         self._last_telemetry: dict | None = None
 
+        # ── Thruster control deadman state (mirrors rf_remote exactly) ──────── #
+        # ``_last_ctrl_mono`` is the clock time of the last SUBMITTED non-zero
+        # thruster command; ``_last_ctrl_nonzero`` latches whether it moved the
+        # motor (the active-driver flag). ``_active_expiry_s`` is the timeout of
+        # that command (from its Command Timeout field, clamped). The deadman
+        # fires once (clearing the latch) and re-arms only on a new non-zero cmd.
+        self._last_ctrl_mono: float | None = None
+        self._last_ctrl_nonzero: bool = False
+        self._active_expiry_s: float = _DEADMAN_DEFAULT_S
+        self._expiry_fired: bool = False
+
         # Debug counters / last values
         self._rx_frames: int = 0
         self._tx_frames: int = 0
+        self._thruster_rx: int = 0
+        self._thruster_tx: int = 0
+        self._denied: int = 0
+        self._last_deny_log: float = 0.0
+        self._last_ctrl_cmd: dict | None = None
+        self._last_egress_status: dict | None = None
         self._last_129025: n2k.Pgn129025 | None = None
         self._last_129026: n2k.Pgn129026 | None = None
         self._last_127250: n2k.Pgn127250 | None = None
         self._last_128267: n2k.Pgn128267 | None = None
         self._last_130306: n2k.Pgn130306 | None = None
+        self._last_128006: n2k.Pgn128006 | None = None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────── #
 
@@ -343,11 +422,15 @@ class Nmea2000Connector(Connector):
         ctx.subscribe("telemetry", self._on_telemetry)
         self._task = asyncio.ensure_future(self._run_ingress())
         self._egress_task = asyncio.ensure_future(self._run_egress())
+        # The deadman watchdog runs regardless of the grant: it only ever fires
+        # when the active-driver latch is set, and the latch can only arm after a
+        # successful (i.e. granted) non-zero thruster command.
+        self._watchdog_task = asyncio.ensure_future(self._run_watchdog())
 
     async def stop(self) -> None:
-        """Stop both loops and close the transport."""
+        """Stop all loops and close the transport."""
         self._stop = True
-        for task in (self._task, self._egress_task):
+        for task in (self._task, self._egress_task, self._watchdog_task):
             if task is not None:
                 task.cancel()
                 try:
@@ -356,6 +439,7 @@ class Nmea2000Connector(Connector):
                     pass
         self._task = None
         self._egress_task = None
+        self._watchdog_task = None
         try:
             await self._transport.close()
         except Exception:  # noqa: BLE001
@@ -379,6 +463,11 @@ class Nmea2000Connector(Connector):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                # A control-INPUT link loss neutralizes the motor ONLY when the
+                # remote thruster was the ACTIVE driver (the latch is armed) —
+                # mirrors rf_remote's gated EOF. An idle/handed-off link drop must
+                # not disturb an autonomous mode the thruster head isn't driving.
+                self._neutralize_if_armed()
                 logger.warning(
                     "nmea2000: read loop ended (%s); reconnecting in %.1f s",
                     exc,
@@ -395,10 +484,10 @@ class Nmea2000Connector(Connector):
         while not self._stop:
             can_id, data = await self._transport.recv()
             self._rx_frames += 1
-            _, pgn, _ = n2k.unpack_id(can_id)
-            await self._dispatch(pgn, data)
+            _, pgn, src = n2k.unpack_id(can_id)
+            await self._dispatch(pgn, data, src)
 
-    async def _dispatch(self, pgn: int, data: bytes) -> None:
+    async def _dispatch(self, pgn: int, data: bytes, src: int = _OWN_SRC) -> None:
         """Decode one PGN and publish any resulting bus events."""
         now = self._mono()
         ctx = self._ctx
@@ -448,6 +537,9 @@ class Nmea2000Connector(Connector):
             f130306 = n2k.decode_130306(data)
             if f130306 is not None:
                 self._last_130306 = f130306
+
+        elif pgn == 128006:
+            self._on_128006(data, src)
         # All other PGNs are silently ignored.
 
     async def _try_emit_fix(self) -> None:
@@ -473,6 +565,145 @@ class Nmea2000Connector(Connector):
         except Exception:  # noqa: BLE001
             pass
 
+    # ── Thruster control ingress (PGN 128006) ─────────────────────────────── #
+
+    def _submit(self, cmd: dict) -> bool:
+        """Submit ``cmd`` via the governed context. Returns True iff forwarded.
+
+        Mirrors rf_remote: a :exc:`PermissionError` (ungranted, non-STOP) is
+        counted + throttle-logged + dropped; any other error is swallowed. This
+        is the ONLY path to a motor-affecting command — there is no raw-bus
+        fallback. STOP always flows (the context guarantees it).
+        """
+        ctx = self._ctx
+        if ctx is None:
+            return False
+        try:
+            ctx.submit_command(cmd)
+        except PermissionError:
+            self._denied += 1
+            now = self._mono()
+            if (now - self._last_deny_log) >= _DENY_LOG_INTERVAL:
+                self._last_deny_log = now
+                logger.warning(
+                    "nmea2000: thruster command %r denied (no control grant); dropping",
+                    cmd.get("type"),
+                )
+            return False
+        except Exception as exc:  # noqa: BLE001 - never let the loop die
+            logger.warning("nmea2000: command %r failed: %s", cmd.get("type"), exc)
+            return False
+        self._last_ctrl_cmd = cmd
+        return True
+
+    def _on_128006(self, data: bytes, src: int) -> None:
+        """Map a received PGN 128006 control frame to a governed manual command.
+
+        Never raises. The active-driver deadman latch is armed ONLY by a
+        successfully submitted NON-ZERO command (mirrors rf_remote). NA fields are
+        treated as 0/absent before any arithmetic.
+        """
+        try:
+            # Loopback guard: never treat our OWN egress 128006 status broadcast
+            # as an inbound control command (a socketcan bus with own-message
+            # loopback must not let us self-command).
+            if src == _OWN_SRC:
+                return
+            frame = n2k.decode_128006(data)
+            if frame is None:
+                return
+            self._last_128006 = frame
+            self._thruster_rx += 1
+
+            # Address filter: accept commands for our thruster identifier, or a
+            # broadcast/absent identifier (NA -> None). Documented choice.
+            if frame.identifier is not None and frame.identifier != self._thruster_id:
+                return
+
+            # Deadman timeout from the received Command Timeout field, clamped;
+            # falls back to the default when the field is NA/non-finite.
+            timeout = frame.command_timeout_s
+            if timeout is not None and math.isfinite(timeout):
+                self._active_expiry_s = min(_DEADMAN_MAX_S, max(_DEADMAN_MIN_S, timeout))
+            else:
+                self._active_expiry_s = _DEADMAN_DEFAULT_S
+
+            # Direction OFF (or NA) => no propulsion. Ready/To Port/To Starboard =>
+            # drive at the commanded speed (a trolling motor realizes lateral
+            # direction by rotating, so azimuth — not the lookup — carries it).
+            direction = frame.direction
+            speed_pct = frame.speed_pct if frame.speed_pct is not None else 0
+            speed_pct = min(100, max(0, speed_pct))
+            if direction is None or direction == 0:  # 0 = Off
+                thrust = 0.0
+            else:
+                thrust = speed_pct / 100.0
+
+            steering = self._azimuth_to_steering(frame.azimuth_rad)
+            cmd = {"type": "manual", "thrust": thrust, "steering": steering}
+            if self._submit(cmd):
+                # Only a submitted command touches the latch. A non-zero command
+                # arms the active-driver deadman; a zero/OFF command disarms it
+                # (it already neutralized) — exactly rf_remote's semantics.
+                self._last_ctrl_mono = self._mono()
+                self._last_ctrl_nonzero = thrust != 0.0
+                self._expiry_fired = False
+        except Exception as exc:  # noqa: BLE001 - ingress must never crash the loop
+            logger.warning("nmea2000: 128006 handling error: %s", exc)
+
+    def _azimuth_to_steering(self, azimuth_rad: float | None) -> float:
+        """Convert an unsigned N2K azimuth (0..2π rad) to a normalized steering
+        command in ``[-1, 1]`` using the configured max steer angle."""
+        if azimuth_rad is None or not math.isfinite(azimuth_rad):
+            return 0.0
+        az = azimuth_rad
+        # Unsigned 0..2π -> signed -π..π (port negative, starboard positive).
+        if az > math.pi:
+            az -= 2 * math.pi
+        steering = math.degrees(az) / self._max_steer_angle_deg
+        return max(-1.0, min(1.0, steering))
+
+    # ── Thruster deadman ──────────────────────────────────────────────────── #
+
+    def _disarm_deadman(self) -> None:
+        """Clear the active-driver latch and its timestamp."""
+        self._last_ctrl_nonzero = False
+        self._last_ctrl_mono = None
+
+    def _check_expiry(self) -> None:
+        """Fire the deadman once if the last non-zero command has gone stale.
+
+        Synchronous + defensive (tests drive it directly, no sleeps). Never
+        raises. Submit-before-disarm ordering — with no await between them the
+        cleared latch cannot double-fire (mirrors rf_remote).
+        """
+        try:
+            if self._last_ctrl_mono is None or not self._last_ctrl_nonzero:
+                return
+            age = self._mono() - self._last_ctrl_mono
+            if age < self._active_expiry_s:
+                return
+            self._expiry_fired = True
+            self._submit(dict(_NEUTRALIZE_CMD))
+            self._disarm_deadman()
+        except Exception as exc:  # noqa: BLE001 - the deadman must never crash
+            logger.warning("nmea2000: deadman check error: %s", exc)
+
+    def _neutralize_if_armed(self) -> None:
+        """EOF/error path: submit ONE stop then disarm, but only when the latch
+        is armed (the thruster head is the active driver)."""
+        if self._last_ctrl_nonzero:
+            self._submit(dict(_NEUTRALIZE_CMD))
+            self._disarm_deadman()
+
+    async def _run_watchdog(self) -> None:
+        """Background loop: re-check the deadman every ``watchdog_poll_s``."""
+        while not self._stop:
+            await asyncio.sleep(self._watchdog_poll_s)
+            if self._stop:
+                break
+            self._check_expiry()
+
     # ── Egress loop ───────────────────────────────────────────────────────── #
 
     def _on_telemetry(self, payload: dict) -> None:
@@ -488,6 +719,12 @@ class Nmea2000Connector(Connector):
             telem = self._last_telemetry
             if telem is None:
                 continue
+            # Thruster status is broadcast from the motor block INDEPENDENTLY of
+            # position (a boat with no GPS fix still reports its thruster state).
+            # Real telemetry always carries a "motor" block; when absent we skip.
+            motor = telem.get("motor")
+            if isinstance(motor, dict):
+                await self._egress_thruster(telem, motor)
             pos = telem.get("position")
             if pos is None:
                 continue
@@ -517,12 +754,82 @@ class Nmea2000Connector(Connector):
             except Exception as exc:  # noqa: BLE001
                 logger.debug("nmea2000: egress send failed: %s", exc)
 
+    async def _egress_thruster(self, telem: dict, motor: dict) -> None:
+        """Broadcast our own thruster state as PGN 128006 (+ 128008 motor status).
+
+        Reads the telemetry ``motor`` block (``state.to_dict()["motor"]``):
+        ``thrust``, ``steering`` and the commanded ``steer_angle_deg`` (the motor
+        azimuth relative to the bow — the brief's "azimuth_deg" is this field).
+        Direction is OFF when thrust is 0 else Ready; speed % is ``|thrust|*100``;
+        azimuth control is the commanded angle (deg -> rad, reduced to 0..2π).
+        Always on — no grant needed (outward transport.send only).
+        """
+        try:
+            thrust = float(motor.get("thrust") or 0.0)
+            steer_angle_deg = motor.get("steer_angle_deg")
+            if steer_angle_deg is None:
+                steer_angle_deg = float(motor.get("steering") or 0.0) * self._max_steer_angle_deg
+            azimuth_rad = math.radians(float(steer_angle_deg)) % (2 * math.pi)
+            running = thrust != 0.0
+            direction = 1 if running else 0            # Ready / Off
+            speed_pct = min(100, max(0, int(round(abs(thrust) * 100))))
+
+            data = n2k.encode_128006(
+                sid=0,
+                identifier=self._thruster_id,
+                direction=direction,
+                power=1 if running else 0,             # OFF_ON
+                retract=0,                             # deployed (not retractable)
+                speed_pct=speed_pct,
+                events=0,
+                command_timeout_s=None,                # status, not a timed command
+                azimuth_rad=azimuth_rad,
+            )
+            await self._transport.send(n2k.pack_id(5, 128006, _OWN_SRC), data)
+            self._tx_frames += 1
+            self._thruster_tx += 1
+            self._last_egress_status = {
+                "direction": direction,
+                "speed_pct": speed_pct,
+                "azimuth_deg": round(math.degrees(azimuth_rad), 1),
+            }
+
+            # PGN 128008 Thruster Motor Status (single-frame, encode-only). Current
+            # from the battery block if telemetry carries one, else NA; temperature
+            # and operating time NA (not modelled).
+            battery = telem.get("battery")
+            current_a: float | None = None
+            if isinstance(battery, dict):
+                cur = battery.get("current_a", battery.get("current"))
+                if cur is not None:
+                    current_a = float(cur)
+            data8 = n2k.encode_128008(
+                sid=0,
+                identifier=self._thruster_id,
+                motor_events=0,
+                current_a=current_a,
+                temperature_k=None,
+                operating_time_min=None,
+            )
+            await self._transport.send(n2k.pack_id(6, 128008, _OWN_SRC), data8)
+            self._tx_frames += 1
+            self._thruster_tx += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("nmea2000: thruster egress failed: %s", exc)
+
     # ── Introspection ─────────────────────────────────────────────────────── #
 
     def status(self) -> dict:
         return {
             "rx_frames": self._rx_frames,
             "tx_frames": self._tx_frames,
+            "thruster_rx": self._thruster_rx,
+            "thruster_tx": self._thruster_tx,
+            "thruster_control": bool(self.manifest.control),
+            "deadman_armed": self._last_ctrl_nonzero,
+            "denied": self._denied,
         }
 
     def debug(self) -> str:
@@ -576,6 +883,30 @@ class Nmea2000Connector(Connector):
                 lines.append(
                     f"  PGN 130306: wind_speed_mps={spd!r}  wind_angle_deg={ang_deg!r}"
                 )
+            # Thruster (PGN 128006) — control gate, latch/deadman, last frame.
+            lines.append(
+                f"  thruster  : control={bool(self.manifest.control)} "
+                f"rx={self._thruster_rx} tx={self._thruster_tx} denied={self._denied}"
+            )
+            lines.append(
+                f"  deadman   : armed={self._last_ctrl_nonzero} fired={self._expiry_fired} "
+                f"expiry_s={self._active_expiry_s} last_cmd={self._last_ctrl_cmd!r}"
+            )
+            if self._last_egress_status is not None:
+                lines.append(f"  last egress: 128006 {self._last_egress_status!r}")
+            if self._last_128006 is not None:
+                d = self._last_128006
+                az_deg = (
+                    round(math.degrees(d.azimuth_rad), 2)
+                    if d.azimuth_rad is not None
+                    else None
+                )
+                lines.append(
+                    f"  PGN 128006: id={d.identifier!r} dir={d.direction!r} "
+                    f"power={d.power!r} retract={d.retract!r} speed%={d.speed_pct!r} "
+                    f"events={d.events:#04x} timeout_s={d.command_timeout_s!r} "
+                    f"azimuth_deg={az_deg!r}"
+                )
             return "\n".join(lines)
         except Exception:  # noqa: BLE001
             return "Nmea2000Connector: debug error"
@@ -587,9 +918,26 @@ class Nmea2000Connector(Connector):
 
 
 def _build(settings: dict) -> Connector:
-    """Factory: build an :class:`Nmea2000Connector` from persisted settings."""
+    """Factory: build an :class:`Nmea2000Connector` from persisted settings.
+
+    The ``thruster_control`` setting selects the manifest DYNAMICALLY (see
+    :func:`build_manifest`): off => the pure data-bridge manifest (unchanged
+    hash); on => the control manifest with the extra thruster grant line and a
+    different hash, so flipping it forces re-consent before the ingress control
+    path can arm.
+    """
     channel = str(settings.get("channel", "can0"))
-    return Nmea2000Connector(_SocketCanTransport(channel))  # pragma: no cover
+    thruster_control = bool(settings.get("thruster_control", False))
+    max_steer_angle_deg = float(settings.get("max_steer_angle_deg", 35.0))
+    thruster_id = int(settings.get("thruster_id", 0))
+    manifest = build_manifest(thruster_control)
+    transport = _SocketCanTransport(channel)  # pragma: no cover - real CAN
+    return Nmea2000Connector(
+        transport,
+        manifest=manifest,
+        max_steer_angle_deg=max_steer_angle_deg,
+        thruster_id=thruster_id,
+    )
 
 
 register_connector(

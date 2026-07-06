@@ -32,15 +32,19 @@ from vanchor.core.models import GpsFix
 from vanchor.nav import n2k, nmea
 from vanchor.nav.n2k import (
     Pgn127250,
+    Pgn128006,
     Pgn128267,
     Pgn129025,
     Pgn129026,
     Pgn130306,
     decode_127250,
+    decode_128006,
     decode_128267,
     decode_129025,
     decode_129026,
     decode_130306,
+    encode_128006,
+    encode_128008,
     encode_129025,
     encode_129026,
     pack_id,
@@ -780,3 +784,520 @@ async def test_ingress_reconnects_on_eof() -> None:
         assert transport.open_calls >= 2
     finally:
         await conn.stop()
+
+
+# ──────────────────────────────────────────────────────────────────────────── #
+# 12. Task 7 — PGN 128006 / 128008 thruster codec                              #
+# ──────────────────────────────────────────────────────────────────────────── #
+
+
+def test_decode_128006_basic() -> None:
+    """Hand-packed 128006 decodes to exactly the expected fields.
+
+    Layout (canboat, PACKET_SINGLE, 8 bytes): SID u8, Identifier u8,
+    byte2 = Direction(4b) | Power(2b)<<4 | Retract(2b)<<6, Speed u8 %,
+    Control Events u8 bitfield, Command Timeout u8 * 0.005 s, Azimuth u16 * 1e-4 rad.
+    """
+    b2 = 2 | (1 << 4) | (0 << 6)  # direction=2 (To Port), power=1 (On), retract=0
+    buf = struct.pack("<BBBBBBH", 3, 0, b2, 75, 0b101, 100, 1000)
+    d = decode_128006(buf)
+    assert d is not None
+    assert d.sid == 3
+    assert d.identifier == 0
+    assert d.direction == 2
+    assert d.power == 1
+    assert d.retract == 0
+    assert d.speed_pct == 75
+    assert d.events == 0b101
+    assert d.command_timeout_s == pytest.approx(100 * 0.005)  # 0.5 s
+    assert d.azimuth_rad == pytest.approx(1000 * 1e-4)          # 0.1 rad
+
+
+def test_decode_128006_na_fields() -> None:
+    """Every NA sentinel in 128006 decodes to None (bitfield events stays raw)."""
+    b2 = 0x0F | (0x03 << 4) | (0x03 << 6)  # all-NA nibble/2-bit fields = 0xFF
+    buf = struct.pack("<BBBBBBH", 0xFF, 0xFF, b2, 0xFF, 0, 0xFF, 0xFFFF)
+    d = decode_128006(buf)
+    assert d is not None
+    assert d.sid is None
+    assert d.identifier is None
+    assert d.direction is None
+    assert d.power is None
+    assert d.retract is None
+    assert d.speed_pct is None
+    assert d.command_timeout_s is None
+    assert d.azimuth_rad is None
+    assert d.events == 0
+
+
+def test_decode_128006_short_buffer() -> None:
+    assert decode_128006(b"\x00" * 7) is None
+
+
+def test_encode_decode_128006_round_trip() -> None:
+    buf = encode_128006(
+        sid=5,
+        identifier=1,
+        direction=3,
+        power=1,
+        retract=2,
+        speed_pct=80,
+        events=0b11,
+        command_timeout_s=0.75,
+        azimuth_rad=1.2,
+    )
+    assert len(buf) == 8
+    d = decode_128006(buf)
+    assert d is not None
+    assert d.sid == 5
+    assert d.identifier == 1
+    assert d.direction == 3
+    assert d.power == 1
+    assert d.retract == 2
+    assert d.speed_pct == 80
+    assert d.events == 0b11
+    assert d.command_timeout_s == pytest.approx(0.75, abs=0.005)
+    assert d.azimuth_rad == pytest.approx(1.2, abs=1e-4)
+
+
+def test_encode_decode_128006_na_round_trip() -> None:
+    buf = encode_128006()  # all defaults → mostly NA
+    d = decode_128006(buf)
+    assert d is not None
+    assert d.power is None
+    assert d.retract is None
+    assert d.speed_pct is None
+    assert d.command_timeout_s is None
+    assert d.azimuth_rad is None
+
+
+def test_encode_128008_shape() -> None:
+    """128008 is single-frame (8 bytes); encode-only egress shape check."""
+    buf = encode_128008(
+        sid=0,
+        identifier=0,
+        motor_events=0,
+        current_a=12,
+        temperature_k=300.0,
+        operating_time_min=5,
+    )
+    assert len(buf) == 8
+    sid, ident, ev, cur = buf[0], buf[1], buf[2], buf[3]
+    temp = struct.unpack_from("<H", buf, 4)[0]
+    op = struct.unpack_from("<H", buf, 6)[0]
+    assert sid == 0
+    assert ident == 0
+    assert ev == 0
+    assert cur == 12
+    assert temp == 30000  # 300.0 K / 0.01
+    assert op == 5
+
+
+def test_encode_128008_na_current_and_temp() -> None:
+    buf = encode_128008()  # no current / temperature → NA sentinels
+    assert buf[3] == 0xFF                              # current NA
+    assert struct.unpack_from("<H", buf, 4)[0] == 0xFFFF  # temperature NA
+
+
+# ──────────────────────────────────────────────────────────────────────────── #
+# 13. Task 7 — thruster control ingress (safety-gated)                          #
+# ──────────────────────────────────────────────────────────────────────────── #
+
+
+class _RecSink:
+    """Records every command handed to the governed sink."""
+
+    def __init__(self) -> None:
+        self.commands: list[dict] = []
+
+    def __call__(self, cmd: dict) -> None:
+        self.commands.append(cmd)
+
+
+def _ctrl_ctx(
+    bus: EventBus,
+    sink: _RecSink,
+    *,
+    control: bool,
+    mono: Any = None,
+) -> ConnectorContext:
+    from vanchor.connectors.base import ConnectorManifest
+
+    manifest = ConnectorManifest(
+        name="nmea2000",
+        label="NMEA 2000",
+        description="Test",
+        consumes=("telemetry",),
+        produces=("gps.fix_in", "nmea.in"),
+        control=control,
+        grant_lines=(),
+    )
+    import time as _t
+
+    return ConnectorContext(
+        bus=bus,
+        manifest=manifest,
+        command_sink=sink,
+        mono_fn=mono or _t.monotonic,
+    )
+
+
+@pytest.mark.asyncio
+async def test_thruster_ungranted_dropped_but_data_bridge_works() -> None:
+    """UNGRANTED: a 128006 control frame is dropped (sink never called) while the
+    GPS data bridge keeps working in the SAME run."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    clock = [0.0]
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, mono_fn=lambda: clock[0], manifest=build_manifest(False)
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    ctx = _ctrl_ctx(bus, sink, control=False, mono=lambda: clock[0])
+
+    fixes: list[Any] = []
+    bus.subscribe("gps.fix_in", fixes.append)
+
+    await conn.start(ctx)
+    try:
+        # A control command that must be dropped.
+        ctrl = encode_128006(direction=1, speed_pct=80, azimuth_rad=0.1, command_timeout_s=1.0)
+        transport.feed(pack_id(5, 128006, 0x22), ctrl)
+        # Data bridge frames in the same run.
+        transport.feed(pack_id(6, 129025, 0x22), encode_129025(47.5, -122.3))
+        transport.feed(pack_id(6, 129026, 0x22), encode_129026(5, 0, 1.0, 5.0))
+        for _ in range(6):
+            await asyncio.sleep(0)
+
+        assert sink.commands == []          # motor command NEVER reached the sink
+        assert conn._denied >= 1            # it was denied
+        assert len(fixes) == 1              # data bridge still worked
+    finally:
+        await conn.stop()
+
+
+@pytest.mark.asyncio
+async def test_thruster_granted_maps_manual_command() -> None:
+    """GRANTED: 128006 (speed 50%, azimuth +0.1 rad, Ready) → exact governed manual."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    clock = [0.0]
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, mono_fn=lambda: clock[0], manifest=build_manifest(True),
+        max_steer_angle_deg=35.0,
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    ctx = _ctrl_ctx(bus, sink, control=True, mono=lambda: clock[0])
+
+    await conn.start(ctx)
+    try:
+        data = encode_128006(direction=1, speed_pct=50, azimuth_rad=0.1, command_timeout_s=0.5)
+        transport.feed(pack_id(5, 128006, 0x22), data)
+        for _ in range(4):
+            await asyncio.sleep(0)
+
+        assert len(sink.commands) == 1
+        cmd = sink.commands[0]
+        assert cmd["type"] == "manual"
+        assert cmd["thrust"] == pytest.approx(0.5)
+        assert cmd["steering"] == pytest.approx(math.degrees(0.1) / 35.0, abs=1e-3)
+        assert conn._last_ctrl_nonzero is True
+    finally:
+        await conn.stop()
+
+
+@pytest.mark.asyncio
+async def test_thruster_direction_off_zeros_thrust_and_disarms() -> None:
+    """Direction OFF → thrust 0.0 and the deadman latch is disarmed."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    clock = [0.0]
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, mono_fn=lambda: clock[0], manifest=build_manifest(True)
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    ctx = _ctrl_ctx(bus, sink, control=True, mono=lambda: clock[0])
+
+    await conn.start(ctx)
+    try:
+        data = encode_128006(direction=0, speed_pct=50, azimuth_rad=0.0)
+        transport.feed(pack_id(5, 128006, 0x22), data)
+        for _ in range(4):
+            await asyncio.sleep(0)
+
+        assert sink.commands == [{"type": "manual", "thrust": 0.0, "steering": 0.0}]
+        assert conn._last_ctrl_nonzero is False
+    finally:
+        await conn.stop()
+
+
+@pytest.mark.asyncio
+async def test_thruster_self_frame_ignored_no_loopback_command() -> None:
+    """A 128006 from our OWN source address must not self-command (loopback guard)."""
+    from vanchor.connectors.nmea2000 import _OWN_SRC, build_manifest
+
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(transport, manifest=build_manifest(True))
+    bus = EventBus()
+    sink = _RecSink()
+    ctx = _ctrl_ctx(bus, sink, control=True)
+
+    await conn.start(ctx)
+    try:
+        data = encode_128006(direction=1, speed_pct=90, azimuth_rad=0.0)
+        transport.feed(pack_id(5, 128006, _OWN_SRC), data)  # our own address
+        for _ in range(4):
+            await asyncio.sleep(0)
+        assert sink.commands == []
+    finally:
+        await conn.stop()
+
+
+def test_thruster_deadman_fires_exactly_once() -> None:
+    """Nonzero command then silence past the (field) timeout → exactly ONE stop."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    clock = [0.0]
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, mono_fn=lambda: clock[0], manifest=build_manifest(True)
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    conn._ctx = _ctrl_ctx(bus, sink, control=True, mono=lambda: clock[0])
+
+    # Command Timeout 0.5 s (raw 100 * 0.005) → expiry 0.5 s.
+    conn._on_128006(encode_128006(direction=1, speed_pct=40, azimuth_rad=0.0,
+                                  command_timeout_s=0.5), 0x22)
+    assert len(sink.commands) == 1
+
+    clock[0] = 0.4
+    conn._check_expiry()
+    assert len(sink.commands) == 1  # not yet expired
+
+    clock[0] = 0.6
+    conn._check_expiry()
+    assert sink.commands[-1] == {"type": "stop"}
+    assert len(sink.commands) == 2
+
+    clock[0] = 5.0
+    conn._check_expiry()
+    conn._check_expiry()
+    assert len(sink.commands) == 2  # stays quiet
+
+
+def test_thruster_deadman_rearms_on_resumed_commands() -> None:
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    clock = [0.0]
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, mono_fn=lambda: clock[0], manifest=build_manifest(True)
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    conn._ctx = _ctrl_ctx(bus, sink, control=True, mono=lambda: clock[0])
+
+    conn._on_128006(encode_128006(direction=1, speed_pct=40, azimuth_rad=0.0), 0x22)
+    clock[0] = 2.0
+    conn._check_expiry()
+    assert sum(1 for c in sink.commands if c == {"type": "stop"}) == 1
+
+    conn._on_128006(encode_128006(direction=1, speed_pct=60, azimuth_rad=0.0), 0x22)
+    clock[0] = 4.0
+    conn._check_expiry()
+    assert sum(1 for c in sink.commands if c == {"type": "stop"}) == 2
+
+
+def test_thruster_deadman_default_timeout_when_field_na() -> None:
+    """Missing Command Timeout → default 1.0 s expiry."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    clock = [0.0]
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, mono_fn=lambda: clock[0], manifest=build_manifest(True)
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    conn._ctx = _ctrl_ctx(bus, sink, control=True, mono=lambda: clock[0])
+
+    conn._on_128006(encode_128006(direction=1, speed_pct=40, azimuth_rad=0.0), 0x22)
+    clock[0] = 0.9
+    conn._check_expiry()
+    assert all(c != {"type": "stop"} for c in sink.commands)  # < 1.0 s default
+    clock[0] = 1.1
+    conn._check_expiry()
+    assert sink.commands[-1] == {"type": "stop"}
+
+
+def test_thruster_ungranted_deadman_never_reaches_sink() -> None:
+    """Without control the command is denied, so nothing arms; no stop can sneak out."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    clock = [0.0]
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, mono_fn=lambda: clock[0], manifest=build_manifest(False)
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    conn._ctx = _ctrl_ctx(bus, sink, control=False, mono=lambda: clock[0])
+
+    conn._on_128006(encode_128006(direction=1, speed_pct=90, azimuth_rad=0.0), 0x22)
+    clock[0] = 5.0
+    conn._check_expiry()
+    assert sink.commands == []
+
+
+@pytest.mark.asyncio
+async def test_thruster_eof_neutralizes_only_when_armed() -> None:
+    """EOF with the latch armed → exactly one stop; EOF after OFF → nothing."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    # (i) armed → EOF neutralizes with one stop
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, manifest=build_manifest(True), reconnect_delay_s=0.0
+    )
+    bus = EventBus()
+    sink = _RecSink()
+    ctx = _ctrl_ctx(bus, sink, control=True)
+    await conn.start(ctx)
+    try:
+        transport.feed(pack_id(5, 128006, 0x22),
+                       encode_128006(direction=1, speed_pct=70, azimuth_rad=0.0))
+        transport.feed_eof()
+        for _ in range(60):
+            await asyncio.sleep(0)
+            if transport.open_calls >= 2 and {"type": "stop"} in sink.commands:
+                break
+    finally:
+        await conn.stop()
+    assert sum(1 for c in sink.commands if c == {"type": "stop"}) == 1
+    assert transport.open_calls >= 2
+
+    # (ii) last command OFF → latch clear → EOF neutralizes nothing
+    transport2 = FakeCanTransport()
+    conn2 = Nmea2000Connector(
+        transport2, manifest=build_manifest(True), reconnect_delay_s=0.0
+    )
+    sink2 = _RecSink()
+    ctx2 = _ctrl_ctx(EventBus(), sink2, control=True)
+    await conn2.start(ctx2)
+    try:
+        transport2.feed(pack_id(5, 128006, 0x22),
+                        encode_128006(direction=0, speed_pct=0, azimuth_rad=0.0))
+        transport2.feed_eof()
+        for _ in range(60):
+            await asyncio.sleep(0)
+            if transport2.open_calls >= 2:
+                break
+    finally:
+        await conn2.stop()
+    assert {"type": "stop"} not in sink2.commands
+
+
+# ──────────────────────────────────────────────────────────────────────────── #
+# 14. Task 7 — dynamic manifest = the consent opt-in                            #
+# ──────────────────────────────────────────────────────────────────────────── #
+
+
+def test_thruster_manifest_dynamics_and_reconsent() -> None:
+    from vanchor.connectors import registry
+    from vanchor.connectors.base import manifest_hash
+    from vanchor.connectors.nmea2000 import MANIFEST, _build, build_manifest
+
+    m_off = build_manifest(False)
+    m_on = build_manifest(True)
+
+    # Off == the pre-task data-bridge manifest (hash unchanged); On differs.
+    assert m_off.control is False
+    assert manifest_hash(m_off) == manifest_hash(MANIFEST)
+    assert m_on.control is True
+    assert manifest_hash(m_on) != manifest_hash(m_off)
+    assert len(m_on.grant_lines) == len(m_off.grant_lines) + 1
+
+    # An old grant (consented to the data-bridge manifest) does NOT arm the
+    # control manifest — flipping thruster_control forces re-consent.
+    grants = {"nmea2000": {"enabled": True, "manifest_hash": manifest_hash(m_off)}}
+    assert registry.armed("nmea2000", m_off, grants) is True
+    assert registry.armed("nmea2000", m_on, grants) is False
+    assert registry.needs_reconsent("nmea2000", m_on, grants) is True
+
+    # _build wires the setting → the dynamic manifest.
+    assert manifest_hash(_build({}).manifest) == manifest_hash(MANIFEST)
+    assert _build({"thruster_control": True}).manifest.control is True
+
+
+# ──────────────────────────────────────────────────────────────────────────── #
+# 15. Task 7 — thruster egress (128006 status broadcast)                        #
+# ──────────────────────────────────────────────────────────────────────────── #
+
+
+@pytest.mark.asyncio
+async def test_thruster_egress_encodes_128006_from_motor_block() -> None:
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, egress_interval_s=0.05, manifest=build_manifest(True),
+        max_steer_angle_deg=35.0,
+    )
+    bus = EventBus()
+    ctx = _ctrl_ctx(bus, _RecSink(), control=True)
+    await conn.start(ctx)
+    try:
+        telem = {
+            "position": {"lat": 47.5, "lon": -122.3},
+            "sog_knots": 2.0,
+            "heading_deg": 10.0,
+            "motor": {"thrust": 0.5, "steering": 0.2, "steer_angle_deg": 7.0},
+        }
+        await bus.publish("telemetry", telem)
+        await asyncio.sleep(0.12)
+
+        frames = [(cid, d) for cid, d in transport.sent if unpack_id(cid)[1] == 128006]
+        assert frames, "no 128006 frame sent"
+        dec = decode_128006(frames[-1][1])
+        assert dec is not None
+        assert dec.direction == 1                 # Ready (nonzero thrust)
+        assert dec.speed_pct == 50                # |0.5| * 100
+        assert dec.azimuth_rad == pytest.approx(math.radians(7.0) % (2 * math.pi), abs=1e-3)
+    finally:
+        await conn.stop()
+
+
+@pytest.mark.asyncio
+async def test_thruster_egress_independent_of_position() -> None:
+    """Thruster status broadcasts from the motor block even with no GPS fix, but
+    position frames (129025) are still skipped."""
+    from vanchor.connectors.nmea2000 import build_manifest
+
+    transport = FakeCanTransport()
+    conn = Nmea2000Connector(
+        transport, egress_interval_s=0.05, manifest=build_manifest(True)
+    )
+    bus = EventBus()
+    ctx = _ctrl_ctx(bus, _RecSink(), control=True)
+    await conn.start(ctx)
+    try:
+        telem = {"position": None, "motor": {"thrust": 0.0, "steering": 0.0, "steer_angle_deg": 0.0}}
+        await bus.publish("telemetry", telem)
+        await asyncio.sleep(0.12)
+        pgns = {unpack_id(cid)[1] for cid, _ in transport.sent}
+        assert 128006 in pgns
+        assert 129025 not in pgns  # no position → no position frame
+    finally:
+        await conn.stop()
+
+
+def test_thruster_isinstance_pgn128006() -> None:
+    d = decode_128006(encode_128006(direction=1, speed_pct=10))
+    assert isinstance(d, Pgn128006)

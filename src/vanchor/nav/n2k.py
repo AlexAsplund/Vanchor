@@ -5,10 +5,12 @@ This module is **pure stdlib** (``struct`` only) and does **no** I/O. It provide
 
 * :func:`pack_id` / :func:`unpack_id` — (priority, PGN, source) ↔ 29-bit CAN ID,
   with PDU1/PDU2 detection.
-* Decoders for PGNs 129025, 129026, 127250, 128267 and 130306 — single-frame
-  format only. Fast-packet PGNs (e.g. 129029 GNSS) are **intentionally out of
-  scope**.
-* Encoders for 129025 and 129026 (egress back onto the N2K bus).
+* Decoders for PGNs 129025, 129026, 127250, 128267, 130306 and 128006 — single-
+  frame format only. Fast-packet PGNs (e.g. 129029 GNSS) are **intentionally out
+  of scope**.
+* Encoders for 129025, 129026, 128006 and 128008 (egress back onto the N2K bus).
+  Both thruster PGNs (128006 Thruster Control Status, 128008 Thruster Motor
+  Status) are single-frame (8 bytes) per canboat, so no fast-packet TX is needed.
 
 **CAN ID layout (29-bit extended ID)**::
 
@@ -179,6 +181,40 @@ class Pgn130306:
     ref: int | None   # reference frame
 
 
+@dataclass(frozen=True)
+class Pgn128006:
+    """PGN 128006 — Thruster Control Status.
+
+    BENCH-VERIFY: layout transcribed verbatim from canboat (``analyzer/pgn.h``
+    ``"Thruster Control Status"``, ``PACKET_SINGLE``, 8 bytes)::
+
+        byte 0     SID                       u8
+        byte 1     Identifier                u8   (thruster identifier)
+        byte 2     Direction Control  bits 0-3   lookup 0=Off 1=Ready
+                                                  2=To Port 3=To Starboard (NA=0xF)
+                   Power Enabled      bits 4-5   lookup OFF_ON (NA=0x3)
+                   Retract Control    bits 6-7   lookup 0=Off 1=Extend
+                                                  2=Retract (NA=0x3)
+        byte 3     Speed Control             u8   percent, resolution 1 % (NA=0xFF)
+        byte 4     Control Events            u8   bitfield (kept raw)
+        byte 5     Command Timeout           u8   resolution 0.005 s (NA=0xFF)
+        bytes 6-7  Azimuth Control           u16  resolution 1e-4 rad, LE (NA=0xFFFF)
+
+    ``direction`` numbering matches the canboat THRUSTER_DIRECTION_CONTROL lookup.
+    ``events`` is a bitfield and is always returned as a raw ``int``.
+    """
+
+    sid: int | None
+    identifier: int | None
+    direction: int | None        # 0=Off, 1=Ready, 2=To Port, 3=To Starboard
+    power: int | None            # OFF_ON lookup (0=Off, 1=On)
+    retract: int | None          # 0=Off, 1=Extend, 2=Retract
+    speed_pct: int | None        # commanded speed, percent (0-100)
+    events: int                  # Control Events bitfield (raw)
+    command_timeout_s: float | None  # deadman timeout, seconds
+    azimuth_rad: float | None    # commanded azimuth, radians (unsigned 0..2π)
+
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
@@ -310,6 +346,48 @@ def decode_130306(data: bytes) -> Pgn130306 | None:
     return Pgn130306(sid=sid, speed_mps=speed, angle_rad=angle, ref=ref)
 
 
+# Thruster field scales (canboat).
+_THRUSTER_TIMEOUT_RES = 0.005  # DURATION_UFIX8_5MS: raw * 0.005 s
+_TEMPERATURE_RES = 0.01        # TEMPERATURE: raw * 0.01 K
+_NA_NIBBLE = 0x0F              # 4-bit lookup NA
+_NA_2BIT = 0x03               # 2-bit lookup NA
+
+
+def decode_128006(data: bytes) -> Pgn128006 | None:
+    """Decode PGN 128006 – Thruster Control Status.
+
+    Returns ``None`` when ``data`` is shorter than 8 bytes.  Each field that
+    equals its NA sentinel is returned as ``None`` (the ``events`` bitfield is
+    kept raw).  See :class:`Pgn128006` for the BENCH-VERIFY layout.
+    """
+    if len(data) < 8:
+        return None
+    sid_raw = data[0]
+    ident_raw = data[1]
+    b2 = data[2]
+    dir_raw = b2 & 0x0F           # bits 0-3
+    pwr_raw = (b2 >> 4) & 0x03    # bits 4-5
+    ret_raw = (b2 >> 6) & 0x03    # bits 6-7
+    speed_raw = data[3]
+    events = data[4]
+    timeout_raw = data[5]
+    (az_raw,) = struct.unpack_from("<H", data, 6)
+
+    return Pgn128006(
+        sid=_u8_or_none(sid_raw),
+        identifier=_u8_or_none(ident_raw),
+        direction=None if dir_raw == _NA_NIBBLE else dir_raw,
+        power=None if pwr_raw == _NA_2BIT else pwr_raw,
+        retract=None if ret_raw == _NA_2BIT else ret_raw,
+        speed_pct=None if speed_raw == _NA_U8 else speed_raw,
+        events=events,
+        command_timeout_s=(
+            None if timeout_raw == _NA_U8 else timeout_raw * _THRUSTER_TIMEOUT_RES
+        ),
+        azimuth_rad=None if az_raw == _NA_U16 else az_raw * 1e-4,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Encoders                                                                    #
 # --------------------------------------------------------------------------- #
@@ -348,3 +426,84 @@ def encode_129026(
     cog_raw = _NA_U16 if cog_rad is None else min(_NA_U16, max(0, int(round(cog_rad / 1e-4))))
     sog_raw = _NA_U16 if sog_mps is None else min(_NA_U16, max(0, int(round(sog_mps / 0.01))))
     return struct.pack("<BBHHxx", sid_raw, ref_byte, cog_raw, sog_raw)
+
+
+def encode_128006(
+    *,
+    sid: int | None = 0,
+    identifier: int | None = 0,
+    direction: int | None = 0,
+    power: int | None = None,
+    retract: int | None = None,
+    speed_pct: int | None = None,
+    events: int = 0,
+    command_timeout_s: float | None = None,
+    azimuth_rad: float | None = None,
+) -> bytes:
+    """Encode a PGN 128006 – Thruster Control Status frame (8 bytes).
+
+    ``None`` fields are written as their NA sentinel and round-trip through
+    :func:`decode_128006`.  ``azimuth_rad`` is an UNSIGNED angle (0..2π); callers
+    with a signed azimuth must reduce it modulo 2π first (see the connector's
+    egress).  BENCH-VERIFY: layout matches :class:`Pgn128006`.
+    """
+    b0 = _NA_U8 if sid is None else (sid & 0xFF)
+    b1 = _NA_U8 if identifier is None else (identifier & 0xFF)
+    dir_bits = _NA_NIBBLE if direction is None else (direction & 0x0F)
+    pwr_bits = _NA_2BIT if power is None else (power & 0x03)
+    ret_bits = _NA_2BIT if retract is None else (retract & 0x03)
+    b2 = dir_bits | (pwr_bits << 4) | (ret_bits << 6)
+    # Clamp to 0..0xFE so a real value can never collide with the 0xFF NA sentinel.
+    b3 = _NA_U8 if speed_pct is None else min(0xFE, max(0, int(round(speed_pct))))
+    b4 = events & 0xFF
+    b5 = (
+        _NA_U8
+        if command_timeout_s is None
+        else min(0xFE, max(0, int(round(command_timeout_s / _THRUSTER_TIMEOUT_RES))))
+    )
+    az_raw = (
+        _NA_U16
+        if azimuth_rad is None
+        else min(0xFFFE, max(0, int(round(azimuth_rad / 1e-4))))
+    )
+    return struct.pack("<BBBBBBH", b0, b1, b2, b3, b4, b5, az_raw)
+
+
+def encode_128008(
+    *,
+    sid: int | None = 0,
+    identifier: int | None = 0,
+    motor_events: int = 0,
+    current_a: float | None = None,
+    temperature_k: float | None = None,
+    operating_time_min: float | None = None,
+) -> bytes:
+    """Encode a PGN 128008 – Thruster Motor Status frame (8 bytes, ENCODE-ONLY).
+
+    Single-frame per canboat (``PACKET_SINGLE``)::
+
+        byte 0     SID              u8
+        byte 1     Identifier       u8
+        byte 2     Motor Events     u8   bitfield
+        byte 3     Current          u8   resolution 1 A (NA=0xFF)
+        bytes 4-5  Temperature      u16  resolution 0.01 K, LE (NA=0xFFFF)
+        bytes 6-7  Operating Time   u16  resolution 60 s (minutes), LE (NA=0xFFFF)
+
+    ``None`` current/temperature/operating-time are written as their NA sentinel.
+    BENCH-VERIFY: layout transcribed from canboat ``"Thruster Motor Status"``.
+    """
+    b0 = _NA_U8 if sid is None else (sid & 0xFF)
+    b1 = _NA_U8 if identifier is None else (identifier & 0xFF)
+    b2 = motor_events & 0xFF
+    b3 = _NA_U8 if current_a is None else min(0xFE, max(0, int(round(current_a))))
+    temp_raw = (
+        _NA_U16
+        if temperature_k is None
+        else min(0xFFFE, max(0, int(round(temperature_k / _TEMPERATURE_RES))))
+    )
+    op_raw = (
+        _NA_U16
+        if operating_time_min is None
+        else min(0xFFFE, max(0, int(round(operating_time_min))))
+    )
+    return struct.pack("<BBBBHH", b0, b1, b2, b3, temp_raw, op_raw)

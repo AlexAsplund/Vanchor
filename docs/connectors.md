@@ -63,8 +63,36 @@ armed/disarmed live via `POST /api/connectors/{name}/arm`.
 |---|---|---|
 | `nmea-tcp` | out `nmea.out` / in `nmea.in` | The reference connector (wraps the NMEA-TCP bridge). Legacy `nmea_tcp.enabled` config auto-arms it once; host/port edits re-sync into the grant at boot. |
 | `metrics` | out `telemetry` | **Offline-first store-and-forward**: samples telemetry (1 Hz default) into gzip NDJSON parts under `data_dir/metrics_buffer/` (cap 50 MB, drop-oldest, survives restart) and POSTs parts to `settings.url` whenever the network is reachable (Bearer token optional). No url → pure local buffer. |
-| `nmea2000` | in `gps.fix_in`, `nmea.in` / out CAN | Pure PGN codec (`nav/n2k.py`): 129025/129026 → rich `GpsFix`, 127250 → HDT, 128267 → DPT, 130306 decoded to debug. Egress broadcasts position + COG/SOG (course from the fusion ground-velocity vector). **BENCH-VERIFY**: field layouts + SocketCAN transport are transcribed, not yet verified on a real bus. Single-frame PGNs only (no fast-packet). |
+| `nmea2000` | in `gps.fix_in`, `nmea.in` / out CAN (+ opt-in thruster control) | Pure PGN codec (`nav/n2k.py`): 129025/129026 → rich `GpsFix`, 127250 → HDT, 128267 → DPT, 130306 decoded to debug. Egress broadcasts position + COG/SOG (course from the fusion ground-velocity vector) and — always on — the motor's own **thruster status** (PGN 128006 + 128008). **Thruster control** (PGN 128006 ingress) is opt-in, see below. **BENCH-VERIFY**: field layouts + SocketCAN transport are transcribed, not yet verified on a real bus. Single-frame PGNs only (no fast-packet). |
 | `rf-remote` | control | The control-grant reference. Line protocol (`BTN STOP/ANCHOR/MANUAL`, `STICK t s`, `PING`) over a serial transport. **Deadman**: 1 s of stick silence while the remote is the *active driver* → one `{"type":"stop"}` (guaranteed path, survives grant revocation). Mode buttons hand off control and disarm the deadman — radio loss while anchored does **not** disturb the anchor hold. |
+
+### Thruster (PGN 128006 / 128008)
+
+The `nmea2000` connector participates in the N2K thruster ecosystem so the trolling
+motor looks like a thruster to a control head.
+
+- **Egress (always on, no grant):** alongside position/COG, it broadcasts the motor's
+  current state as **128006 Thruster Control Status** (direction OFF when thrust is 0
+  else Ready; speed % = `|thrust|·100`; azimuth = the commanded `steer_angle_deg` →
+  rad) plus **128008 Thruster Motor Status** (current from the battery block if
+  present, else NA). Both are single-frame per canboat.
+- **Control ingress (opt-in, consent-gated):** turning on the connector setting
+  `thruster_control` makes `_build` construct a **different manifest** — `control: true`
+  plus an explicit grant line. Because the grant hash covers the manifest, flipping the
+  setting **auto-disarms** the connector until the user re-consents to the new line
+  (that re-consent, not any code flag, is the opt-in). A received 128006 addressed to
+  our thruster id (or broadcast) maps to the governed
+  `{"type":"manual","thrust":±speed/100,"steering":azimuth/max_steer_angle_deg}` via
+  `submit_command` — never a raw bus write. Direction OFF → thrust 0. Steering is
+  normalized by the `max_steer_angle_deg` setting (default 35°, since the connector
+  can't read boat state) and clamped to `[-1,1]`.
+- **Deadman (mirrors rf-remote exactly):** the active-driver latch arms only on a
+  successfully-submitted *non-zero* command. On expiry (the received Command Timeout,
+  clamped to `[0.25, 10] s`, else 1.0 s default) it submits exactly one guaranteed-path
+  `{"type":"stop"}`, then disarms until commands resume. An OFF/zero command disarms;
+  a transport EOF/error neutralizes **only** when the latch is armed. A loopback guard
+  ignores 128006 frames from our own source address so our status broadcast can never
+  self-command. **BENCH-VERIFY** the 128006/128008 layouts on a real bus.
 
 ## Known limitations
 
