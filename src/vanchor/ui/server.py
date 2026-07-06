@@ -968,6 +968,24 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             )
         return Response(content=json.dumps(result), media_type="application/json")
 
+    @app.post("/api/connectors/{name}/settings")
+    async def set_connector_settings(name: str, payload: dict) -> Response:
+        """Update persisted settings for a connector and live-apply them.
+
+        Body is ``{key: value, ...}`` matching the connector's
+        ``settings_schema``.  Unknown keys → 400.  A masked secret value
+        ``"•••"`` leaves the stored secret unchanged.  Returns
+        ``{ok, running, needs_reconsent?}`` on success or
+        ``{ok:False, error:...}`` with status 400 on validation failure."""
+        result = await runtime.set_connector_settings(name, payload or {})
+        if not result.get("ok"):
+            return Response(
+                content=json.dumps(result),
+                media_type="application/json",
+                status_code=400,
+            )
+        return Response(content=json.dumps(result), media_type="application/json")
+
     @app.get("/api/connectors/{name}/debug")
     async def connector_debug(name: str) -> dict:
         """Human-readable debug snapshot for a running connector."""

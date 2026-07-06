@@ -21,6 +21,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   `thruster_control` setting, which changes the manifest hash and forces re-consent —
   accepts 128006 thruster commands through the governed path with an rf-remote-style
   Command-Timeout deadman, an OFF→thrust-0 mapping, and a self-frame loopback guard.
+  **Connector settings** (Task 8): every connector exposes a typed settings schema
+  editable live via `POST /api/connectors/{name}/settings` and a ⚙ Settings inline
+  form in the Connectors card. Saves are live-applied (stop → rebuild → start); secrets
+  masked as `"•••"` in responses (stored plain-text); the thruster-control
+  manifest-change exception surfaces `needs_reconsent` and re-arms the consent flow.
+  The nmea-tcp boot host/port re-sync is suppressed after a user-explicit settings save
+  (`user_edited` guard).
 
 ## [1.5.0a2] — 2026-07-05
 

@@ -80,6 +80,23 @@ class NmeaTcpConnector(Connector):
 
     manifest = MANIFEST
 
+    settings_schema = [
+        {
+            "key": "host",
+            "label": "Listen host",
+            "type": "str",
+            "default": "0.0.0.0",
+            "hint": "IP address to listen on (0.0.0.0 = all interfaces)",
+        },
+        {
+            "key": "port",
+            "label": "Port",
+            "type": "int",
+            "default": 10110,
+            "hint": "TCP port for NMEA-0183 clients (default 10110)",
+        },
+    ]
+
     def __init__(self, host: str = "0.0.0.0", port: int = 10110) -> None:
         self._host = host
         self._port = port

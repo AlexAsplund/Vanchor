@@ -344,6 +344,37 @@ class Nmea2000Connector(Connector):
 
     manifest = MANIFEST
 
+    settings_schema = [
+        {
+            "key": "interface",
+            "label": "CAN interface",
+            "type": "str",
+            "default": "can0",
+            "hint": "SocketCAN interface name (e.g. can0, vcan0)",
+        },
+        {
+            "key": "thruster_control",
+            "label": "Thruster control",
+            "type": "bool",
+            "default": False,
+            "hint": "Accept PGN 128006 thruster commands — changing this requires re-approving the connector",
+        },
+        {
+            "key": "max_steer_angle_deg",
+            "label": "Max steer angle (°)",
+            "type": "float",
+            "default": 35.0,
+            "hint": "Normalise PGN 128006 azimuth to steering in [-1, 1]",
+        },
+        {
+            "key": "thruster_id",
+            "label": "Thruster ID",
+            "type": "int",
+            "default": 0,
+            "hint": "Only accept 128006 frames addressed to this identifier (0 = any)",
+        },
+    ]
+
     def __init__(
         self,
         transport: CanTransport | None = None,
@@ -925,13 +956,19 @@ def _build(settings: dict) -> Connector:
     hash); on => the control manifest with the extra thruster grant line and a
     different hash, so flipping it forces re-consent before the ingress control
     path can arm.
+
+    ``interface`` is the canonical settings key (schema-aligned); the legacy
+    ``channel`` key is accepted as a fallback so existing grants survive a
+    first-time settings edit without losing their CAN interface name.
     """
-    channel = str(settings.get("channel", "can0"))
+    interface = str(
+        settings.get("interface") or settings.get("channel") or "can0"
+    )
     thruster_control = bool(settings.get("thruster_control", False))
     max_steer_angle_deg = float(settings.get("max_steer_angle_deg", 35.0))
     thruster_id = int(settings.get("thruster_id", 0))
     manifest = build_manifest(thruster_control)
-    transport = _SocketCanTransport(channel)  # pragma: no cover - real CAN
+    transport = _SocketCanTransport(interface)  # pragma: no cover - real CAN
     return Nmea2000Connector(
         transport,
         manifest=manifest,

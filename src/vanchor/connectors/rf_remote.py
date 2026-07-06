@@ -138,6 +138,29 @@ class RfRemoteConnector(Connector):
 
     manifest = MANIFEST
 
+    settings_schema = [
+        {
+            "key": "port",
+            "label": "Serial port",
+            "type": "str",
+            "default": "/dev/ttyUSB0",
+            "hint": "Serial device path (e.g. /dev/ttyUSB0 or /dev/serial/by-id/…)",
+        },
+        {
+            "key": "baudrate",
+            "label": "Baud rate",
+            "type": "int",
+            "default": 115200,
+        },
+        {
+            "key": "expiry_s",
+            "label": "Stick expiry (s)",
+            "type": "float",
+            "default": 1.0,
+            "hint": "Radio silence after which a non-zero stick triggers a STOP",
+        },
+    ]
+
     def __init__(
         self,
         transport: SerialTransport,

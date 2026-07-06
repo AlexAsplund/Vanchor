@@ -85,6 +85,25 @@ class Connector(ABC):
     #: attribute or override it as a property.
     manifest: ConnectorManifest
 
+    #: Editable configuration schema for this connector.
+    #:
+    #: A list of field descriptors that declare which ``settings`` keys are
+    #: user-editable via the API and the Connectors UI.  Each dict has:
+    #:
+    #: * ``key``         – the settings dict key (required)
+    #: * ``label``       – human-readable label (required)
+    #: * ``type``        – ``"str"``, ``"int"``, ``"float"``, or ``"bool"`` (required)
+    #: * ``default``     – default value when the key is absent from the store
+    #: * ``placeholder`` – optional input placeholder text (str only)
+    #: * ``hint``        – optional one-liner shown below the field
+    #: * ``secret``      – if ``True``, the stored value is masked as ``"•••"`` in API
+    #:                     responses; it is still stored as **plain text** in
+    #:                     ``connectors.json`` (note this in the hint)
+    #:
+    #: Connectors with no configurable settings leave this as the empty list (the
+    #: default). Subclasses override it as a class-level list attribute.
+    settings_schema: list = []
+
     @abstractmethod
     async def start(self, ctx: ConnectorContext) -> None:
         """Begin bridging, using ``ctx`` as the ONLY seam to vanchor."""

@@ -165,6 +165,43 @@ class MetricsConnector(Connector):
 
     manifest = MANIFEST
 
+    settings_schema = [
+        {
+            "key": "url",
+            "label": "Endpoint URL",
+            "type": "str",
+            "default": "",
+            "placeholder": "https://…",
+            "hint": "leave empty to only buffer locally",
+        },
+        {
+            "key": "token",
+            "label": "Bearer token",
+            "type": "str",
+            "default": "",
+            "secret": True,
+            "hint": "Authorization header token (stored as plaintext in connectors.json)",
+        },
+        {
+            "key": "interval_s",
+            "label": "Sample interval (s)",
+            "type": "float",
+            "default": 1.0,
+        },
+        {
+            "key": "flush_interval_s",
+            "label": "Flush interval (s)",
+            "type": "float",
+            "default": 30.0,
+        },
+        {
+            "key": "buffer_max_mb",
+            "label": "Buffer cap (MB)",
+            "type": "int",
+            "default": 50,
+        },
+    ]
+
     def __init__(
         self,
         data_dir: str | Path | None = None,

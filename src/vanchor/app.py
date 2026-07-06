@@ -121,6 +121,32 @@ async def _stop_motor(motor) -> None:
         logger.debug("motor stop failed (best-effort)")
 
 
+def _mask_connector_settings(schema: list, stored: dict) -> dict:
+    """Build a display-safe settings dict from ``schema`` and ``stored`` values.
+
+    For each field in ``schema``:
+    - The value is taken from ``stored`` if present, else from the field's
+      ``default``.
+    - Secret fields (``secret: True``) are masked: ``"•••"`` when the stored
+      value is non-empty, ``""`` when it is empty/absent.
+    - Internal runtime keys (``data_dir``, ``user_edited``) are never included.
+
+    Returns a ``{key: value}`` dict covering every schema field.
+    """
+    result: dict = {}
+    for field in schema:
+        key = field.get("key")
+        if not key:
+            continue
+        default = field.get("default", "")
+        val = stored.get(key, default)
+        if field.get("secret"):
+            result[key] = "•••" if val else ""
+        else:
+            result[key] = val
+    return result
+
+
 def _overlay_menu_values(schema: dict, saved: dict) -> dict:
     """Return a copy of a device-menu ``schema`` with each setting's ``value``
     replaced by the saved value for that key (when present) -- so the UI shows
@@ -508,7 +534,10 @@ class Runtime:
         if "nmea-tcp" in self._connector_grants:
             _g = self._connector_grants["nmea-tcp"]
             _g_settings = _g.get("settings", {})
-            if (
+            # Only resync host/port from cfg when the grant was NOT explicitly
+            # edited via the settings API (user_edited=True means the user
+            # intentionally chose different values; don't clobber them on restart).
+            if not _g_settings.get("user_edited") and (
                 _g_settings.get("host") != cfg.nmea_tcp.host
                 or _g_settings.get("port") != cfg.nmea_tcp.port
             ):
@@ -3136,7 +3165,13 @@ class Runtime:
         """Status of every *registered* connector (not just armed ones).
 
         Each entry: ``{name, label, description, grant_lines, control,
-        armed, needs_reconsent, running, status}``."""
+        armed, needs_reconsent, running, status, settings, settings_schema}``.
+
+        ``settings`` contains current values from the grant store merged over
+        schema defaults.  Secret fields are masked as ``"•••"`` when set or
+        ``""`` when unset.  Internal keys (``data_dir``, ``user_edited``) are
+        excluded.  ``settings_schema`` is the connector's declared field list.
+        """
         from .connectors import registry as _creg
         from .connectors.registry import (
             armed as _armed,
@@ -3163,6 +3198,9 @@ class Runtime:
                 st = running_conn.status() if running_conn is not None else {}
             except Exception:  # noqa: BLE001 - status must never raise
                 st = {}
+            # Build the masked settings dict from the schema + grant store.
+            schema = getattr(conn_proto, "settings_schema", []) or []
+            masked_settings = _mask_connector_settings(schema, grant_settings)
             result.append({
                 "name": name,
                 "label": mfst.label,
@@ -3173,6 +3211,8 @@ class Runtime:
                 "needs_reconsent": _needs_reconsent(name, mfst, self._connector_grants),
                 "running": running_conn is not None,
                 "status": st,
+                "settings": masked_settings,
+                "settings_schema": schema,
             })
         return result
 
@@ -3236,6 +3276,149 @@ class Runtime:
                     )
 
         return {"ok": True, "running": name in self.connectors}
+
+    async def set_connector_settings(self, name: str, values: dict) -> dict:
+        """Validate, persist, and live-apply new settings for connector ``name``.
+
+        The ``values`` dict is validated against the connector's
+        ``settings_schema``:
+
+        * Unknown keys (not in the schema) → ``{ok: False, error: ...}`` (400).
+        * A masked secret value ``"•••"`` means *keep the stored value
+          unchanged* — it is **never** written literally.
+        * Values are type-coerced according to the field's ``type``.
+        * The merge is additive: existing stored keys not covered by the schema
+          (or not present in ``values``) survive unchanged.
+        * The internal ``user_edited: true`` flag is set so the nmea-tcp
+          boot re-sync does not clobber explicitly chosen host/port values.
+
+        If the connector is **running**, live-applies the change:
+        stop → rebuild with new settings → start.  A failing restart is logged
+        and the connector is left not-running (never crashes the runtime).
+
+        If the new settings change the connector's **manifest** (e.g. flipping
+        ``thruster_control`` on the nmea2000 connector), the connector is
+        stopped and the response includes ``needs_reconsent: true`` — the UI
+        should surface the re-consent flow.
+        """
+        from .connectors import registry as _creg
+        from .connectors.base import manifest_hash as _mhash
+        from .connectors.context import ConnectorContext
+        from .connectors.registry import save_grants as _save_grants
+
+        if not _creg.has(name):
+            return {"ok": False, "error": f"unknown connector {name!r}"}
+
+        current_grant = self._connector_grants.get(name, {})
+        stored_settings = current_grant.get("settings", {})
+        settings_for_proto = {"data_dir": self.config.data_dir, **stored_settings}
+        try:
+            proto = _creg.build(name, settings_for_proto)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"failed to build connector: {exc}"}
+
+        schema: list = getattr(proto, "settings_schema", []) or []
+        schema_keys: set = {f["key"] for f in schema if f.get("key")}
+
+        # Reject unknown keys
+        for key in values:
+            if key not in schema_keys:
+                return {"ok": False, "error": f"unknown setting key {key!r}"}
+
+        # Type-coerce values; skip masked secrets (they mean "unchanged")
+        coerced: dict = {}
+        for field in schema:
+            key = field.get("key")
+            if not key or key not in values:
+                continue
+            raw = values[key]
+            # Masked secret = "leave the stored value alone"
+            if field.get("secret") and raw == "•••":
+                continue
+            ftype = field.get("type", "str")
+            try:
+                if ftype == "int":
+                    coerced[key] = int(raw)
+                elif ftype == "float":
+                    coerced[key] = float(raw)
+                elif ftype == "bool":
+                    if isinstance(raw, bool):
+                        coerced[key] = raw
+                    else:
+                        coerced[key] = str(raw).lower() in ("true", "1", "yes", "on")
+                else:
+                    coerced[key] = str(raw)
+            except (ValueError, TypeError) as exc:
+                return {"ok": False, "error": f"invalid value for {key!r}: {exc}"}
+
+        # Merge into existing stored settings, preserving unknown/internal keys.
+        # user_edited is updated; data_dir is not user-visible.
+        new_stored = dict(stored_settings)
+        new_stored.update(coerced)
+        new_stored["user_edited"] = True
+
+        # Build with new settings to detect a manifest change (e.g. thruster_control).
+        new_settings_full = {"data_dir": self.config.data_dir, **new_stored}
+        try:
+            new_proto = _creg.build(name, new_settings_full)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"failed to build with new settings: {exc}"}
+
+        new_manifest_hash = _mhash(new_proto.manifest)
+        old_manifest_hash = current_grant.get("manifest_hash", "")
+        manifest_changed = bool(old_manifest_hash) and (new_manifest_hash != old_manifest_hash)
+        was_enabled = bool(current_grant.get("enabled", False))
+        needs_reconsent_flag = manifest_changed and was_enabled
+
+        # Persist — the manifest_hash in the grant stays as-is (only
+        # set_connector_armed updates it; that's the consent step).
+        self._connector_grants[name] = {
+            **current_grant,
+            "settings": new_stored,
+        }
+        _save_grants(self.config.data_dir, self._connector_grants)
+
+        # Live-apply when the connector is running.
+        running_conn = self.connectors.get(name)
+        if running_conn is not None:
+            # Always stop the current instance first.
+            self.connectors.pop(name, None)
+            try:
+                await running_conn.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "connector %r stop failed during settings update: %s", name, exc
+                )
+            if manifest_changed:
+                # Manifest changed → connector is disarmed (hash mismatch);
+                # don't restart it.  The user must re-consent.
+                logger.info(
+                    "connector %r stopped after manifest-changing settings update "
+                    "(needs_reconsent=True)", name
+                )
+            else:
+                # Rebuild + restart with new settings.
+                try:
+                    new_conn = _creg.build(name, new_settings_full)
+                    sink = self._make_connector_sink(name)
+                    ctx = ConnectorContext(
+                        self.bus, new_conn.manifest, sink, mono_fn=self._mono_fn
+                    )
+                    await new_conn.start(ctx)
+                    self.connectors[name] = new_conn
+                    logger.info("connector %r restarted with new settings", name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "connector %r failed to restart with new settings: %s; "
+                        "left not-running",
+                        name, exc,
+                    )
+
+        return {
+            "ok": True,
+            "needs_reconsent": needs_reconsent_flag,
+            "running": name in self.connectors,
+        }
 
     def connector_debug(self, name: str) -> dict:
         """Human-readable debug string for connector ``name``.

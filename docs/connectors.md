@@ -94,6 +94,54 @@ motor looks like a thruster to a control head.
   ignores 128006 frames from our own source address so our status broadcast can never
   self-command. **BENCH-VERIFY** the 128006/128008 layouts on a real bus.
 
+## Configuring connectors
+
+Every connector declares a **settings schema** — a list of editable fields that
+control its runtime behaviour (host/port, endpoint URL, CAN interface name, …).
+Settings are stored in `connectors.json` alongside the consent grant.
+
+### Editing settings via the UI
+
+Open **Settings → Devices → Connectors**, expand any connector, and click
+**⚙ Settings**.  Each field is rendered from the connector's schema (text, number,
+checkbox, or password inputs with labels and hints).  Click **Save** to persist and
+live-apply the change (if the connector is running, it is stopped, rebuilt with the
+new settings, and started again — resilient: a failing restart leaves the system
+stable).  **Cancel** discards edits.
+
+### Editing settings via the API
+
+```
+POST /api/connectors/{name}/settings
+Content-Type: application/json
+
+{"port": 9000, "token": "my-bearer-token"}
+```
+
+Responds with `{ok, running, needs_reconsent?}`.  Unknown keys → 400.
+Values are type-coerced (e.g. `"9000"` → `9000` for an `int` field).
+
+### Secrets
+
+Fields declared `secret: true` (e.g. `metrics.token`) are stored **plain-text** in
+`connectors.json`.  The API masks them as `"•••"` in responses — posting `"•••"` back
+leaves the stored value unchanged.  Posting `""` clears the secret.  The plain-text
+storage is intentional (no key management complexity on a boat-local LAN) — protect
+`connectors.json` via filesystem permissions if the threat model requires it.
+
+### The thruster-control re-consent exception
+
+The `nmea2000` connector's `thruster_control` setting changes the connector's
+**manifest** (it gains `control: true` and an extra consent line).  Because the
+manifest hash changes, saving this setting:
+
+1. Disarms the connector (armed → False, needs_reconsent → True in the response).
+2. Stops the connector if it was running.
+3. The UI surfaces the re-approve consent flow automatically.
+
+This is the ONLY setting that triggers re-consent; all other settings are purely
+operational and do not affect the consent state.
+
 ## Known limitations
 
 - The RF deadman cannot observe *external* mode changes: if the app engages anchor

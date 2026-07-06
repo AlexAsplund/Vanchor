@@ -1545,6 +1545,116 @@
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
+  // POST /api/connectors/{name}/settings — resolves to {ok,...} or {ok:false,error}.
+  function postSettings(name, values) {
+    return fetch("/api/connectors/" + encodeURIComponent(name) + "/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    })
+      .then((r) => {
+        if (r.status === 404) return { ok: false, error: "settings_not_supported", status: 404 };
+        return r.json();
+      })
+      .catch(() => ({ ok: false, error: "network error" }));
+  }
+
+  // Build the settings form DOM for one connector. Returns the form container div.
+  // Each input gets data-settings-key and data-settings-type for value collection.
+  function buildSettingsForm(schema, currentSettings) {
+    const form = document.createElement("div");
+    (schema || []).forEach((field) => {
+      const key = field.key || "";
+      const ftype = field.type || "str";
+      const fLabel = field.label || key;
+      const fHint = field.hint || "";
+      const fPlaceholder = field.placeholder || "";
+      const isSecret = !!field.secret;
+      const fDefault = field.default !== undefined ? field.default : "";
+      const storedVal = (currentSettings && currentSettings[key] !== undefined)
+        ? currentSettings[key] : fDefault;
+
+      const rowEl = document.createElement("div");
+      rowEl.className = "dev-srcrow";
+      rowEl.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:4px;";
+
+      const spanEl = document.createElement("span");
+      spanEl.textContent = fLabel;
+      spanEl.style.cssText = "min-width:120px;font-size:13px;";
+
+      var inputEl;
+      if (ftype === "bool") {
+        const switchWrap = document.createElement("label");
+        switchWrap.className = "switch";
+        inputEl = document.createElement("input");
+        inputEl.type = "checkbox";
+        inputEl.checked = !!storedVal;
+        const trackEl = document.createElement("span");
+        trackEl.className = "track";
+        switchWrap.append(inputEl, trackEl);
+        rowEl.append(spanEl, switchWrap);
+      } else {
+        inputEl = document.createElement("input");
+        inputEl.autocomplete = "off";
+        inputEl.spellcheck = false;
+        inputEl.style.cssText = "flex:1;min-width:0;";
+        if (ftype === "int") {
+          inputEl.type = "number";
+          inputEl.step = "1";
+          inputEl.value = String(storedVal !== "" ? storedVal : "");
+        } else if (ftype === "float") {
+          inputEl.type = "number";
+          inputEl.step = "any";
+          inputEl.value = String(storedVal !== "" ? storedVal : "");
+        } else if (isSecret) {
+          inputEl.type = "password";
+          inputEl.autocomplete = "new-password";
+          // "•••" = value is set but hidden; send it back as-is to leave unchanged.
+          inputEl.value = String(storedVal);
+          if (!storedVal && fPlaceholder) inputEl.placeholder = fPlaceholder;
+        } else {
+          inputEl.type = "text";
+          inputEl.value = String(storedVal);
+          if (fPlaceholder) inputEl.placeholder = fPlaceholder;
+        }
+        rowEl.append(spanEl, inputEl);
+      }
+      inputEl.dataset.settingsKey = key;
+      inputEl.dataset.settingsType = ftype;
+      form.appendChild(rowEl);
+
+      if (fHint) {
+        const hintEl = document.createElement("div");
+        hintEl.className = "hint";
+        hintEl.style.cssText = "margin: 0 0 6px 128px; font-size: 11px;";
+        hintEl.textContent = fHint;
+        form.appendChild(hintEl);
+      }
+    });
+    return form;
+  }
+
+  // Collect values from a settings form. Returns {key: value, ...}.
+  function collectFormValues(form, schema) {
+    var values = {};
+    (schema || []).forEach((field) => {
+      const key = field.key || "";
+      const ftype = field.type || "str";
+      const inputEl = form.querySelector("[data-settings-key=\"" + key + "\"]");
+      if (!inputEl) return;
+      if (ftype === "bool") {
+        values[key] = !!inputEl.checked;
+      } else if (ftype === "int") {
+        values[key] = inputEl.value !== "" ? parseInt(inputEl.value, 10) : 0;
+      } else if (ftype === "float") {
+        values[key] = inputEl.value !== "" ? parseFloat(inputEl.value) : 0;
+      } else {
+        values[key] = inputEl.value;   // includes "•••" for unchanged secrets
+      }
+    });
+    return values;
+  }
+
   function renderConnector(c) {
     const name = c && typeof c.name === "string" ? c.name : "";
     const label = c && typeof c.label === "string" ? c.label : name;
@@ -1554,12 +1664,15 @@
     const isArmed = !!c.armed;
     const needsReconsent = !!c.needs_reconsent;
     const isRunning = !!c.running;
+    const schema = Array.isArray(c.settings_schema) ? c.settings_schema : [];
+    const currentSettings = (c.settings && typeof c.settings === "object") ? c.settings : {};
+    const hasSettings = schema.length > 0;
 
     const row = document.createElement("div");
     row.dataset.connName = name;
     row.style.cssText = "padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.06);";
 
-    // ---- header: status dot · label · badges · spacer · debug · toggle ----
+    // ---- header: status dot · label · badges · spacer · settings · debug · toggle ----
     const header = document.createElement("div");
     header.style.cssText = "display:flex; align-items:center; gap:8px; flex-wrap:wrap;";
 
@@ -1596,6 +1709,13 @@
     const spacer = document.createElement("span");
     spacer.style.flex = "1";
 
+    // ⚙ Settings button — shown only when the connector has a schema.
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.className = "btn-ghost" + (hasSettings ? "" : " hidden");
+    settingsBtn.title = "Configure settings";
+    settingsBtn.textContent = "⚙ Settings";   // ⚙
+
     const debugBtn = document.createElement("button");
     debugBtn.type = "button";
     debugBtn.className = "btn-ghost";
@@ -1611,7 +1731,7 @@
     track.className = "track";
     switchLbl.append(toggle, track);
 
-    header.append(statusDot, lbl, ctrlBadge, reconsentBadge, spacer, debugBtn, switchLbl);
+    header.append(statusDot, lbl, ctrlBadge, reconsentBadge, spacer, settingsBtn, debugBtn, switchLbl);
     row.appendChild(header);
 
     // Description hint
@@ -1676,7 +1796,44 @@
     consentBlock.append(consentBtnRow);
     row.appendChild(consentBlock);
 
-    // Per-row status feedback line.
+    // ---- inline settings panel (hidden until ⚙ Settings is clicked) --------
+    const settingsPanel = document.createElement("div");
+    settingsPanel.className = "hidden";
+    settingsPanel.style.cssText =
+      "margin-top:10px;padding:10px 12px;border-radius:var(--r-sm,6px);" +
+      "background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.08);";
+
+    const settingsTitle = document.createElement("div");
+    settingsTitle.className = "ctx-sub";
+    settingsTitle.style.marginBottom = "8px";
+    settingsTitle.textContent = "Settings";
+    settingsPanel.appendChild(settingsTitle);
+
+    // The form is rebuilt when Cancel resets it; keep a mutable reference.
+    var settingsForm = buildSettingsForm(schema, currentSettings);
+    settingsPanel.appendChild(settingsForm);
+
+    const settingsBtnRow = document.createElement("div");
+    settingsBtnRow.className = "btn-row";
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "btn-primary";
+    saveBtn.textContent = "Save";
+    const cancelSettingsBtn = document.createElement("button");
+    cancelSettingsBtn.type = "button";
+    cancelSettingsBtn.className = "btn-ghost";
+    cancelSettingsBtn.textContent = "Cancel";
+    settingsBtnRow.append(saveBtn, cancelSettingsBtn);
+    settingsPanel.appendChild(settingsBtnRow);
+
+    const settingsStatusEl = document.createElement("div");
+    settingsStatusEl.className = "hint";
+    settingsStatusEl.style.minHeight = "1.2em";
+    settingsPanel.appendChild(settingsStatusEl);
+
+    row.appendChild(settingsPanel);
+
+    // Per-row status feedback line (for arm/disarm flow).
     const statusEl = document.createElement("div");
     statusEl.className = "hint";
     statusEl.style.minHeight = "1.2em";
@@ -1689,8 +1846,19 @@
       statusEl.className = "hint" + (kind ? " " + kind : "");
     }
 
+    function setSettingsStatus(msg, kind) {
+      settingsStatusEl.textContent = msg || "";
+      settingsStatusEl.className = "hint" + (kind ? " " + kind : "");
+    }
+
     function showConsentBlock() { consentBlock.classList.remove("hidden"); }
     function hideConsentBlock() { consentBlock.classList.add("hidden"); }
+
+    function showSettingsPanel() {
+      hideConsentBlock();
+      settingsPanel.classList.remove("hidden");
+    }
+    function hideSettingsPanel() { settingsPanel.classList.add("hidden"); }
 
     // ---- event wiring ------------------------------------------------------
 
@@ -1700,6 +1868,7 @@
       if (!wantsOn) {
         // Disable: always immediate, no confirm flow.
         hideConsentBlock();
+        hideSettingsPanel();
         toggle.disabled = true;
         setStatus("Disabling…", "busy");
         postArm(name, false).then((res) => {
@@ -1717,6 +1886,7 @@
       } else {
         // Enable: show consent flow; NEVER POST without the confirm step.
         toggle.checked = false;   // revert visual until confirmed
+        hideSettingsPanel();
         showConsentBlock();
         setStatus("", "");
       }
@@ -1753,6 +1923,60 @@
       hideConsentBlock();
       toggle.checked = isArmed || needsReconsent;
       setStatus("", "");
+    });
+
+    // ⚙ Settings button — toggle the settings panel.
+    settingsBtn.addEventListener("click", () => {
+      if (settingsPanel.classList.contains("hidden")) {
+        hideConsentBlock();
+        showSettingsPanel();
+        setSettingsStatus("", "");
+      } else {
+        hideSettingsPanel();
+      }
+    });
+
+    // Settings "Save" — collect values and POST.
+    saveBtn.addEventListener("click", () => {
+      const values = collectFormValues(settingsForm, schema);
+      saveBtn.disabled = true;
+      cancelSettingsBtn.disabled = true;
+      setSettingsStatus("Saving…", "busy");
+      postSettings(name, values).then((res) => {
+        saveBtn.disabled = false;
+        cancelSettingsBtn.disabled = false;
+        if (!res) { setSettingsStatus("No response.", "err"); return; }
+        if (res.error === "settings_not_supported") {
+          // Endpoint doesn't exist (old backend) — hide the button permanently.
+          settingsBtn.classList.add("hidden");
+          hideSettingsPanel();
+          setSettingsStatus("", "");
+          return;
+        }
+        if (!res.ok) {
+          setSettingsStatus("Error: " + (res.error || "unknown"), "err");
+          return;
+        }
+        // Success.
+        hideSettingsPanel();
+        if (res.needs_reconsent) {
+          setStatus("Saved. Re-approval required — permissions changed.", "warn");
+          setTimeout(load, 400);
+        } else {
+          setStatus("Settings saved.", "ok");
+          setTimeout(load, 400);
+        }
+      });
+    });
+
+    // Settings "Cancel" — hide and reset form to original values.
+    cancelSettingsBtn.addEventListener("click", () => {
+      // Rebuild the form from the original stored values (discard dirty edits).
+      settingsPanel.removeChild(settingsForm);
+      settingsForm = buildSettingsForm(schema, currentSettings);
+      settingsPanel.insertBefore(settingsForm, settingsBtnRow);
+      setSettingsStatus("", "");
+      hideSettingsPanel();
     });
 
     // Debug button — toggle the shared viewer open/closed for this connector.
