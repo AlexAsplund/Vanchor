@@ -4,6 +4,20 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Independent Steering + Thrust channels** (`docs/custom-hardware.md`): the motor
+  device is split into two logical channels that can be sourced, configured
+  (own port/baud/framing), health-checked and debugged independently — for custom
+  rigs like a modified trolling-motor head with its own steering servo + separate
+  thrust ESC. Channels resolving to one physical link (the default single-MCU rig)
+  build the exact combined controller as before; STOP zeroes both channels through
+  the single control seam in every topology; a failing channel never takes down
+  the other and gates only the modes that need it, by name. Configured in
+  Settings → Devices → Motor → "Advanced: split channels".
+- **Depth in the map long-press menu**: press-and-hold the chart and the menu
+  shows the best-known depth at that point (nearest sounding within ~100 m, else
+  the nearest imported contour) above "Place marker here".
+
+
 - **Connector framework** (`src/vanchor/connectors/`, `docs/connectors.md`): pluggable
   external integrations under a permission-manifest trust model — default-deny
   allowlists, plain-language **user consent** in Settings → Devices → Connectors
