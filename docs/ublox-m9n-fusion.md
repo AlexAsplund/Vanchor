@@ -13,8 +13,9 @@ speed* — precisely the anchor hold regime where NMEA's COG is undefined.
 - `nav/ubx.py` — a pure, stdlib-only parser: frame sync + Fletcher checksum,
   `parse_stream` (resyncs past garbage, tolerates partial frames), `decode_nav_pvt`,
   and `cfg_valset` / `cfg_marine_10hz` config builders (10 Hz, **sea** dynamic
-  model, NAV-PVT on, NMEA off). **The CFG key IDs need bench verification on a
-  real M9N** (flagged in the code) — the parsing is exact and fully tested.
+  model, NAV-PVT on, NMEA off — configured on **both UART1 and USB**, so it works
+  however the receiver is wired; the unused port's keys are valid no-ops). All CFG
+  key IDs are **bench-verified on a real M9N** (see below).
 - `hardware/drivers/ublox.py` — `UbloxGps`, a registry driver (`gps_source: ublox`)
   that configures the receiver on open, parses NAV-PVT off a byte transport, and
   publishes a rich `GpsFix` (with velocity + accuracy) on the new `GPS_FIX_IN`
@@ -75,10 +76,15 @@ never clobbers another's.
   gentler complementary blend).
 - **`align`** (drive straight at cruise) → the steady compass-vs-GNSS-course
   difference is the compass/IMU **mounting yaw offset**, applied to the heading.
-- **`interference`** (bow tied off, ramp the motor) → how far the magnetic heading
-  drifts from the magnetics-free **gyro reference** as thrust rises, reported as
-  max drift, a °/thrust slope, and a **0–100 quality score** (0 = interference
-  makes the compass unusable, 100 = the motor doesn't move it at all).
+- **`interference`** (bow tied off, ramp the motor AND sweep the steering) → how
+  far the magnetic heading drifts from the magnetics-free **gyro reference**,
+  fitted as a 2D thrust×steer model (the steering servo rotates the motor, so its
+  field direction turns too). Reported as max drift, per-thrust coefficients, and
+  a **0–100 quality score** (0 = interference makes the compass unusable, 100 =
+  the motor doesn't move it at all), plus **escalating mitigation
+  recommendations** (move the IMU / twist supply pair → mu-metal shielding /
+  bonding → dual-antenna GNSS) and an opt-in **experimental software remedy** that
+  subtracts the fitted drift from the heading in real time.
 
 The navigator records during a capture, subtracts the gyro bias from the IMU rate,
 adds the mounting offset to the heading, and applies tuned gains live
@@ -90,10 +96,58 @@ Kept **separate from the one-time boat-setup wizard** (re-run when a sensor move
 The captured noise is also a natural input for matching the sim/ML to a specific
 boat.
 
+## Bench verification (2026-07-05, real M9N over USB)
+Everything the parsing/config layer claims was validated against a physical M9N
+(`/dev/ttyACM0`, the stable `/dev/serial/by-id/usb-u-blox_AG_...` path):
+
+- **Every `cfg_marine_10hz` VALSET key ACKs**, and the rate config takes effect —
+  **10 Hz NAV-PVT confirmed** on the wire.
+- **The MSGOUT keys are per-port** (`I2C=6 / UART1=7 / UART2=8 / USB=9 / SPI=a`).
+  The first config only enabled UART1 and a USB-connected M9N stayed silent — the
+  driver now configures **both UART1 and USB** (NAV-PVT on, UBX on, NMEA off).
+- The `UbloxGps` driver ran end-to-end: opened, configured, parsed ~10 frames/s,
+  and correctly **dropped not-OK fixes** — indoors the receiver often reports a 3D
+  solution with `gnssFixOK = 0` (outside its accuracy limits); the driver only
+  publishes fixes the receiver itself trusts. The per-device 🐞 **Debug view**
+  shows `fix_type` vs `valid(gnssFixOK)` side by side so this state is
+  diagnosable at a glance.
+- Config is written to the **RAM layer only** — the receiver reverts to stock
+  (multi-GNSS NMEA) on power-cycle; the driver re-applies it on every connect.
+
+## Using it
+- Settings → Devices → GPS source → **"u-blox M9N (UBX)"**, port = the
+  `/dev/serial/by-id/...` entry from the dropdown (survives replug/renumber).
+  Note **"Auto (follows mode)" never selects the ublox** — Auto resolves to
+  serial-NMEA/sim off the hardware switch; the UBX driver is always an explicit
+  choice.
+- On **USB** (`ttyACM*`) the baud/framing settings are ignored (USB CDC-ACM);
+  any values work. On the **Pi UART** use 38400 8N1 (the M9N UART default).
+  The process needs the `dialout` group to open the port.
+- Watch it live via the GPS 🐞 Debug stream (frames, fix quality, the NED
+  velocity vector, hAcc/sAcc).
+
+## Measured reality: indoor multipath (and what actually helps)
+A 60 s stationary capture indoors-by-a-window characterised the M9N's worst-case
+jitter: **~5.7 m 2D RMS** position scatter that is a **slow random-walk**
+(consecutive fixes ~0.08 m apart but wandering ~9 m/min — multipath, not white
+noise), a **~0.4 m/s phantom velocity**, and a self-reported **hAcc ≈ 15 m** (vs
+~1.5 m open-sky). Consequences, all shipped:
+
+- `sensors.gps_jitter: "indoor"` gives the **sim GPS the same jitter character**
+  (OU random-walk + phantom velocity + large hAcc) for testing the autopilot.
+- `sensors.gps_position_filter` enables an **accuracy-weighted position low-pass**
+  (time constant grows with hAcc above a good-fix threshold; passthrough on good
+  fixes). It cuts the scatter the anchor hold sees by ~20% but **cannot** remove
+  the slow wander or the phantom velocity — no causal filter can.
+- The honest mitigation is **hAcc-adaptive control tolerance** (don't hold tighter
+  than the receiver's reported accuracy) — still an open roadmap item.
+
 ## Status
-- Fully unit-tested: UBX parser (15), fusion (9), driver (4), navigator wiring (3),
-  incl. the non-blocking guarantee. Suite green.
-- **Bench items** (can't verify without an M9N): the UBX-CFG key IDs, and tuning
-  the fusion gains (`heading_gain`, `vel_tau_s`, `dr_timeout_s`) against real
-  sensor noise. The M9N is standard-precision (~1.5 m) — this buys *smoother,
-  faster, drift-aware, crab-aware* state, not RTK precision (that's the F9P).
+- Fully unit-tested (parser / fusion / driver / navigator wiring / calibration,
+  incl. the non-blocking guarantee) and the UBX + driver path is
+  **hardware-verified** per above. Suite green.
+- **Still open**: field-tuning the fusion gains on the water (the still-capture
+  calibration measures them per boat), the hAcc-adaptive hold radius, and — for
+  genuinely magnetics-free heading at zero speed — a dual-antenna (F9-class)
+  receiver. The M9N is standard-precision (~1.5 m open sky); this stack buys
+  *smoother, faster, drift-aware, crab-aware* state, not RTK precision.
