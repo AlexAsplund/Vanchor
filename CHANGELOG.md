@@ -4,6 +4,19 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Connector framework** (`src/vanchor/connectors/`, `docs/connectors.md`): pluggable
+  external integrations under a permission-manifest trust model — default-deny
+  allowlists, plain-language **user consent** in Settings → Devices → Connectors
+  (re-consent on any manifest change), control-as-capability routed through the same
+  governed command path as the app (STOP always flows, granted or not). Ships four
+  connectors: **nmea-tcp** (the retrofitted bridge), **metrics** (offline-first
+  store-and-forward telemetry export for a boat without internet), **nmea2000**
+  (PGN codec + CAN seam; position/COG-SOG/heading/depth ingress, position egress —
+  bench-verify flagged), and **rf-remote** (the control-grant reference: governed
+  thrust/steer with an active-driver deadman that neutralizes via STOP and never
+  disturbs an autonomous anchor hold on radio loss). Built subagent-driven with
+  per-task adversarial reviews + a whole-branch safety review.
+
 ## [1.5.0a2] — 2026-07-05
 
 - **Per-device Debug view** (Settings → Devices). Every device class now has a

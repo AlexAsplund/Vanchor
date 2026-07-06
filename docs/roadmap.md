@@ -207,6 +207,14 @@ numbers + training recipe in [`docs/anchor-ml.md`](anchor-ml.md).
     Design sketch (packs, safety floor, registry, phasing) in
     [`docs/community-plan.md`](community-plan.md).
 
+## Connectors (2026-07-06, branch feature/connectors)
+Permission-manifest integration framework (see [`docs/connectors.md`](connectors.md)):
+consent-gated connectors on the event bus — nmea-tcp (retrofit), metrics (offline
+store-and-forward), nmea2000 (codec + CAN seam, bench-verify pending), rf-remote
+(control grant with active-driver deadman). Open follow-ups: N2K + SocketCAN bench
+verification on real hardware; entry-point pack packaging example; fast-packet PGNs
+(129029 GNSS) if ever needed.
+
 ## Engineering debt (carried over, still open)
 
 - Per-boat saved gain profiles; persist applied tuner gains back to config
