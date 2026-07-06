@@ -229,6 +229,51 @@ def _build_battery_config(cfg: AppConfig):
     )
 
 
+class _NeutralChannelMotor:
+    """Hold a disabled channel at neutral (0.0) before delegating to the inner
+    motor controller.
+
+    Used for combined-plan configs where one channel source is ``"none"`` while
+    the other rides the shared serial/sim board.  The combined controller still
+    transmits both ``thrust`` and ``steering`` fields in every frame; this adapter
+    ensures the disabled field is always 0.0 regardless of what the control loop
+    computes, honouring the docstring promise in
+    :func:`~vanchor.hardware.link_plan.plan_motor_links`.
+
+    Duck-typed to the ``MotorController`` interface.
+    """
+
+    def __init__(self, inner, neutral_channel: str) -> None:
+        self._inner = inner
+        self._neutral = neutral_channel  # "steering" or "thrust"
+
+    def apply(self, command) -> None:
+        import dataclasses
+        command = dataclasses.replace(command, **{self._neutral: 0.0})
+        self._inner.apply(command)
+
+    async def flush(self) -> None:
+        flush = getattr(self._inner, "flush", None)
+        if flush is None:
+            return
+        res = flush()
+        if hasattr(res, "__await__"):
+            await res
+
+    async def start(self) -> None:
+        await _start_motor(self._inner)
+
+    async def stop(self) -> None:
+        await _stop_motor(self._inner)
+
+    def debug(self) -> str:
+        try:
+            inner_dbg = self._inner.debug()
+        except Exception:  # noqa: BLE001
+            inner_dbg = repr(self._inner)
+        return f"NeutralChannel({self._neutral}=0) -> {inner_dbg}"
+
+
 class _TeeMotor:
     """Fan one ``MotorCommand`` out to several motor controllers at once — e.g.
     drive the simulated boat AND a real steering servo for bench testing.
@@ -263,6 +308,93 @@ class _TeeMotor:
         # the serial controller). Never let one failure block the others.
         for m in self._motors:
             await _stop_motor(m)
+
+
+class _SimChannelState:
+    """Shared mutable state for a pair of sim split-motor channel adapters.
+
+    Both :class:`_SimThrustChannel` and :class:`_SimSteeringChannel` hold a
+    reference to the same state object so that either channel's flush can
+    reconstruct the full :class:`~vanchor.core.models.MotorCommand` that the
+    :class:`~vanchor.sim.devices.SimMotorController` expects.
+    """
+
+    __slots__ = ("thrust", "steering")
+
+    def __init__(self) -> None:
+        self.thrust: float = 0.0
+        self.steering: float = 0.0
+
+
+class _SimThrustChannel:
+    """A split :class:`~vanchor.hardware.split_motor.MotorChannel` that drives
+    the thrust axis of a :class:`~vanchor.sim.devices.SimMotorController`.
+
+    ``set_normalized`` records the commanded thrust; ``flush`` applies the
+    combined (thrust + steering) command to the underlying sim motor so the
+    physics simulation sees the correct full command. Shares its
+    :class:`_SimChannelState` with a sibling :class:`_SimSteeringChannel`.
+    """
+
+    def __init__(self, sim_motor, state: _SimChannelState) -> None:
+        self._sim = sim_motor
+        self._state = state
+
+    def set_normalized(self, value: float) -> None:
+        self._state.thrust = max(-1.0, min(1.0, value))
+
+    async def flush(self) -> None:
+        from .core.models import MotorCommand
+        self._sim.apply(MotorCommand(
+            thrust=self._state.thrust, steering=self._state.steering))
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    def debug(self) -> str:
+        return f"SimThrustChannel: thrust={self._state.thrust:+.3f}"
+
+    @property
+    def healthy(self) -> bool | None:
+        return None  # sim: health not applicable
+
+
+class _SimSteeringChannel:
+    """A split :class:`~vanchor.hardware.split_motor.MotorChannel` that drives
+    the steering axis of a :class:`~vanchor.sim.devices.SimMotorController`.
+
+    Symmetric counterpart to :class:`_SimThrustChannel`; flush applies the
+    combined command (so both channels' flushes are idempotent — the second
+    just re-applies the same already-complete command).
+    """
+
+    def __init__(self, sim_motor, state: _SimChannelState) -> None:
+        self._sim = sim_motor
+        self._state = state
+
+    def set_normalized(self, value: float) -> None:
+        self._state.steering = max(-1.0, min(1.0, value))
+
+    async def flush(self) -> None:
+        from .core.models import MotorCommand
+        self._sim.apply(MotorCommand(
+            thrust=self._state.thrust, steering=self._state.steering))
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+    def debug(self) -> str:
+        return f"SimSteeringChannel: steering={self._state.steering:+.3f}"
+
+    @property
+    def healthy(self) -> bool | None:
+        return None  # sim: health not applicable
 
 
 class Runtime:
@@ -1145,6 +1277,9 @@ class Runtime:
     # "both" (drive the sim boat AND mirror to a real servo).
     _SENSOR_SOURCES = ("sim", "serial", "nmea", "none")
     _MOTOR_SOURCES = ("sim", "serial", "both", "none")
+    # Per-channel split sources: "both" makes no sense for an individual channel
+    # (it is a combined concept); serial channels are Task 3 (placeholders only).
+    _CHANNEL_SOURCES = ("sim", "serial", "none")
     # Battery is the registry-driven 4th device kind (#42): the built-in "sim" +
     # "none" baselines plus any registered/pack battery driver (e.g. "ina226").
     _BATTERY_SOURCES = ("sim", "none")
@@ -1320,6 +1455,10 @@ class Runtime:
                 "compass": list(self._compass_sources()),
                 "motor": list(self._MOTOR_SOURCES),
                 "battery": list(self._battery_sources()),
+                # Per-channel split sources ("both" is a combined concept, not a
+                # per-channel one; split channels use sim | serial | none).
+                "steering": list(self._CHANNEL_SOURCES),
+                "thrust": list(self._CHANNEL_SOURCES),
             },
             "menus": self._device_menus(),
             "driver_menus": self._driver_menus(),
@@ -1373,13 +1512,21 @@ class Runtime:
             raise ValueError(
                 f"motor_source must be one of {self._MOTOR_SOURCES} (got {hw_in['motor_source']!r})"
             )
+        # Per-channel split sources (steering / thrust).
+        for ch in ("steering", "thrust"):
+            key = f"{ch}_source"
+            if hw_in.get(key) is not None and hw_in[key] not in self._CHANNEL_SOURCES:
+                raise ValueError(
+                    f"{key} must be one of {self._CHANNEL_SOURCES} (got {hw_in[key]!r})"
+                )
         batt_allowed = self._battery_sources()
         if hw_in.get("battery_source") is not None and hw_in["battery_source"] not in batt_allowed:
             raise ValueError(
                 f"battery_source must be one of {batt_allowed} (got {hw_in['battery_source']!r})"
             )
         # Ports are strings; baudrate is an int. Coerce/validate via the merge.
-        for key in ("gps_port", "compass_port", "motor_port"):
+        for key in ("gps_port", "compass_port", "motor_port",
+                    "steering_port", "thrust_port"):
             if key in hw_in and hw_in[key] is not None and not isinstance(hw_in[key], str):
                 raise ValueError(f"{key} must be a string")
         for key, src in (("baudrate", hw_in), ("port", nmea_in)):
@@ -1390,7 +1537,7 @@ class Runtime:
                     raise ValueError(f"{key} must be an integer") from None
         # Per-device serial framing: baud (int), bytesize 5-8, parity N/E/O/M/S,
         # stopbits 1/1.5/2. Normalise parity to an upper-case letter.
-        for dev in ("gps", "compass", "motor"):
+        for dev in ("gps", "compass", "motor", "steering", "thrust"):
             baud = hw_in.get(f"{dev}_baud")
             if baud is not None:
                 try:
@@ -1430,9 +1577,17 @@ class Runtime:
         # (follow mode). Apply those explicitly so selecting Auto actually resets
         # a source that was set to sim/serial/none.
         for k in ("gps_source", "compass_source", "depth_source", "motor_source",
-                  "battery_source"):
+                  "battery_source", "steering_source", "thrust_source"):
             if k in hw_in:
                 setattr(hw, k, hw_in[k])
+
+        # Validate the proposed motor link plan BEFORE persisting: catch any
+        # same-port framing conflicts and surface them as a 400 (ValueError).
+        from .hardware.link_plan import plan_motor_links
+        try:
+            plan_motor_links(hw)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
         save_device_overrides(self.config.data_dir, hw, nmea, motor)
         # Reflect the edit in the live config so a subsequent GET shows it.
@@ -1566,15 +1721,102 @@ class Runtime:
             hw.motor_port, baudrate=hw.motor_baud, bytesize=hw.motor_bytesize,
             parity=hw.motor_parity, stopbits=hw.motor_stopbits))
 
+    def _build_split_channel(
+        self,
+        name: str,
+        link: dict | None,
+        sim_motor,
+        sim_state: "_SimChannelState | None",
+        cfg: AppConfig,
+    ):
+        """Build one split motor channel; returns ``None`` on failure (Constraint 4).
+
+        ``name`` is "thrust" or "steering"; ``link`` is the resolved channel
+        link dict from :func:`~vanchor.hardware.link_plan.plan_motor_links`
+        (``None`` or ``source=="none"`` -> not connected).  A build exception is
+        caught, logged, and surfaced as ``None`` so the other channel can still
+        start up.
+        """
+        if link is None or link["source"] == "none":
+            return None
+        try:
+            src = link["source"]
+            if src == "sim":
+                if sim_motor is None:
+                    logger.warning(
+                        "split %s channel needs a sim motor but none was created; "
+                        "add a sim-capable device to the config", name)
+                    return None
+                if sim_state is None:
+                    return None  # should not happen; guard anyway
+                if name == "thrust":
+                    return _SimThrustChannel(sim_motor, sim_state)
+                return _SimSteeringChannel(sim_motor, sim_state)
+            elif src == "both":
+                # tee-per-channel (drive sim boat AND a physical board on the same
+                # axis) is out of scope for Task 3. A combined "both" config uses
+                # _TeeMotor in _construct_devices and never reaches this path; a
+                # genuinely split "both" config downgrades to sim-only here.
+                logger.warning(
+                    "split %s channel: source 'both' (tee-per-channel) is not yet "
+                    "implemented; downgrading to sim-only", name)
+                if sim_motor is None:
+                    logger.warning(
+                        "split %s channel needs a sim motor but none was created; "
+                        "add a sim-capable device to the config", name)
+                    return None
+                if sim_state is None:
+                    return None  # should not happen; guard anyway
+                if name == "thrust":
+                    return _SimThrustChannel(sim_motor, sim_state)
+                return _SimSteeringChannel(sim_motor, sim_state)
+            elif src == "serial":
+                from .hardware.serial_channels import (
+                    SerialSteeringChannel,
+                    SerialThrustChannel,
+                )
+                from .hardware.serial_link import PySerialTransport
+                transport = PySerialTransport(
+                    link["port"],
+                    baudrate=link["baud"],
+                    bytesize=link["bytesize"],
+                    parity=link["parity"],
+                    stopbits=link["stopbits"],
+                )
+                if name == "thrust":
+                    return SerialThrustChannel(transport)
+                return SerialSteeringChannel(transport)
+            else:
+                logger.warning(
+                    "unknown source %r for split %s channel; skipping", src, name)
+                return None
+        except Exception as exc:  # noqa: BLE001 — Constraint 4: never crash startup
+            logger.warning(
+                "split %s channel could not be built (%s); running without it", name, exc)
+            return None
+
     def _construct_devices(self, cfg: AppConfig) -> dict:
         """Build the device set (simulator + sensors + motor) for ``cfg.hardware``.
         Returns a dict and does NOT mutate ``self`` — so a live reload can build
         the new set first and swap it in only on success (see reload_devices)."""
+        from .hardware.link_plan import plan_motor_links
         src = {n: cfg.hardware.source(n) for n in ("gps", "compass", "depth", "motor")}
+        # Resolve the motor channel plan (pure, unit-testable). This determines
+        # whether to build one combined controller or two independent channels.
+        plan = plan_motor_links(cfg.hardware)
+
         # The sim boat exists whenever any device is simulated (sensors read its
-        # truth; the sim motor drives it).
+        # truth; the sim motor drives it). Check both the legacy src and the new
+        # per-channel links so a split config with one sim channel also creates
+        # the simulator.
+        _split_needs_sim = (
+            plan.kind == "split" and any(
+                ch is not None and ch["source"] in ("sim", "both")
+                for ch in (plan.thrust, plan.steering)
+            )
+        )
         simulator = None
-        if any(s in ("sim", "both") for s in src.values()):
+        if any(s in ("sim", "both") for s in src.values()) or _split_needs_sim:
             # On a LIVE reload, carry over the current boat state so a device
             # change doesn't teleport the simulated boat back to the start.
             prev = getattr(self, "simulator", None)
@@ -1597,16 +1839,39 @@ class Runtime:
             )
         from .hardware.interfaces import NullMotor
         sim_motor = simulator.motor if simulator is not None else None
-        if src["motor"] == "none":
-            # Motor "Not connected": a safe no-op so the loop runs; motor modes
-            # are disabled (see vanchor.core.capabilities).
-            motor = NullMotor()
-        elif src["motor"] == "serial":
-            motor = self._build_serial_motor(cfg)
-        elif src["motor"] == "both":
-            motor = _TeeMotor([sim_motor, self._build_serial_motor(cfg)])
+
+        if plan.kind == "combined":
+            # --- COMBINED path (legacy-identical) ----------------------------
+            # Every legacy config (channel keys unset) ALWAYS takes this path
+            # (Constraint 3). The four cases below reproduce today's exact builds.
+            if plan.source == "none":
+                # Motor "Not connected": a safe no-op so the loop runs; motor
+                # modes are disabled (see vanchor.core.capabilities).
+                motor = NullMotor()
+            elif plan.source == "serial":
+                motor = self._build_serial_motor(cfg)
+            elif plan.source == "both":
+                motor = _TeeMotor([sim_motor, self._build_serial_motor(cfg)])
+            else:
+                # "sim" or any unrecognised source -> sim fallback, exactly
+                # as today (the plan passes the source string through verbatim).
+                motor = sim_motor if sim_motor is not None else NullMotor()
+            # If one channel source is "none" while the other rides the shared
+            # board, wrap the combined motor so the disabled field is always sent
+            # at neutral (0.0).  Only applies when neutral_channel is set; the
+            # plain combined path (no neutral_channel) is never wrapped.
+            if plan.neutral_channel:
+                motor = _NeutralChannelMotor(motor, plan.neutral_channel)
         else:
-            motor = sim_motor if sim_motor is not None else NullMotor()
+            # --- SPLIT path --------------------------------------------------
+            # Two independent channels, each guarded (Constraint 4).
+            from .hardware.split_motor import SplitMotor
+            sim_state = _SimChannelState() if sim_motor is not None else None
+            thrust_ch = self._build_split_channel(
+                "thrust", plan.thrust, sim_motor, sim_state, cfg)
+            steering_ch = self._build_split_channel(
+                "steering", plan.steering, sim_motor, sim_state, cfg)
+            motor = SplitMotor(thrust=thrust_ch, steering=steering_ch)
         # "nmea" (or anything not sim/serial) builds NO internal sensor: the
         # navigator is fed by external NMEA over the bridge/inject instead.
         gps = compass = depth = None
@@ -2848,6 +3113,15 @@ class Runtime:
         grid["field"] = field
         return grid
 
+    def depth_at(self, lat: float, lon: float) -> dict:
+        """Best-known depth at a point (nearest sounding within ~100 m, else the
+        nearest imported contour vertex) for the map long-press menu.
+        ``{ok, depth_m?, source?, dist_m?}``."""
+        hit = self.depth_map.depth_at(lat, lon)
+        if hit is None:
+            return {"ok": False}
+        return {"ok": True, **hit}
+
     def depth_contours(self, bbox=None, limit: int = 20000) -> dict:
         """Imported depth contours (isobath polylines) windowed to a
         (west, south, east, north) bbox. Returns ``{ok, count, contours}`` where
@@ -3075,11 +3349,54 @@ class Runtime:
         return out
 
     def _device_connected_map(self, cfg: AppConfig) -> dict:
-        """``{kind: bool}`` — a device is connected unless its source is "none"."""
+        """``{kind: bool}`` — a device is connected unless its source is "none".
+
+        For a **split** motor plan the map additionally carries ``"thrust"`` and
+        ``"steering"`` per-channel booleans: *connected* means the channel is
+        both configured (source ≠ "none") **and** was actually built (channel
+        object is not ``None``).  A build failure (e.g. serial channels arriving
+        in Task 3) therefore shows up here so mode-gating keeps the pilot safe.
+
+        When the plan is **combined** those keys are absent; the fail-open
+        default in :func:`~vanchor.core.capabilities.missing_devices` treats
+        them as connected, preserving exact back-compat with all legacy tests.
+        """
+        from .hardware.link_plan import plan_motor_links
+        from .hardware.split_motor import SplitMotor
         hw = cfg.hardware
         conn = {k: hw.source(k) != "none" for k in ("gps", "compass", "depth", "motor")}
         bsrc = hw.battery_source or ("sim" if self.simulator is not None else "none")
         conn["battery"] = bsrc != "none"
+
+        # Split plan: add per-channel connectivity (fail-open for combined so
+        # every existing test that omits "thrust"/"steering" stays green).
+        try:
+            plan = plan_motor_links(hw)
+        except ValueError:
+            plan = None  # malformed config; leave channel keys absent (fail-open)
+
+        if plan is not None and plan.kind == "split":
+            motor = getattr(
+                getattr(self, "controller", None), "motor", None)
+            thrust_ch = motor.thrust if isinstance(motor, SplitMotor) else None
+            steering_ch = motor.steering if isinstance(motor, SplitMotor) else None
+
+            t_src = plan.thrust["source"] if plan.thrust else "none"
+            s_src = plan.steering["source"] if plan.steering else "none"
+
+            # Connected = configured (non-none) AND actually built (not None)
+            conn["thrust"] = (t_src != "none") and (thrust_ch is not None)
+            conn["steering"] = (s_src != "none") and (steering_ch is not None)
+            # Motor composite: at least one channel active
+            conn["motor"] = conn["thrust"] or conn["steering"]
+
+        # Combined plan with a neutral (disabled) channel: include the disabled
+        # channel as False so anchor/vectored modes are correctly gated with
+        # "Steering/Thrust not connected".  The OMIT rule applies only to the
+        # plain combined case (no neutral_channel); here we must be explicit.
+        elif plan is not None and plan.kind == "combined" and plan.neutral_channel:
+            conn[plan.neutral_channel] = False
+
         return conn
 
     def device_status(self) -> dict:
@@ -3112,11 +3429,97 @@ class Runtime:
                 src = "sim" if self.simulator is not None else "none"
             out[kind] = {"source": src, "connected": connected.get(kind, True),
                          "healthy": _healthy(dev)}
+
+        # Split plan: add per-channel status entries + update motor roll-up.
+        from .hardware.link_plan import plan_motor_links
+        from .hardware.split_motor import SplitMotor
+        try:
+            plan = plan_motor_links(hw)
+        except ValueError:
+            plan = None
+
+        if plan is not None and plan.kind == "split":
+            motor = self.controller.motor
+            thrust_ch = motor.thrust if isinstance(motor, SplitMotor) else None
+            steering_ch = motor.steering if isinstance(motor, SplitMotor) else None
+
+            t_src = plan.thrust["source"] if plan.thrust else "none"
+            s_src = plan.steering["source"] if plan.steering else "none"
+            t_conn = (t_src != "none") and (thrust_ch is not None)
+            s_conn = (s_src != "none") and (steering_ch is not None)
+
+            def _ch_healthy(ch) -> bool | None:
+                if ch is None:
+                    return False  # build failed / serial Task 3 placeholder
+                return _healthy(ch)
+
+            out["thrust"] = {
+                "source": t_src,
+                "connected": t_conn,
+                "healthy": _ch_healthy(thrust_ch),
+            }
+            out["steering"] = {
+                "source": s_src,
+                "connected": s_conn,
+                "healthy": _ch_healthy(steering_ch),
+            }
+            # Update the composite motor healthy to the roll-up (both healthy).
+            t_h = out["thrust"]["healthy"]
+            s_h = out["steering"]["healthy"]
+            known = [h for h in (t_h, s_h) if h is not None]
+            out["motor"]["healthy"] = all(known) if known else None
+            out["motor"]["source"] = "split"
+            out["motor"]["connected"] = t_conn or s_conn
+
+        elif plan is not None and plan.kind == "combined" and plan.neutral_channel:
+            # Combined plan with a disabled channel: surface it in device_status
+            # so telemetry()'s mode_availability derivation can gate correctly.
+            # The active channel is not surfaced separately (back-compat with the
+            # plain combined case); only the DISABLED side gets an entry.
+            out[plan.neutral_channel] = {
+                "source": "none",
+                "connected": False,
+                "healthy": None,
+            }
+
         return out
 
     def device_debug(self, kind: str) -> dict:
         """Human-readable raw-data snapshot for one device (Devices -> Debug).
-        Returns ``{ok, kind, source, debug}``; ``ok:false`` if no such device."""
+        Returns ``{ok, kind, source, debug}``; ``ok:false`` if no such device.
+
+        Also accepts the per-channel kinds ``"steering"`` and ``"thrust"`` when
+        the motor plan is split; ``"motor"`` always returns the composite
+        :class:`~vanchor.hardware.split_motor.SplitMotor` debug (which includes
+        both channels) even in a split build, so the existing UI debug button
+        keeps working.
+        """
+        hw = self.config.hardware
+
+        # Handle per-channel split kinds.
+        if kind in ("steering", "thrust"):
+            from .hardware.split_motor import SplitMotor
+            from .hardware.link_plan import plan_motor_links
+            motor = self.controller.motor
+            try:
+                plan = plan_motor_links(hw)
+            except ValueError:
+                plan = None
+            if plan is None or plan.kind != "split":
+                return {"ok": False, "kind": kind,
+                        "debug": f"Motor plan is not split; no '{kind}' channel."}
+            ch = motor.thrust if kind == "thrust" else motor.steering
+            ch_link = plan.thrust if kind == "thrust" else plan.steering
+            src = ch_link["source"] if ch_link else "none"
+            if ch is None:
+                return {"ok": False, "kind": kind, "source": src,
+                        "debug": f"No {kind} channel is active (not built)."}
+            try:
+                text = ch.debug()
+            except Exception as exc:  # noqa: BLE001
+                text = f"debug() raised: {type(exc).__name__}: {exc}"
+            return {"ok": True, "kind": kind, "source": src, "debug": text}
+
         dev = {"gps": self.gps, "compass": self.compass,
                "depth": self.depth_sounder, "motor": self.controller.motor,
                "battery": getattr(self, "battery_monitor", None)}.get(kind)
@@ -3135,8 +3538,15 @@ class Runtime:
         """``{kind: debug_string}`` for every device -- recorded into a debug
         session so raw device data is preserved (notably the UBX GPS, which
         bypasses the per-sentence ``nmea`` capture)."""
-        return {kind: self.device_debug(kind).get("debug", "")
-                for kind in ("gps", "compass", "depth", "motor", "battery")}
+        from .hardware.link_plan import plan_motor_links
+        kinds = ["gps", "compass", "depth", "motor", "battery"]
+        try:
+            plan = plan_motor_links(self.config.hardware)
+            if plan.kind == "split":
+                kinds += ["steering", "thrust"]
+        except ValueError:
+            pass
+        return {kind: self.device_debug(kind).get("debug", "") for kind in kinds}
 
     # ------------------------------------------------------------------ #
     # Connector framework (consent-gated bus bridges)

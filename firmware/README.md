@@ -264,3 +264,76 @@ lossy, ~2 A) — both drop-in by re-mapping the two PWM + enable pins.
   reverse dead-time, so it makes-before-breaks with the motor unpowered.
 
 See `docs/firmware.md` for the protocol↔code mapping and the one Pi-side change.
+
+---
+
+## 6. Split firmware protocol (BENCH-VERIFY)
+
+> **Status as of 2026-07-06:** No physical split boards exist yet. The Pi
+> driver (`src/vanchor/hardware/serial_channels.py`) implements the protocols
+> below; they must be bench-verified against actual firmware before deploying
+> on a boat.
+
+When a **modified Minn Kota head** (or other custom hardware) puts steering
+and thrust on two separate Arduino boards, the Pi uses two independent serial
+links. Each board gets its own command stream and sends its own feedback; the
+Pi never interleaves commands across boards.
+
+The framing (baud / parity / stop bits) is the same as the combined protocol
+(8N1, default 4800 baud, `\r\n` line endings) unless overridden per channel in
+the Pi config.
+
+### 6.1 Steering-only board — `STEER` command
+
+```
+STEER <steer>\r\n
+```
+
+* `steer`  integer `-100..100` — steering angle (`round(normalized * 100)`;
+  −100 hard port, +100 hard starboard, 0 centred).
+
+Examples:
+
+```
+STEER 0          # centred
+STEER 100        # hard starboard
+STEER -50        # half port
+```
+
+Feedback: the board sends the standard `A <angle_deg> <ok> <wrap_pct>` line
+(same format as the combined firmware — Section 1) at ~10 Hz.
+
+Loss-of-signal failsafe (same 800 ms watchdog as the combined firmware): the
+board holds the current angle when no `STEER` arrives within the window.
+
+### 6.2 Thrust-only board — `THRUST` command
+
+```
+THRUST <pwm> <dir>\r\n
+```
+
+* `pwm`   integer `0..255` — thrust magnitude (`round(|normalized| * 255)`)
+* `dir`   `F` or `R` — forward (`normalized ≥ 0`) or reverse
+
+Examples:
+
+```
+THRUST 0 F       # stopped
+THRUST 255 F     # full ahead
+THRUST 128 R     # half astern
+```
+
+Feedback: the board sends the standard `E <pwm> <dir> <state>` line (same
+format as the combined firmware — Section 1) at ~5 Hz.
+
+Loss-of-signal failsafe: same 800 ms watchdog; engine ramps to neutral/stop
+(does not flip direction on a watchdog trip).
+
+### 6.3 Implementing the split firmware
+
+A split steering board can be a fork of `firmware/steering/steering.ino` that
+reads `STEER <steer>` instead of the `steer` field of `CMD`; it can discard the
+`pwm` and `dir` fields entirely. A split thrust board is similarly a fork of
+`firmware/engine/engine.ino` that reads `THRUST <pwm> <dir>` instead of `CMD`.
+The shared protocol header (`firmware/common/vanchor_protocol.h`) will need
+a new parser for each split command variant.

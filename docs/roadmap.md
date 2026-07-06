@@ -215,6 +215,13 @@ store-and-forward), nmea2000 (codec + CAN seam, bench-verify pending), rf-remote
 verification on real hardware; entry-point pack packaging example; fast-packet PGNs
 (129029 GNSS) if ever needed.
 
+## Split motor channels (2026-07-06, branch feature/split-motor-devices)
+Steering + Thrust are independent device channels (docs/custom-hardware.md):
+link-resolved construction (shared-MCU rigs build the combined controller
+byte-identically), per-channel serial devices + framing + health + debug, UI
+under Motor -> Advanced. Open follow-ups: bench-verify the split line protocols
+on real boards; per-channel driver-pack example; tee-per-channel if ever needed.
+
 ## Engineering debt (carried over, still open)
 
 - Per-boat saved gain profiles; persist applied tuner gains back to config

@@ -514,6 +514,25 @@ class HardwareConfig:
     motor_bytesize: int = 8
     motor_parity: str = "N"
     motor_stopbits: float = 1.0
+    # --- Split-motor per-channel overrides (motor-split, Task 1) ------------- #
+    # The motor is really two channels (steering + thrust). By default BOTH follow
+    # the legacy motor_* fields above, so the constructed object graph is IDENTICAL
+    # to today (one combined controller on one link). Set a channel's *_source (or
+    # *_port) ONLY to drive that channel on its own board/link. Resolution lives in
+    # source()/channel_link() below; the physical-link decision in
+    # hardware.link_plan.plan_motor_links.
+    steering_source: str | None = None  # "sim" | "serial" | "both" | "none"
+    thrust_source: str | None = None    # "sim" | "serial" | "both" | "none"
+    steering_port: str = ""             # blank -> fall back to motor_port
+    thrust_port: str = ""               # blank -> fall back to motor_port
+    steering_baud: int = 4800
+    thrust_baud: int = 4800
+    steering_bytesize: int = 8
+    steering_parity: str = "N"
+    steering_stopbits: float = 1.0
+    thrust_bytesize: int = 8
+    thrust_parity: str = "N"
+    thrust_stopbits: float = 1.0
     # Sensors also accept "nmea": build NO internal device and let the navigator
     # be fed by external NMEA over the TCP bridge (--nmea-tcp) or inject_nmea —
     # e.g. a phone or chart-plotter GPS. So "GPS from NMEA" is never blocked.
@@ -534,12 +553,55 @@ class HardwareConfig:
     device_settings: dict = field(default_factory=dict)
 
     def source(self, device: str) -> str:
-        """Resolve the source for ``device`` ("gps"/"compass"/"depth"/"motor"),
-        honouring its override else falling back to ``enabled``."""
+        """Resolve the source for ``device``
+        ("gps"/"compass"/"depth"/"motor"/"steering"/"thrust"), honouring its
+        override else falling back.
+
+        The two motor channels ("steering"/"thrust") fall back to the LEGACY motor
+        resolution (``source("motor")``) rather than straight to ``enabled``, so an
+        unset channel behaves EXACTLY like today's single motor (Constraint 3)."""
         override = getattr(self, f"{device}_source", None)
         if override:
             return override
+        if device in ("steering", "thrust"):
+            return self.source("motor")
         return "serial" if self.enabled else "sim"
+
+    def channel_link(self, channel: str) -> dict:
+        """Resolve the full link for a motor ``channel`` ("steering"/"thrust").
+
+        Returns ``{source, port, baud, bytesize, parity, stopbits}``.
+
+        Partial-override rule (crisp, so back-compat is exact): a channel is
+        "configured" when its ``*_source`` is set OR its ``*_port`` is non-empty.
+
+          * NOT configured -> EVERY field mirrors the legacy ``motor_*`` link, so an
+            unset channel is bit-for-bit today's motor (Constraint 3).
+          * configured -> the channel's OWN baud + framing apply (they do not keep
+            blending with motor_*). The port still falls back to ``motor_port`` when
+            the channel port is left blank, since a serial link needs a port.
+        """
+        chan_src = getattr(self, f"{channel}_source", None)
+        chan_port = getattr(self, f"{channel}_port", "")
+        configured = bool(chan_src) or bool(chan_port)
+        if not configured:
+            # Legacy: mirror the motor link field-for-field.
+            return {
+                "source": self.source("motor"),
+                "port": self.motor_port,
+                "baud": self.motor_baud,
+                "bytesize": self.motor_bytesize,
+                "parity": self.motor_parity,
+                "stopbits": self.motor_stopbits,
+            }
+        return {
+            "source": chan_src if chan_src else self.source("motor"),
+            "port": chan_port if chan_port else self.motor_port,
+            "baud": getattr(self, f"{channel}_baud"),
+            "bytesize": getattr(self, f"{channel}_bytesize"),
+            "parity": getattr(self, f"{channel}_parity"),
+            "stopbits": getattr(self, f"{channel}_stopbits"),
+        }
 
 
 @dataclass

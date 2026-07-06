@@ -44,6 +44,68 @@
               <button type="button" class="btn-ghost" id="dev-debug-battery" data-debug="battery" title="Live raw data">🐞 Debug</button>
             </label>
           </div>
+
+          <!-- Advanced: split channels — independent Steering + Thrust sources.
+               Hidden (closed <details>) by default; auto-opened by devices.js
+               when the saved config has explicit steering_source/thrust_source.
+               Collecting the split keys requires the disclosure to be open. -->
+          <details id="dev-split-details">
+            <summary title="Collapse to keep the saved config — edits here are only sent while expanded.">Advanced: split channels</summary>
+            <div class="hint">Both channels on one controller (the default hardware)? Keep the combined Motor setting above. Configuring a channel switches that channel to its own baud/framing.</div>
+            <div class="dev-srcgrid">
+              <label class="dev-srcrow">
+                <span>Steering</span>
+                <select id="dev-src-steering"></select>
+                <button type="button" class="btn-ghost" id="dev-debug-steering" data-debug="steering" title="Live raw data">🐞 Debug</button>
+              </label>
+            </div>
+            <div id="dev-split-steering-serial" class="hidden">
+              <label class="dev-srcrow">
+                <span>Steering port</span>
+                <select id="dev-steering-port-pick" data-input="dev-steering-port"></select>
+              </label>
+              <label class="dev-srcrow dev-port-custom hidden">
+                <span>Steering custom</span>
+                <input type="text" id="dev-steering-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/… or /dev/ttyUSB0" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="dev-srcrow dev-lineopts">
+                <span>Steering line</span>
+                <div class="line-fields">
+                  <input type="number" id="dev-steering-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
+                  <select id="dev-steering-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                  <select id="dev-steering-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                  <select id="dev-steering-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                </div>
+              </div>
+            </div>
+            <div class="dev-srcgrid">
+              <label class="dev-srcrow">
+                <span>Thrust</span>
+                <select id="dev-src-thrust"></select>
+                <button type="button" class="btn-ghost" id="dev-debug-thrust" data-debug="thrust" title="Live raw data">🐞 Debug</button>
+              </label>
+            </div>
+            <div id="dev-split-thrust-serial" class="hidden">
+              <label class="dev-srcrow">
+                <span>Thrust port</span>
+                <select id="dev-thrust-port-pick" data-input="dev-thrust-port"></select>
+              </label>
+              <label class="dev-srcrow dev-port-custom hidden">
+                <span>Thrust custom</span>
+                <input type="text" id="dev-thrust-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/… or /dev/ttyUSB0" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="dev-srcrow dev-lineopts">
+                <span>Thrust line</span>
+                <div class="line-fields">
+                  <input type="number" id="dev-thrust-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
+                  <select id="dev-thrust-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                  <select id="dev-thrust-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                  <select id="dev-thrust-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                </div>
+              </div>
+            </div>
+          </details>
+
           <div class="hint">Auto = follows the Mode above. NMEA = from a phone/plotter over NMEA. Both = drive the sim boat + the real servo, for bench-testing.</div>
 
           <!-- Shared live raw-data viewer (one device at a time). Opened by the

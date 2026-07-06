@@ -19,24 +19,34 @@ DEVICE_LABEL = {
     "compass": "Compass",
     "depth": "Depth sounder",
     "motor": "Motor",
+    # Split-motor channels: present when the plan is "split"; also inherit the
+    # combined-motor label when mirroring (see _device_connected_map back-compat).
+    "steering": "Steering",
+    "thrust": "Thrust",
 }
 
 # Every motor-commanding mode needs a motor. GPS is required by anything that
 # navigates to/holds a position; heading-hold needs a heading source (compass);
 # contour-follow additionally needs the depth sounder.
+#
+# Split-motor back-compat: when the plan is "combined", "thrust" and "steering"
+# are absent from the connected-map (they fail-open to True), so the gating
+# logic is identical to the pre-split behaviour.  When "split", the connected-
+# map carries per-channel booleans and these extra requirements gate the
+# specific channel that is missing.
 MODE_REQUIRES: dict[ControlModeName, tuple[str, ...]] = {
-    ControlModeName.MANUAL: ("motor",),
-    ControlModeName.ANCHOR_HOLD: ("motor", "gps"),
-    ControlModeName.ANCHOR_ML: ("motor", "gps"),
-    ControlModeName.ANCHOR_LEIF: ("motor", "gps"),
-    ControlModeName.HEADING_HOLD: ("motor", "compass"),
-    ControlModeName.WAYPOINT: ("motor", "gps"),
-    ControlModeName.WORK_AREA: ("motor", "gps"),
-    ControlModeName.FOLLOW_APB: ("motor", "gps"),
-    ControlModeName.DRIFT: ("motor", "gps"),
-    ControlModeName.CONTOUR_FOLLOW: ("motor", "gps", "depth"),
-    ControlModeName.ORBIT: ("motor", "gps"),
-    ControlModeName.TROLLING: ("motor", "gps"),
+    ControlModeName.MANUAL: ("motor", "thrust"),
+    ControlModeName.ANCHOR_HOLD: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.ANCHOR_ML: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.ANCHOR_LEIF: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.HEADING_HOLD: ("motor", "compass", "thrust", "steering"),
+    ControlModeName.WAYPOINT: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.WORK_AREA: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.FOLLOW_APB: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.DRIFT: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.CONTOUR_FOLLOW: ("motor", "gps", "depth", "thrust", "steering"),
+    ControlModeName.ORBIT: ("motor", "gps", "thrust", "steering"),
+    ControlModeName.TROLLING: ("motor", "gps", "thrust", "steering"),
 }
 
 
