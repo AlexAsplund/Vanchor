@@ -19,8 +19,6 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
-
 from .context import ConnectorContext
 
 

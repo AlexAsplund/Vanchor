@@ -230,3 +230,49 @@ def test_default_debug_never_raises() -> None:
     assert isinstance(out, str)
     assert "_DemoConnector" in out
     assert c.status() == {}
+
+
+# --------------------------------------------------------------------------- #
+# load_connectors failure isolation (Fix 4f)
+# --------------------------------------------------------------------------- #
+def test_load_connectors_skips_bad_module_and_succeeds(monkeypatch) -> None:
+    """A connector module whose import raises is logged + skipped; the rest of
+    the in-tree connectors still load and load_connectors() does not raise
+    (Fix 4f).  Mirrors how the driver loader handles bad entries."""
+    import importlib
+    import pkgutil
+    import vanchor.connectors as _conn_pkg
+
+    real_import = importlib.import_module
+    bad_name = "vanchor.connectors.fake_bad_module"
+
+    def _patched_import(name, *args, **kwargs):
+        if name == bad_name:
+            raise ImportError("simulated bad connector import")
+        return real_import(name, *args, **kwargs)
+
+    # Inject a fake bad module entry before the real ones.
+    real_iter = pkgutil.iter_modules
+
+    class _FakeMod:
+        name = "fake_bad_module"
+        ispkg = False
+        module_finder = None
+
+    def _patched_iter(path):
+        yield _FakeMod()
+        yield from real_iter(path)
+
+    monkeypatch.setattr(importlib, "import_module", _patched_import)
+    monkeypatch.setattr(pkgutil, "iter_modules", _patched_iter)
+
+    # Reset the idempotency flag so the load loop actually runs.
+    orig_loaded = _conn_pkg._loaded
+    _conn_pkg._loaded = False
+    try:
+        _conn_pkg.load_connectors()   # must NOT raise
+    finally:
+        _conn_pkg._loaded = orig_loaded  # restore so other tests are unaffected
+
+    # The real in-tree connectors must still be registered after the failed load.
+    assert registry.has("metrics"), "metrics connector must still be registered"

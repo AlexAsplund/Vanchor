@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -115,10 +117,26 @@ def load_grants(data_dir: str | Path) -> dict[str, Any]:
 
 
 def save_grants(data_dir: str | Path, grants: dict[str, Any]) -> None:
-    """Persist ``grants`` to ``<data_dir>/connectors.json`` (creating the dir)."""
+    """Persist ``grants`` to ``<data_dir>/connectors.json`` (creating the dir).
+
+    Uses an atomic write (temp file in the same directory + os.replace) so a
+    crash mid-write never leaves a truncated/corrupt grants file."""
     d = Path(data_dir)
     d.mkdir(parents=True, exist_ok=True)
-    (d / GRANTS_FILE).write_text(json.dumps(grants, indent=2), encoding="utf-8")
+    target = d / GRANTS_FILE
+    payload = json.dumps(grants, indent=2)
+    fd, tmp_path = tempfile.mkstemp(dir=d, prefix=".grants-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp_path, target)
+    except BaseException:
+        # Clean up the temp file on any error (including KeyboardInterrupt).
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def armed(name: str, manifest: ConnectorManifest, grants: dict[str, Any]) -> bool:

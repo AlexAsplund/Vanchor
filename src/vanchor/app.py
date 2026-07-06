@@ -498,6 +498,34 @@ class Runtime:
                         "failed to auto-arm nmea-tcp connector; legacy TCP disabled"
                     )
 
+        # Re-sync nmea-tcp host/port from cfg if a grant already exists but
+        # its settings differ (e.g. nmea_tcp.port changed in devices.json
+        # after the grant was first written at auto-arm time).  Grant settings
+        # are written once and never updated otherwise, so a cfg edit + restart
+        # would silently use the stale port without this re-sync.
+        # The enabled flag is intentionally left untouched: an explicit user
+        # disable must survive across restarts.
+        if "nmea-tcp" in self._connector_grants:
+            _g = self._connector_grants["nmea-tcp"]
+            _g_settings = _g.get("settings", {})
+            if (
+                _g_settings.get("host") != cfg.nmea_tcp.host
+                or _g_settings.get("port") != cfg.nmea_tcp.port
+            ):
+                _old_host = _g_settings.get("host")
+                _old_port = _g_settings.get("port")
+                _new_settings = {**_g_settings, "host": cfg.nmea_tcp.host, "port": cfg.nmea_tcp.port}
+                self._connector_grants["nmea-tcp"] = {**_g, "settings": _new_settings}
+                _save_grants(cfg.data_dir, self._connector_grants)
+                logger.info(
+                    "nmea-tcp grant host/port resynced from cfg "
+                    "(was %s:%s, now %s:%s)",
+                    _old_host,
+                    _old_port,
+                    cfg.nmea_tcp.host,
+                    cfg.nmea_tcp.port,
+                )
+
         # --- Trip log (#66): per-outing track + stats, persisted to disk. - #
         self.trip = TripLog(
             cfg.data_dir,
@@ -3119,7 +3147,11 @@ class Runtime:
             sp = _creg.spec(name)
             if sp is None:  # pragma: no cover - registry invariant
                 continue
-            settings = self._connector_grants.get(name, {}).get("settings", {})
+            grant_settings = self._connector_grants.get(name, {}).get("settings", {})
+            # Inject data_dir so connectors that buffer to disk (e.g. metrics)
+            # use the runtime's data dir instead of CWD.  Grant settings win on
+            # any explicit key (e.g. a custom data_dir override).
+            settings = {"data_dir": self.config.data_dir, **grant_settings}
             try:
                 conn_proto = _creg.build(name, settings)
                 mfst = conn_proto.manifest
@@ -3157,7 +3189,10 @@ class Runtime:
         if not _creg.has(name):
             return {"ok": False, "error": f"unknown connector {name!r}"}
 
-        settings = self._connector_grants.get(name, {}).get("settings", {})
+        grant_settings = self._connector_grants.get(name, {}).get("settings", {})
+        # Inject data_dir so connectors that buffer to disk use the runtime's
+        # data dir; grant settings override if they carry an explicit key.
+        settings = {"data_dir": self.config.data_dir, **grant_settings}
         try:
             conn = _creg.build(name, settings)
         except Exception as exc:  # noqa: BLE001
@@ -3487,7 +3522,10 @@ class Runtime:
         for name in _creg.names():
             if name in self.connectors:
                 continue  # already running (e.g. after set_connector_armed)
-            settings = self._connector_grants.get(name, {}).get("settings", {})
+            grant_settings = self._connector_grants.get(name, {}).get("settings", {})
+            # Inject data_dir so connectors that buffer to disk use the
+            # runtime's data dir; grant settings override if explicitly set.
+            settings = {"data_dir": self.config.data_dir, **grant_settings}
             try:
                 conn = _creg.build(name, settings)
             except Exception as exc:  # noqa: BLE001

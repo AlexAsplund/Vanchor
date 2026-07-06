@@ -538,3 +538,80 @@ async def test_connector_debug_unknown(tmp_path: Path) -> None:
     rt = _runtime(tmp_path)
     result = rt.connector_debug("zzz-no-such")
     assert result["ok"] is False
+
+
+# --------------------------------------------------------------------------- #
+# 8. data_dir injection (Fix 1 / Constraint 9)
+# --------------------------------------------------------------------------- #
+
+
+async def test_metrics_connector_buffer_under_data_dir(tmp_path: Path) -> None:
+    """Arming the metrics connector builds it with the runtime's data_dir so
+    its buffer directory lands under tmp_path, not CWD (Fix 1 / Constraint 9).
+
+    Previously, connectors were built with only the grant's frozen settings and
+    no data_dir, causing the metrics buffer to default to CWD (``"."``).
+    """
+    from vanchor.connectors.metrics import MetricsConnector
+
+    rt = _runtime(tmp_path)
+    try:
+        result = await rt.set_connector_armed("metrics", True)
+        assert result["ok"] is True, f"arm failed: {result}"
+        conn = rt.connectors.get("metrics")
+        assert isinstance(conn, MetricsConnector), "metrics connector must be running"
+        # _buf_dir must be a subdirectory of tmp_path, never CWD.
+        assert conn._buf_dir.is_relative_to(tmp_path), (
+            f"buffer dir {conn._buf_dir!r} must be under {tmp_path!r}, not CWD"
+        )
+    finally:
+        for c in list(rt.connectors.values()):
+            await c.stop()
+        rt.connectors.clear()
+
+
+# --------------------------------------------------------------------------- #
+# 9. NMEA-TCP host/port resync on cfg change (Fix 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_nmea_tcp_grant_settings_resynced_on_port_change(tmp_path: Path) -> None:
+    """If a nmea-tcp grant exists with a stale port, Runtime.__init__ rewrites
+    the settings from cfg while leaving the enabled flag untouched (Fix 2).
+
+    Previously, the grant's settings were frozen at auto-arm time and never
+    updated, so editing nmea_tcp.port in devices.json and restarting silently
+    used the old port.
+    """
+    from vanchor.connectors import registry as _creg_inner
+
+    old_port = 10110
+    old_host = "127.0.0.1"
+
+    sp = _creg_inner.spec("nmea-tcp")
+    assert sp is not None, "nmea-tcp connector must be registered"
+    tmp_conn = sp.build({"host": old_host, "port": old_port})
+    stale_grants = {
+        "nmea-tcp": {
+            "enabled": False,  # explicit disable — must survive the resync
+            "manifest_hash": manifest_hash(tmp_conn.manifest),
+            "settings": {"host": old_host, "port": old_port},
+        }
+    }
+    save_grants(tmp_path, stale_grants)
+
+    # Boot a Runtime with a different port.
+    new_port = 10999
+    cfg = AppConfig(data_dir=str(tmp_path))
+    cfg.nmea_tcp.host = old_host
+    cfg.nmea_tcp.port = new_port
+    Runtime(cfg)  # resync happens in __init__
+
+    updated = load_grants(tmp_path)
+    assert updated["nmea-tcp"]["settings"]["port"] == new_port, (
+        "port must be resynced from cfg"
+    )
+    assert updated["nmea-tcp"]["settings"]["host"] == old_host
+    assert updated["nmea-tcp"]["enabled"] is False, (
+        "enabled flag must survive unchanged after resync"
+    )

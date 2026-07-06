@@ -5,13 +5,17 @@ The tests lead the implementation (TDD) and are organised safety-first:
 
 1. Ungranted STICK is dropped and the sink NEVER sees it; the loop survives;
    an ungranted "BTN STOP" STILL reaches the sink (Global Constraint 3).
-2. The expiry deadman fires EXACTLY ONE zero command after silence, then stays
-   quiet until sticks resume (which re-arms it).
+2. The expiry deadman fires EXACTLY ONE ``{"type":"stop"}`` neutralizer after
+   silence (only when the remote is the ACTIVE driver), then stays quiet until
+   sticks resume (which re-arms it).  Mode buttons disarm the latch so the
+   deadman does not fire while the autopilot owns the motor.
 3. STICK maps to the exact governed manual command with clamped floats.
 4. Buttons map to the real command shapes (stop / anchor_hold / manual-zero).
 5. Garbage lines are ignored + counted; out-of-range floats are clamped; a
    malformed STICK never yields an unclamped/NaN value.
-6. Transport EOF -> zero command + reconnect attempt (no real sleeps).
+6. Transport EOF -> ``{"type":"stop"}`` neutralizer (ONLY when remote is the
+   ACTIVE driver) + reconnect attempt (no real sleeps); otherwise reconnects
+   silently.
 7. debug() never raises and returns a string.
 
 The command shapes are the REAL ones accepted by ``Runtime.handle_command`` ->

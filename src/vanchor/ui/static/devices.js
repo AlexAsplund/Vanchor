@@ -1810,9 +1810,7 @@
       .then((data) => {
         if (!data) return;   // 404 already handled
         const list = Array.isArray(data.connectors) ? data.connectors : [];
-        const u = $("conn-unavailable");
         const body = $("conn-body");
-        if (u) u.classList.add("hidden");
         if (body) body.classList.remove("hidden");
         renderConnectors(list);
         const nArmed = list.filter((c) => !!c.armed).length;

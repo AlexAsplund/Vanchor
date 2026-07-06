@@ -401,8 +401,10 @@ class MetricsConnector(Connector):
             # A gzip file produced by gzip.open("wt") with nothing written is ~41 bytes
             # (header + FNAME field + empty deflate stream + trailer), so a byte-size
             # threshold would never fire.  Structural decompression is the reliable check.
+            # Pre-filter: real parts are at least 76+ bytes after compression; anything
+            # 512+ bytes is certainly non-empty data, so skip decompression entirely.
             try:
-                if gzip.decompress(body).strip() == b"":  # empty part (e.g. rotate-then-stop)
+                if len(body) < 512 and gzip.decompress(body).strip() == b"":  # empty part (e.g. rotate-then-stop)
                     try:
                         part.unlink(missing_ok=True)
                         logger.debug("metrics: deleted empty part %s (structural check)", part.name)

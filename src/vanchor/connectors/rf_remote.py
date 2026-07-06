@@ -125,8 +125,9 @@ class RfRemoteConnector(Connector):
         Injectable monotonic clock (default :func:`time.monotonic`) — drives the
         expiry deadman so tests need no real sleeps.
     expiry_s:
-        Radio-silence timeout after which a non-zero stick is zeroed (default
-        1.0 s).
+        Radio-silence timeout after which the active-driver latch triggers a
+        ``{"type": "stop"}`` neutralizer (default 1.0 s).  Only fires when the
+        latch is set (remote is the ACTIVE driver); idle remotes are unaffected.
     watchdog_poll_s:
         How often the background watchdog re-checks the clock (default 0.1 s).
         Tests drive :meth:`_check_expiry` directly and ignore this.
@@ -338,9 +339,11 @@ class RfRemoteConnector(Connector):
                 return
             # Fire exactly one neutralizer, then disarm until sticks resume.
             # FIX 3: the neutralizer is a guaranteed-path {"type": "stop"}.
+            # Submit before disarm so the cleared latch cannot double-fire:
+            # both operations are synchronous with no await between them.
             self._expiry_fired = True
-            self._disarm_deadman()
             self._submit(dict(_NEUTRALIZE_CMD))
+            self._disarm_deadman()
         except Exception as exc:  # noqa: BLE001 - the deadman must never crash
             logger.warning("rf-remote: deadman check error: %s", exc)
 
@@ -357,9 +360,12 @@ class RfRemoteConnector(Connector):
     async def _run_read(self) -> None:
         """Open the transport and read lines forever, reconnecting on drops.
 
-        On EOF or any read error the deadman zero command is submitted (a lost
-        link stops the boat), then the transport is reopened with exponential
-        backoff. Mirrors the serial-device supervised reader.
+        On EOF or any read error, a ``{"type": "stop"}`` neutralizer is
+        submitted — but ONLY when the remote is the ACTIVE driver (the
+        ``_last_stick_nonzero`` latch is set).  A link drop must not disturb
+        an autonomous mode (e.g. anchor hold) the remote is no longer driving.
+        After neutralizing, the transport is reopened with exponential backoff.
+        Mirrors the serial-device supervised reader.
         """
         backoff = self._backoff_start
         # Initial open (with backoff on failure).
@@ -398,8 +404,11 @@ class RfRemoteConnector(Connector):
                     logger.warning(
                         "rf-remote: link lost (%s); neutralizing + reconnecting", exc
                     )
-                    self._disarm_deadman()
+                    # Submit before disarm so the cleared latch cannot
+                    # double-fire; both operations are synchronous with no
+                    # await between them.
                     self._submit(dict(_NEUTRALIZE_CMD))
+                    self._disarm_deadman()
                 else:
                     logger.warning(
                         "rf-remote: link lost (%s); not active driver, reconnecting", exc
