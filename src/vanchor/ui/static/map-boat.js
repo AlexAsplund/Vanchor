@@ -54,7 +54,8 @@
     anchor_ml: ["⚓", "Anchor · Smart"], anchor_leif: ["⚓", "Anchor · Leif"],
     heading_hold: ["🧭", "Heading"], waypoint: ["📍", "Route"], follow_apb: ["🛰", "Follow APB"],
     drift: ["🌀", "Drift"], orbit: ["🔄", "Orbit"], contour: ["📈", "Contour"],
-    trolling: ["🎣", "Trolling"], stop: ["■", "Stopped"],
+    trolling: ["🎣", "Trolling"], work_area: ["🎯", "Work Area"],
+    cruise: ["🚤", "Cruise"], stop: ["■", "Stopped"],
   };
   const modeMeta = (m) => MODE_META[m] || ["•", m || "—"];
 
