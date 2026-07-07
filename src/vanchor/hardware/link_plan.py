@@ -126,8 +126,22 @@ def plan_motor_links(hw: HardwareConfig) -> LinkPlan:
 
     s_src, t_src = steering["source"], thrust["source"]
 
-    # Both disabled -> one NullMotor (combined "none").
+    # Both channels "none": only a REAL motor-off when the combined motor is
+    # off too. When motor_source still says sim/serial, explicit channel
+    # "none"+"none" means "no split configured" -- the Devices panel re-submits
+    # every field, so a stray persisted none/none must not silently disconnect
+    # the motor (field incident: 100% thrust into a NullMotor while the sim
+    # motor sat idle). Motor-off stays expressible via motor_source="none".
     if s_src == "none" and t_src == "none":
+        combined = hw.source("motor")
+        if combined != "none":
+            link = {
+                "source": combined, "port": hw.motor_port, "baud": hw.motor_baud,
+                "bytesize": hw.motor_bytesize, "parity": hw.motor_parity,
+                "stopbits": hw.motor_stopbits,
+            }
+            return LinkPlan(kind="combined", source=combined, link=link,
+                            tee=(combined == "both"))
         return LinkPlan(kind="combined", source="none", link=thrust)
 
     # Exactly one disabled -> the active side's single device carries both fields;

@@ -289,8 +289,20 @@ def test_both_both_is_combined_with_tee_flag():
     assert plan.tee is True
 
 
-def test_none_none_is_combined_none():
+def test_none_none_with_sim_motor_stays_combined_sim():
+    """Field incident: the Devices panel re-submits every field, so a stray
+    persisted steering/thrust = none/none silently replaced the sim motor with
+    a NullMotor (100% thrust, boat parked). Channel none+none only means
+    motor-off when the combined motor_source is ALSO none."""
     hw = HardwareConfig(steering_source="none", thrust_source="none")
+    plan = plan_motor_links(hw)   # default motor_source resolves to sim
+    assert plan.kind == "combined" and plan.source == "sim"
+    assert plan.neutral_channel is None
+
+
+def test_none_none_with_motor_none_is_still_off():
+    hw = HardwareConfig(steering_source="none", thrust_source="none",
+                        motor_source="none")
     plan = plan_motor_links(hw)
     assert plan.kind == "combined" and plan.source == "none"
     assert plan.neutral_channel is None

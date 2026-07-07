@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Fix: sim boat wouldn't move (100% thrust into a NullMotor)** — the Devices
+  panel re-submits every field on save, so switching any source (e.g. GPS back
+  to Auto) also persisted the Advanced split-channel selects as
+  steering/thrust = none/none, which the link planner took as "motor
+  disconnected" and built a NullMotor over the live sim motor. Channel
+  none+none now only means motor-off when `motor_source` is ALSO none;
+  otherwise it means "no split configured" and the combined motor builds as
+  selected. Regression-tested both ways.
+
 - **New logo + icon set**: an anchor whose crown is a GPS reticle ring, in the
   app's cyan/off-white on dark navy. Hand-authored SVGs (`icons/logo.svg`,
   `icons/logo-wordmark.svg`, `favicon.svg`) with all PWA PNGs regenerated from
