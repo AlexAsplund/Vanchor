@@ -2292,7 +2292,16 @@ body[data-view="instruments"] #hud .hud-widget {
 }
 body[data-view="instruments"] #hud .hud-widget.vw-off { display: none !important; }
 body[data-view="instruments"] #hud .hud-label { font-size: 14px; }
-body[data-view="instruments"] #hud .hud-big { font-size: clamp(38px, 9vw, 92px); }
+/* Size the number to the CARD, not the viewport: with all five widgets on, a
+   9vw glyph overflows its grid cell (screenshot audit caught "2.40" clipping).
+   cqi needs the widget to be a container; the grid's 1fr tracks don't depend
+   on content width, so inline-size containment is layout-safe here. The plain
+   vw line stays first as the fallback for browsers without container units. */
+body[data-view="instruments"] #hud .hud-widget { container-type: inline-size; }
+body[data-view="instruments"] #hud .hud-big {
+  font-size: clamp(38px, 9vw, 92px);
+  font-size: clamp(34px, 26cqi, 92px);
+}
 body[data-view="instruments"] #hud .hud-big small { font-size: 0.32em; }
 body[data-view="instruments"] #hud .hud-hdg-readout { font-size: clamp(26px, 6vw, 58px); }
 body[data-view="instruments"] #hud .hud-compass svg { width: 140px; height: 140px; }
