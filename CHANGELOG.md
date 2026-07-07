@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a3] — 2026-07-07
+
 - **Phone-as-sensor devices**: select source **Phone (this device)** for GPS
   and/or compass, and a connected phone streams its browser geolocation (with
   per-fix accuracy riding into the fusion) and magnetic compass heading to the
