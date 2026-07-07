@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/vanchor/ui/static/icons/logo-wordmark.svg" alt="Vanchor-NG" width="400" />
+</p>
+
 # Vanchor-NG
 
 > **v1.0-alpha** — the start of a new major version. Vanchor-NG is a ground-up,

@@ -364,9 +364,10 @@ body.hud-frame-on .heading-tape { display: block; }
 }
 .brand { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; }
 .brand-mark {
-  width: 14px; height: 14px; border-radius: 4px;
-  background: conic-gradient(from 200deg, var(--accent), var(--accent-2), var(--accent));
-  box-shadow: 0 0 12px rgba(27, 228, 255, 0.6);
+  /* The actual logo (anchor + GPS reticle ring), not a placeholder square. */
+  width: 20px; height: 20px; border-radius: 5px;
+  background: url("/static/icons/logo.svg") center / contain no-repeat;
+  box-shadow: 0 0 12px rgba(27, 228, 255, 0.45);
 }
 .brand-name { font-weight: 800; letter-spacing: 0.06em; font-size: 14px; color: var(--text); }
 .brand-ng { color: var(--accent); margin-left: 2px; }

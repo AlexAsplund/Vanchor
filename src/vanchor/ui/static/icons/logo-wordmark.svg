@@ -1,0 +1,38 @@
+<!-- Vanchor-NG lockup: mark + hand-drawn chamfered letterforms (stroke-based,
+     no font dependency, so it renders identically on GitHub / docs / anywhere).
+     "VANCHOR" in UI text color, "NG" in accent cyan — echoes the app topbar.
+     Self-contained dark tile so it works on both light and dark pages. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 316 84" role="img" aria-label="Vanchor NG">
+  <rect width="316" height="84" rx="16" fill="#071018"/>
+  <!-- the mark (same geometry as logo.svg, sans tile) -->
+  <g transform="translate(14,14) scale(0.875)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#eaf2fb" stroke-width="5">
+      <path d="M32 29.5 V57"/>
+      <path d="M22 37 H42"/>
+      <path d="M14.76 39 A17.5 17.5 0 1 0 49.24 39"/>
+    </g>
+    <g stroke="#2ff3ff" stroke-width="5">
+      <circle cx="32" cy="20" r="8"/>
+      <path d="M32 2.8 V5"/>
+      <path d="M14.8 20 H17"/>
+      <path d="M47 20 H49.2"/>
+    </g>
+  </g>
+  <!-- wordmark: 12x20 letter cells, 18-unit advance -->
+  <g transform="translate(86,29) scale(1.3)" fill="none" stroke-width="3"
+     stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#eaf2fb">
+      <path d="M0 0 L6 20 L12 0"/>                                    <!-- V -->
+      <path transform="translate(18,0)" d="M0 20 L6 0 L12 20 M2.7 11 L9.3 11"/>  <!-- A -->
+      <path transform="translate(36,0)" d="M0 20 L0 0 L12 20 L12 0"/> <!-- N -->
+      <path transform="translate(54,0)" d="M12 0 L3 0 L0 3 L0 17 L3 20 L12 20"/> <!-- C -->
+      <path transform="translate(72,0)" d="M0 0 V20 M12 0 V20 M0 10 H12"/>       <!-- H -->
+      <path transform="translate(90,0)" d="M3 0 L9 0 L12 3 L12 17 L9 20 L3 20 L0 17 L0 3 Z"/> <!-- O -->
+      <path transform="translate(108,0)" d="M0 20 V0 H9 L12 3 V7 L9 10 H0 M6.5 10 L12 20"/>   <!-- R -->
+    </g>
+    <g stroke="#2ff3ff">
+      <path transform="translate(134,0)" d="M0 20 L0 0 L12 20 L12 0"/>            <!-- N -->
+      <path transform="translate(152,0)" d="M12 0 H3 L0 3 V17 L3 20 H12 V10 H7.5"/> <!-- G -->
+    </g>
+  </g>
+</svg>

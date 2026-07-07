@@ -59,7 +59,10 @@ const SHELL = [
   "/static/vendor/fonts/JetBrainsMono-400.woff2",
   "/static/vendor/fonts/JetBrainsMono-500.woff2",
   "/static/vendor/fonts/JetBrainsMono-700.woff2",
-  // App icons.
+  // App icons + logo (favicon.svg + logo.svg are referenced by index.html /
+  // style.css, so cache them for offline too).
+  "/static/favicon.svg",
+  "/static/icons/logo.svg",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
   "/static/icons/icon-maskable-512.png",

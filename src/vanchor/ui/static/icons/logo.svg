@@ -1,0 +1,22 @@
+<!-- Vanchor-NG mark: an anchor whose crown is a GPS reticle ring (position
+     fix + holding ground = virtual anchoring). Geometry lives on a 64-unit
+     grid with >=5-unit strokes so it stays legible at 16 px. The dark tile
+     makes it work on the dark UI and on white README/GitHub backgrounds. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Vanchor-NG">
+  <rect width="64" height="64" rx="14" fill="#071018"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- anchor body -->
+    <g stroke="#eaf2fb" stroke-width="5">
+      <path d="M32 29.5 V57"/>
+      <path d="M22 37 H42"/>
+      <path d="M14.76 39 A17.5 17.5 0 1 0 49.24 39"/>
+    </g>
+    <!-- GPS reticle ring as the anchor's crown -->
+    <g stroke="#2ff3ff" stroke-width="5">
+      <circle cx="32" cy="20" r="8"/>
+      <path d="M32 2.8 V5"/>
+      <path d="M14.8 20 H17"/>
+      <path d="M47 20 H49.2"/>
+    </g>
+  </g>
+</svg>

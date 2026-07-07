@@ -1,0 +1,19 @@
+<!-- Favicon = the Vanchor-NG mark (see icons/logo.svg). Kept as its own file
+     so /static/favicon.svg is a stable URL; strokes are chunky enough that
+     the anchor + reticle ring still read at 16 px. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Vanchor-NG">
+  <rect width="64" height="64" rx="14" fill="#071018"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#eaf2fb" stroke-width="5">
+      <path d="M32 29.5 V57"/>
+      <path d="M22 37 H42"/>
+      <path d="M14.76 39 A17.5 17.5 0 1 0 49.24 39"/>
+    </g>
+    <g stroke="#2ff3ff" stroke-width="5">
+      <circle cx="32" cy="20" r="8"/>
+      <path d="M32 2.8 V5"/>
+      <path d="M14.8 20 H17"/>
+      <path d="M47 20 H49.2"/>
+    </g>
+  </g>
+</svg>
