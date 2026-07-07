@@ -282,7 +282,10 @@ function setConn(state, text) {
 
 VA.connect = function () {
   let _pingInterval = null;
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  // Scheme-aware: on the HTTPS port the page is a secure context and the
+  // browser BLOCKS plain ws:// as mixed content — use wss:// there.
+  const wsProto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${wsProto}://${location.host}/ws`);
   ws.onopen = () => {
     setConn("connected", "connected");
     // Offline-first command queue (#26): the link is back, so replay commands
