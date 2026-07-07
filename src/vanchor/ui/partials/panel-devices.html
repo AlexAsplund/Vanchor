@@ -119,6 +119,19 @@
             </div>
           </div>
 
+          <!-- Phone-as-sensor sharing (hardware.drivers.phone). The toggle makes
+               THIS browser stream its geolocation + compass heading to the boat;
+               select source "Phone" for GPS/Compass above to consume it. -->
+          <div class="dev-srcrow" id="phone-share-row">
+            <label class="switch"><input type="checkbox" id="phone-share" /><span class="track"></span>
+              📱 Share this phone's GPS &amp; compass</label>
+          </div>
+          <div class="hint" id="phone-share-status" hidden></div>
+          <div class="hint">⚠ Phone sensors are <b>crude and vary wildly</b> between
+            devices — experimentation only, not navigation. GPS sharing needs the
+            <b>https://</b> address. One device feeds at a time; another takes over
+            only when the feeder disconnects (taking the helm never switches it).</div>
+
           <div id="dev-serial" class="hidden">
             <div class="ctx-sub">Serial ports</div>
             <div class="hint">Pick a detected port. Prefer a "stable" entry (<code>/dev/serial/by-id/…</code> or an on-board <code>/dev/serial0</code>) — it survives reboots &amp; replugging; a raw <code>/dev/ttyUSB0</code> can get renumbered. Set each port's baud to match its device.</div>

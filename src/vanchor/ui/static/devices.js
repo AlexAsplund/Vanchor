@@ -38,6 +38,7 @@
     nmea: "NMEA (from phone/plotter)",
     hwt901b: "HWT901B AHRS",
     ublox: "u-blox M9N (UBX)",
+    phone: "Phone (this device)",
     none: "Not connected",
   };
   const MOTOR_LABELS = {
@@ -2164,4 +2165,132 @@
     if (card.open && !loaded) load();
     if (!card.open) closeDebug();   // never leak the poll
   });
+})();
+
+/* Vanchor-NG — phone-as-sensor streaming (hardware.drivers.phone).
+ *
+ * When "Share this phone's GPS & compass" is on, this browser streams
+ * geolocation fixes + device-orientation heading to the boat over the WS
+ * (VA.sendVolatile: fire-and-forget, never queued). The SERVER arbitrates:
+ * one feeder per sensor kind; others are rejected; a slot frees only when the
+ * feeding client disconnects. Selecting source "Phone" in Devices is what
+ * actually consumes the stream. Disclaimer: crude, varies wildly by device.
+ */
+"use strict";
+
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const box = $("phone-share");
+  if (!box || !window.VA) return;
+  const statusEl = $("phone-share-status");
+  const KEY = "vanchor-phone-share";
+
+  let geoWatch = null;
+  let orientHandler = null;
+  let lastCompassSend = 0;
+  const state = { gps: "", compass: "" };   // last server-reported status
+
+  function setStatus(msg) {
+    if (!statusEl) return;
+    statusEl.hidden = !msg;
+    statusEl.textContent = msg || "";
+  }
+
+  function summarize() {
+    const words = [];
+    for (const kind of ["gps", "compass"]) {
+      const st = state[kind];
+      if (!st) continue;
+      if (st === "accepted") words.push(kind.toUpperCase() + ": feeding the boat");
+      else if (st === "rejected") words.push(kind.toUpperCase() + ": another device is feeding");
+      else if (st === "inactive") words.push(kind.toUpperCase() + ": select source “Phone” in Devices");
+    }
+    if (words.length) setStatus("📱 " + words.join(" · "));
+  }
+  VA.onPhoneSensors((t) => {
+    if (t && t.kind) { state[t.kind] = t.status || ""; summarize(); }
+  });
+
+  function startGps() {
+    if (geoWatch !== null) return;
+    if (!("geolocation" in navigator)) {
+      setStatus("⚠ No geolocation in this browser.");
+      return;
+    }
+    if (!window.isSecureContext) {
+      setStatus("⚠ GPS sharing needs the https:// address (compass may still work).");
+    }
+    try {
+      geoWatch = navigator.geolocation.watchPosition((pos) => {
+        const c = pos.coords;
+        VA.sendVolatile({
+          type: "phone_gps", lat: c.latitude, lon: c.longitude,
+          accuracy: c.accuracy, speed: c.speed, heading: c.heading,
+        });
+      }, (err) => {
+        setStatus("⚠ GPS sharing failed: " + (err && err.message ? err.message : "denied"));
+      }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
+    } catch (e) { /* ignore */ }
+  }
+
+  function onOrient(ev) {
+    // iOS exposes a fused magnetic heading; elsewhere absolute alpha is
+    // 0 = north counter-clockwise, so heading = 360 - alpha.
+    let heading = null;
+    if (typeof ev.webkitCompassHeading === "number") heading = ev.webkitCompassHeading;
+    else if (ev.absolute === true && typeof ev.alpha === "number") heading = 360 - ev.alpha;
+    if (heading === null || !isFinite(heading)) return;
+    const now = Date.now();
+    if (now - lastCompassSend < 250) return;   // ~4 Hz is plenty
+    lastCompassSend = now;
+    VA.sendVolatile({ type: "phone_compass", heading: (heading % 360 + 360) % 360 });
+  }
+
+  function startCompass() {
+    if (orientHandler) return;
+    orientHandler = onOrient;
+    if ("ondeviceorientationabsolute" in window) {
+      window.addEventListener("deviceorientationabsolute", orientHandler);
+    } else {
+      window.addEventListener("deviceorientation", orientHandler);
+    }
+  }
+
+  function stopAll() {
+    if (geoWatch !== null && "geolocation" in navigator) {
+      try { navigator.geolocation.clearWatch(geoWatch); } catch (e) { /* ignore */ }
+    }
+    geoWatch = null;
+    if (orientHandler) {
+      window.removeEventListener("deviceorientationabsolute", orientHandler);
+      window.removeEventListener("deviceorientation", orientHandler);
+      orientHandler = null;
+    }
+    state.gps = state.compass = "";
+    setStatus("");
+  }
+
+  async function start() {
+    // iOS needs an explicit permission request from a user gesture.
+    try {
+      if (typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function") {
+        await DeviceOrientationEvent.requestPermission();
+      }
+    } catch (e) { /* denied -> compass just won't fire */ }
+    startGps();
+    startCompass();
+    setStatus("📱 Sharing… waiting for the boat to accept.");
+  }
+
+  box.addEventListener("change", () => {
+    try { localStorage.setItem(KEY, box.checked ? "1" : "0"); } catch (e) { /* ignore */ }
+    if (box.checked) start(); else stopAll();
+  });
+
+  // Restore across reloads. (GPS permission persists; iOS orientation
+  // permission may need the toggle re-flipped once per session.)
+  let saved = "0";
+  try { saved = localStorage.getItem(KEY) || "0"; } catch (e) { /* ignore */ }
+  if (saved === "1") { box.checked = true; start(); }
 })();

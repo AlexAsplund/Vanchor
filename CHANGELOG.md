@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Phone-as-sensor devices**: select source **Phone (this device)** for GPS
+  and/or compass, and a connected phone streams its browser geolocation (with
+  per-fix accuracy riding into the fusion) and magnetic compass heading to the
+  boat over the existing WebSocket ("Share this phone's GPS & compass" in
+  Settings → Devices). **Disclaimer: crude, varies wildly between devices —
+  experimentation, not navigation**; GPS sharing needs the https:// address.
+  Strict single-feeder arbitration: one client feeds each sensor kind; another
+  takes over automatically ONLY when the feeder disconnects — taking the helm
+  never reassigns the feeder.
+
 - **HTTPS listener** on a second port (default **8443**, `server.https_port`, 0
   disables): the same app served over TLS so secure-context browser APIs work on
   the boat — the real Screen Wake Lock API and full PWA/service-worker installs.

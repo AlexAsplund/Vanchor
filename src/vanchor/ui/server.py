@@ -1341,6 +1341,7 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             _helm["ws"] = websocket
         # Mark the link alive for the lost-connection failsafe (#64).
         runtime.client_connected()
+        _phone_status: dict = {}   # last phone-sensor status sent to THIS client
         try:
             # Send an immediate snapshot so the UI paints without waiting.
             await websocket.send_text(
@@ -1364,6 +1365,18 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                     await websocket.send_text(
                         json.dumps({"type": "pong", "v": _PROTOCOL_V})
                     )
+                    continue
+                if mtype in ("phone_gps", "phone_compass"):
+                    # Phone-sensor samples (hardware.drivers.phone). Allowed from
+                    # ANY client incl. observers -- feeding sensors is data
+                    # ingress, not control; the hub enforces one feeder per kind.
+                    kind = mtype.split("_", 1)[1]
+                    status = await runtime.phone_ingest(kind, id(websocket), msg)
+                    if _phone_status.get(kind) != status:
+                        _phone_status[kind] = status
+                        await websocket.send_text(json.dumps(
+                            {"type": "phone_sensors", "v": _PROTOCOL_V,
+                             "kind": kind, "status": status}))
                     continue
                 if mtype == "take_helm":
                     # Cooperative helm transfer (#24): claim the helm, demoting the
@@ -1416,6 +1429,7 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             # If the helm dropped, auto-promote the oldest remaining client (#24).
             if _helm["ws"] is websocket:
                 _promote_next_helm()
+            runtime.phone_disconnect(id(websocket))  # free feeder slots it held
             runtime.client_disconnected()
             # Tell the survivors the new roles + presence counts.
             with contextlib.suppress(Exception):

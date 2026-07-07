@@ -209,6 +209,8 @@ function _stopConfirmed(t) {
 // this client's role plus the shared presence scalars (clients/helm_present).
 // STOP always works regardless of role (server-enforced safety floor).
 VA.role = "observer";        // "helm" | "observer" — until the first role frame
+VA._phoneHandlers = [];
+VA.onPhoneSensors = (fn) => VA._phoneHandlers.push(fn);
 VA.helmPresent = false;      // is ANY client currently the helm?
 VA.clientCount = 1;          // number of connected clients
 VA.isHelm = function () { return VA.role === "helm"; };
@@ -307,6 +309,14 @@ VA.connect = function () {
     setTimeout(VA.connect, 1000);
   };
   ws.onerror = () => setConn("disconnected", "connection error");
+  // Fire-and-forget send for high-rate sensor streams: no queue, no ack —
+  // if the socket is down the sample is simply dropped (a stale phone fix is
+  // worse than no fix, so buffering would be wrong).
+  VA.sendVolatile = (obj) => {
+    if (ws && ws.readyState === 1) {
+      try { ws.send(JSON.stringify(obj)); } catch (e) { /* ignore */ }
+    }
+  };
   ws.onmessage = (ev) => {
     let t;
     try { t = JSON.parse(ev.data); } catch (err) { VA.logLine("bad telemetry: " + err); return; }
@@ -320,6 +330,9 @@ VA.connect = function () {
       case "ack":  _resolvePending(t.seq, true); return;
       case "nack": _resolvePending(t.seq, false, t.error); return;
       case "role": dispatchRole(t); return;      // multi-client role/presence (#24)
+      case "phone_sensors":                       // phone-as-sensor feeder status
+        (VA._phoneHandlers || []).forEach((fn) => { try { fn(t); } catch (e) { /* ignore */ } });
+        return;
       case "role_denied":                        // command rejected: not the helm
         VA.logLine("⛔ " + (t.error || "observer — take the helm to command"));
         if (t.seq != null) _resolvePending(t.seq, false, t.error);

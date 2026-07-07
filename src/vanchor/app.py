@@ -3491,6 +3491,22 @@ class Runtime:
 
         return out
 
+    async def phone_ingest(self, kind: str, client_id, data: dict) -> str:
+        """Feed one phone-sensor sample (see hardware.drivers.phone). Returns
+        accepted/rejected/inactive -- 'inactive' until a phone source is selected
+        in Devices, 'rejected' while ANOTHER client holds the feeder slot."""
+        hub = getattr(self, "phone_hub", None)
+        if hub is None:
+            return "inactive"
+        return await hub.ingest(kind, client_id, data)
+
+    def phone_disconnect(self, client_id) -> None:
+        """A WS client vanished: free any phone-sensor feeder slots it held (the
+        only automatic reassignment path -- helm changes never touch feeders)."""
+        hub = getattr(self, "phone_hub", None)
+        if hub is not None:
+            hub.on_disconnect(client_id)
+
     def device_debug(self, kind: str) -> dict:
         """Human-readable raw-data snapshot for one device (Devices -> Debug).
         Returns ``{ok, kind, source, debug}``; ``ok:false`` if no such device.
