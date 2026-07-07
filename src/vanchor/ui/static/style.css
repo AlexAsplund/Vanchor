@@ -107,6 +107,33 @@ body.light.theme-daylight {
 html[data-theme="daylight"] body::before,
 body.light.theme-daylight::before { background: var(--bg); }
 
+/* Daylight: the topbar and the always-on HUD/steering readouts keep their
+   DELIBERATELY dark backing (that darkness is what keeps them readable over the
+   bright Light/Topo/Satellite basemaps) -- so the text inside them must stay
+   LIGHT. Re-scope the dark-theme text/accent palette locally instead of letting
+   the page-wide dark-on-white palette bleed in (which made these panels read as
+   dim dark-on-dark in the daylight theme). */
+html[data-theme="daylight"] .topbar,
+html[data-theme="daylight"] .hud,
+html[data-theme="daylight"] .steering-gauge,
+html[data-theme="daylight"] .catch-fab,
+body.light.theme-daylight .topbar,
+body.light.theme-daylight .hud,
+body.light.theme-daylight .steering-gauge,
+body.light.theme-daylight .catch-fab {
+  --text: #eaf2fb;
+  --muted: #a3b4cc;
+  --faint: rgba(120, 170, 255, 0.05);
+  --line: rgba(130, 180, 255, 0.13);
+  --line-bright: rgba(130, 200, 255, 0.28);
+  --accent: #2ff3ff;
+  --accent-rgb: 47, 243, 255;
+  --accent-2: #2ce8b0;
+  --active: #2ce8b0;
+  --warn: #ffc24d;
+  --stop: #ff5d7e;
+}
+
 /* Deep tactical backdrop: gradient + faint grid + vignette, beneath the map. */
 body::before {
   content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
