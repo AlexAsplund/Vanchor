@@ -4,6 +4,21 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **New logo + icon set**: an anchor whose crown is a GPS reticle ring, in the
+  app's cyan/off-white on dark navy. Hand-authored SVGs (`icons/logo.svg`,
+  `icons/logo-wordmark.svg`, `favicon.svg`) with all PWA PNGs regenerated from
+  them; the topbar brand mark and README header now use the real mark instead
+  of the placeholder colored square.
+
+- **Phone GPS: server-side fix reissue** — first field RUM recording showed the
+  real cause of "regularly loses GPS fix": phone browsers deliver
+  `watchPosition` only on change and coalesce timers, so the stream is sparse
+  (~6 s) and bursty, tripping the 5 s loss-of-fix failsafe. The PhoneGps device
+  now re-publishes the last fix at 1 Hz while the stream is quiet, hard-capped
+  at 15 s (past that the silence is real and the failsafe fires) and only while
+  the feeder is still connected. End-to-end test pins the recorded field
+  cadence against the failsafe.
+
 - **Client RUM into the Debug recorder**: the UI now streams browser-side
   telemetry to the boat (`POST /api/client-log`, batched, bounded) — JS errors
   + unhandled rejections with stacks, WS open/close/error, tab visibility

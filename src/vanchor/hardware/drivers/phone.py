@@ -20,6 +20,7 @@ feeder role: commanding the boat and feeding it sensors are independent.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
@@ -134,9 +135,58 @@ class _PhoneSensorBase(Sensor):
 
 class PhoneGps(_PhoneSensorBase):
     """Browser Geolocation fixes -> rich GpsFix on ``gps.fix_in`` (the accuracy
-    field rides along, so the fusion/accuracy-weighted paths see it)."""
+    field rides along, so the fusion/accuracy-weighted paths see it).
+
+    Browsers deliver ``watchPosition`` only on CHANGE and coalesce timers, so a
+    stationary phone's stream is sparse and bursty (field RUM showed ~6 s
+    between real fixes) — which trips the boat's 5 s loss-of-fix failsafe. The
+    device therefore RE-PUBLISHES the last fix once per second while the stream
+    is quiet, hard-capped at ``_REISSUE_MAX_S``: past that the silence is real
+    and the failsafe must fire."""
 
     kind = "gps"
+    _REISSUE_EVERY_S = 1.0
+    _REISSUE_MAX_S = 15.0
+
+    def __init__(self, hub: PhoneSensorHub, bus: EventBus | None,
+                 mono_fn: Callable[[], float] = time.monotonic) -> None:
+        super().__init__(hub, bus, mono_fn)
+        self._last_fix: GpsFix | None = None
+        self._last_real_mono: float | None = None
+        self._reissued = 0
+        self._task: asyncio.Task | None = None
+
+    async def start(self) -> None:
+        await super().start()
+        try:
+            self._task = asyncio.get_running_loop().create_task(self._reissue_loop())
+        except RuntimeError:  # no running loop (sync construction in tests)
+            self._task = None
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+        await super().stop()
+
+    async def _reissue_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._REISSUE_EVERY_S)
+            await self._reissue_if_quiet(self._mono())
+
+    async def _reissue_if_quiet(self, now: float) -> None:
+        """Re-publish the last real fix when the stream has gone quiet (but not
+        dead) -- bridges browser timer coalescing without masking a true loss."""
+        if self._last_fix is None or self._last_real_mono is None:
+            return
+        age = now - self._last_real_mono
+        if not (self._REISSUE_EVERY_S < age <= self._REISSUE_MAX_S):
+            return
+        if self.hub.feeder(self.kind) is None:   # feeder gone -> stay silent
+            return
+        self._reissued += 1
+        if self.bus is not None:
+            await self.bus.publish(events.GPS_FIX_IN, self._last_fix)
 
     async def _on_sample(self, data: dict) -> None:
         lat, lon = data.get("lat"), data.get("lon")
@@ -155,7 +205,10 @@ class PhoneGps(_PhoneSensorBase):
         )
         self._count += 1
         self._last_desc = (f"{fix.point.lat:.6f},{fix.point.lon:.6f} "
-                           f"±{fix.h_acc_m or 0:.0f}m {fix.sog_knots:.1f}kn")
+                           f"±{fix.h_acc_m or 0:.0f}m {fix.sog_knots:.1f}kn"
+                           f" (+{self._reissued} reissued)")
+        self._last_fix = fix
+        self._last_real_mono = self._mono()
         if self.bus is not None:
             await self.bus.publish(events.GPS_FIX_IN, fix)
 
