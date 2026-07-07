@@ -4,6 +4,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Sim weather persists across restarts** — the Simulator panel's environment
+  (wind/current/gusts/variability) only mutated the live sim, so a restart
+  silently reverted to calm while the sliders still showed the old values.
+  The base weather now round-trips through `environment.json` (presets too),
+  and the panel sliders seed from server truth on load instead of stale
+  client-side positions.
+
 - **Fix: sim boat wouldn't move (100% thrust into a NullMotor)** — the Devices
   panel re-submits every field on save, so switching any source (e.g. GPS back
   to Auto) also persisted the Advanced split-channel selects as

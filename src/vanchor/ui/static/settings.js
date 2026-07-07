@@ -186,6 +186,24 @@
     const [id, out] = p.split(":"); if ($(id)) bindSlider(id, out, env);
   });
 
+  // Seed the weather sliders from SERVER truth once (the sim env persists
+  // across restarts now): set values + readouts directly — never dispatch
+  // events, which would re-send set_environment on every page load.
+  let envSeeded = false;
+  VA.onTelemetry((t) => {
+    if (envSeeded || !t || !t.environment) return;
+    envSeeded = true;
+    const map = { cs: "current_speed", cd: "current_dir", ws: "wind_speed",
+                  wd: "wind_dir", ga: "gust_amplitude_mps", wv: "wind_variability" };
+    for (const id in map) {
+      const el = $(id), out = $(id + "-val");
+      const v = t.environment[map[id]];
+      if (!el || v == null) continue;
+      el.value = v;
+      if (out) out.textContent = el.value;
+    }
+  });
+
   // ---- weather presets (task #44) ----
   // Populated from GET /api/weather/presets; selecting one fires weather_preset.
   const presetSel = $("weather-preset");

@@ -397,6 +397,15 @@ class _SimSteeringChannel:
         return None  # sim: health not applicable
 
 
+# Environment fields persisted across restarts (environment.json): the base
+# weather the Simulator panel sets. Derived live values (wind_gust_now) and
+# tuning constants (gust_tau_s) stay out.
+_ENV_PERSIST_KEYS = (
+    "current_speed", "current_dir", "wind_speed", "wind_dir",
+    "gust_amplitude_mps", "wind_variability", "current_variability",
+)
+
+
 class Runtime:
     """Owns every component and the background tasks that drive them."""
 
@@ -475,6 +484,22 @@ class Runtime:
             wind_variability=cfg.environment.wind_variability,
             current_variability=cfg.environment.current_variability,
         )
+
+        # Persisted Simulator-panel weather beats the config defaults, so a
+        # restart resumes the same conditions instead of silently going calm
+        # while the UI sliders still show the old values.
+        self._env_path = os.path.join(cfg.data_dir, "environment.json")
+        try:
+            with open(self._env_path, encoding="utf-8") as fh:
+                saved = json.load(fh)
+            for k in _ENV_PERSIST_KEYS:
+                if k in saved:
+                    setattr(environment, k, float(saved[k]))
+            logger.info("restored sim environment from %s", self._env_path)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning("could not restore %s: %s", self._env_path, exc)
 
         # --- devices: simulated and/or real serial hardware (per-device) -- #
         # Built via _construct_devices so the SAME logic powers a live reload
@@ -2120,6 +2145,7 @@ class Runtime:
                     setattr(env, key, float(command[key]))
             # Re-anchor the slow weather wander on the new base values.
             self.simulator.set_weather_base()
+            self._save_environment()
         elif ctype == "weather_preset" and self.simulator is not None:
             self._apply_weather_preset(str(command.get("id", "")))
         elif ctype == "sim_fault":
@@ -3024,6 +3050,20 @@ class Runtime:
                     logger.warning("could not remove cached chart %s: %s", path, exc)
         return {"ok": True, "removed": removed, "message": f"Cleared {removed} cached chart(s)."}
 
+    def _save_environment(self) -> None:
+        """Persist the sim weather base so a restart resumes the same
+        conditions (the Simulator panel's sliders otherwise looked set while
+        the restarted sim ran calm)."""
+        env = self._environment
+        data = {k: float(getattr(env, k, 0.0)) for k in _ENV_PERSIST_KEYS}
+        try:
+            tmp = self._env_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=1)
+            os.replace(tmp, self._env_path)
+        except OSError as exc:  # pragma: no cover - disk-full etc.
+            logger.warning("could not persist %s: %s", self._env_path, exc)
+
     def _apply_weather_preset(self, preset_id: str) -> None:
         """Apply a named weather preset to the live sim environment."""
         from .sim.weather import WEATHER_PRESETS
@@ -3041,6 +3081,7 @@ class Runtime:
         env.wind_variability = preset.wind_variability
         env.current_variability = preset.current_variability
         self.simulator.set_weather_base()
+        self._save_environment()
         logger.info("applied weather preset %r", preset_id)
 
     def apply_tuned_gains(self, job: str, params: dict, *, persist: bool = False) -> None:

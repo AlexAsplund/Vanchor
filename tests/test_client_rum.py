@@ -59,3 +59,31 @@ def test_entries_recorded_into_active_debug_session(tmp_path):
     client = [ln for ln in lines if ln.get("kind") == "client"]
     assert client and client[0]["data"]["event"] == "geo_gap"
     assert client[0]["data"]["session"] == "phone1"
+
+
+def test_environment_persists_across_restart(tmp_path):
+    """Field report: after a server restart with sim active, the weather was
+    silently calm until a slider was touched — set_environment only mutated the
+    live env. The base weather now round-trips through environment.json."""
+    rt = _rt(tmp_path)
+    rt.handle_command({"type": "set_environment", "wind_speed": 6.0,
+                       "wind_dir": 210.0, "current_speed": 0.4,
+                       "gust_amplitude_mps": 1.5})
+    assert (tmp_path / "environment.json").is_file()
+
+    rt2 = _rt(tmp_path)                      # "restart"
+    env = rt2._environment
+    assert env.wind_speed == 6.0
+    assert env.wind_dir == 210.0
+    assert env.current_speed == 0.4
+    assert env.gust_amplitude_mps == 1.5
+
+
+def test_weather_preset_persists_too(tmp_path):
+    rt = _rt(tmp_path)
+    rt.handle_command({"type": "weather_preset", "id": "coastal"})
+    saved = json.loads((tmp_path / "environment.json").read_text())
+    assert saved["wind_speed"] > 0
+
+    rt2 = _rt(tmp_path)
+    assert rt2._environment.wind_speed == saved["wind_speed"]
