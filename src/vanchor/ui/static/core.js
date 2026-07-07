@@ -287,6 +287,7 @@ VA.connect = function () {
   const wsProto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${wsProto}://${location.host}/ws`);
   ws.onopen = () => {
+    if (VA.rum) VA.rum("ws", "open");
     setConn("connected", "connected");
     // Offline-first command queue (#26): the link is back, so replay commands
     // buffered while it was down (dropping any past their TTL) and re-send once
@@ -303,6 +304,7 @@ VA.connect = function () {
     }, 2000);
   };
   ws.onclose = () => {
+    if (VA.rum) VA.rum("ws", "close", "warn");
     clearInterval(_pingInterval);
     _pingInterval = null;
     // Snapshot sent-but-unacked commands so they can be re-sent once on the next
@@ -311,7 +313,10 @@ VA.connect = function () {
     setConn("disconnected", "reconnecting…");
     setTimeout(VA.connect, 1000);
   };
-  ws.onerror = () => setConn("disconnected", "connection error");
+  ws.onerror = () => {
+    if (VA.rum) VA.rum("ws", "error", "warn");
+    setConn("disconnected", "connection error");
+  };
   // Fire-and-forget send for high-rate sensor streams: no queue, no ack —
   // if the socket is down the sample is simply dropped (a stale phone fix is
   // worse than no fix, so buffering would be wrong).
@@ -577,3 +582,61 @@ if ("serviceWorker" in navigator) {
     });
   });
 }
+
+// ---- client RUM -> POST /api/client-log (into logs + debug recordings) ----
+// Lightweight real-user-monitoring so field problems on a phone are
+// troubleshootable from the boat's Debug panel/recordings: JS errors,
+// unhandled rejections, WS lifecycle, tab visibility, and breadcrumbs other
+// modules add via VA.rum(event, msg, level). Batched every 5 s (sendBeacon on
+// pagehide); buffer is bounded so a crash-loop can't flood the boat.
+(function () {
+  const SID = Math.random().toString(36).slice(2, 8);   // this page-load's id
+  let buf = [];
+  let dropped = 0;
+  VA.rum = (event, msg, level) => {
+    if (buf.length >= 100) { dropped++; return; }
+    buf.push({
+      t: Date.now(), level: level || "info",
+      event: String(event).slice(0, 40),
+      msg: msg == null ? "" : String(msg).slice(0, 500),
+    });
+  };
+  function flush(unloading) {
+    if (!buf.length) return;
+    if (dropped) {
+      buf.push({ t: Date.now(), level: "warn", event: "rum_dropped", msg: String(dropped) });
+      dropped = 0;
+    }
+    const body = JSON.stringify({ session: SID, entries: buf.splice(0, 100) });
+    try {
+      if (unloading && navigator.sendBeacon) {
+        navigator.sendBeacon("/api/client-log", new Blob([body], { type: "application/json" }));
+        return;
+      }
+      fetch("/api/client-log", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body, keepalive: !!unloading,
+      }).catch(() => { /* offline — entries already spliced; next batch continues */ });
+    } catch (e) { /* ignore */ }
+  }
+  setInterval(() => flush(false), 5000);
+  window.addEventListener("pagehide", () => flush(true));
+  window.addEventListener("error", (ev) => {
+    const src = (ev.filename || "").split("/").pop();
+    VA.rum("js_error",
+      (ev.message || "") + " @" + src + ":" + (ev.lineno || 0) +
+      (ev.error && ev.error.stack ? " | " + String(ev.error.stack).slice(0, 400) : ""),
+      "error");
+  });
+  window.addEventListener("unhandledrejection", (ev) => {
+    VA.rum("js_rejection",
+      String((ev.reason && ev.reason.stack) || ev.reason).slice(0, 400), "error");
+  });
+  // Visibility is the #1 suspect whenever a phone-fed sensor goes quiet:
+  // browsers throttle/freeze JS (and geolocation) in hidden tabs.
+  document.addEventListener("visibilitychange", () => VA.rum("visibility", document.visibilityState));
+  VA.rum("client_hello",
+    (navigator.userAgent || "").slice(0, 160) +
+    " | secure:" + window.isSecureContext +
+    " | " + location.pathname + " | " + innerWidth + "x" + innerHeight);
+})();

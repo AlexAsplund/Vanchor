@@ -4,6 +4,22 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Client RUM into the Debug recorder**: the UI now streams browser-side
+  telemetry to the boat (`POST /api/client-log`, batched, bounded) — JS errors
+  + unhandled rejections with stacks, WS open/close/error, tab visibility
+  changes, wake-lock transitions, phone-sensor feeder changes, geolocation
+  errors and fix gaps, plus a per-page-load hello (UA/secure-context/viewport).
+  Entries land in the `vanchor.client` logger (visible in the Debug panel) and
+  as a structured `client` stream inside active debug recordings — so a phone
+  problem in the field is troubleshootable from the same recording as the boat
+  data. Other modules can add breadcrumbs via `VA.rum(event, msg, level)`.
+- **Phone GPS fix-loss hardening**: browsers only fire `watchPosition` on
+  change, so a stationary phone starved the boat into "fix lost" — the client
+  now re-sends the last fix every 2 s (up to 15 s, marked `cached`), and the
+  phone device's stale window widened 5 s → 10 s to absorb uneven browser
+  cadence. The remaining loss cases (tab hidden, screen lock) now show up
+  explicitly in RUM as `visibility`/`geo_gap` breadcrumbs.
+
 ## [1.5.0a3] — 2026-07-07
 
 - **Phone-as-sensor devices**: select source **Phone (this device)** for GPS

@@ -2186,6 +2186,9 @@
   const KEY = "vanchor-phone-share";
 
   let geoWatch = null;
+  let keepAlive = null;      // re-send timer: browsers only fire watchPosition
+  let lastFix = null;        // on CHANGE, so a stationary phone starves the boat
+  let lastFixT = 0;
   let orientHandler = null;
   let lastCompassSend = 0;
   const state = { gps: "", compass: "" };   // last server-reported status
@@ -2208,7 +2211,11 @@
     if (words.length) setStatus("📱 " + words.join(" · "));
   }
   VA.onPhoneSensors((t) => {
-    if (t && t.kind) { state[t.kind] = t.status || ""; summarize(); }
+    if (t && t.kind) {
+      state[t.kind] = t.status || "";
+      if (VA.rum) VA.rum("phone_feeder", t.kind + " -> " + t.status);
+      summarize();
+    }
   });
 
   function startGps() {
@@ -2223,13 +2230,30 @@
     try {
       geoWatch = navigator.geolocation.watchPosition((pos) => {
         const c = pos.coords;
-        VA.sendVolatile({
+        const now = Date.now();
+        if (lastFixT && now - lastFixT > 5000 && VA.rum) {
+          VA.rum("geo_gap", ((now - lastFixT) / 1000).toFixed(1) + "s between fixes", "warn");
+        }
+        lastFix = {
           type: "phone_gps", lat: c.latitude, lon: c.longitude,
           accuracy: c.accuracy, speed: c.speed, heading: c.heading,
-        });
+        };
+        lastFixT = now;
+        VA.sendVolatile(lastFix);
       }, (err) => {
+        if (VA.rum) VA.rum("geo_error", (err && err.message) || "denied", "warn");
         setStatus("⚠ GPS sharing failed: " + (err && err.message ? err.message : "denied"));
       }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
+      // Keep-alive: if the watcher goes quiet (stationary phone), re-send the
+      // last fix for up to 15 s so the boat doesn't declare the fix lost; past
+      // that the loss is real — stay silent and let the gap show honestly.
+      keepAlive = setInterval(() => {
+        if (!lastFix || !lastFixT) return;
+        const age = Date.now() - lastFixT;
+        if (age > 2500 && age < 15000) {
+          VA.sendVolatile(Object.assign({ cached: true }, lastFix));
+        }
+      }, 2000);
     } catch (e) { /* ignore */ }
   }
 
@@ -2261,6 +2285,8 @@
       try { navigator.geolocation.clearWatch(geoWatch); } catch (e) { /* ignore */ }
     }
     geoWatch = null;
+    if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
+    lastFix = null; lastFixT = 0;
     if (orientHandler) {
       window.removeEventListener("deviceorientationabsolute", orientHandler);
       window.removeEventListener("deviceorientation", orientHandler);

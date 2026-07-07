@@ -1323,6 +1323,16 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     async def trip_delete(trip_id: str) -> dict:
         return {"ok": runtime.trip_delete(trip_id)}
 
+    @app.post("/api/client-log")
+    async def client_log(payload: dict) -> dict:
+        """Client-RUM ingestion (see Runtime.client_log). Accepts batches from
+        the UI's VA.rum buffer; sendBeacon posts land here too."""
+        entries = payload.get("entries")
+        session = str(payload.get("session", "?"))
+        if not isinstance(entries, list):
+            return {"accepted": 0}
+        return {"accepted": runtime.client_log(entries, session)}
+
     @app.websocket("/ws")
     async def ws(websocket: WebSocket) -> None:
         await websocket.accept()

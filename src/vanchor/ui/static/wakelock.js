@@ -52,6 +52,7 @@
       sentinel = await navigator.wakeLock.request("screen");
       sentinel.addEventListener("release", function () { sentinel = null; });
       console.debug("[wakelock] acquired (api)");
+      if (VA.rum) VA.rum("wakelock", "acquired (api)");
     } catch (err) {
       console.debug("[wakelock] request() rejected:", err.message);
       videoAcquire();  // e.g. permissions policy / battery saver -> fall back
@@ -97,7 +98,10 @@
     if (!video.paused && !video.ended) return;          // already playing
     const p = video.play();
     if (p && p.then) {
-      p.then(function () { console.debug("[wakelock] acquired (video fallback)"); })
+      p.then(function () {
+        console.debug("[wakelock] acquired (video fallback)");
+        if (VA.rum) VA.rum("wakelock", "acquired (video fallback)");
+      })
        .catch(function (err) { console.debug("[wakelock] video play rejected:", err && err.message); });
     }
   }

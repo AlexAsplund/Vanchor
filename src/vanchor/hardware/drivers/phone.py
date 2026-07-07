@@ -34,7 +34,8 @@ from ..registry import register_driver
 
 logger = logging.getLogger("vanchor.phone")
 
-_STALE_S = 5.0  # no sample for this long -> unhealthy
+_STALE_S = 10.0  # no sample for this long -> unhealthy (browser geolocation
+#                  cadence is uneven; the client also keep-alives at 2 s)
 
 Sink = Callable[[dict], Awaitable[None]]
 

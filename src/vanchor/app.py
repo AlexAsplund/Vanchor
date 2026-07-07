@@ -3500,6 +3500,35 @@ class Runtime:
             return "inactive"
         return await hub.ingest(kind, client_id, data)
 
+    def client_log(self, entries: list, session: str = "?") -> int:
+        """Ingest client-RUM entries (JS errors, WS lifecycle, sensor
+        breadcrumbs) from a browser. Each entry is logged under the
+        ``vanchor.client`` logger -- which the debug recorder's root log
+        capture already includes -- AND written to an active recording as a
+        structured ``client`` stream, so field problems on a phone are
+        troubleshootable from the same recording as the boat data. Bounded:
+        at most 50 entries per call, fields truncated."""
+        client_logger = logging.getLogger("vanchor.client")
+        sid = str(session)[:12]
+        now = time.time()
+        accepted = 0
+        for e in entries[:50]:
+            if not isinstance(e, dict):
+                continue
+            level = str(e.get("level", "info")).lower()
+            event = str(e.get("event", ""))[:40]
+            msg = str(e.get("msg", ""))[:500]
+            lvl = (logging.ERROR if level == "error"
+                   else logging.WARNING if level in ("warn", "warning")
+                   else logging.INFO)
+            client_logger.log(lvl, "[%s] %s: %s", sid, event, msg)
+            if self.debug.active:
+                self.debug.write("client", {"session": sid, "level": level,
+                                            "event": event, "msg": msg,
+                                            "t": e.get("t")}, now)
+            accepted += 1
+        return accepted
+
     def phone_disconnect(self, client_id) -> None:
         """A WS client vanished: free any phone-sensor feeder slots it held (the
         only automatic reassignment path -- helm changes never touch feeders)."""
