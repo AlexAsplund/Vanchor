@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **HTTPS listener** on a second port (default **8443**, `server.https_port`, 0
+  disables): the same app served over TLS so secure-context browser APIs work on
+  the boat — the real Screen Wake Lock API and full PWA/service-worker installs.
+  Bring your own cert (`server.ssl_certfile`/`ssl_keyfile`) or a self-signed one
+  (CN=vanchor.local, SANs vanchor.local/localhost/127.0.0.1) is auto-generated
+  once into `<data_dir>/tls/` and reused, so a device trusts it once. Best-effort:
+  busy port or no openssl -> warning, plain HTTP unaffected. mDNS TXT advertises
+  `https_port` when active.
+
 - **Independent Steering + Thrust channels** (`docs/custom-hardware.md`): the motor
   device is split into two logical channels that can be sourced, configured
   (own port/baud/framing), health-checked and debugged independently — for custom

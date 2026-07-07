@@ -480,6 +480,15 @@ class ServerConfig:
     # Advertise the UI over mDNS so a phone/PWA can auto-find it at vanchor.local
     # (no IP typing). Graceful no-op if zeroconf is unavailable.
     mdns: bool = True
+    # Optional HTTPS listener on a SECOND port (same app). Secure-context browser
+    # APIs (Screen Wake Lock, full PWA/service-worker installs) need HTTPS, which
+    # plain-HTTP LAN serving can't give. 0 disables. If the port is busy or no
+    # cert can be produced, HTTPS is skipped with a warning (HTTP unaffected).
+    https_port: int = 8443
+    # Bring-your-own cert paths; both empty -> a self-signed cert with
+    # CN=vanchor.local is auto-generated once into <data_dir>/tls/ and reused.
+    ssl_certfile: str = ""
+    ssl_keyfile: str = ""
 
 
 @dataclass
@@ -1116,6 +1125,9 @@ battery:
 server:
   host: 127.0.0.1
   port: 8000
+  https_port: 8443           # HTTPS listener (wake-lock/PWA need it); 0 disables
+  ssl_certfile: ""           # bring-your-own cert; both empty -> auto-generate a
+  ssl_keyfile: ""            #   self-signed CN=vanchor.local into <data_dir>/tls/
 
 hardware:
   enabled: false            # master switch: false = full sim, true = all serial

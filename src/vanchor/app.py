@@ -4222,20 +4222,62 @@ def main(argv: list[str] | None = None) -> None:
     runtime = Runtime(config)
     app = create_app(runtime)
 
+    # Optional HTTPS listener on a second port: secure-context browser APIs
+    # (Screen Wake Lock, full PWA installs) need it. Best-effort -- a busy port
+    # or missing cert/openssl logs a warning and plain HTTP is unaffected.
+    tls_pair = None
+    if config.server.https_port:
+        from .tls import ensure_tls_cert, port_free
+        if not port_free(config.server.host, config.server.https_port):
+            logger.warning("HTTPS port %d is in use; HTTPS disabled",
+                           config.server.https_port)
+        else:
+            tls_pair = ensure_tls_cert(config.data_dir,
+                                       config.server.ssl_certfile,
+                                       config.server.ssl_keyfile)
+
     # Advertise over mDNS so a phone/PWA finds vanchor.local without an IP.
     advert = None
     if config.server.mdns:
         from . import __version__
         from .discovery import advertise
-        advert = advertise(config.server.port, config.server.host,
-                           properties={"version": __version__})
+        props = {"version": __version__}
+        if tls_pair:
+            props["https_port"] = str(config.server.https_port)
+        advert = advertise(config.server.port, config.server.host, properties=props)
+
+    log_level = (args.log_level or "info").lower()
+    servers = [uvicorn.Server(uvicorn.Config(
+        app, host=config.server.host, port=config.server.port, log_level=log_level))]
+    if tls_pair:
+        cert, key = tls_pair
+        servers.append(uvicorn.Server(uvicorn.Config(
+            app, host=config.server.host, port=config.server.https_port,
+            log_level=log_level, ssl_certfile=cert, ssl_keyfile=key)))
+        logger.info("HTTPS listening on port %d (cert: %s)",
+                    config.server.https_port, cert)
+
+    async def _serve_all() -> None:
+        # One event loop for every listener (the Runtime's tasks/bus live on it).
+        # We own the signal handling: uvicorn's per-server handlers would clobber
+        # each other, leaving all but the last server unstoppable on Ctrl-C.
+        import signal as _signal
+        for srv in servers:
+            srv.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+        loop = asyncio.get_running_loop()
+
+        def _stop() -> None:
+            for srv in servers:
+                srv.should_exit = True
+        for sig in (_signal.SIGINT, _signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _stop)
+            except NotImplementedError:  # pragma: no cover - non-unix
+                pass
+        await asyncio.gather(*(srv.serve() for srv in servers))
+
     try:
-        uvicorn.run(
-            app,
-            host=config.server.host,
-            port=config.server.port,
-            log_level=(args.log_level or "info").lower(),
-        )
+        asyncio.run(_serve_all())
     finally:
         if advert is not None:
             advert.close()
