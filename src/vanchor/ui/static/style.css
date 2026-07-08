@@ -482,8 +482,10 @@ body.hud-fade-text .catch-fab::after {
 .hud-tick { stroke: var(--muted); stroke-width: 1.5; }
 .hud-tick-n { stroke: var(--accent); }
 .hud-rose text { font: 800 11px Inter, sans-serif; text-anchor: middle; }
-.hud-rose-n { fill: var(--accent); }
-.hud-rose-c { fill: var(--muted); }
+/* Cardinal letters CENTER on their tick lines (default SVG text-anchor is
+   `start`, which hung every glyph to the right of its coordinate). */
+.hud-rose-n { fill: var(--accent); text-anchor: middle; }
+.hud-rose-c { fill: var(--muted); text-anchor: middle; }
 .hud-needle-n { fill: var(--accent); filter: drop-shadow(0 0 3px rgba(27,228,255,0.6)); }
 .hud-needle-s { fill: color-mix(in srgb, var(--text) 40%, transparent); }
 .hud-rose-hub { fill: var(--text); }
