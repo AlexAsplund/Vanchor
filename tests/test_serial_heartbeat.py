@@ -24,7 +24,7 @@ from vanchor.hardware.serial_devices import (
     parse_engine_status,
     parse_steering_feedback,
 )
-from vanchor.hardware.serial_link import FakeSerialTransport
+from vanchor.hardware.serial_link import FakeSerialTransport, append_crc
 
 
 # --------------------------------------------------------------------------- #
@@ -90,7 +90,7 @@ async def test_heartbeat_off_leaves_wire_format_unchanged() -> None:
     await asyncio.sleep(0)  # let the read loop come up (sets the transport flag)
     await mc.flush()
     await mc.flush()
-    assert t.written == ["CMD 0 F 0", "CMD 0 F 0"]  # no seq appended
+    assert t.written == [append_crc("CMD 0 F 0"), append_crc("CMD 0 F 0")]  # no seq appended
     assert mc.healthy is True  # unchanged health semantics
     await mc.stop()
 
@@ -101,7 +101,7 @@ async def test_heartbeat_on_appends_incrementing_seq() -> None:
     await mc.start()
     await mc.flush()
     await mc.flush()
-    assert t.written[:2] == ["CMD 0 F 0 1", "CMD 0 F 0 2"]
+    assert t.written[:2] == [append_crc("CMD 0 F 0 1"), append_crc("CMD 0 F 0 2")]
     await mc.stop()
 
 

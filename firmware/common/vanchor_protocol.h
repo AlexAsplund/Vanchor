@@ -43,10 +43,11 @@
  *       dir   = 'R' if thrust < 0 else 'F'
  *       steer = round(steering * 100)          steering in [-1, 1]
  *
- *   Examples:
- *       CMD 0 F 0          stopped, centred
- *       CMD 255 F 0        full ahead, centred
- *       CMD 128 R -100     half astern, hard port
+ *   Since protocol v2 the Pi appends a "*HH" CRC-8 suffix (see below).
+ *   Examples (with their real CRCs):
+ *       CMD 0 F 0*DC          stopped, centred
+ *       CMD 255 F 0*F0        full ahead, centred
+ *       CMD 128 R -100*3B     half astern, hard port
  *
  *   NOTE: a single CMD line carries BOTH thrust and steering. The engine board
  *   uses pwm+dir and ignores steer; the steering board uses steer and ignores
@@ -99,10 +100,24 @@
 #ifndef VANCHOR_PROTOCOL_H
 #define VANCHOR_PROTOCOL_H
 
-// Match HardwareConfig.baudrate (core/config.py, default 4800). If you bump the
-// Pi to 9600/57600/115200 for headroom, change it identically in both places.
+// Match the Pi's motor_baud/steering_baud/thrust_baud (core/config.py,
+// default 115200 since protocol v2). Native-USB boards ignore the number;
+// a real UART must agree on both ends. Change identically in both places.
 #ifndef VANCHOR_BAUD
-#define VANCHOR_BAUD 4800
+#define VANCHOR_BAUD 115200
+#endif
+
+// Protocol v2: every line MAY carry a trailing "*HH" — CRC-8 (poly 0x07,
+// init 0x00, unreflected) over all characters before the '*', two uppercase
+// hex digits. The Pi always sends it and verifies it on feedback.
+//   Compatibility matrix (each side degrades safely):
+//     new Pi  + old fw : old parser ignores the "*HH" tail -> drives fine
+//     old Pi  + new fw : no CRC on CMD -> rejected when VANCHOR_REQUIRE_CRC,
+//                        watchdog holds the safe state (visible, safe)
+//     new Pi  + new fw : full integrity both directions
+// Set VANCHOR_REQUIRE_CRC to 0 to accept CRC-less commands from an older Pi.
+#ifndef VANCHOR_REQUIRE_CRC
+#define VANCHOR_REQUIRE_CRC 1
 #endif
 
 // Failsafe: ramp to safe state if no valid CMD within this window (ms).
@@ -186,6 +201,82 @@ inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer,
   *steer = (int)s;
   if (seq) *seq = (int)q;
   return true;
+}
+
+/*
+ * CRC-8 (poly 0x07, init 0x00, unreflected) over `len` chars — mirrors
+ * crc8() in src/vanchor/hardware/serial_link.py exactly.
+ */
+inline unsigned char vanchorCrc8(const char *s, unsigned int len) {
+  unsigned char crc = 0;
+  for (unsigned int i = 0; i < len; i++) {
+    crc ^= (unsigned char)s[i];
+    for (unsigned char b = 0; b < 8; b++)
+      crc = (crc & 0x80) ? (unsigned char)((crc << 1) ^ 0x07)
+                         : (unsigned char)(crc << 1);
+  }
+  return crc;
+}
+
+/*
+ * Verify-and-strip a trailing "*HH" CRC suffix IN PLACE.
+ *   returns  1  suffix present and correct (line truncated at the '*')
+ *            0  suffix present but WRONG (line truncated; caller must reject)
+ *           -1  no suffix (older Pi; line untouched)
+ * A '*' not followed by exactly two hex digits at end-of-line is not a suffix.
+ */
+inline int vanchorCheckCrc(char *line) {
+  unsigned int len = 0;
+  while (line[len]) len++;
+  // tolerate a trailing '\r' the way the parser does
+  unsigned int end = len;
+  while (end > 0 && (line[end - 1] == '\r' || line[end - 1] == '\n')) end--;
+  if (end < 3 || line[end - 3] != '*') return -1;
+  unsigned char want = 0;
+  for (unsigned int i = end - 2; i < end; i++) {
+    char c = line[i];
+    unsigned char v;
+    if (c >= '0' && c <= '9') v = c - '0';
+    else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+    else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+    else return -1;
+    want = (unsigned char)((want << 4) | v);
+  }
+  line[end - 3] = '\0';                       // strip "*HH" (and the tail)
+  return vanchorCrc8(line, end - 3) == want ? 1 : 0;
+}
+
+/*
+ * Gate an inbound line per VANCHOR_REQUIRE_CRC. Strips a valid suffix in
+ * place so the line is ready for vanchorParseCmd(). Call BEFORE parsing:
+ *
+ *     if (vanchorAcceptLine(g_line) && vanchorParseCmd(g_line, ...)) { ... }
+ */
+inline bool vanchorAcceptLine(char *line) {
+  int v = vanchorCheckCrc(line);
+  if (v == 1) return true;          // verified (and stripped)
+  if (v == 0) return false;         // corrupted: never act on it
+#if VANCHOR_REQUIRE_CRC
+  return false;                     // no CRC and we require one (old Pi)
+#else
+  return true;                      // no CRC tolerated (VANCHOR_REQUIRE_CRC=0)
+#endif
+}
+
+/*
+ * Append "*HH" to a NUL-terminated outbound line (before the "\r\n").
+ * No-op if the buffer lacks the 4 spare bytes.
+ */
+inline void vanchorAppendCrc(char *buf, unsigned int cap) {
+  unsigned int len = 0;
+  while (buf[len]) len++;
+  if (len + 4 > cap) return;
+  unsigned char c = vanchorCrc8(buf, len);
+  const char *hex = "0123456789ABCDEF";
+  buf[len] = '*';
+  buf[len + 1] = hex[c >> 4];
+  buf[len + 2] = hex[c & 0x0F];
+  buf[len + 3] = '\0';
 }
 
 #endif  // VANCHOR_PROTOCOL_H

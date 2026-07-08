@@ -2,7 +2,7 @@
 
 Vanchor's motor is modelled as two logical channels — **steering** (the azimuth
 head) and **thrust** (the prop) — that normally live on one microcontroller (the
-default rig: a single Arduino speaking the combined `CMD <pwm> <dir> <steer>`
+default rig: a single Arduino speaking the combined `CMD <pwm> <dir> <steer>*HH`
 frame; see `firmware/README.md`). If your hardware isn't vanchor's own — say a
 modified trolling-motor head with its own steering servo and a separate thrust
 ESC — the channels can be sourced, configured, health-checked and debugged

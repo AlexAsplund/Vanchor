@@ -76,6 +76,8 @@ static void expectReject(const char *line) {
   if (ok) std::printf("  ^ line=\"%s\" was accepted but should be rejected\n", line);
 }
 
+static void runCrcVectors();  // protocol v2 vectors (defined below)
+
 int main() {
   // ---- Well-formed lines from the header's own examples ----------------
   expectOk("CMD 0 F 0", 0, 'F', 0);       // stopped, centred
@@ -146,6 +148,54 @@ int main() {
     std::printf("OK: all %d checks passed\n", g_checks);
     return 0;
   }
+  runCrcVectors();
+
   std::printf("FAILED: %d of %d checks failed\n", g_failures, g_checks);
   return 1;
+}
+
+// ---- protocol v2: CRC vectors shared with the Python suite ---------------
+// Reads ../../common/protocol_vectors.txt and checks vanchorCheckCrc() +
+// vanchorAcceptLine() agree with the recorded verdicts. Keeping ONE vector
+// file for both suites means the two CRC implementations cannot drift.
+static void runCrcVectors() {
+  FILE *f = std::fopen("../../common/protocol_vectors.txt", "r");
+  if (!f) { std::printf("FAIL cannot open protocol_vectors.txt\n"); ++g_failures; return; }
+  char raw[160];
+  while (std::fgets(raw, sizeof raw, f)) {
+    if (raw[0] == '#' || raw[0] == '\n') continue;
+    char verdict[8], line[144];
+    if (std::sscanf(raw, "%7s %[^\n]", verdict, line) != 2) continue;
+    char work[144];
+    std::strcpy(work, line);
+    int v = vanchorCheckCrc(work);
+    if (std::strcmp(verdict, "OK") == 0) {
+      CHECK(v == 1);
+      char work2[144]; std::strcpy(work2, line);
+      CHECK(vanchorAcceptLine(work2));
+    } else if (std::strcmp(verdict, "BAD") == 0) {
+      CHECK(v == 0);
+      char work2[144]; std::strcpy(work2, line);
+      CHECK(!vanchorAcceptLine(work2));
+    } else {  // NOCRC: absent suffix; acceptance depends on VANCHOR_REQUIRE_CRC
+      CHECK(v == -1);
+      char work2[144]; std::strcpy(work2, line);
+#if VANCHOR_REQUIRE_CRC
+      CHECK(!vanchorAcceptLine(work2));
+#else
+      CHECK(vanchorAcceptLine(work2));
+#endif
+    }
+  }
+  std::fclose(f);
+  // A stripped OK line must still parse as a command when it is a CMD.
+  char cmd[64] = "CMD 128 R -100 42*7D";
+  int pwm; char dir; int steer, seq;
+  CHECK(vanchorAcceptLine(cmd));
+  CHECK(vanchorParseCmd(cmd, &pwm, &dir, &steer, &seq));
+  CHECK(pwm == 128 && dir == 'R' && steer == -100 && seq == 42);
+  // Round-trip the append helper against a known value.
+  char out[64] = "A -12.4 1 -7 42";
+  vanchorAppendCrc(out, sizeof out);
+  CHECK(std::strcmp(out, "A -12.4 1 -7 42*C8") == 0);
 }

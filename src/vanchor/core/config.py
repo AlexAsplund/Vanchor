@@ -516,7 +516,7 @@ class HardwareConfig:
     # otherwise the shared ``baudrate`` (4800) is the right NMEA 0183 default.
     gps_baud: int = 38400
     compass_baud: int = 4800
-    motor_baud: int = 4800
+    motor_baud: int = 115200  # protocol v2 default (CRC lines; fw VANCHOR_BAUD)
     # Per-device serial framing. NMEA 0183 and the Arduino motor link are 8N1
     # (the defaults); override only for an unusual device. bytesize 5-8;
     # parity "N"/"E"/"O"/"M"/"S"; stopbits 1, 1.5 or 2.
@@ -540,8 +540,8 @@ class HardwareConfig:
     thrust_source: str | None = None    # "sim" | "serial" | "both" | "none"
     steering_port: str = ""             # blank -> fall back to motor_port
     thrust_port: str = ""               # blank -> fall back to motor_port
-    steering_baud: int = 4800
-    thrust_baud: int = 4800
+    steering_baud: int = 115200
+    thrust_baud: int = 115200
     steering_bytesize: int = 8
     steering_parity: str = "N"
     steering_stopbits: float = 1.0
@@ -1140,7 +1140,7 @@ hardware:
   # fix lag. compass_baud / motor_baud default to 4800 (NMEA 0183 standard).
   gps_baud: 38400
   compass_baud: 4800
-  motor_baud: 4800
+  motor_baud: 115200          # protocol v2 (CRC lines; match fw VANCHOR_BAUD)
   # Per-device source overrides (null = follow `enabled`). Mix sim + real freely:
   #   gps_source: nmea       # GPS from external NMEA (phone/plotter via nmea_tcp)
   #   motor_source: both     # drive the sim boat AND a real servo (bench testing)

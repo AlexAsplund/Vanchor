@@ -340,11 +340,12 @@ def test_load_dotenv_missing_file_is_noop(clean_env, tmp_path) -> None:
 
 
 def test_per_device_baud_defaults() -> None:
-    """gps_baud defaults to 38400; compass and motor default to 4800 (NMEA standard)."""
+    """gps_baud defaults to 38400; compass defaults to 4800 (NMEA standard);
+    motor/steering/thrust default to 115200 (protocol v2)."""
     hw = HardwareConfig()
     assert hw.gps_baud == 38400
     assert hw.compass_baud == 4800
-    assert hw.motor_baud == 4800
+    assert hw.motor_baud == 115200
     # The shared fallback stays at 4800 for backward compat.
     assert hw.baudrate == 4800
 
@@ -368,7 +369,7 @@ def test_per_device_baud_independent_of_shared_baudrate() -> None:
     assert cfg.hardware.baudrate == 9600
     assert cfg.hardware.gps_baud == 38400      # GPS default is not 9600
     assert cfg.hardware.compass_baud == 4800   # unchanged
-    assert cfg.hardware.motor_baud == 4800     # unchanged
+    assert cfg.hardware.motor_baud == 115200   # unchanged from v2 default
 
 
 def test_per_device_baud_env_overrides(clean_env) -> None:
@@ -390,7 +391,7 @@ def test_default_config_yaml_has_per_device_baud() -> None:
     hw = parsed.get("hardware", {})
     assert hw.get("gps_baud") == 38400
     assert hw.get("compass_baud") == 4800
-    assert hw.get("motor_baud") == 4800
+    assert hw.get("motor_baud") == 115200
 
 
 def test_water_env_overrides(clean_env) -> None:

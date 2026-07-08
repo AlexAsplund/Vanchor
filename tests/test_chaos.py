@@ -27,7 +27,7 @@ from vanchor.controller.safety import SafetyConfig, SafetyGovernor
 from vanchor.core.models import ControlModeName, GeoPoint, GpsFix, MotorCommand
 from vanchor.core.state import NavigationState
 from vanchor.hardware.serial_devices import SerialMotorController
-from vanchor.hardware.serial_link import FakeSerialTransport
+from vanchor.hardware.serial_link import FakeSerialTransport, append_crc
 
 
 # --------------------------------------------------------------------------- #
@@ -303,21 +303,21 @@ async def test_through_zero_reversal_gated_in_serial_driver():
 
     motor.apply(MotorCommand(thrust=1.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 255 F 0"
+    assert transport.written[-1] == append_crc("CMD 255 F 0")
 
     clock["t"] = 0.2  # one zero tick
     motor.apply(MotorCommand(thrust=0.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 0 F 0"
+    assert transport.written[-1] == append_crc("CMD 0 F 0")
 
     clock["t"] = 0.4  # reverse after a single zero tick -> still blocked
     motor.apply(MotorCommand(thrust=-1.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 0 F 0", "reverse bypassed the delay"
+    assert transport.written[-1] == append_crc("CMD 0 F 0"), "reverse bypassed the delay"
 
     clock["t"] = 1.2  # full delay elapsed from the first zero tick -> allowed
     await motor.flush()
-    assert transport.written[-1] == "CMD 255 R 0"
+    assert transport.written[-1] == append_crc("CMD 255 R 0")
 
 
 # --------------------------------------------------------------------------- #

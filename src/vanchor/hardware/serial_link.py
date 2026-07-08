@@ -248,3 +248,52 @@ class PySerialTransport(SerialTransport):
             raise RuntimeError("transport not open")
         self._writer.write(data)
         await self._writer.drain()
+
+
+# --------------------------------------------------------------------------- #
+# Line integrity: CRC-8 suffix (protocol v2)
+# --------------------------------------------------------------------------- #
+# Motor/steering command + feedback lines carry a trailing ``*HH`` — CRC-8
+# (poly 0x07, init 0x00, unreflected) over every character before the ``*``,
+# as two uppercase hex digits:   ``CMD 128 R -100 42*3A``
+#
+# Rationale (see firmware/README.md): USB CDC already CRCs the wire, so this
+# guards the OTHER corruption sources — boot spew, partial lines after a
+# reset, buffer overruns — while keeping newline framing and terminal
+# debuggability. Receivers REJECT a line whose CRC does not match and fall
+# back on the watchdog/health machinery; a line with NO ``*`` parses as
+# before (older peer), so mixed host/firmware versions degrade gracefully.
+
+def crc8(payload: str) -> int:
+    """CRC-8 (poly 0x07, init 0x00) over the ASCII payload."""
+    crc = 0
+    for ch in payload.encode("ascii", errors="replace"):
+        crc ^= ch
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+def append_crc(line: str) -> str:
+    """Return ``line`` with its ``*HH`` CRC-8 suffix appended."""
+    return f"{line}*{crc8(line):02X}"
+
+
+def strip_verify_crc(line: str) -> tuple[str, bool | None]:
+    """Split a possibly-CRC-suffixed line into ``(payload, verdict)``.
+
+    verdict ``True``  = CRC present and correct (payload has it stripped)
+            ``False`` = CRC present but WRONG (payload stripped; caller rejects)
+            ``None``  = no CRC suffix (older peer; payload returned verbatim)
+    A ``*`` without exactly two trailing hex digits is not a CRC suffix.
+    """
+    star = line.rfind("*")
+    if star < 0 or len(line) - star != 3:
+        return line, None
+    tail = line[star + 1:]
+    try:
+        want = int(tail, 16)
+    except ValueError:
+        return line, None
+    payload = line[:star]
+    return payload, crc8(payload) == want

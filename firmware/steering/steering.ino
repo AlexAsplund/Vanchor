@@ -174,7 +174,10 @@ static void pollSerial() {
       if (g_lineLen > 0) {
         g_line[g_lineLen] = '\0';
         int pwm, steer, seq; char dir;
-        if (vanchorParseCmd(g_line, &pwm, &dir, &steer, &seq)) {
+        // Protocol v2: verify + strip the *HH CRC before parsing. A corrupted
+        // (or, with VANCHOR_REQUIRE_CRC, CRC-less) line is dropped whole; the
+        // watchdog holds the safe state if that persists.
+        if (vanchorAcceptLine(g_line) && vanchorParseCmd(g_line, &pwm, &dir, &steer, &seq)) {
           onCommand(pwm, dir, steer);
           g_lastSeq = seq;              // echo this back in the A feedback line
         }
@@ -296,12 +299,14 @@ static void updateControl() {
     int wrap = (int)(g_angleDeg / STEER_RANGE_DEG * 100.0f);
     if (wrap > 100) wrap = 100;
     if (wrap < -100) wrap = -100;
-    Serial.print("A ");
-    Serial.print(g_angleDeg, 1);
-    Serial.print(g_feedbackOk ? " 1 " : " 0 ");
-    Serial.print(wrap);
-    Serial.print(' ');
-    Serial.print(g_lastSeq);      // heartbeat echo (roadmap #18)
+    // Build the whole line in a buffer so the *HH CRC covers it (v2).
+    char ang[12];
+    dtostrf(g_angleDeg, 0, 1, ang);
+    char fb[VANCHOR_LINE_MAX];
+    snprintf(fb, sizeof fb, "A %s %d %d %d",
+             ang, g_feedbackOk ? 1 : 0, wrap, g_lastSeq);
+    vanchorAppendCrc(fb, sizeof fb);
+    Serial.print(fb);
     Serial.print("\r\n");
   }
 }

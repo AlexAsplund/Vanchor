@@ -21,7 +21,7 @@ from typing import Awaitable, Callable
 import pytest
 
 from vanchor.hardware.serial_channels import SerialSteeringChannel, SerialThrustChannel
-from vanchor.hardware.serial_link import FakeSerialTransport
+from vanchor.hardware.serial_link import FakeSerialTransport, append_crc
 
 
 # --------------------------------------------------------------------------- #
@@ -72,7 +72,7 @@ class TestSerialSteeringChannel:
         ch.set_normalized(0.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER 0"]
+        assert t.written == [append_crc("STEER 0")]
 
     async def test_frame_full_port(self) -> None:
         """Full port (-1.0) -> STEER -100"""
@@ -81,7 +81,7 @@ class TestSerialSteeringChannel:
         ch.set_normalized(-1.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER -100"]
+        assert t.written == [append_crc("STEER -100")]
 
     async def test_frame_full_starboard(self) -> None:
         """Full starboard (+1.0) -> STEER 100"""
@@ -90,7 +90,7 @@ class TestSerialSteeringChannel:
         ch.set_normalized(1.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER 100"]
+        assert t.written == [append_crc("STEER 100")]
 
     async def test_frame_midpoint(self) -> None:
         """Half starboard (0.5) -> STEER 50"""
@@ -99,7 +99,7 @@ class TestSerialSteeringChannel:
         ch.set_normalized(0.5)
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER 50"]
+        assert t.written == [append_crc("STEER 50")]
 
     async def test_frame_rounding(self) -> None:
         """Round-to-int: 0.156 -> round(15.6) = 16"""
@@ -108,7 +108,7 @@ class TestSerialSteeringChannel:
         ch.set_normalized(0.156)
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER 16"]
+        assert t.written == [append_crc("STEER 16")]
 
     # -- clamping ------------------------------------------------------------ #
 
@@ -119,7 +119,7 @@ class TestSerialSteeringChannel:
         ch.set_normalized(2.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER 100"]
+        assert t.written == [append_crc("STEER 100")]
 
     async def test_clamp_low(self) -> None:
         """set_normalized(-5.0) -> clamped to -1.0 -> STEER -100"""
@@ -128,7 +128,7 @@ class TestSerialSteeringChannel:
         ch.set_normalized(-5.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER -100"]
+        assert t.written == [append_crc("STEER -100")]
 
     async def test_flush_clamps_independently(self) -> None:
         """flush() re-clamps before formatting: avoids out-of-range frames
@@ -139,7 +139,7 @@ class TestSerialSteeringChannel:
         ch._value = 1.5  # pyright: ignore[reportPrivateUsage]
         await t.open()
         await ch.flush()
-        assert t.written == ["STEER 100"]
+        assert t.written == [append_crc("STEER 100")]
 
     # -- neutral on stop ----------------------------------------------------- #
 
@@ -153,7 +153,7 @@ class TestSerialSteeringChannel:
         t.feed_eof()  # unblock the supervisor read loop
         await channel_start_stop(ch, t)
         # The stop command is the last written line.
-        assert t.written and t.written[-1] == "STEER 0"
+        assert t.written and t.written[-1] == append_crc("STEER 0")
 
     # -- feedback parsing -> healthy ----------------------------------------- #
 
@@ -286,7 +286,7 @@ class TestSerialSteeringChannel:
         await ch.flush()
         await ch.flush()
         assert len(t.written) == 2
-        assert t.written[0] == t.written[1] == "STEER 50"
+        assert t.written[0] == t.written[1] == append_crc("STEER 50")
 
     # -- debug --------------------------------------------------------------- #
 
@@ -345,7 +345,7 @@ class TestSerialSteeringChannel:
         ch._value = float("nan")  # pyright: ignore[reportPrivateUsage]
         await t.open()
         await ch.flush()  # must not raise
-        assert t.written == ["STEER 0"]
+        assert t.written == [append_crc("STEER 0")]
 
 
 # =========================================================================== #
@@ -364,7 +364,7 @@ class TestSerialThrustChannel:
         ch.set_normalized(0.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["THRUST 0 F"]
+        assert t.written == [append_crc("THRUST 0 F")]
 
     async def test_frame_full_forward(self) -> None:
         """Full forward (+1.0) -> THRUST 255 F"""
@@ -373,7 +373,7 @@ class TestSerialThrustChannel:
         ch.set_normalized(1.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["THRUST 255 F"]
+        assert t.written == [append_crc("THRUST 255 F")]
 
     async def test_frame_full_reverse(self) -> None:
         """Full reverse (-1.0) -> THRUST 255 R"""
@@ -382,7 +382,7 @@ class TestSerialThrustChannel:
         ch.set_normalized(-1.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["THRUST 255 R"]
+        assert t.written == [append_crc("THRUST 255 R")]
 
     async def test_frame_half_forward(self) -> None:
         """Half forward (0.5) -> THRUST 128 F (round(127.5) = 128)"""
@@ -391,7 +391,7 @@ class TestSerialThrustChannel:
         ch.set_normalized(0.5)
         await t.open()
         await ch.flush()
-        assert t.written == ["THRUST 128 F"]
+        assert t.written == [append_crc("THRUST 128 F")]
 
     async def test_frame_direction_boundary(self) -> None:
         """Tiny negative -> R; tiny positive -> F; exactly 0 -> F."""
@@ -401,15 +401,15 @@ class TestSerialThrustChannel:
 
         ch.set_normalized(-0.001)
         await ch.flush()
-        assert t.written[-1].endswith(" R")
+        assert t.written[-1] == append_crc("THRUST 0 R")
 
         ch.set_normalized(0.001)
         await ch.flush()
-        assert t.written[-1].endswith(" F")
+        assert t.written[-1] == append_crc("THRUST 0 F")
 
         ch.set_normalized(0.0)
         await ch.flush()
-        assert t.written[-1] == "THRUST 0 F"
+        assert t.written[-1] == append_crc("THRUST 0 F")
 
     # -- clamping ------------------------------------------------------------ #
 
@@ -420,7 +420,7 @@ class TestSerialThrustChannel:
         ch.set_normalized(3.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["THRUST 255 F"]
+        assert t.written == [append_crc("THRUST 255 F")]
 
     async def test_clamp_low(self) -> None:
         """set_normalized(-3.0) -> clamped to -1.0 -> THRUST 255 R"""
@@ -429,7 +429,7 @@ class TestSerialThrustChannel:
         ch.set_normalized(-3.0)
         await t.open()
         await ch.flush()
-        assert t.written == ["THRUST 255 R"]
+        assert t.written == [append_crc("THRUST 255 R")]
 
     async def test_flush_clamps_independently(self) -> None:
         """flush() re-clamps: internal _value > 1.0 -> THRUST 255 F."""
@@ -438,7 +438,7 @@ class TestSerialThrustChannel:
         ch._value = 2.0  # pyright: ignore[reportPrivateUsage]
         await t.open()
         await ch.flush()
-        assert t.written == ["THRUST 255 F"]
+        assert t.written == [append_crc("THRUST 255 F")]
 
     # -- neutral on stop ----------------------------------------------------- #
 
@@ -450,7 +450,7 @@ class TestSerialThrustChannel:
         ch.set_normalized(0.9)
         t.feed_eof()
         await channel_start_stop(ch, t)
-        assert t.written and t.written[-1] == "THRUST 0 F"
+        assert t.written and t.written[-1] == append_crc("THRUST 0 F")
 
     # -- feedback parsing -> engine status ----------------------------------- #
 
@@ -577,7 +577,7 @@ class TestSerialThrustChannel:
         await ch.flush()
         await ch.flush()
         assert len(t.written) == 2
-        assert t.written[0] == t.written[1] == "THRUST 128 F"
+        assert t.written[0] == t.written[1] == append_crc("THRUST 128 F")
 
     # -- debug --------------------------------------------------------------- #
 
@@ -635,7 +635,7 @@ class TestSerialThrustChannel:
         ch._value = float("nan")  # pyright: ignore[reportPrivateUsage]
         await t.open()
         await ch.flush()  # must not raise
-        assert t.written == ["THRUST 0 F"]
+        assert t.written == [append_crc("THRUST 0 F")]
 
 
 # =========================================================================== #
@@ -662,8 +662,8 @@ class TestChannelIntegration:
         motor.apply(MotorCommand(thrust=0.5, steering=-0.25))
         await motor.flush()
 
-        assert t_thrust.written == ["THRUST 128 F"]
-        assert t_steer.written == ["STEER -25"]
+        assert t_thrust.written == [append_crc("THRUST 128 F")]
+        assert t_steer.written == [append_crc("STEER -25")]
 
     async def test_split_motor_stop_zeroes_both(self) -> None:
         """A STOP-shaped command zeroes both channels (Constraint 4)."""
@@ -687,8 +687,8 @@ class TestChannelIntegration:
         motor.apply(MotorCommand(thrust=0.0, steering=0.0))
         await motor.flush()
 
-        assert t_thrust.written[-1] == "THRUST 0 F"
-        assert t_steer.written[-1] == "STEER 0"
+        assert t_thrust.written[-1] == append_crc("THRUST 0 F")
+        assert t_steer.written[-1] == append_crc("STEER 0")
 
     async def test_one_channel_write_failure_does_not_block_other(self) -> None:
         """Write failure on thrust must not prevent steering from being written."""
@@ -709,7 +709,7 @@ class TestChannelIntegration:
         await motor.flush()  # Must not raise, even with thrust transport down.
 
         # Steering still gets its frame.
-        assert t_steer.written == ["STEER 30"]
+        assert t_steer.written == [append_crc("STEER 30")]
         # Thrust transport was down -> nothing written.
         assert t_thrust.written == []
 

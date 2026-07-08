@@ -1,0 +1,22 @@
+# Golden protocol-integrity vectors — shared by BOTH test suites:
+#   tests/test_protocol_crc.py               (Pi / Python side)
+#   firmware/steering/tests/test_parse_cmd   (firmware / C side)
+# Format:  <VERDICT> <line>
+#   OK    = CRC present and correct  -> accept
+#   BAD   = CRC present but wrong    -> reject (both sides, always)
+#   NOCRC = no *HH suffix (old peer) -> Python accepts; firmware accepts only
+#           when compiled with VANCHOR_REQUIRE_CRC=0
+# CRC-8 poly 0x07, init 0x00, unreflected, over everything before the '*'.
+OK    CMD 0 F 0*DC
+OK    CMD 255 F 0*F0
+OK    CMD 128 R -100*3B
+OK    CMD 128 R -100 42*7D
+OK    STEER -50*AD
+OK    THRUST 128 F*CD
+OK    A -12.4 1 -7 42*C8
+OK    E 128 F RUN 42*2E
+BAD   CMD 0 F 0*FF
+BAD   CMD 255 F 0*00
+BAD   A -12.4 1 -7 42*C9
+NOCRC CMD 0 F 0
+NOCRC A -12.4 1 -7

@@ -214,7 +214,7 @@ def test_partial_override_switches_whole_channel_to_its_own_framing():
     )
     t = hw.channel_link("thrust")
     assert t["port"] == "/dev/ttyUSB2"   # blank channel port -> motor_port
-    assert t["baud"] == 4800             # channel default, NOT motor's 9600
+    assert t["baud"] == 115200           # channel default (v2: 115200), NOT motor's 9600
     assert t["bytesize"] == 8 and t["parity"] == "N" and t["stopbits"] == 1.0
 
 

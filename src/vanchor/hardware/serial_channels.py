@@ -48,7 +48,7 @@ from .serial_devices import (
     parse_engine_status,
     parse_steering_feedback,
 )
-from .serial_link import SerialTransport
+from .serial_link import SerialTransport, append_crc
 from .split_motor import MotorChannel
 
 logger = logging.getLogger("vanchor.hardware.serial")
@@ -128,7 +128,7 @@ class SerialSteeringChannel(MotorChannel):
             self._feedback_task = None
         # Best-effort: command a centred stop before closing.
         try:
-            await self.transport.write_line(self._format(0))
+            await self.transport.write_line(append_crc(self._format(0)))
         except Exception:  # pragma: no cover - defensive
             logger.debug("%s: failed to send stop command on shutdown", type(self).__name__)
         await self.transport.close()
@@ -145,7 +145,7 @@ class SerialSteeringChannel(MotorChannel):
         """
         value = self._value if math.isfinite(self._value) else 0.0
         steer = min(100, max(-100, round(value * 100)))
-        line = self._format(steer)
+        line = append_crc(self._format(steer))   # protocol v2 (*HH)
         self._last_frame = line
         try:
             await self.transport.write_line(line)
@@ -276,7 +276,7 @@ class SerialThrustChannel(MotorChannel):
             self._feedback_task = None
         # Best-effort: command a stop before closing.
         try:
-            await self.transport.write_line(self._format(0, "F"))
+            await self.transport.write_line(append_crc(self._format(0, "F")))
         except Exception:  # pragma: no cover - defensive
             logger.debug("%s: failed to send stop command on shutdown", type(self).__name__)
         await self.transport.close()
@@ -294,7 +294,7 @@ class SerialThrustChannel(MotorChannel):
         value = self._value if math.isfinite(self._value) else 0.0
         pwm = min(255, max(0, round(abs(value) * 255)))
         direction = "R" if value < 0 else "F"
-        line = self._format(pwm, direction)
+        line = append_crc(self._format(pwm, direction))   # protocol v2 (*HH)
         self._last_frame = line
         try:
             await self.transport.write_line(line)

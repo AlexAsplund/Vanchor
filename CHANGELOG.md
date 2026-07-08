@@ -4,6 +4,19 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Serial protocol v2: CRC-8 line integrity + 115200 baud** — every
+  motor/steering line (`CMD`/`STEER`/`THRUST` out, `A`/`E` feedback in) now
+  carries a `*HH` CRC-8 suffix; receivers on both sides reject a corrupted
+  line whole and lean on the existing watchdog/health machinery. Golden
+  vectors (`firmware/common/protocol_vectors.txt`) are exercised by BOTH the
+  Python suite and the host-compiled firmware test so the two implementations
+  cannot drift. Motor-family baud defaults 4800 → 115200 (`motor_baud`,
+  `steering_baud`, `thrust_baud`; reflash firmware or set `VANCHOR_BAUD` to
+  match). Mixed versions degrade safely — see firmware/README.md.
+- **HUD compass rose: cardinal letters centered on their ticks** — SVG text
+  defaults to start-anchoring, so N/E/S/W hung to the right of their
+  crosshair ticks; now middle-anchored and re-centered.
+
 - **Sim weather persists across restarts** — the Simulator panel's environment
   (wind/current/gusts/variability) only mutated the live sim, so a restart
   silently reverted to calm while the sliders still showed the old values.

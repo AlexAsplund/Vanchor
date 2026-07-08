@@ -27,7 +27,7 @@ from ..core import events
 from ..core.events import EventBus
 from ..core.models import MotorCommand
 from .interfaces import MotorController, Sensor
-from .serial_link import SerialTransport
+from .serial_link import SerialTransport, append_crc, strip_verify_crc
 
 logger = logging.getLogger("vanchor.hardware.serial")
 
@@ -70,7 +70,10 @@ def parse_steering_feedback(line: str) -> SteeringFeedback | None:
     (older firmware) parses fine with ``seq=None``; a present-but-garbage 5th
     field is ignored (also ``seq=None``) rather than rejecting the whole report.
     """
-    parts = line.split()
+    payload, crc_ok = strip_verify_crc(line)
+    if crc_ok is False:
+        return None                     # corrupted feedback: reject, never guess
+    parts = payload.split()
     if len(parts) < 4 or parts[0] != "A":
         return None
     try:
@@ -117,7 +120,10 @@ def parse_engine_status(line: str) -> EngineStatus | None:
     truncated lines). As lenient as :func:`parse_steering_feedback` so a noisy
     stream never raises out of the read loop.
     """
-    parts = line.split()
+    payload, crc_ok = strip_verify_crc(line)
+    if crc_ok is False:
+        return None                     # corrupted status: reject, never guess
+    parts = payload.split()
     if len(parts) < 4 or parts[0] != "E":
         return None
     try:
@@ -693,6 +699,7 @@ class SerialMotorController(MotorController):
             self._seq = (self._seq + 1) % self.SEQ_MODULO
             seq = self._seq
             line = f"{line} {seq}"
+        line = append_crc(line)          # protocol v2 line integrity (*HH)
         self._last_frame = line
         self._last_frame_monotonic = _time.monotonic()
         try:

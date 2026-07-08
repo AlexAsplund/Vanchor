@@ -27,13 +27,14 @@ The Pi's hardware abstraction layer already defines this exactly in
 | Aspect | Value |
 |---|---|
 | Electrical | USB serial (CDC), 8N1 ASCII |
-| Baud | **4800** (`HardwareConfig.baudrate`, default). Change in both places together. |
+| Baud | **115200** (`HardwareConfig.motor_baud`, default since protocol v2; was 4800). Native-USB boards ignore it; a real UART must match both ends. Change in both places together. |
+| Integrity | **CRC-8 `*HH` suffix** on every line, both directions (protocol v2, see below) |
 | Line ending Pi→Arduino | `\r\n` (Arduino accepts `\n`, tolerates `\r`) |
 | Line ending Arduino→Pi | `\r\n` |
 
 ### Command — Pi → Arduino (one per control tick)
 ```
-CMD <pwm> <dir> <steer>\r\n
+CMD <pwm> <dir> <steer>[ <seq>]*HH\r\n
 ```
 * `pwm`   `0..255`   thrust magnitude (`round(|thrust|*255)`)
 * `dir`   `F`/`R`    forward / reverse (`R` if `thrust < 0`)
@@ -44,14 +45,36 @@ reads `pwm`+`dir` and ignores `steer`; the **steering** board reads `steer` and
 ignores `pwm`+`dir`. The Pi opens a separate transport per device, so each board
 gets its own `CMD` stream (or, on a shared bus, each filters the same line).
 
-Examples: `CMD 0 F 0` (stop, centred) · `CMD 255 F 0` (full ahead) ·
-`CMD 128 R -100` (half astern, hard port).
+Examples (real CRCs): `CMD 0 F 0*DC` (stop, centred) · `CMD 255 F 0*F0`
+(full ahead) · `CMD 128 R -100*3B` (half astern, hard port).
+
+### Line integrity — CRC-8 `*HH` (protocol v2)
+
+Every line carries a trailing `*HH`: CRC-8 (poly 0x07, init 0x00, unreflected)
+over all characters before the `*`, as two uppercase hex digits. Golden vectors
+for both implementations live in `common/protocol_vectors.txt` (exercised by
+the Python suite AND the host-compiled firmware test, so they cannot drift).
+
+Rules, chosen so mixed versions degrade **safely**:
+
+| Peer mix | Behaviour |
+|---|---|
+| new Pi + new firmware | full integrity both directions |
+| new Pi + old firmware | old parser ignores the `*HH` tail → drives fine |
+| old Pi + new firmware | no CRC on `CMD` → **rejected** (`VANCHOR_REQUIRE_CRC`, default 1); the watchdog holds the safe state. Build with `-DVANCHOR_REQUIRE_CRC=0` to tolerate an older Pi. |
+| corrupted line, either direction | rejected whole — receivers never guess; the watchdog / health machinery covers persistent loss |
+
+Why not a binary protocol? USB CDC already CRCs the wire in hardware; the
+garbage this guards against is boot spew, partial lines after a reset and
+buffer overruns — which a line CRC catches while keeping newline resync and
+`screen /dev/ttyUSB0` debuggability. (If a future board wants a true binary
+link, that's CAN territory, not a hand-rolled UART format.)
 
 ### Feedback — Arduino → Pi
 Steering reports the **actual** head angle so the Pi's closed-loop telemetry
 (`steering.angle_deg`, `feedback_ok`, `wrap_pct` in `app.py`) is real:
 ```
-A <angle_deg> <ok> <wrap_pct>\r\n      e.g.  A -12.4 1 -7
+A <angle_deg> <ok> <wrap_pct> <seq>*HH\r\n      e.g.  A -12.4 1 -7 42*C8
 ```
 Engine emits an optional debug ack:
 ```

@@ -18,7 +18,7 @@ from vanchor.hardware.serial_devices import (
     SerialMotorController,
     SteeringFeedback,
 )
-from vanchor.hardware.serial_link import FakeSerialTransport, PySerialTransport
+from vanchor.hardware.serial_link import FakeSerialTransport, PySerialTransport, append_crc
 from vanchor.nav import nmea
 
 
@@ -143,7 +143,7 @@ async def test_motor_stop_command() -> None:
     motor = SerialMotorController(transport, time_fn=lambda: 0.0)
     motor.apply(MotorCommand(thrust=0.0, steering=0.0))
     await motor.flush()
-    assert transport.written == ["CMD 0 F 0"]
+    assert transport.written == [append_crc("CMD 0 F 0")]
 
 
 async def test_motor_full_forward() -> None:
@@ -151,7 +151,7 @@ async def test_motor_full_forward() -> None:
     motor = SerialMotorController(transport, time_fn=lambda: 0.0)
     motor.apply(MotorCommand(thrust=1.0, steering=0.0))
     await motor.flush()
-    assert transport.written == ["CMD 255 F 0"]
+    assert transport.written == [append_crc("CMD 255 F 0")]
 
 
 async def test_motor_steering_extremes() -> None:
@@ -163,7 +163,7 @@ async def test_motor_steering_extremes() -> None:
     motor.apply(MotorCommand(thrust=0.5, steering=1.0))
     await motor.flush()
 
-    assert transport.written == ["CMD 255 F -100", "CMD 128 F 100"]
+    assert transport.written == [append_crc("CMD 255 F -100"), append_crc("CMD 128 F 100")]
 
 
 async def test_motor_clamps_out_of_range() -> None:
@@ -171,7 +171,7 @@ async def test_motor_clamps_out_of_range() -> None:
     motor = SerialMotorController(transport, time_fn=lambda: 0.0)
     motor.apply(MotorCommand(thrust=5.0, steering=-9.0))
     await motor.flush()
-    assert transport.written == ["CMD 255 F -100"]
+    assert transport.written == [append_crc("CMD 255 F -100")]
 
 
 # --------------------------------------------------------------------------- #
@@ -187,22 +187,22 @@ async def test_reverse_delay_blocks_immediate_flip_and_allows_after_delay() -> N
     # Drive forward.
     motor.apply(MotorCommand(thrust=1.0, steering=0.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 255 F 0"
+    assert transport.written[-1] == append_crc("CMD 255 F 0")
 
     # Immediately request reverse -> blocked, held at stop.
     motor.apply(MotorCommand(thrust=-1.0, steering=0.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 0 F 0"
+    assert transport.written[-1] == append_crc("CMD 0 F 0")
 
     # Still within the cooldown -> still blocked.
     clock["t"] = 0.5
     await motor.flush()
-    assert transport.written[-1] == "CMD 0 F 0"
+    assert transport.written[-1] == append_crc("CMD 0 F 0")
 
     # After the delay elapses -> reverse is allowed.
     clock["t"] = 1.0  # 1.0s of being "zero" >= 0.9s
     await motor.flush()
-    assert transport.written[-1] == "CMD 255 R 0"
+    assert transport.written[-1] == append_crc("CMD 255 R 0")
 
 
 async def test_reverse_allowed_when_already_stopped_long_enough() -> None:
@@ -214,7 +214,7 @@ async def test_reverse_allowed_when_already_stopped_long_enough() -> None:
     # First command is reverse from a standstill: no prior direction, allowed.
     motor.apply(MotorCommand(thrust=-1.0, steering=0.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 255 R 0"
+    assert transport.written[-1] == append_crc("CMD 255 R 0")
 
 
 async def test_no_delay_for_same_direction_changes() -> None:
@@ -227,7 +227,7 @@ async def test_no_delay_for_same_direction_changes() -> None:
     await motor.flush()
     motor.apply(MotorCommand(thrust=1.0, steering=0.0))
     await motor.flush()  # same direction, no time advance -> allowed
-    assert transport.written == ["CMD 128 F 0", "CMD 255 F 0"]
+    assert transport.written == [append_crc("CMD 128 F 0"), append_crc("CMD 255 F 0")]
 
 
 async def test_reverse_delay_not_bypassed_through_zero() -> None:
@@ -247,31 +247,31 @@ async def test_reverse_delay_not_bypassed_through_zero() -> None:
     # Drive forward.
     motor.apply(MotorCommand(thrust=1.0, steering=0.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 255 F 0"
+    assert transport.written[-1] == append_crc("CMD 255 F 0")
 
     # One zero tick at t=0.2 (simulates PID crossing zero).
     clock["t"] = 0.2
     motor.apply(MotorCommand(thrust=0.0, steering=0.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 0 F 0"
+    assert transport.written[-1] == append_crc("CMD 0 F 0")
 
     # Immediately request reverse after a single zero tick — must still be blocked.
     clock["t"] = 0.4
     motor.apply(MotorCommand(thrust=-1.0, steering=0.0))
     await motor.flush()
-    assert transport.written[-1] == "CMD 0 F 0", (
+    assert transport.written[-1] == append_crc("CMD 0 F 0"), (
         "reverse delay was bypassed by a single zero-thrust tick"
     )
 
     # Still within the cooldown (0.4 - 0.2 = 0.2 s elapsed of 0.9 s required).
     clock["t"] = 0.8
     await motor.flush()
-    assert transport.written[-1] == "CMD 0 F 0"
+    assert transport.written[-1] == append_crc("CMD 0 F 0")
 
     # Delay elapsed from the first zero tick (0.2 + 0.9 = 1.1 s) → reverse allowed.
     clock["t"] = 1.2
     await motor.flush()
-    assert transport.written[-1] == "CMD 255 R 0"
+    assert transport.written[-1] == append_crc("CMD 255 R 0")
 
 
 # --------------------------------------------------------------------------- #
@@ -484,7 +484,7 @@ async def test_motor_flush_while_down_does_not_raise_and_recovers() -> None:
 
     transport.fail_writes = False  # link back
     await motor.flush()
-    assert transport.written == ["CMD 128 F 0"]
+    assert transport.written == [append_crc("CMD 128 F 0")]
     await motor.stop()
 
 
