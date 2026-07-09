@@ -3,7 +3,7 @@
 #   180-pair : full 360° directional coverage with FORWARD thrust only
 #              (the servo allows >=±360; ±180 covers every direction, beyond it
 #              only helps wrap-free repointing which needs the slew model)
-#   slew-pair: actuator fidelity — head slews at 120 deg/s (20 rpm) AND has the full
+#   slew-pair: actuator fidelity — head slews at 95 deg/s effective (20 rpm peak minus ramp) AND has the full
 #              ±360 range, so thrust modulation during rotation and wrap-free
 #              shortest-path repointing are both learnable (owner experiment).
 set -u
@@ -15,16 +15,16 @@ PY=.venv/bin/python
 while pgrep -f "anchor_policy\.train" > /dev/null; do sleep 300; done
 
 mkdir -p "$RUNS"/{smart180,leif180,smartslew,leifslew}-20260710
-setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 180 \
+setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 180 --steer-rate-dps 95 \
   --workers 4 --init-policy src/vanchor/controller/anchor_policy.json \
   --ckpt-dir "$RUNS/smart180-20260710" > "$RUNS/smart180-20260710/train.log" 2>&1 &
-setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 180 --pure \
+setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 180 --steer-rate-dps 95 --pure \
   --workers 4 --init-policy src/vanchor/controller/anchor_leif.json \
   --ckpt-dir "$RUNS/leif180-20260710" > "$RUNS/leif180-20260710/train.log" 2>&1 &
-setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 360 --steer-rate-dps 120 \
+setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 360 --steer-rate-dps 95 \
   --workers 4 --init-policy src/vanchor/controller/anchor_policy.json \
   --ckpt-dir "$RUNS/smartslew-20260710" > "$RUNS/smartslew-20260710/train.log" 2>&1 &
-setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 360 --steer-rate-dps 120 --pure \
+setsid nohup $PY -m experiments.anchor_policy.train $CAPS --steer-range 360 --steer-rate-dps 95 --pure \
   --workers 3 --init-policy src/vanchor/controller/anchor_leif.json \
   --ckpt-dir "$RUNS/leifslew-20260710" > "$RUNS/leifslew-20260710/train.log" 2>&1 &
 echo "phase-2 launched: $(date)"

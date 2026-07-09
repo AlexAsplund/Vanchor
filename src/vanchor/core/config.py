@@ -116,9 +116,10 @@ class BoatConfig:
     thrust_yaw_ff_trim: float = 0.0  # calibration refinement (radians) on the FF angle
     max_steer_angle_deg: float = 180.0  # full mechanical swing (manual reaches this)
     autopilot_steer_deg: float = 35.0  # authority the autopilot actually uses
-    # Head rotation speed: the steering gearmotor turns the shaft at ~20 rpm
-    # = 120 deg/s (owner-confirmed 2026-07-09; ramp up/down not modelled).
-    max_steer_rate_dps: float = 120.0
+    # Head rotation speed: the gearmotor's 20 rpm is 120 deg/s peak, but with
+    # ramp up/down the EFFECTIVE rate is 90-100 deg/s (owner-confirmed
+    # 2026-07-09). 95 captures the ramp in a constant-rate model.
+    max_steer_rate_dps: float = 95.0
     max_turn_rate_deg: float = 18.0  # used by the kinematic "simple" model
     # Hull character / tracking (directional stability) for the fossen model.
     # ~0.35 = jon boat (flat-bottom: loose, skittish, lots of leeway), 1.0 =
@@ -1023,7 +1024,7 @@ boat:
   thrust_yaw_ff_trim: 0.0  # calibration-measured FF refinement (rad), added on top
   max_steer_angle_deg: 180.0   # full mechanical swing (manual reaches this)
   autopilot_steer_deg: 35.0    # authority the autopilot actually uses
-  max_steer_rate_dps: 120.0 # head rotation speed: ~20 rpm gearmotor = 120 deg/s
+  max_steer_rate_dps: 95.0  # effective head rotation speed incl. ramp (peak 120)
   max_turn_rate_deg: 18.0  # used by the "simple" model only
   hull_tracking: 1.0     # directional stability: ~0.35 jon boat (loose) .. 1.0 skiff .. ~2.5 keel (tracks)
   shaft_dia_mm: 25.4         # trolling-motor shaft (steering gearbox)
