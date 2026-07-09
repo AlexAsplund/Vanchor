@@ -31,3 +31,4 @@ experiments/*/checkpoints/
 # Auto-generated API reference (make docs)
 #docs/api/
 .superpowers/
+experiments/*/runs/
