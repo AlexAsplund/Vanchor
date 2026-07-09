@@ -307,7 +307,8 @@ itself.
 </video>
 
 *Clip: waypoints are added by tapping the map, a line connects them, and
-the boat follows each leg to the final waypoint.*
+the boat follows each leg to the final waypoint. Shown at 5× simulation
+speed; the other clips are real time.*
 
 One more thing you already installed: the `routing` extra from chapter 3
 powers **Take me here (smart route)** in the Route panel — press **Pick

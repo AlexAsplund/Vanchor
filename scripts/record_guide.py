@@ -96,23 +96,31 @@ def main() -> None:
     # rig and the story content evolve independently).
     import record_guide_clips  # noqa: F401  (registers via @clip)
 
-    with tempfile.TemporaryDirectory(prefix="vanchor-guide-") as wd:
-        proc, base = boot_server(Path(wd))
-        BASE_URL = base
-        try:
-            with sync_playwright() as pw:
-                rec = Recorder(pw, base)
-                for name, fn in CLIPS.items():
-                    if only and name not in only:
-                        continue
-                    print(f"[clip] {name}")
-                    rec.clip(name, fn)
-        finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+    # Clips record in REAL TIME by default (time_scale 1.0) so control quality
+    # on screen is exactly what a user gets — a sped-up sim slows the control
+    # loop relative to the boat and made station-keeping look far sloppier
+    # than reality (field review finding). A clip that genuinely needs
+    # time-lapse sets fn.time_scale and DISCLOSES it in its guide caption.
+    wanted = [(n, f) for n, f in CLIPS.items() if not only or n in only]
+    groups: dict = {}
+    for name, fn in wanted:
+        groups.setdefault(getattr(fn, "time_scale", 1.0), []).append((name, fn))
+    with sync_playwright() as pw:
+        for tscale, clips_ in groups.items():
+            with tempfile.TemporaryDirectory(prefix="vanchor-guide-") as wd:
+                proc, base = boot_server(Path(wd), time_scale=tscale)
+                BASE_URL = base
+                try:
+                    rec = Recorder(pw, base)
+                    for name, fn in clips_:
+                        print(f"[clip] {name} (sim x{tscale:g})")
+                        rec.clip(name, fn)
+                finally:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
 
 
 if __name__ == "__main__":

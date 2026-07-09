@@ -37,10 +37,14 @@ CALM = {
 # gusts/variability -> identical drift every run. Strength verified against the
 # smart (anchor_ml) station-keeper: at 0.3 m/s + 2.5 m/s it cycles ~2-7 m from
 # the anchor inside the 8 m ring; at 0.5 m/s + 4 m/s it drags (drag alarm).
+# Probed at time_scale 1.0 (real time): max excursion 4.6 m / mean 2.2 m
+# inside the 8 m ring — visible activity, honest tight hold. (The weaker
+# 0.3/2.5 set was a workaround for the old 5x-sim recording, which slowed the
+# control loop 5x relative to the boat and made the keeper look sloppy.)
 PUSH = {
     "type": "set_environment",
-    "current_speed": 0.3, "current_dir": 90.0,
-    "wind_speed": 2.5, "wind_dir": 120.0,
+    "current_speed": 0.5, "current_dir": 90.0,
+    "wind_speed": 4.0, "wind_dir": 120.0,
     "gust_amplitude_mps": 0.0, "wind_variability": 0.0,
     "current_variability": 0.0,
 }
@@ -234,6 +238,11 @@ def clip_follow_route(page, base):
 # --------------------------------------------------------------------------- #
 # 4. big-stop (~10 s): boat underway, one STOP tap, everything goes quiet.
 # --------------------------------------------------------------------------- #
+# Route legs cover hundreds of metres; real time would take many minutes, so
+# this one clip records at 5x sim speed — DISCLOSED in its guide caption.
+clip_follow_route.time_scale = 5.0
+
+
 @clip("big-stop")
 def clip_big_stop(page, base):
     fresh_scene(page, base, CALM, LAKE[0], LAKE[1], heading=25)
@@ -300,11 +309,12 @@ def clip_drop_anchor(page, base):
     if not page.locator("#anchor-vectored").is_checked():
         raise RuntimeError("anchor-vectored toggle did not flip on")
 
-    # 2. Drop the anchor and let station-keeping run ~30 s (sim at 5x: the
-    # 0.5 m/s set gives several drift-out/pull-back corrections in that window).
+    # 2. Drop the anchor and let station-keeping run ~35 s in REAL TIME:
+    # the boat eases toward the ring edge and the keeper vectors it back —
+    # one honest correction cycle, exactly what a live user sees.
     drag_slider(page, "#ar", 8)
     glide_click(page, "#anchor-go", settle_ms=500)
-    page.wait_for_timeout(30_000)
+    page.wait_for_timeout(35_000)
 
     # 3. Zoom out until the shoreline is in frame; switch the basemap to Topo
     # via the layers control (hover expands it, then click the radio).

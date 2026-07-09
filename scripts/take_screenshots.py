@@ -55,7 +55,7 @@ def _wait_ready(base: str, timeout_s: float = 40) -> None:
     raise RuntimeError("server did not become ready")
 
 
-def boot_server(workdir: Path) -> tuple[subprocess.Popen, str]:
+def boot_server(workdir: Path, time_scale: float = TIME_SCALE) -> tuple[subprocess.Popen, str]:
     port = _free_port()
     data = workdir / "vanchor_data"
     data.mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,7 @@ def boot_server(workdir: Path) -> tuple[subprocess.Popen, str]:
         "sim:\n"
         f"  start_lat: {LAKE[0]}\n"
         f"  start_lon: {LAKE[1]}\n"
-        f"  time_scale: {TIME_SCALE}\n"
+        f"  time_scale: {time_scale}\n"
     )
     proc = subprocess.Popen(
         [VANCHOR, "--config", str(cfg), "--host", "127.0.0.1", "--port", str(port),
