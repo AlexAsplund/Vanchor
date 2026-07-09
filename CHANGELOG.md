@@ -4,6 +4,21 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Getting-started guide + tutorial clips**: docs/getting-started.md — 13
+  chapters written for non-technical users, with five embedded screen
+  recordings (docs/media/, ~3 MB total) recorded in REAL TIME against an
+  isolated simulator by scripts/record_guide.py: first launch, manual driving,
+  the anchor demo (Smart station-keeping + Vectored thrust enabled, then
+  Topo basemap, shoreline routing and an island loop), route following
+  (declared 5× time-lapse) and STOP.
+- **3D concept walkthrough**: docs/concept/ — a self-contained three.js page
+  (offline, vendored r160) explaining virtual anchoring: 18 s intro with an
+  X-ray hardware tour (helm board, 8-wire cable, thrust driver, servo, motor)
+  and a seamless 63 s station-keeping loop with signal-path animation, factual
+  captions, a vectored-thrust/full-rotation demo beat, free-orbit explore
+  mode, phone layout and reduced-motion/no-WebGL fallbacks. Linked from the
+  README and the guide.
+
 - **Serial protocol v2: CRC-8 line integrity + 115200 baud** — every
   motor/steering line (`CMD`/`STEER`/`THRUST` out, `A`/`E` feedback in) now
   carries a `*HH` CRC-8 suffix; receivers on both sides reject a corrupted
