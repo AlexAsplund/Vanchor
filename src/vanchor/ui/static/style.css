@@ -1281,7 +1281,9 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 /* Standalone floating launcher: anchored just above the HUD's left edge so it
    never wraps the numeric HUD row onto a second line. */
 .catch-fab {
-  position: absolute; left: 10px; bottom: 116px; z-index: 1001;
+  /* Sits ABOVE the HUD panel (hud: bottom 16 + ~162 tall) — parked lower it
+     covered the SPEED readout's leading digit (guide-video review finding). */
+  position: absolute; left: 10px; bottom: 190px; z-index: 1001;
   width: 48px; height: 48px; border-radius: 50%; padding: 0;
   border: 1px solid rgba(var(--accent-rgb), 0.4);
   background: var(--glass-solid, rgba(10, 18, 28, 0.7));
@@ -1298,7 +1300,7 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
   font: 800 11px var(--font-num); display: flex; align-items: center; justify-content: center;
 }
 @media (max-width: 640px) {
-  .catch-fab { width: 44px; height: 44px; bottom: 108px; }
+  .catch-fab { width: 44px; height: 44px; bottom: 252px; }  /* HUD wraps taller here */
 }
 
 #catch-scrim { z-index: 2400; }
