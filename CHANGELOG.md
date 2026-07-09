@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Fossen model: missing current-rotation term fixed** — audited the 3-DOF
+  physics against Fossen's reference implementation
+  (cybergalactic/PythonVehicleSimulator, per the FossenHandbook materials).
+  The Coriolis matrix matches `m2c` exactly and the relative-velocity form is
+  correct, but the integration omitted `Dnu_c = [r·v_c, −r·u_c, 0]` — the
+  body-frame rotation of a constant ground-frame current while the boat yaws.
+  A 60 s turn in a 0.5 m/s current diverged 14 m / 74° of heading; calm-water
+  behavior is bit-for-bit unchanged. Golden-endpoint regression test added.
+  Remaining documented simplifications: diagonal quadratic damping (no
+  crossflow-drag strip integrals) and cos/sin/sin2 wind coefficients.
+
 - **Getting-started guide + tutorial clips**: docs/getting-started.md — 13
   chapters written for non-technical users, with five embedded screen
   recordings (docs/media/, ~3 MB total) recorded in REAL TIME against an

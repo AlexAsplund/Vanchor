@@ -165,3 +165,42 @@ def test_head_current_makes_sog_less_than_stw():
     # The southward current eats ~0.6 m/s of the northward ground progress.
     assert stw > sog + 0.3
     assert sog == pytest.approx(stw - 0.6, abs=0.15)
+
+
+# --------------------------------------------------------------------------- #
+# Ocean-current kinetics: the Dnu_c body-frame rotation term (Fossen ch. 6,
+# audited against cybergalactic/PythonVehicleSimulator's otter, 2026-07).
+# --------------------------------------------------------------------------- #
+def test_current_rotation_term_present_in_turns():
+    """A sustained turn in a uniform current must include nu_c_dot = [r*v_c,
+    -r*u_c, 0]. Golden values from the corrected dynamics; the pre-fix model
+    (term omitted) lands ~14 m away with ~74 deg heading error, far outside
+    these tolerances."""
+    import math
+    from vanchor.core.geo import haversine_m
+    from vanchor.core.models import Environment, GeoPoint, MotorCommand
+
+    env = Environment(current_speed=0.5, current_dir=90.0, wind_speed=0.0, wind_dir=0.0)
+    boat = FossenBoat(BoatState(point=GeoPoint(59.0, 18.0)), FossenParams())
+    cmd = MotorCommand(thrust=0.8, steering=0.6)
+    for _ in range(1200):  # 60 s at 20 Hz
+        boat.step(0.05, cmd, env)
+    # Golden endpoint of the corrected model (deterministic integration).
+    golden = GeoPoint(59.00000454, 18.00078986)
+    assert haversine_m(boat.state.point, golden) < 1.0
+    assert abs((boat.state.heading_deg - 160.1 + 180) % 360 - 180) < 5.0
+
+
+def test_no_current_calm_water_unchanged_by_the_term():
+    """With zero current the Dnu_c term is identically zero: calm-water
+    behavior is bit-for-bit what it was before the fix."""
+    from vanchor.core.models import Environment, GeoPoint, MotorCommand
+
+    env = Environment(current_speed=0.0, current_dir=0.0, wind_speed=0.0, wind_dir=0.0)
+    boat = FossenBoat(BoatState(point=GeoPoint(59.0, 18.0)), FossenParams())
+    cmd = MotorCommand(thrust=0.8, steering=0.6)
+    for _ in range(400):
+        boat.step(0.05, cmd, env)
+    # r settles to the tuned sustained turn rate; the term must not alter it.
+    assert 6.0 < abs(boat.yaw_rate_dps) < 30.0  # 0.8 thrust / 0.6 steer sustained rate
+    assert boat.surge_mps > 0.3

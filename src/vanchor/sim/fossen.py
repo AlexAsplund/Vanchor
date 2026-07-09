@@ -43,6 +43,16 @@ the boat to starboard (heading increases). Cross-coupling between sway and yaw i
 the damping / added-mass matrices makes the boat visibly "crab" (sway) during a
 turn.
 
+Checked against Fossen's reference implementation (PythonVehicleSimulator
+``gnc.m2c`` + the otter USV, 2026-07): the Coriolis matrix matches ``m2c``
+exactly, the relative-velocity form matches, and the ``Dnu_c`` current-rotation
+term is included (see ``step``). Two deliberate simplifications remain: cross-
+flow drag is approximated by the diagonal quadratic terms (no ``crossFlowDrag``
+strip integrals), and wind coefficients use the small-craft cos/sin/sin2 shape
+rather than Isherwood tables. Note ``Environment.wind_dir``/``current_dir`` are
+the direction the flow moves TOWARD (not the meteorological from-direction) --
+consistent throughout the sim and UI.
+
 Integration is semi-implicit Euler: solve for ``nu_dot``, advance ``nu``, then
 update heading by ``r*dt`` and the NED position from the absolute body velocity
 rotated into the local tangent plane (current/wind already live inside ``nu``).
@@ -343,11 +353,19 @@ class FossenBoat:
         nu_c = self._current_body(env, s.heading_deg)
         nu_r = nu - nu_c
 
-        # Solve M*nu_dot + C(nu_r)*nu_r + D(nu_r)*nu_r = tau_thrust + tau_wind.
+        # Solve M*nu_dot_r + C(nu_r)*nu_r + D(nu_r)*nu_r = tau_thrust + tau_wind
+        # for the RELATIVE acceleration, then add the body-frame rotation of the
+        # current, nu_c_dot = [r*v_c, -r*u_c, 0]: a constant ground-frame current
+        # has rotating body-frame components while the boat yaws, and nu (which
+        # we integrate) is nu_r + nu_c. Fossen 2021 ch. 6 (ocean currents); the
+        # same Dnu_c term as the reference otter USV. Omitting it diverged a
+        # 60 s turn in a 0.5 m/s current by 14 m / 74 deg of heading.
         tau = self._tau(command) + self._tau_wind(env, nu, s.heading_deg)
         cor = self._coriolis(nu_r)
         damping = self._damping(nu_r)
-        nu_dot = self._mass_inv @ (tau - cor @ nu_r - damping @ nu_r)
+        r_now = nu[2]
+        dnu_c = np.array([r_now * nu_c[1], -r_now * nu_c[0], 0.0])
+        nu_dot = dnu_c + self._mass_inv @ (tau - cor @ nu_r - damping @ nu_r)
 
         # Semi-implicit Euler: advance the velocities first.
         nu = nu + nu_dot * dt
