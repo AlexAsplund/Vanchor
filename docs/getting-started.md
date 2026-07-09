@@ -7,7 +7,7 @@ anchor on your own screen, and you'll know exactly which buttons do what.
 Every step tells you what success looks like, so you always know whether it
 worked. Take it at your own pace.
 
-Want the big picture first? See the **[3D concept walkthrough](concept/index.html)**
+Want the big picture first? See the **[3D concept walkthrough](concept/index.html)** — if you're reading this on GitHub, view it on the project's GitHub Pages site or open `http://vanchor.local:8000/concept` once vanchor is running (the boat serves it)
 — an animated tour of how the boat holds a GPS anchor, no install needed.
 
 ---

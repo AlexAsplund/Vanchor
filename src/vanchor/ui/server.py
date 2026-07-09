@@ -1456,4 +1456,14 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             return response
 
     app.mount("/static", _NoCacheStatic(directory=STATIC_DIR), name="static")
+
+    # The 3D concept walkthrough (docs/concept/) is a static page that needs a
+    # SERVER to run (ES modules don't load from file:// and GitHub shows HTML
+    # as source), so the boat serves it at /concept when the docs tree exists
+    # (source checkouts / pip install -e). Absent in a wheel install -> skipped.
+    # server.py -> ui -> vanchor -> src -> repo root
+    _concept_dir = Path(__file__).resolve().parents[3] / "docs" / "concept"
+    if _concept_dir.is_dir():
+        app.mount("/concept", StaticFiles(directory=str(_concept_dir), html=True),
+                  name="concept")
     return app
