@@ -95,6 +95,26 @@ training with no strong-wind regression.
 - **center** mount is near-uncontrollable for everyone (no yaw lever arm);
   don't read too much into its absolute numbers.
 
+## Physics-fix re-evaluation (2026-07-09)
+
+The Fossen model gained the missing `Dnu_c` current-rotation term (see
+CHANGELOG / commit `082038a`; a 60 s turn in a 0.5 m/s current previously
+diverged 14 m). Both shipped policies and the PID baseline were re-scored on
+the corrected physics — `eval.py` defaults: 128 held-out scenarios, 5 m
+circle, 180 s (NOTE: a different protocol from the capped per-mount table
+above, so columns are not comparable across sections):
+
+| Controller | within (pre-fix) | within (fixed) | mean dist (pre → post) | energy |
+|---|---|---|---|---|
+| PID | 75.6% | 79.4% | 10.04 → 9.82 m | 0.259 |
+| Smart (shipped) | 75.0% | **79.9%** | 9.79 → **9.29 m** | 0.692 |
+| Leif | 76.7% | **82.0%** | 10.57 → 10.03 m | 0.890 |
+
+Every controller improves: the omitted term acted as a phantom disturbance
+while turning in current, so the corrected world is easier to hold in. The
+ranking is unchanged and the policies transfer without retraining; a future
+training run on the corrected physics may claw back a little more.
+
 ## Reproducing
 
 ```bash
