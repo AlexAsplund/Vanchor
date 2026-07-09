@@ -60,7 +60,7 @@ class AnchorEnv:
         self.pure = bool(pure)
         self.steer_range_deg = steer_range_deg
         # EXPERIMENT (actuator fidelity): the real steering head slews at
-        # ~50 deg/s (BoatConfig.max_steer_rate_dps) but the env historically
+        # ~120 deg/s (BoatConfig.max_steer_rate_dps, 20 rpm gearmotor) but the env historically
         # applied commanded steering INSTANTLY. With steer_rate_dps set, the
         # physical deflection tracks the command at that rate, so thrust fires
         # at the head's ACTUAL angle mid-swing -- making thrust modulation
