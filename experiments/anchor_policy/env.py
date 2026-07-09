@@ -51,7 +51,8 @@ class AnchorEnv:
                  pure: bool = False, steer_range_deg: float | None = None,
                  wind_cap: float | None = None, current_cap: float | None = None,
                  gust_cap: float | None = None,
-                 steer_rate_dps: float | None = None):
+                 steer_rate_dps: float | None = None,
+                 pid_cal_deg: float | None = None):
         # EXPERIMENT: pure=True makes the net output the command DIRECTLY
         # (command = clip(net), no PID base) -- a from-scratch learned controller
         # rather than a PID refiner. steer_range_deg widens the boat's physical
@@ -67,6 +68,13 @@ class AnchorEnv:
         # during rotation a learnable behaviour. None = legacy instant.
         self.steer_rate_dps = steer_rate_dps
         self._head_st = 0.0   # actual physical steering, normalised [-1, 1]
+        # EXPERIMENT: at very wide steer ranges the PID base's +/-45deg-intent
+        # steering becomes absurdly hot (x8 at 360). pid_cal_deg rescales the
+        # BASE's steering so it keeps commanding the physical angles it was
+        # designed for (e.g. 120), while the learned residual retains the full
+        # +/-1 = +/-steer_range authority. None = legacy (no rescale).
+        self._pid_scale = (pid_cal_deg / steer_range_deg
+                           if pid_cal_deg and steer_range_deg else 1.0)
         # EXPERIMENT: cap the environmental severity to the HOLDABLE regime so the
         # policy trains on conditions a trolling motor can actually station-keep in
         # (the un-holdable 12 m/s tail otherwise dominates the average). Applied to
@@ -193,6 +201,7 @@ class AnchorEnv:
             st = float(np.clip(residual[1], -1.0, 1.0))
         else:
             pid_th, pid_st = pid_base(f[0] * 10.0, f[1] * 10.0, f[2] * 1.5, f[3] * 1.5)
+            pid_st *= self._pid_scale
             th = float(np.clip(pid_th + self.residual_scale * float(residual[0]), -1.0, 1.0))
             st = float(np.clip(pid_st + self.residual_scale * float(residual[1]), -1.0, 1.0))
         dth, dst = th - self._prev[0], st - self._prev[1]
