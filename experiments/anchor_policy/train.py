@@ -130,6 +130,11 @@ def main():
     ap.add_argument("--wind-cap", type=float, default=None)     # EXPERIMENT: cap wind (m/s)
     ap.add_argument("--current-cap", type=float, default=None)  # EXPERIMENT: cap current (m/s)
     ap.add_argument("--gust-cap", type=float, default=None)     # EXPERIMENT: cap gust amplitude
+    ap.add_argument("--hours", type=float, default=None,
+                    help="wall-clock budget; stop cleanly (checkpointed) when exceeded")
+    ap.add_argument("--init-policy", default=None,
+                    help="warm-start theta from a policy JSON (fresh starts only; "
+                         "sizes must match the --history-derived net shape)")
     args = ap.parse_args()
     global _PURE, _STEER, _WIND_CAP, _CUR_CAP, _GUST_CAP
     _PURE, _STEER = args.pure, args.steer_range
@@ -152,7 +157,19 @@ def main():
         theta, m_adam, v_adam = st["theta"], st["m"], st["v"]
         start_gen, best_val = int(st["gen"]), float(st["best_val"])
         adam_t = int(st["adam_t"]) if "adam_t" in st.files else start_gen
+        # Restore the perturbation RNG so a resume continues the EXACT stream
+        # (previously a restart replayed a fresh stream from seed 0).
+        if "rng_state" in st.files:
+            rng.bit_generator.state = json.loads(str(st["rng_state"]))
         print(f"resumed at gen {start_gen} (best_val={best_val:.1f}, params={n})")
+    elif args.init_policy:
+        init = TinyPolicy.load(args.init_policy)
+        if tuple(init.sizes) != tuple(sizes):
+            raise SystemExit(f"--init-policy sizes {tuple(init.sizes)} != net {tuple(sizes)} "
+                             f"(check --history)")
+        theta = init.get_params()
+        print(f"warm start from {args.init_policy}: {n} params, pop={args.pop}x2, "
+              f"workers={args.workers}, dt={args.dt}")
     else:
         print(f"fresh start: {n} params, pop={args.pop}x2, workers={args.workers}, dt={args.dt}")
 
@@ -161,6 +178,9 @@ def main():
     t0 = time.time()
     try:
         for gen in range(start_gen, args.gens):
+            if args.hours is not None and (time.time() - t0) > args.hours * 3600.0:
+                print(f"wall-clock budget ({args.hours} h) reached at gen {gen}; stopping.")
+                break
             gen_seed = (gen * 7919 + 1) & 0x7FFFFFFF
             eps = rng.standard_normal((args.pop, n))
             cands = np.concatenate([theta + args.sigma * eps, theta - args.sigma * eps])
@@ -199,13 +219,15 @@ def main():
                     TinyPolicy(sizes=sizes, params=theta).save(
                         os.path.join(ckpt, "best_policy.json"), meta=POLICY_META)
                 np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
-                         gen=gen + 1, best_val=best_val, adam_t=adam_t)
+                         gen=gen + 1, best_val=best_val, adam_t=adam_t,
+                         rng_state=json.dumps(rng.bit_generator.state))
     except KeyboardInterrupt:
         print("\ninterrupted -- state is checkpointed; rerun to resume.")
     finally:
         pool.close(); pool.join()
         np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
-                 gen=gen + 1, best_val=best_val, adam_t=adam_t)
+                 gen=gen + 1, best_val=best_val, adam_t=adam_t,
+                 rng_state=json.dumps(rng.bit_generator.state))
         print("checkpoint saved.")
 
 
