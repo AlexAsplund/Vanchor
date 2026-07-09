@@ -33,12 +33,14 @@ CALM = {
     "gust_amplitude_mps": 0.0, "wind_variability": 0.0,
     "current_variability": 0.0,
 }
-# Steady deterministic push for the anchor clip: a firm current + wind with
-# zero gusts/variability -> identical drift every run.
+# Steady deterministic push for the anchor clip: current + wind with zero
+# gusts/variability -> identical drift every run. Strength verified against the
+# smart (anchor_ml) station-keeper: at 0.3 m/s + 2.5 m/s it cycles ~2-7 m from
+# the anchor inside the 8 m ring; at 0.5 m/s + 4 m/s it drags (drag alarm).
 PUSH = {
     "type": "set_environment",
-    "current_speed": 0.5, "current_dir": 90.0,
-    "wind_speed": 4.0, "wind_dir": 120.0,
+    "current_speed": 0.3, "current_dir": 90.0,
+    "wind_speed": 2.5, "wind_dir": 120.0,
     "gust_amplitude_mps": 0.0, "wind_variability": 0.0,
     "current_variability": 0.0,
 }
@@ -75,9 +77,11 @@ def add_cursor(page) -> None:
         "}")
 
 
-def glide_click(page, selector: str, settle_ms: int = 350) -> None:
-    """Move the visible cursor to an element (real mouse move) and click it."""
-    el = page.locator(selector).first
+def glide_click(page, selector, settle_ms: int = 350) -> None:
+    """Move the visible cursor to an element (real mouse move) and click it.
+
+    `selector` is a CSS string or an already-resolved Playwright locator."""
+    el = page.locator(selector).first if isinstance(selector, str) else selector
     el.scroll_into_view_if_needed()
     page.wait_for_timeout(120)
     box = el.bounding_box()
@@ -246,28 +250,102 @@ def clip_big_stop(page, base):
 
 
 # --------------------------------------------------------------------------- #
-# 5. drop-anchor (~25 s, HERO): ring drops, wind pushes, the boat breathes back.
+# 5. drop-anchor (~75-80 s, HERO): the anchor panel's learned/vectored switches
+# are flipped on camera, the anchor drops and station-keeping runs against a
+# steady set, then the map zooms out to the Topo basemap and the right-click
+# menu plans an "Along shoreline" route and a "Loop around island" route.
 # Recorded LAST: there is no clear-anchor command, so the dropped anchor's
 # pin/ring would otherwise linger on the shared server into later clips.
 # --------------------------------------------------------------------------- #
+# Right-click targets, verified against the offline water cache (see
+# take_screenshots.boot_server): a water point ~40 m off the NE shoreline (the
+# shoreline plan from LAKE returns 13 waypoints) and the centroid of the
+# ~380 m island SSW of the start (island-loop plan returns 19 waypoints).
+SHORE_PT = (59.8814, 12.0355)
+ISLAND_PT = (59.871984, 12.026854)
+
+
+def screen_pt(page, lat: float, lon: float) -> tuple[float, float]:
+    """Map latlng -> page pixel coordinates (for mouse clicks on the chart)."""
+    x, y = page.evaluate(
+        "([lat, lon]) => {"
+        "  const r = document.getElementById('map').getBoundingClientRect();"
+        "  const p = VA.mapCtx.map.latLngToContainerPoint([lat, lon]);"
+        "  return [r.left + p.x, r.top + p.y];"
+        "}", [lat, lon])
+    return float(x), float(y)
+
+
+def right_click(page, lat: float, lon: float) -> None:
+    """Glide the cursor to a chart position and right-click it (context menu)."""
+    x, y = screen_pt(page, lat, lon)
+    page.mouse.move(x, y, steps=22)
+    page.wait_for_timeout(400)
+    page.mouse.click(x, y, button="right")
+    page.wait_for_selector(".map-menu", timeout=6000)
+
+
 @clip("drop-anchor")
 def clip_drop_anchor(page, base):
-    # Steady deterministic push so the drift-out/pull-back loop repeats cleanly.
+    # Steady deterministic push so the drift-out/pull-back cycle repeats cleanly.
     fresh_scene(page, base, PUSH, LAKE[0], LAKE[1], heading=25)
     set_view(page, LAKE[0], LAKE[1], 17.8)
-    glide_click(page, ".mode-btn[data-mode='anchor_hold']", settle_ms=250)
+
+    # 1. Anchor panel; flip the two optional switches ON, visibly.
+    glide_click(page, ".mode-btn[data-mode='anchor_hold']", settle_ms=500)
+    glide_click(page, "label.switch:has(#anchor-smart)", settle_ms=900)
+    if not page.locator("#anchor-smart").is_checked():
+        raise RuntimeError("anchor-smart toggle did not flip on")
+    glide_click(page, "label.switch:has(#anchor-vectored)", settle_ms=900)
+    if not page.locator("#anchor-vectored").is_checked():
+        raise RuntimeError("anchor-vectored toggle did not flip on")
+
+    # 2. Drop the anchor and let station-keeping run ~30 s (sim at 5x: the
+    # 0.5 m/s set gives several drift-out/pull-back corrections in that window).
     drag_slider(page, "#ar", 8)
-    glide_click(page, "#anchor-go", settle_ms=250)
-    # Hands off — the station-keeping loop is the show. Pace the clip off the
-    # real distance-to-anchor: out past ~5 m, back inside ~3 m, twice.
-    t0 = time.time()
-    for _ in range(2):
-        wait_state(base, lambda s: s.get("distance_to_anchor_m", 0) > 5.0, 8)
-        page.wait_for_timeout(300)
-        wait_state(base, lambda s: s.get("distance_to_anchor_m", 99) < 3.0, 8)
-        page.wait_for_timeout(300)
-    # Top up so the hero clip breathes at least ~16 s after the drop.
-    remainder = 16.0 - (time.time() - t0)
-    if remainder > 0:
-        page.wait_for_timeout(int(remainder * 1000))
+    glide_click(page, "#anchor-go", settle_ms=500)
+    page.wait_for_timeout(30_000)
+
+    # 3. Zoom out until the shoreline is in frame; switch the basemap to Topo
+    # via the layers control (hover expands it, then click the radio).
+    page.evaluate("() => { VA.mapCtx.follow.boat = false; }")
+    page.evaluate(
+        "([lat, lon]) => VA.mapCtx.map.flyTo([lat, lon], 15.8, {duration: 2.0})",
+        [LAKE[0], LAKE[1]])
+    page.wait_for_timeout(2800)
+    box = page.locator(".leaflet-control-layers").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2,
+                    steps=22)
+    page.wait_for_selector(".leaflet-control-layers-expanded", timeout=4000)
+    page.wait_for_timeout(600)
+    topo = page.locator(".leaflet-control-layers-base label",
+                        has_text="Topo").first
+    glide_click(page, topo, settle_ms=400)
+    page.mouse.move(640, 400, steps=18)      # off the control so it collapses
+    page.wait_for_timeout(3200)              # Topo tiles load
+
+    # 4. Right-click a water point near the shoreline; "Along shoreline" plans
+    # a water-only route (offline water cache) and loads + starts it.
+    right_click(page, *SHORE_PT)
+    page.wait_for_timeout(1400)
+    glide_click(page, ".map-menu [data-act='shore']", settle_ms=600)
+    page.wait_for_timeout(10_000)            # waypoint string along the shore
+
+    # 5. Pan to the island; on an island the menu's shoreline row swaps (async
+    # detection) to "Loop around island" — wait for the swap, then click it.
+    page.evaluate(
+        "([lat, lon]) => VA.mapCtx.map.panTo([lat, lon], {duration: 1.5})",
+        [ISLAND_PT[0], ISLAND_PT[1]])
+    page.wait_for_timeout(2200)
+    right_click(page, *ISLAND_PT)
+    page.wait_for_selector(".map-menu [data-act='island']", timeout=10_000)
+    page.wait_for_timeout(900)
+    glide_click(page, ".map-menu [data-act='island']", settle_ms=600)
+    page.wait_for_timeout(5000)              # waypoints ring the island
     cmd(base, {"type": "stop"})
+    cmd(base, {"type": "goto", "waypoints": []})
+    cmd(base, {"type": "stop"})
+
+
+# ~78 s of 1280x800: nudge crf above the 25-s clips' default to stay small.
+clip_drop_anchor.crf = 30

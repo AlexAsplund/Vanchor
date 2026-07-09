@@ -29,11 +29,11 @@ const C = {
 const CYAN = new THREE.Color(C.cyan), TEAL = new THREE.Color(C.teal);
 
 // ------------------------------------------------------------- timeline -----
-// Beat durations from the spec. 00–01 cold open (plays once), 02–08 loop (61 s).
-const BEAT_DUR = [6, 12, 8, 10, 7, 8, 10, 10, 8];
+// Beat durations from the spec. 00–01 cold open (plays once), 02–08 loop (63 s).
+const BEAT_DUR = [6, 12, 8, 10, 7, 8, 10, 10, 10];
 const BEAT_START = BEAT_DUR.reduce((a, d) => (a.push(a[a.length - 1] + d), a), [0]).slice(0, -1);
 const COLD_OPEN = BEAT_START[2];            // 18
-const LOOP_DUR = BEAT_DUR.slice(2).reduce((a, b) => a + b, 0); // 61
+const LOOP_DUR = BEAT_DUR.slice(2).reduce((a, b) => a + b, 0); // 63
 
 function timeInfo(globalT) {
   let beat, localT, loopT = 0;
@@ -1280,7 +1280,7 @@ let contactShadow;
 // STAGE 2 — STORY & ANIMATION
 // One deterministic clock. simState is a pure function of time (scrub-safe,
 // frame-rate independent); beats own ONLY camera, captions and overlays.
-// COLD_OPEN (beats 00–01, 18 s, once) → LOOP (beats 02–08, 61 s, seamless).
+// COLD_OPEN (beats 00–01, 18 s, once) → LOOP (beats 02–08, 63 s, seamless).
 // ============================================================================
 
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1341,24 +1341,26 @@ function windOf(cycle) {
 }
 
 // ----------------------------------------------------- simState tracks ------
-// All in loop time lt ∈ [0, 61): b02 0–8, b03 8–18, b04 18–25, b05 25–33,
-// b06 33–43, b07 43–53, b08 53–61.
+// All in loop time lt ∈ [0, 63): b02 0–8, b03 8–18, b04 18–25, b05 25–33,
+// b06 33–43, b07 43–53, b08 53–63.
 const driftAt = track([[0, 0], [8.6, 0], [10.2, 0.4], [13.5, 1.7], [18, 3.2],
   [22, 3.45], [25, 3.6], [29, 3.78], [33, 3.85], [35.4, 3.9], [38.5, 3.15],
   [41.5, 2.0], [44.5, 1.0], [46.8, 0.32], [48.2, 0.02], [49.2, -0.13],
   [50.6, 0.015], [51.8, 0]]);
 const thrustAt = track([[35.2, 0], [36.4, 22], [37.6, 38], [40, 37], [43.5, 34],
   [45.5, 22], [47.6, 8], [49.4, 0],
-  [55.4, 0], [56.0, 5], [56.7, 0], [58.9, 0], [59.4, 4], [60.0, 0]]); // b08 puffs
+  [57.4, 0], [58.0, 30], [59.2, 26], [59.9, 0]]); // b08 beam push at az 90°
 const azMixAt = track([[26.5, 0], [28.4, 0.62], [30.4, 1.05], [31.5, 1],
-  [51.5, 1], [53.5, 0.85], [57, 0]]);
+  [51.5, 1], [53.2, 0.7], [54.8, 0]]);
+// b08 vectored-thrust demo azimuth: one full head rotation with a hold at
+// +90° (beam push) while the hull heading stays fixed. 360° ≡ 0° at the seam.
+const demoAzAt = track([[55.0, 0], [57.4, 90], [59.8, 90], [62.6, 360]]);
 const xrayLoopAt = track([[18.05, 0], [18.9, 0.92], [23.4, 0.92], [25.0, 0],
-  [33.05, 0], [33.9, 0.88], [38.2, 0.88], [41.2, 0.30], [44.0, 0],
-  [54, 0], [55.8, 0.22], [59, 0.22], [60.7, 0]]);
+  [33.05, 0], [33.9, 0.88], [38.2, 0.88], [41.2, 0.30], [44.0, 0]]);
 const xrayColdAt = track([[6.6, 0], [8.2, 0.95], [15.6, 0.95], [17.7, 0]]);
 const gridLock0At = track([[0, 0.12], [1.1, 0.15], [3.0, 1]]);
-const windSkewAt = track([[0, 0.12], [7, 0.12], [9.5, 0.5], [43, 0.5], [48, 0.15], [61, 0.12]]);
-const streakActAt = track([[0, 0.02], [6, 0.12], [8, 0.4], [10, 1], [43, 1], [49, 0.4], [55, 0.18], [59, 0.02], [61, 0.02]]);
+const windSkewAt = track([[0, 0.12], [7, 0.12], [9.5, 0.5], [43, 0.5], [48, 0.15], [63, 0.12]]);
+const streakActAt = track([[0, 0.02], [6, 0.12], [8, 0.4], [10, 1], [43, 1], [49, 0.4], [55, 0.18], [61, 0.02], [63, 0.02]]);
 
 // prop spin: integral of spin rate over the loop, tabulated once (pure lookup)
 const SPIN_STEP = 0.05, SPIN_IDLE = 1.6;
@@ -1406,7 +1408,7 @@ function simAt(gt) {
   }
   const lt = SIM.lt;
   const w0 = windOf(SIM.cycle), w1 = windOf(SIM.cycle + 1);
-  const wb = SIM.cold ? 0 : smooth(59.4, 61, lt);       // re-randomize at seam
+  const wb = SIM.cold ? 0 : smooth(61.4, 63, lt);       // re-randomize at seam
   let dA = w1.ang - w0.ang;
   dA = Math.atan2(Math.sin(dA), Math.cos(dA));
   SIM.windAng = w0.ang + dA * wb;
@@ -1417,7 +1419,7 @@ function simAt(gt) {
   SIM.tension = clamp01(SIM.dispDrift / 3.9);
   SIM.azTargetDeg = ((r2d(w0.ang) + 180 + 540) % 360) - 180;
   const micro = (1.6 * Math.sin(gt * 0.53) + 0.7 * Math.sin(gt * 1.71)) * MOTION;
-  SIM.azDeg = SIM.cold ? micro * 2 : SIM.azTargetDeg * azMixAt(lt) + micro;
+  SIM.azDeg = SIM.cold ? micro * 2 : SIM.azTargetDeg * azMixAt(lt) + demoAzAt(lt) + micro;
   SIM.thrust = SIM.cold ? 0 : thrustAt(lt);
   SIM.xray = SIM.cold ? xrayColdAt(gt) : xrayLoopAt(lt);
   SIM.gridLock = SIM.cold ? 0.12 : (SIM.cycle === 0 ? gridLock0At(lt) : 1);
@@ -1550,7 +1552,7 @@ for (let i = 0; i < 6; i++) {
 const _wOff = new THREE.Vector2();
 function loopAzRadAt(lt, cycle) {               // scripted azimuth at loop time
   const tgt = ((r2d(windOf(cycle).ang) + 180 + 540) % 360) - 180;
-  return d2r(tgt * azMixAt(lt));
+  return d2r(tgt * azMixAt(lt) + demoAzAt(lt));
 }
 function propXZAt(lt, cycle, out) {             // world xz of the prop hub
   offsetAt(lt, cycle, _wOff);
@@ -1620,6 +1622,32 @@ markerTriGeo.rotateX(-Math.PI / 2);            // lie in the XZ plane, tip +x
 const markerTri = new THREE.Mesh(markerTriGeo, servoTickLiveMat);
 markerTri.renderOrder = 6;
 servoHud.add(protractorBase, sweepArc, ghostTick, liveTick, markerTri);
+
+// --------------------------------------------- beat-08 vectored-thrust dial --
+// Water-level azimuth dial under the motor shaft (boat-local, does NOT rotate
+// with the steering group). Contrast read: dim ±35° band (the PID
+// station-keeper's steering range) vs the full-rotation circle the vectored
+// mode uses; a radial tick + swept arc follow the head azimuth.
+const vecDial = new THREE.Group();
+vecDial.position.set(3.28, 0.115, 0);
+boat.add(vecDial);
+const vecCircleMat = new THREE.MeshBasicMaterial({ color: C.cyan, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+const vecBandMat = new THREE.MeshBasicMaterial({ color: C.amber, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+const vecTickMat = new THREE.MeshBasicMaterial({ color: C.teal, transparent: true, opacity: 0, blending: THREE.NormalBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+const vecTrailMat = vecCircleMat.clone();
+const vecCircle = flatRing(0.82, 0.855, 96, C.cyan, 0, vecCircleMat);       // full rotation
+const vecBand = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.80, 24, 1, -d2r(35), d2r(70)), vecBandMat);
+vecBand.rotation.x = -Math.PI / 2;                                          // ±35° band, about the bow
+vecBand.renderOrder = 6;
+const vecTick = new THREE.Mesh(new THREE.RingGeometry(0.60, 0.90, 2, 1, -0.030, 0.060), vecTickMat);
+vecTick.rotation.x = -Math.PI / 2;
+vecTick.renderOrder = 6;
+const vecTrail = new THREE.Mesh(new THREE.RingGeometry(0.63, 0.79, 8, 1, 0, 0.02), vecTrailMat);
+vecTrail.rotation.x = -Math.PI / 2;
+vecTrail.position.y = -0.004;
+vecTrail.renderOrder = 6;
+vecDial.add(vecCircle, vecBand, vecTick, vecTrail);
+vecDial.visible = false;
 
 // ---------------------------------------------------------- signal pulses ---
 // Each channel is ONE THREE.Points cloud (1 draw call): per-point brightness is
@@ -1784,7 +1812,7 @@ function applySim(sim) {
   retRing.scale.setScalar(1 + 0.035 * Math.sin(gt * 2.0) + 0.10 * sim.lockPulse);
   retRing2.scale.copy(retRing.scale);
   retTicks.rotation.y = gt * 0.12;
-  const breathe = sim.cold ? 0 : 0.05 * Math.sin(gt * 1.25) * smooth(52, 55, lt) * (1 - smooth(59.2, 61, lt));
+  const breathe = sim.cold ? 0 : 0.05 * Math.sin(gt * 1.25) * smooth(52, 55, lt) * (1 - smooth(61.2, 63, lt));
   holdCircle.material.opacity = (0.10 + 0.08 * sim.gridLock) * sim.anchorOn + breathe;
   // per-cycle stamp: ghost ring descends + ripple (a re-affirmation on later loops)
   const su = sim.cold ? 0 : clamp01((lt - 0.35) / 1.0);
@@ -1898,6 +1926,20 @@ function applySim(sim) {
     markerTri.rotation.y = -azRad;             // needle sweeps flat on the dial
   }
 
+  // ---- beat-08 vectored-thrust dial (±35° band vs full rotation) ----
+  const vt = sim.cold ? 0 : smooth(54.4, 55.4, lt) * (1 - smooth(62.2, 62.9, lt));
+  vecDial.visible = vt > 0.02;
+  if (vecDial.visible) {
+    vecCircleMat.opacity = 0.55 * vt;
+    vecBandMat.opacity = 0.30 * vt;
+    vecTickMat.opacity = 0.9 * vt;
+    vecTrailMat.opacity = 0.22 * vt;
+    vecTick.rotation.z = -azRad;               // tick follows the head azimuth
+    const sweep = Math.max(d2r(demoAzAt(lt)), 0.02);   // arc swept so far
+    vecTrail.geometry.dispose();
+    vecTrail.geometry = new THREE.RingGeometry(0.63, 0.79, Math.max(8, Math.ceil(sweep * 10)), 1, -sweep, sweep);
+  }
+
   // ---- 8-WIRE callout: lift the ribbon out of the dark while pointed at ----
   const ribHot = sim.cold ? smooth(10.15, 10.6, gt) * (1 - smooth(11.9, 12.35, gt)) : 0;
   cableMatA.emissiveIntensity = 0.10 + 0.50 * ribHot;
@@ -1913,10 +1955,11 @@ function applySim(sim) {
     updateChannel(chPower, gt, idle && { a: 0.1, f: 1, g: 0 });
   } else {
     updateChannel(chGps, gt, envWin(lt, 9, 55, 0.5));
-    updateChannel(chServo, gt, envMax(envWin(lt, 25.4, 30.6, 1.1), envWin(lt, 31, 47, 1.1, 0.22)));
-    updateChannel(chPwm, gt, envMax(envWin(lt, 33.2, 45.3, 0.9), envWin(lt, 53.6, 60.0, 0.9, 0.3)));
+    updateChannel(chServo, gt, envMax(envWin(lt, 25.4, 30.6, 1.1), envWin(lt, 31, 47, 1.1, 0.22),
+      envWin(lt, 54.8, 62.2, 1.1, 0.3)));                 // b08: servo sweeps the head
+    updateChannel(chPwm, gt, envMax(envWin(lt, 33.2, 45.3, 0.9), envWin(lt, 57.0, 59.7, 0.9, 0.3)));
     updateChannel(chSense, gt, envWin(lt, 35.0, 46.2, 0.9, 0.8));
-    updateChannel(chPower, gt, envMax(envWin(lt, 34.4, 45.6, 0.8, 0.8), envWin(lt, 54.2, 60.2, 0.8, 0.28)));
+    updateChannel(chPower, gt, envMax(envWin(lt, 34.4, 45.6, 0.8, 0.8), envWin(lt, 57.5, 60.0, 0.8, 0.28)));
   }
 }
 
@@ -2053,11 +2096,15 @@ function poseB07(localT, sim, out) {
   out.fov = lerp(_poseT.fov, 42, clamp01(k));
 }
 function poseB08(localT, out) {
-  const u = clamp01(localT / 8);
-  const ang = d2r(20) * Math.sin(Math.PI * u);        // out and seamlessly back
-  out.pos.copy(HERO_POS).sub(HERO_TGT).applyAxisAngle(UP, ang).add(HERO_TGT);
-  out.pos.y += 0.35 * Math.sin(Math.PI * u);
-  out.tgt.copy(HERO_TGT);
+  // push toward the bow for the vectored-thrust demo, then return to the hero
+  // frame — sin(πu) is 0 at both ends, so the seam into beat 02 is exact
+  const u = clamp01(localT / 10);
+  const k = Math.sin(Math.PI * u);
+  const ang = d2r(30) * k;
+  out.pos.copy(HERO_POS).sub(HERO_TGT).applyAxisAngle(UP, ang)
+    .multiplyScalar(1 - 0.40 * k).add(HERO_TGT);
+  out.pos.y = lerp(HERO_POS.y, 2.1, k);
+  out.tgt.copy(HERO_TGT).lerp(_v3c.set(3.28, 0.30, 0), 0.85 * k);
   out.fov = 42;
 }
 
@@ -2094,19 +2141,20 @@ const beatIdxEl = $('beatIdx'), wipeEl = $('wipe'), wordmarkEl = $('wordmark');
 const logoOverlay = $('logoOverlay'), lgRing = $('lgRing'), lgTicks = $('lgTicks'), lgAnchor = $('lgAnchor');
 const calloutEl = $('callout'), leaderSvg = $('leader');
 const chipDrift = $('chipDrift'), chipAz = $('chipAz'), chipEsc = $('chipEsc'),
-      chipLock = $('chipLock'), panelTel = $('panelTel'), hudEl = $('hud');
+      chipLock = $('chipLock'), panelTel = $('panelTel'), hudEl = $('hud'),
+      featPanel = $('featPanel');
 const escLabel = chipEsc.querySelector('span'), escBar = chipEsc.querySelector('.bar i');
 
 const CAPS = [
   ['00 · MARK', 'VANCHOR-NG · The virtual anchor'],
-  ['01 · THE HARDWARE', 'One brain. One muscle. The helm board computes; the thrust driver delivers.'],
-  ['02 · ANCHOR SET', 'Drop a virtual anchor. No chain — just a GPS point the boat is told to hold.'],
-  ['03 · DRIFT', 'Wind and current don’t care about your anchor. Metre by metre, the drift builds.'],
-  ['04 · THE HELM DECIDES', 'The helm board reads the GPS ten times a second. It knows how far off — and which way.'],
-  ['05 · AIM — SERVO', 'The helm drives the steering servo — swinging the motor to point straight at home.'],
-  ['06 · THRUST — DRIVER', 'PWM to the thrust driver, power to the prop — a measured pulse, never more. Current-sense reports back.'],
-  ['07 · BACK ON THE MARK', 'Zero drift. Locked. One full correction — and the loop never stops running.'],
-  ['08 · IT JUST HOLDS', 'Set it and fish. Station-keeping, quietly, forever. → github'],
+  ['01 · THE HARDWARE', 'The helm board (Pi/Pico carrier) runs the controller; the thrust driver (BTN8982 H-bridge) powers the motor. An 8-wire cable links them.'],
+  ['02 · ANCHOR SET', 'A GPS position is set as the anchor point. The controller holds the boat on it — no physical anchor.'],
+  ['03 · DRIFT', 'Wind and current push the boat off the anchor point. Drift is measured against the GPS fix.'],
+  ['04 · DECIDE', 'The control loop runs at 5 Hz. Each tick computes drift distance and bearing back to the anchor point.'],
+  ['05 · AIM — SERVO', 'The helm board drives the steering servo. The servo rotates the motor head toward the anchor bearing.'],
+  ['06 · THRUST — DRIVER', 'The helm board sends PWM over the 8-wire cable. The thrust driver powers the prop; current-sense data returns on the same cable.'],
+  ['07 · BACK ON THE MARK', 'Drift returns to zero. The control loop continues at 5 Hz while the anchor is set.'],
+  ['08 · STATION-KEEPING OPTIONS', 'Two options: a learned station-keeper, and vectored thrust — the motor head rotates fully instead of steering within ±35°.'],
 ];
 let capBeatShown = -1;
 
@@ -2124,11 +2172,11 @@ const _cable8Mid = (() => {
   return best;
 })();
 const CALLOUTS = [
-  { t0: 1.4, t1: 4.0, label: 'HELM BOARD', sub: 'vanchor-helm v4.2 · Pi/Pico carrier — the brain, by the battery', p: new THREE.Vector3(-1.42, 0.42, 0.12) },
-  { t0: 4.2, t1: 6.3, label: '8-WIRE CABLE', sub: 'stern to bow · PWM out, current-sense telemetry back', p: _cable8Mid },
+  { t0: 1.4, t1: 4.0, label: 'HELM BOARD', sub: 'vanchor-helm v4.2 · Pi/Pico carrier · runs the 5 Hz control loop', p: new THREE.Vector3(-1.42, 0.42, 0.12) },
+  { t0: 4.2, t1: 6.3, label: '8-WIRE CABLE', sub: 'stern to bow · PWM forward, current-sense back', p: _cable8Mid },
   { t0: 6.5, t1: 8.5, label: 'THRUST DRIVER', sub: 'vanchor-thrust v1.1 · BTN8982 H-bridge + heatsink', p: new THREE.Vector3(2.0, 0.56, 0) },
-  { t0: 8.7, t1: 10.3, label: 'STEERING SERVO', sub: 'thin servo lead, driven straight from the helm', p: new THREE.Vector3(3.18, 0.98, 0) },
-  { t0: 10.5, t1: 11.8, label: 'TROLLING MOTOR', sub: 'bow-mounted · steerable head + prop, fed by two heavy cables', p: new THREE.Vector3(3.32, 0.3, 0) },
+  { t0: 8.7, t1: 10.3, label: 'STEERING SERVO', sub: 'rotates the motor head · servo lead from the helm board', p: new THREE.Vector3(3.18, 0.98, 0) },
+  { t0: 10.5, t1: 11.8, label: 'TROLLING MOTOR', sub: 'bow-mounted · steerable head + prop · powered from the thrust driver', p: new THREE.Vector3(3.32, 0.3, 0) },
 ];
 
 // loop-HUD ring: SENSE · DECIDE · AIM · THRUST
@@ -2294,20 +2342,23 @@ function updateDOM(ti, sim) {
     }
     panelTel.innerHTML =
       `<span style="color:#ffc24d">DRIFT ${sim.dispDrift.toFixed(2)} m</span><br>` +
-      `<span style="color:#2ff3ff">BRG ${String(brg).padStart(3, '0')}° · FIX 10 Hz</span>` +
+      `<span style="color:#2ff3ff">BRG ${String(brg).padStart(3, '0')}° · CTL 5 Hz</span>` +
       `<svg width="96" height="22" viewBox="0 0 96 22"><polyline points="${pts}" fill="none" stroke="#2ff3ff" stroke-width="1.3" opacity=".9"/></svg>`;
     placeChip(panelTel, _v3a, 120, -140, true);
     panelTel.style.opacity = (smooth(18.9, 19.6, lt) * (1 - smooth(24.2, 24.9, lt))).toFixed(3);
   } else panelTel.style.display = 'none';
-  // AZ (beat 05)
-  if (!sim.cold && lt > 26.0 && lt < 32.6) {
+  // AZ (beat 05 servo aim + beat 08 vectored sweep)
+  if (!sim.cold && ((lt > 26.0 && lt < 32.6) || (lt > 55.6 && lt < 62.0))) {
     steeringGroup.getWorldPosition(_v3a);
     _v3a.y += 0.35;
     const azShow = ((Math.round(SIM.azDeg) % 360) + 360) % 360;
     chipAz.textContent = `AZ ${String(azShow).padStart(3, '0')}°`;
     placeChip(chipAz, _v3a, 26, -40, true);
     chipAz.style.color = '#2ff3ff';
-    chipAz.style.opacity = (smooth(26.0, 26.6, lt) * (1 - smooth(32.0, 32.6, lt))).toFixed(3);
+    const azOp = lt < 40
+      ? smooth(26.0, 26.6, lt) * (1 - smooth(32.0, 32.6, lt))
+      : smooth(55.6, 56.2, lt) * (1 - smooth(61.4, 62.0, lt));
+    chipAz.style.opacity = azOp.toFixed(3);
   } else chipAz.style.display = 'none';
   // ESC (beat 06) — anchored to the motor shaft at the waterline so the bar
   // sits INSIDE beat 06's low waterline framing (the driver board itself is
@@ -2336,8 +2387,12 @@ function updateDOM(ti, sim) {
     chipLock.style.transform = `scale(${(0.9 + 0.15 * sim.lockPulse).toFixed(3)})`;
   } else chipLock.style.display = 'none';
 
-  // ---- beat-08 wordmark ----
-  const wm = beat === 8 ? smooth(2.2, 3.4, localT) * (1 - smooth(5.6, 6.8, localT)) : 0;
+  // ---- beat-08 feature panel + wordmark ----
+  const featOp = beat === 8 && !sim.cold
+    ? smooth(1.4, 2.2, localT) * (1 - smooth(7.4, 8.2, localT)) : 0;
+  featPanel.style.display = featOp > 0.01 ? 'block' : 'none';
+  featPanel.style.opacity = featOp.toFixed(3);
+  const wm = beat === 8 ? smooth(8.2, 9.0, localT) * (1 - smooth(9.4, 9.9, localT)) : 0;
   wordmarkEl.style.opacity = wm.toFixed(3);
 
   // ---- scrub rail (loop beats 02–08) ----
@@ -2427,7 +2482,7 @@ window.__play = function () {
 // film (or a static-beat slideshow under prefers-reduced-motion).
 let introDone = false, introTimer = 0;
 let rmBeat = 0;
-const RM_TIMES = [3.5, 5.2, 5, 6, 3.5, 6.5, 5, 6, 3.2];  // hero moment per beat
+const RM_TIMES = [3.5, 5.2, 5, 6, 3.5, 6.5, 5, 6, 5.5];  // hero moment per beat
 function rmShow(n) {
   rmBeat = ((n % 9) + 9) % 9;
   clockState.mode = 'hold';

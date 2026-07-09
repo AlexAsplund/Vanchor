@@ -147,8 +147,8 @@ the map. That's the whole system running.
   Your browser can't show the clip inline — <a href="media/first-launch.mp4">open first-launch.mp4</a> instead.
 </video>
 
-*Clip: the app starting up — the connection chip turns green, the
-instruments fill in, and the boat settles at the centre of the chart.*
+*Clip: the app starting. The connection chip turns green, the instrument
+chips fill in, and the boat marker appears on the chart.*
 
 If the page doesn't load, jump to [chapter 12](#12-if-something-goes-wrong-troubleshooting)
 — the fixes are short.
@@ -227,15 +227,14 @@ behalf.
   Your browser can't show the clip inline — <a href="media/manual-driving.mp4">open manual-driving.mp4</a> instead.
 </video>
 
-*Clip: the Thrust and Steering sliders in action — the boat accelerates,
-arcs across the chart, then coasts to a stop when thrust returns to zero.*
+*Clip: the Thrust and Steering sliders. The boat accelerates, turns while
+steering is applied, and coasts to a stop when thrust returns to zero.*
 
 ## 7. Drop a virtual anchor (the main event)
 
-Here's the idea: **anchor hold** tells the boat to memorize its exact GPS
-spot and fight to stay there using the motor. No chain to winch, no anchor
-to drag, and it works over rock, weed, or water far too deep for ground
-tackle.
+**Anchor hold** stores the boat's current GPS position and uses the motor
+to keep the boat at it. No physical anchor is involved, so it works over
+any bottom type and at any depth.
 
 1. Tap the **Anchor** tile on the mode rail.
 2. Set the **Anchor radius** slider — the size of the circle you're willing
@@ -243,36 +242,42 @@ tackle.
    start.
 3. Press the button that says **Drop anchor here**.
 
-**What you'll watch** (and it's worth watching for a minute): a cyan anchor
-pin and a ring appear around the boat. The simulated wind and current push
-the boat slowly toward the edge of the ring. Then the motor head swivels to
-point back at the anchor spot, gives a pulse of thrust, and the boat slides
-home — and it repeats, gently, for as long as you leave it. Think of it as
-the boat *breathing* around its spot. The **Dist→Anchor** readout in the
-HUD rises and falls with each cycle.
+**What happens:** a cyan anchor pin and a ring appear around the boat. Wind
+and current push the boat away from the pin. The station-keeper steers the
+motor toward the anchor point, applies thrust, and the boat moves back. The
+cycle repeats for as long as the mode is active. The **Dist→Anchor** readout
+in the HUD rises and falls with each cycle.
 
 <video src="media/drop-anchor.mp4" controls muted playsinline width="640">
   Your browser can't show the clip inline — <a href="media/drop-anchor.mp4">open drop-anchor.mp4</a> instead.
 </video>
 
-*Clip: the anchor ring drops, wind pushes the boat toward the edge, and the
-motor pulses it back to centre — the station-keeping "breathing" loop.*
+*Clip: the **Smart station-keeping (learned)** and **Vectored thrust (full
+rotation)** switches are turned on and the anchor is dropped. A steady
+simulated wind and current push the boat off the spot; the station-keeper
+drives it back. The view then zooms out and the basemap is switched to
+**Topo**. A right-click on the water near the shoreline opens the map menu,
+and **Along shoreline** plans a water-only route whose waypoints follow the
+shoreline. A right-click on an island swaps that menu entry to **Loop around
+island**, which plans a closed ring of waypoints around the island.*
 
-The anchor panel has a few extra switches. None of them are needed today,
-but so they aren't mysterious:
+The anchor panel has additional switches. None of them are needed today:
 
-- **Hold heading while anchored** — also keeps the bow pointed the same way
-  while holding the spot.
-- **Smart station-keeping (learned)** and **Leif** — optional learned
-  autopilots (small neural networks trained in the simulator). Interesting
-  later; fine to ignore now.
-- **Vectored thrust (full rotation)** — lets the motor swing through its
-  full rotation to push straight against the wind. Also one for later.
+- **Hold heading while anchored** — also holds the bow on the heading the
+  boat had when the anchor was dropped.
+- **Smart station-keeping (learned)** — uses a learned neural-net
+  station-keeper instead of the PID one. Falls back automatically if the
+  model is unavailable.
+- **Leif** — an experimental pure neural-net station-keeper that steers the
+  motor through its full rotation. It has no PID fallback and uses more
+  battery. Only one of Smart / Leif can be selected at a time.
+- **Vectored thrust (full rotation)** — vectors the motor through its full
+  rotation to push directly against wind and current, instead of the ±35°
+  band. This is an option of the PID station-keeper.
 
-One genuinely handy extra: the **Jog anchor** pad — the four arrow buttons
-under the drop button. Each tap nudges the anchor spot a little in that
-direction, so you can fine-tune your position without lifting and
-re-dropping.
+The **Jog anchor** pad — the four arrow buttons under the drop button —
+moves the anchor point a small step in the chosen direction, without
+lifting and re-dropping.
 
 ## 8. Follow a route
 
@@ -301,8 +306,8 @@ itself.
   Your browser can't show the clip inline — <a href="media/follow-route.mp4">open follow-route.mp4</a> instead.
 </video>
 
-*Clip: waypoints drop as the map is tapped, a cyan path connects them, and
-the boat runs the legs one by one, arriving at the last pin.*
+*Clip: waypoints are added by tapping the map, a line connects them, and
+the boat follows each leg to the final waypoint.*
 
 One more thing you already installed: the `routing` extra from chapter 3
 powers **Take me here (smart route)** in the Route panel — press **Pick
@@ -375,8 +380,8 @@ delay.
   Your browser can't show the clip inline — <a href="media/big-stop.mp4">open big-stop.mp4</a> instead.
 </video>
 
-*Clip: the boat is moving, STOP is pressed, and the boat coasts to a halt —
-watch the **SOG** chip in the top bar fall to zero.*
+*Clip: the boat is moving, STOP is pressed, and thrust cuts to zero. The
+boat coasts to a stop and the **SOG** chip in the top bar falls to zero.*
 
 In the simulator there is nothing to hurt — this section is practice for
 real life, so that tapping STOP is muscle memory before it ever matters.

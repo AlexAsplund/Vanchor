@@ -64,6 +64,15 @@ def boot_server(workdir: Path) -> tuple[subprocess.Popen, str]:
         src = REPO / "vanchor_data" / name
         if src.exists():
             (data / name).symlink_to(src)
+    # Reuse the repo's offline water cache too, so shoreline/island routing
+    # plans without an Overpass fetch. Per-file symlinks into a REAL directory:
+    # any new cache entry the server writes lands in the temp dir, never the repo.
+    wc_src = REPO / "vanchor_data" / "water_cache"
+    if wc_src.is_dir():
+        wc = data / "water_cache"
+        wc.mkdir(exist_ok=True)
+        for f in wc_src.iterdir():
+            (wc / f.name).symlink_to(f)
     cfg = workdir / "config.yaml"
     cfg.write_text(
         "sim:\n"

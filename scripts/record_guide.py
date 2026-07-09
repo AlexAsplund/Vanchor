@@ -33,11 +33,11 @@ OUT = REPO / "docs" / "media"
 BASE_URL = ""
 
 
-def convert(webm: str, mp4: Path) -> None:
+def convert(webm: str, mp4: Path, crf: int = 28) -> None:
     import imageio_ffmpeg
     ff = imageio_ffmpeg.get_ffmpeg_exe()
     subprocess.run(
-        [ff, "-y", "-i", webm, "-c:v", "libx264", "-preset", "slow", "-crf", "28",
+        [ff, "-y", "-i", webm, "-c:v", "libx264", "-preset", "slow", "-crf", str(crf),
          "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(mp4)],
         capture_output=True, check=True,
     )
@@ -67,7 +67,8 @@ class Recorder:
             browser.close()
             webm = glob.glob(vdir + "/*.webm")[0]
             mp4 = OUT / f"{name}.mp4"
-            convert(webm, mp4)
+            # Long clips can set fn.crf to trade quality for size (default 28).
+            convert(webm, mp4, crf=getattr(fn, "crf", 28))
             print(f"  -> {mp4.name} ({os.path.getsize(mp4) // 1024} KB)")
 
 
