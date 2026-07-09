@@ -50,7 +50,8 @@ class AnchorEnv:
                  residual_scale: float = 0.3, anticip: float = 0.0,
                  pure: bool = False, steer_range_deg: float | None = None,
                  wind_cap: float | None = None, current_cap: float | None = None,
-                 gust_cap: float | None = None):
+                 gust_cap: float | None = None,
+                 steer_rate_dps: float | None = None):
         # EXPERIMENT: pure=True makes the net output the command DIRECTLY
         # (command = clip(net), no PID base) -- a from-scratch learned controller
         # rather than a PID refiner. steer_range_deg widens the boat's physical
@@ -58,6 +59,14 @@ class AnchorEnv:
         # thrust through the full rotation.
         self.pure = bool(pure)
         self.steer_range_deg = steer_range_deg
+        # EXPERIMENT (actuator fidelity): the real steering head slews at
+        # ~50 deg/s (BoatConfig.max_steer_rate_dps) but the env historically
+        # applied commanded steering INSTANTLY. With steer_rate_dps set, the
+        # physical deflection tracks the command at that rate, so thrust fires
+        # at the head's ACTUAL angle mid-swing -- making thrust modulation
+        # during rotation a learnable behaviour. None = legacy instant.
+        self.steer_rate_dps = steer_rate_dps
+        self._head_st = 0.0   # actual physical steering, normalised [-1, 1]
         # EXPERIMENT: cap the environmental severity to the HOLDABLE regime so the
         # policy trains on conditions a trolling motor can actually station-keep in
         # (the un-holdable 12 m/s tail otherwise dominates the average). Applied to
@@ -87,6 +96,7 @@ class AnchorEnv:
 
     # -- lifecycle -------------------------------------------------------- #
     def reset(self, scenario: dict) -> np.ndarray:
+        self._head_st = 0.0
         s = scenario
         self.anchor = ANCHOR
         coslat = math.cos(math.radians(self.anchor.lat))
@@ -189,11 +199,23 @@ class AnchorEnv:
         # The physical steering deflection carries the Helm's mount sign (see
         # reset); the OBSERVATION (_prev) keeps the helm-frame command, exactly
         # as the deployed mode sees its own pre-Helm setpoint.
-        cmd = MotorCommand(thrust=th, steering=st * self._steer_sign)
+        st_cmd = st * self._steer_sign
         n_sub = max(1, round(self.dt / self.physics_dt))
         pdt = self.dt / n_sub
+        if self.steer_rate_dps is None:
+            self._head_st = st_cmd                      # legacy: instant head
+        cmd = MotorCommand(thrust=th, steering=self._head_st)
         self._prev_p_heading = self._p_heading
+        max_ang = self.steer_range_deg or 35.0
         for _ in range(n_sub):
+            if self.steer_rate_dps is not None:
+                step_norm = (self.steer_rate_dps / max_ang) * pdt
+                delta = st_cmd - self._head_st
+                if abs(delta) <= step_norm:
+                    self._head_st = st_cmd
+                else:
+                    self._head_st += math.copysign(step_norm, delta)
+                cmd = MotorCommand(thrust=th, steering=self._head_st)
             env = self.env
             if env.wind_variability > 0.0 or env.current_variability > 0.0:
                 self._weather.step(pdt)

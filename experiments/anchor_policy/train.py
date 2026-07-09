@@ -54,6 +54,7 @@ POLICY_META = {"steer_sign": 1.0}
 # EXPERIMENT globals (set in main before the Pool forks so workers inherit them).
 _PURE = False
 _STEER = None
+_STEER_RATE = None
 _WIND_CAP = None
 _CUR_CAP = None
 _GUST_CAP = None
@@ -79,7 +80,7 @@ def _score(args):
     """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation)."""
     theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE)
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
@@ -87,7 +88,7 @@ def _score(args):
 def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE)
     win, md, en, rr = [], [], [], []
     for sc in validation_batch(K_VALID):
         ret, dists, energy = _rollout(pol, env, sc)
@@ -130,14 +131,18 @@ def main():
     ap.add_argument("--wind-cap", type=float, default=None)     # EXPERIMENT: cap wind (m/s)
     ap.add_argument("--current-cap", type=float, default=None)  # EXPERIMENT: cap current (m/s)
     ap.add_argument("--gust-cap", type=float, default=None)     # EXPERIMENT: cap gust amplitude
+    ap.add_argument("--steer-rate-dps", type=float, default=None,
+                    help="EXPERIMENT: model the head's slew rate (deg/s); the policy "
+                         "must learn thrust modulation while the head swings")
     ap.add_argument("--hours", type=float, default=None,
                     help="wall-clock budget; stop cleanly (checkpointed) when exceeded")
     ap.add_argument("--init-policy", default=None,
                     help="warm-start theta from a policy JSON (fresh starts only; "
                          "sizes must match the --history-derived net shape)")
     args = ap.parse_args()
-    global _PURE, _STEER, _WIND_CAP, _CUR_CAP, _GUST_CAP
+    global _PURE, _STEER, _WIND_CAP, _CUR_CAP, _GUST_CAP, _STEER_RATE
     _PURE, _STEER = args.pure, args.steer_range
+    _STEER_RATE = args.steer_rate_dps
     _WIND_CAP, _CUR_CAP, _GUST_CAP = args.wind_cap, args.current_cap, args.gust_cap
 
     ckpt = args.ckpt_dir
