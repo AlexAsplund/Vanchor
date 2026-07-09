@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>VANCHOR-NG · The virtual anchor</title>
+<meta name="description" content="A 3-D concept film of the Vanchor-NG virtual anchor: drop a GPS point, and the helm board, steering servo and thrust driver quietly hold the boat on it — sense, decide, aim, thrust.">
+<meta property="og:title" content="VANCHOR-NG · The virtual anchor">
+<meta property="og:description" content="A holographic 3-D walkthrough of the virtual-anchor control loop — from GPS fix to prop wash. Runs offline, right in the browser.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="VANCHOR-NG · The virtual anchor">
+<meta name="twitter:description" content="A holographic 3-D walkthrough of the virtual-anchor control loop — from GPS fix to prop wash.">
+<meta name="theme-color" content="#05080d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg stroke='%232ff3ff' fill='none' stroke-width='14' stroke-linecap='round'%3E%3Ccircle cx='100' cy='62' r='34'/%3E%3Cpath d='M100 16v12M100 96v12M54 62h12M134 62h12M100 108v76M78 122h44M62 148q38 40 76 0'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+  @font-face{font-family:'Chakra Petch';font-style:normal;font-weight:500;font-display:swap;
+    src:url('./vendor/fonts/chakra-petch-500.woff2') format('woff2')}
+  @font-face{font-family:'Chakra Petch';font-style:normal;font-weight:600;font-display:swap;
+    src:url('./vendor/fonts/chakra-petch-600.woff2') format('woff2')}
+  @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:100 800;font-display:swap;
+    src:url('./vendor/fonts/jetbrains-mono-var.woff2') format('woff2')}
+  :root{
+    --bg0:#05080d; --bg1:#071018;
+    --cyan:#2ff3ff; --teal:#2ce8b0; --amber:#ffc24d; --text:#eaf2fb;
+    --mono:'JetBrains Mono','SFMono-Regular',ui-monospace,Menlo,Consolas,monospace;
+    --disp:'Chakra Petch',system-ui,-apple-system,'Segoe UI',sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg0);color:var(--text);
+    font-family:var(--disp);-webkit-font-smoothing:antialiased}
+  #app{position:fixed;inset:0}
+  #app canvas{display:block;width:100%;height:100%}
+
+  /* ---------------- story overlay UI ---------------- */
+  #ui{position:fixed;inset:0;pointer-events:none;z-index:20;font-family:var(--disp);overflow:hidden}
+  #ui .chip{position:absolute;display:none;font-family:var(--mono);font-size:12px;letter-spacing:.06em;
+    color:var(--text);background:rgba(6,12,19,.74);border:1px solid rgba(47,243,255,.35);border-radius:5px;
+    padding:4px 9px;white-space:nowrap;box-shadow:0 0 14px rgba(47,243,255,.10)}
+  #chipLock{color:var(--teal);border-color:rgba(44,232,176,.55);font-weight:700;letter-spacing:.24em;
+    box-shadow:0 0 18px rgba(44,232,176,.25)}
+  #chipEsc .bar{width:92px;height:5px;background:rgba(47,243,255,.12);border-radius:3px;margin-top:4px;overflow:hidden}
+  #chipEsc .bar i{display:block;height:100%;width:0;background:var(--teal);box-shadow:0 0 8px var(--teal)}
+  #panelTel{line-height:1.55;font-size:11px}
+  #panelTel svg{display:block;margin-top:3px}
+  #leader{position:absolute;inset:0;width:100%;height:100%}
+  #callout{position:absolute;display:none;background:rgba(6,12,19,.78);border:1px solid rgba(47,243,255,.4);
+    border-radius:6px;padding:6px 11px;max-width:250px;box-shadow:0 0 16px rgba(47,243,255,.12)}
+  #callout .cl-label{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.14em;color:var(--cyan)}
+  #callout .cl-sub{font-size:10.5px;letter-spacing:.05em;color:#a8bfd2;margin-top:2px;white-space:normal}
+  #cap{position:absolute;left:50%;bottom:7.5%;transform:translateX(-50%);text-align:center;z-index:3;
+    max-width:min(760px,88vw);opacity:0;will-change:opacity,transform}
+  #capKick{font-size:12px;letter-spacing:.34em;color:var(--cyan);margin-bottom:8px;
+    text-shadow:0 0 12px rgba(47,243,255,.45);font-weight:600}
+  #capBody{font-size:clamp(15px,2.3vw,21px);font-weight:500;letter-spacing:.02em;color:var(--text);
+    text-shadow:0 2px 18px rgba(0,0,0,.65);padding:2px 18px 6px}
+  #beatIdx{position:absolute;left:22px;bottom:26px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.3em;color:rgba(47,243,255,.8);opacity:0}
+  #hud{position:absolute;right:22px;bottom:16px;width:170px;height:150px;opacity:0}
+  #hud text{font-family:var(--mono);fill:#9fd9e8;font-size:9.5px;letter-spacing:.1em}
+  #wordmark{position:absolute;left:50%;top:36%;transform:translate(-50%,-50%);text-align:center;opacity:0}
+  #wordmark h2{font-size:clamp(28px,6vw,54px);letter-spacing:.3em;color:var(--text);font-weight:600;
+    text-shadow:0 0 30px rgba(47,243,255,.4);white-space:nowrap}
+  #wordmark p{margin-top:10px;font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:#9fd9e8}
+  #logoOverlay{position:absolute;inset:0;background:#04070c;display:grid;place-items:center;opacity:1;z-index:2}
+  #logoOverlay svg{width:min(46vmin,250px);filter:drop-shadow(0 0 18px rgba(47,243,255,.5))}
+  #wipe{position:absolute;inset:0;opacity:0;--w0:0;--w1:0;
+    background:linear-gradient(180deg,
+      transparent calc(var(--w0)*1%),
+      rgba(47,243,255,.8) calc(var(--w0)*1% + .4%),
+      rgba(4,8,13,.97) calc(var(--w0)*1% + 1.6%),
+      rgba(4,8,13,.97) calc(var(--w1)*1% - 1.6%),
+      rgba(47,243,255,.8) calc(var(--w1)*1% - .4%),
+      transparent calc(var(--w1)*1%))}
+  #wipe::after{content:'';position:absolute;inset:0;opacity:.5;
+    background:repeating-linear-gradient(180deg,rgba(47,243,255,.05) 0 1px,transparent 1px 4px)}
+  #modeToggle{position:absolute;top:14px;right:14px;pointer-events:auto;z-index:30;
+    background:rgba(6,12,19,.7);border:1px solid rgba(47,243,255,.4);color:var(--cyan);
+    font-family:var(--mono);font-size:10px;letter-spacing:.24em;padding:7px 12px;border-radius:5px;cursor:pointer}
+  #hint{position:fixed;top:44px;right:14px;z-index:30;pointer-events:none;text-align:right;
+    font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;color:rgba(159,217,232,.55);
+    transition:opacity .5s}
+  body.explore #cap,body.explore #beatIdx,body.explore #hud,body.explore #ui .chip,
+  body.explore #callout,body.explore #leader,body.explore #wordmark,body.explore #rail,
+  body.explore #logoOverlay{display:none!important;opacity:0!important}
+
+  /* ---- 7-segment scrub rail (loop beats 02–08) ---- */
+  #rail{position:absolute;left:50%;bottom:3.4%;transform:translateX(-50%);z-index:4;
+    display:flex;gap:5px;pointer-events:auto;opacity:0;transition:opacity .6s}
+  #rail span{display:block;width:26px;height:4px;border-radius:2px;cursor:pointer;
+    background:rgba(47,243,255,.14);overflow:hidden;position:relative;
+    padding:0;border:0}
+  #rail span i{position:absolute;inset:0;transform-origin:left;transform:scaleX(0);
+    background:rgba(47,243,255,.75);border-radius:2px}
+  #rail span::after{content:'';position:absolute;inset:-7px 0}   /* fat hit area */
+
+  /* ---- intro overlay ---- */
+  #intro{position:fixed;inset:0;z-index:45;display:grid;place-items:center;text-align:center;
+    background:radial-gradient(120% 95% at 50% 115%, rgba(10,34,48,.75) 0%, rgba(7,16,24,.9) 45%, rgba(4,7,12,.96) 100%);
+    transition:opacity .7s;cursor:default}
+  #intro.off{opacity:0;pointer-events:none}
+  body.intro #modeToggle,body.intro #hint{opacity:0;pointer-events:none}
+  #intro svg{width:min(20vmin,110px);margin:0 auto 20px;display:block;
+    filter:drop-shadow(0 0 16px rgba(47,243,255,.45))}
+  #intro h1{font-size:clamp(26px,5vw,44px);letter-spacing:.32em;font-weight:600;color:var(--text);
+    text-shadow:0 0 26px rgba(47,243,255,.35);padding-left:.32em}
+  #intro p{margin:14px auto 26px;max-width:min(520px,84vw);font-size:clamp(13px,1.6vw,15.5px);
+    font-weight:500;letter-spacing:.04em;line-height:1.55;color:#a8bfd2}
+  #intro .btns{display:flex;gap:14px;justify-content:center}
+  #intro button{pointer-events:auto;cursor:pointer;font-family:var(--mono);font-size:11px;
+    letter-spacing:.26em;padding:11px 22px 11px 24px;border-radius:5px;color:var(--cyan);
+    background:rgba(47,243,255,.08);border:1px solid rgba(47,243,255,.5);
+    box-shadow:0 0 18px rgba(47,243,255,.10);transition:background .25s}
+  #intro button:hover{background:rgba(47,243,255,.18)}
+  #intro button.ghost{color:#9fd9e8;border-color:rgba(159,217,232,.35);background:transparent}
+  #intro .auto{margin-top:20px;font-family:var(--mono);font-size:9.5px;letter-spacing:.2em;color:rgba(159,217,232,.4)}
+
+  /* ---- phone / portrait treatment ---- */
+  @media (max-width:480px){
+    #chipAz,#panelTel{display:none!important}
+    #chipEsc .bar{width:72px}
+    #ui .chip{font-size:12px}
+    #wordmark h2{font-size:22px;letter-spacing:.22em}
+    #wordmark p{font-size:10px;letter-spacing:.12em}
+    #intro .btns{flex-direction:column;align-items:center}
+    #intro button{width:232px;white-space:nowrap}
+    #hud{width:118px;height:104px;right:36px;bottom:calc(10px + env(safe-area-inset-bottom))}
+    #beatIdx{left:14px;bottom:calc(14px + env(safe-area-inset-bottom))}
+    #callout{max-width:210px;padding:5px 9px}
+    #callout .cl-sub{font-size:10px}
+    #modeToggle{top:10px;right:10px;padding:8px 12px}
+    #hint{top:42px;right:10px}
+    #rail span{width:20px;height:5px}
+  }
+  @media (orientation:portrait){
+    #cap{bottom:calc(9% + env(safe-area-inset-bottom));max-width:92vw}
+    #capKick{font-size:11px;letter-spacing:.28em}
+    #capBody{font-size:clamp(14.5px,4.1vw,18px)}
+    #rail{bottom:calc(4.6% + env(safe-area-inset-bottom))}
+    #wordmark{top:30%}
+  }
+
+  /* debug readout (?debug=1) */
+  #debug{
+    position:fixed;top:10px;left:12px;z-index:40;display:none;
+    font-family:var(--mono);font-size:11px;line-height:1.6;letter-spacing:.04em;
+    color:var(--cyan);background:rgba(5,8,13,.55);border:1px solid rgba(47,243,255,.22);
+    border-radius:6px;padding:6px 10px;pointer-events:none;white-space:pre;
+    text-shadow:0 0 6px rgba(47,243,255,.35);
+  }
+  body.debug #debug{display:block}
+
+  /* WebGL failure fallback — never a black box */
+  #fallback{
+    position:fixed;inset:0;z-index:50;display:none;place-items:center;text-align:center;
+    background:radial-gradient(120% 90% at 50% 110%, #0a2230 0%, var(--bg1) 45%, var(--bg0) 100%);
+  }
+  #fallback.on{display:grid}
+  #fallback svg{width:110px;margin:0 auto 18px;display:block;
+    filter:drop-shadow(0 0 16px rgba(47,243,255,.45))}
+  #fallback h1{font-size:22px;letter-spacing:.28em;font-weight:600}
+  #fallback p{margin-top:8px;font-family:var(--mono);font-size:12px;color:#9fb4c8;letter-spacing:.08em}
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="ui">
+    <div id="wipe"></div>
+    <svg id="leader"></svg>
+    <div id="callout"><div class="cl-label"></div><div class="cl-sub"></div></div>
+    <div id="chipDrift" class="chip"></div>
+    <div id="chipAz" class="chip"></div>
+    <div id="chipEsc" class="chip"><span></span><div class="bar"><i></i></div></div>
+    <div id="chipLock" class="chip">LOCK</div>
+    <div id="panelTel" class="chip"></div>
+    <div id="cap"><div id="capKick"></div><div id="capBody"></div></div>
+    <div id="rail" aria-label="story progress"></div>
+    <div id="beatIdx"></div>
+    <div id="hud"></div>
+    <div id="wordmark"><h2>VANCHOR-NG</h2><p>SET IT AND FISH · STATION-KEEPING, QUIETLY, FOREVER · → GITHUB</p></div>
+    <div id="logoOverlay">
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <g stroke="#2ff3ff" fill="none" stroke-linecap="round">
+          <circle id="lgRing" cx="100" cy="58" r="34" stroke-width="4"
+                  pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"
+                  transform="rotate(-90 100 58)"/>
+          <g id="lgTicks" stroke-width="3.5" opacity="0">
+            <path d="M100 14 v10"/><path d="M100 92 v10"/>
+            <path d="M56 58 h10"/><path d="M134 58 h10"/>
+          </g>
+          <path id="lgAnchor" stroke-width="5"
+                d="M100 92 L100 168 M80 112 L120 112 M58 138 Q100 184 142 138 M58 138 L58 152 M142 138 L142 152"
+                pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/>
+        </g>
+      </svg>
+    </div>
+  </div>
+  <button id="modeToggle">EXPLORE</button>
+  <div id="hint"></div>
+  <div id="intro">
+    <div>
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <g stroke="#2ff3ff" fill="none" stroke-width="7" stroke-linecap="round">
+          <circle cx="100" cy="58" r="34"/>
+          <path d="M100 14v10M100 92v10M56 58h10M134 58h10"/>
+          <path d="M100 92v76M80 112h40M58 138q42 46 84 0M58 138v14M142 138v14"/>
+        </g>
+      </svg>
+      <h1>VANCHOR-NG</h1>
+      <p>How a trolling motor becomes a GPS anchor — a guided holographic walkthrough
+         of the control loop, from satellite fix to prop wash.</p>
+      <div class="btns">
+        <button id="introStory">&#9654;&nbsp; PLAY THE STORY</button>
+        <button id="introExplore" class="ghost">FREE EXPLORE</button>
+      </div>
+      <div class="auto" id="introAuto">STARTS AUTOMATICALLY</div>
+    </div>
+  </div>
+  <div id="debug"></div>
+  <div id="fallback" aria-hidden="true">
+    <div>
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <g stroke="#2ff3ff" fill="none" stroke-width="7" stroke-linecap="round">
+          <circle cx="100" cy="58" r="34"/>
+          <path d="M100 14v10M100 92v10M56 58h10M134 58h10"/>
+          <path d="M100 92v76M80 112h40M58 138q42 46 84 0M58 138v14M142 138v14"/>
+        </g>
+      </svg>
+      <h1>VANCHOR-NG</h1>
+      <p>THE VIRTUAL ANCHOR · GPS STATION-KEEPING</p>
+      <p style="margin-top:14px;opacity:.65">This walkthrough needs WebGL — your browser or device has it disabled.</p>
+    </div>
+  </div>
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

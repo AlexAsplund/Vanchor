@@ -15,6 +15,10 @@ a real autopilot, or tap the map and say **"take me here"** — the boat plans a
 water-only route around islands and steers itself there, correcting for wind and
 current drift along the way.
 
+**New here?** The **[getting-started guide](docs/getting-started.md)** takes you from zero to a simulated boat holding anchor in about ten minutes — no hardware, no coding experience needed.
+
+**Prefer to watch first?** Open the **[3D concept walkthrough](docs/concept/index.html)** — a 90-second holographic film of the whole control loop (drop an anchor, drift, aim, thrust, re-lock), straight in your browser, fully offline.
+
 The headline is that **it runs entirely in simulation, with no hardware at all.**
 A built-in physics simulator and simulated NMEA sensors close the control loop on
 your laptop, so the whole navigation/control stack can be developed and tested
