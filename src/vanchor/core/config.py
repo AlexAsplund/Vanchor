@@ -126,7 +126,11 @@ class BoatConfig:
     hull_tracking: float = 1.0
     # Steering gearbox (the closed-loop azimuth unit; see cad/steering.py).
     shaft_dia_mm: float = 25.4
-    steer_range_deg: float = 185.0  # +/- cable-wrap mechanical limit of the head
+    # +/- mechanical rotation limit of the steering head. The servo/gearbox
+    # design allows at least +/-360 deg from centre (owner-confirmed 2026-07-09;
+    # the old 185 value was a stale cable-wrap assumption). Set lower for a
+    # build with restricted cable routing.
+    steer_range_deg: float = 360.0
     steer_reduction: float = 4.0  # pinion->ring reduction
     # Sonar transducer beam (cone) angle in degrees. NMEA DPT/DBT carry only a
     # depth, never a beam angle, so this configurable default is what sizes the
@@ -1021,7 +1025,7 @@ boat:
   max_turn_rate_deg: 18.0  # used by the "simple" model only
   hull_tracking: 1.0     # directional stability: ~0.35 jon boat (loose) .. 1.0 skiff .. ~2.5 keel (tracks)
   shaft_dia_mm: 25.4         # trolling-motor shaft (steering gearbox)
-  steer_range_deg: 185.0     # +/- cable-wrap mechanical limit of the head
+  steer_range_deg: 360.0     # +/- head rotation limit (servo design allows >=360)
   steer_reduction: 4.0       # pinion -> ring reduction
   sonar_cone_deg: 20.0       # sonar transducer beam angle; sizes depth-map footprint (2*d*tan(cone/2))
 

@@ -21,11 +21,11 @@
  *     A <angle_deg> <ok> <wrap_pct>\r\n
  *
  * Mechanical params come from core/config.py BoatConfig:
- *     steer_range_deg     = 185.0   (+/- cable-wrap mechanical limit)
+ *     steer_range_deg     = 360.0   (+/- head rotation limit; servo design allows >=360)
  *     max_steer_rate_dps  = 50.0    (head rotation speed; bounds PID output)
  *
  * Safety / robustness:
- *   - clamp target to +/- STEER_RANGE_DEG (cable-wrap soft endstops),
+ *   - clamp target to +/- STEER_RANGE_DEG (soft endstops),
  *   - deadband around the target to stop hunting (worm self-locks in deadband),
  *   - output (PWM) limited; integrator clamped (anti-windup),
  *   - stall detection: large error + ~no motion for a while -> back off + flag,
@@ -49,8 +49,9 @@ const uint8_t PIN_BTS_L_IS = A3;   // optional BTS7960 current-sense (L_IS), ana
 const uint8_t PIN_STATUS_LED = 13;
 
 // --------------------- mechanical / sensor calibration --------------------- //
-// Cable-wrap mechanical limit, deg each side of centre (BoatConfig.steer_range_deg).
-const float STEER_RANGE_DEG = 185.0f;
+// Head rotation limit, deg each side of centre (BoatConfig.steer_range_deg).
+// The servo/gearbox design allows at least +/-360; set to YOUR build's limit.
+const float STEER_RANGE_DEG = 360.0f;
 // Head rotation speed (BoatConfig.max_steer_rate_dps) -- used only as a sanity ref.
 const float MAX_STEER_RATE_DPS = 50.0f;
 
