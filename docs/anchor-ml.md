@@ -95,6 +95,49 @@ training with no strong-wind regression.
 - **center** mount is near-uncontrollable for everyone (no yaw lever arm);
   don't read too much into its absolute numbers.
 
+## Azimuth + actuator-fidelity retraining (2026-07-09 → 14)
+
+Two sequential full-compute stages (15 workers, 24 h, ~10k gens each; ES
+pop 48x2, k=12, warm-started from the shipped policies) on the corrected
+physics with the new **95 deg/s effective steering-slew actuator model**
+(`--steer-rate-dps`; the head is a 20 rpm gearmotor = 120 deg/s peak, ~95
+effective with ramp). Stage A trained a ±360° pair (hybrid needed
+`--pid-cal-deg 120` — the PID base's ±45°-intent steering runs 8x hot at
+±360 and opened at 21% within before calibration); stage B the ±120° pair.
+
+Held-out cross-eval (k=128, each policy in its NATIVE env, all with the
+95 deg/s actuator):
+
+| Controller | within 5 m | mean dist | energy |
+|---|---|---|---|
+| smart360 | 90.3% | 8.45 m | 0.94 |
+| **smart120b (promoted)** | **90.1%** | **7.92 m** | 0.99 |
+| shipped Smart (prev) | 83.7% | 9.24 m | 0.72 |
+| PID (±35 native) | 77.8% | 10.80 m | 0.29 |
+| leif120b | 65.7% | 8.59 m | 1.00 |
+| leif360 | 65.7% | 9.80 m | 0.97 |
+| shipped Leif | 64.6% | 9.50 m | 0.98 |
+
+Conclusions:
+- Retraining on corrected physics + realistic actuator: **+6.5 points** over
+  the previous shipped hybrid under deployment-realistic conditions.
+- **±360 ties ±120 at matched compute** (90.3 vs 90.1; ±120 tighter mean
+  distance). An interim +1.5-point lead for ±360 was a compute-imbalance
+  artifact that stage B's same-budget comparison eliminated. Full rotation
+  is not worth deployment complexity for the hybrid: ±120 + reverse already
+  covers every wash direction, and the redundant wide action mapping eats
+  the theoretical gain. (A (sin,cos) direction parameterization remains the
+  untested alternative if 360 is revisited.)
+- Pure Leif gained ~1 point — hybrid remains the daily driver; Leif ships
+  unchanged.
+- Trade-off: the new hybrid spends more energy than its predecessor
+  (0.99 vs 0.72) buying the extra hold.
+
+**Promoted:** `smart120b` best checkpoint → `src/vanchor/controller/
+anchor_policy.json` (train_azimuth_deg 120, provenance embedded; predecessor
+archived as `runs/anchor_policy-superseded-20260714.json`). Sign-off eval on
+the promoted file reproduced 90.1% / 7.92 m; the 73 anchor runtime tests pass.
+
 ## Physics-fix re-evaluation (2026-07-09)
 
 The Fossen model gained the missing `Dnu_c` current-rotation term (see

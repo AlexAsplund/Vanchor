@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Smart station-keeping policy retrained** on the corrected Fossen physics
+  with a realistic steering-actuator model (95 deg/s effective slew): held-out
+  hold-rate 83.7% → **90.1%** within the 5 m circle, mean distance 9.24 →
+  7.92 m (energy 0.72 → 0.99). Azimuth ablation at matched compute found
+  ±360° ties ±120°, so the shipped ±120 semantics are unchanged — drop-in
+  policy swap, no runtime changes. Training gained --steer-rate-dps (actuator
+  slew model), --pid-cal-deg (base calibration at wide azimuth), --hours,
+  --init-policy warm starts and exact-stream RNG resume; eval.py can now
+  evaluate policies in their native envs. Full record in docs/anchor-ml.md.
+
 - **Fossen model: missing current-rotation term fixed** — audited the 3-DOF
   physics against Fossen's reference implementation
   (cybergalactic/PythonVehicleSimulator, per the FossenHandbook materials).

@@ -46,8 +46,11 @@ def _anchor_pid(obs, kp=0.12, kd=0.6):
     return np.array([thrust, steer])
 
 
+_ENV_KW = {}   # native-env options threaded from the CLI (see main)
+
+
 def _evaluate(action_fn, dt, dur, rad, k, history):
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, **_ENV_KW)
     win, md, en = [], [], []
     for sc in validation_batch(k):
         obs = env.reset(sc)
@@ -70,8 +73,18 @@ def main():
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--radius", type=float, default=5.0)
     ap.add_argument("--k", type=int, default=128)
+    ap.add_argument("--pure", action="store_true")
+    ap.add_argument("--steer-range", type=float, default=None)
+    ap.add_argument("--steer-rate-dps", type=float, default=None)
+    ap.add_argument("--pid-cal-deg", type=float, default=None)
     args = ap.parse_args()
 
+    _ENV_KW.update({k: v for k, v in {
+        "pure": args.pure or None,
+        "steer_range_deg": args.steer_range,
+        "steer_rate_dps": args.steer_rate_dps,
+        "pid_cal_deg": args.pid_cal_deg,
+    }.items() if v})
     pol = TinyPolicy.load(args.policy)
     history = max(1, pol.sizes[0] // OBS_DIM)
     print(f"policy: {os.path.basename(args.policy)}  sizes={pol.sizes}  history={history}")
