@@ -57,7 +57,7 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 - link-loss failsafe: telemetry `link.failsafe_action` reports what engaged — `"continue"` (guided modes keep flying; the default), `"hold"` (anchor-hold, `link_loss_continue_mission: false`), `"stop"` (manual deadman)
 - `anchor_hold {anchor?{lat,lon}, radius_m?}` — drop anchor at current position (or supplied point)
 - `anchor_ml {anchor?{lat,lon}, radius_m?}` — ML-trained anchor hold; falls back to PID if model absent
-- `heading_hold {throttle?, heading?}` — hold a compass heading (defaults to current heading)
+- `heading_hold {throttle?, heading?}` — hold a compass heading (defaults to current heading). DEPRECATED in the UI (2026-07-15): superseded by `manual {steer_bearing|steer_course}`; kept for the API / RF remotes / NMEA2000 connectors
 - `goto {waypoints:[{lat,lon,name?,throttle_pct?,speed_kn?},...], on_arrival?, loop?, patrol?, throttle?, active?}` — follow waypoints; `active` for live in-place edits (resume from that index without restarting). A waypoint's optional `throttle_pct` (engine %, 0..100) **or** `speed_kn` (SOG target) is adopted on arrival at that mark for the following legs, via the throttle-override / cruise channels (so `set_throttle`/`cruise` sent mid-route override it until the next speed-carrying mark)
 - `load_route {gpx, loop?, patrol?, throttle?}` — start navigation from GPX text
 - `follow_apb {throttle?}` — track external autopilot bearing (NMEA APB sentences)

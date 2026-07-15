@@ -26,7 +26,7 @@ A dark, futuristic "tactical HUD" marine app over a live map.
   **layout profiles**, and an **opacity control** (fade just the tile or the text
   too). Optional tactical frame (heading tape + reticles).
 - **Steering gauge** — closed-loop commanded-vs-feedback azimuth with cable-wrap arc.
-- **Mode rail + contextual panels** — Manual, Anchor, Heading-hold, Route, APB,
+- **Mode rail + contextual panels** — Manual, Anchor, Route, APB,
   Drift, Stop, Remote, and a **"🎣 More"** group for the fishing modes.
 - **Remote helm** — full-screen, big-button mode for use at the helm/phone.
 - **Sound feedback** — synthesized audio cues (offline, no files): alarms in
@@ -74,7 +74,8 @@ A dark, futuristic "tactical HUD" marine app over a live map.
   Relative/Absolute/Course steering modes (absolute holds a compass bearing
   while the boat yaws; course follows the straight track line drawn from the
   engage point, cross-track corrected).
-- **Heading-hold** autopilot.
+- **Heading-hold** autopilot (API/connectors only — the UI tile was
+  superseded by Manual's Absolute/Course steering).
 - **Waypoint / Route** following with cross-track correction **and predictive
   drift compensation** (crabs into wind/current so the ground track holds).
 - **Follow-APB** (external autopilot bearing).

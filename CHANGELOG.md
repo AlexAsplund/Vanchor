@@ -4,6 +4,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Heading-hold removed from the UI** — superseded by Manual mode's
+  Absolute (hold a compass bearing) and Course (follow the track line)
+  steering: the rail tile, its panel and the remote-helm button are gone.
+  The `heading_hold` COMMAND remains for the API, RF remotes and NMEA2000
+  connectors, and an externally-engaged heading-hold still displays
+  correctly (mode badge / sounds / wake lock).
+
 - **Heading-up map tilt** — in heading-up mode the chart can lean away
   navigator-style (0–60°, Settings → Map & charts → Map orientation,
   persisted) so more water is visible AHEAD of the boat. Pointer mapping and

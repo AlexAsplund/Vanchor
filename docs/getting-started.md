@@ -186,7 +186,7 @@ compass rose under **Heading** that spins as the boat turns, **Depth**,
 
 **The mode rail** (the row of tiles along the bottom): this is where you
 pick *what job the autopilot should do*. The tiles are **Manual** (you
-drive), **Anchor** (hold a spot), **Heading** (hold a compass course),
+drive — with Relative / Absolute / Course steering), **Anchor** (hold a spot),
 **Route** (follow a path you draw), **APB** (follow an external
 chartplotter — ignore this one for now), **Drift** (controlled slow drift),
 **Stop**, **Remote** (a giant-button layout for phones), and **More**, which

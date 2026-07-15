@@ -322,9 +322,6 @@
       <button class="mode-btn" data-mode="anchor_hold" role="tab" title="Anchor hold">
         <span class="mi" aria-hidden="true">⚓</span><span class="ml">Anchor</span>
       </button>
-      <button class="mode-btn" data-mode="heading_hold" role="tab" title="Heading hold">
-        <span class="mi" aria-hidden="true">🧭</span><span class="ml">Heading</span>
-      </button>
       <button class="mode-btn" data-mode="waypoint" role="tab" title="Waypoint / route">
         <span class="mi" aria-hidden="true">📍</span><span class="ml">Route</span>
       </button>
@@ -426,15 +423,6 @@
           <button id="jog-right" class="dpad-right" aria-label="Jog right">→</button>
           <button id="jog-back" class="dpad-down" aria-label="Jog back">↓</button>
         </div>
-      </div>
-
-      <!-- HEADING -->
-      <div class="ctx-panel" id="ctx-heading_hold" data-for="heading_hold">
-        <div class="slider-row">
-          <label>Target heading <output id="hdg-val">0</output>°</label>
-          <input type="range" id="hdg" min="0" max="359" step="1" value="0" />
-        </div>
-        <button id="hdg-go" class="btn-primary wide">🧭 Hold this heading</button>
       </div>
 
       <!-- WAYPOINT / ROUTE -->
@@ -856,7 +844,6 @@
     <div class="remote-grid">
       <button id="rm-anchor-here" class="rbtn rbtn-anchor">⚓ Anchor here</button>
       <button id="rm-stop" class="rbtn rbtn-stop">■ STOP</button>
-      <button id="rm-hold-hdg" class="rbtn rbtn-hdg">🧭 Hold heading</button>
     </div>
     <div class="remote-section">
       <div class="remote-cap">Navigation</div>

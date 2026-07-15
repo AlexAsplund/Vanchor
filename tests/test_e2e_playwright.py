@@ -202,19 +202,20 @@ def test_stop_integrity(live_server: _ServerHandle, pw_browser):
         _api_post(base, "/api/command", {"type": "manual", "thrust": 0, "steering": 0})
         page.wait_for_timeout(400)
 
-        # Engage heading-hold through the UI: click the Heading rail button then
-        # the Go button on its panel — the exact sequence a user follows.
-        page.click('.mode-btn[data-mode="heading_hold"]')
+        # Engage DRIFT through the UI: click the Drift rail button then the Go
+        # button on its panel — the exact sequence a user follows. (The Heading
+        # tile was removed 2026-07-15 in favour of Manual's Absolute/Course.)
+        page.click('.mode-btn[data-mode="drift"]')
         page.wait_for_timeout(300)
-        page.click("#hdg-go")
+        page.click("#drift-go")
 
-        # Poll the backend: heading_hold should engage within 5 s.
+        # Poll the backend: drift should engage within 5 s.
         engaged = _poll(
-            lambda: _api_state(base).get("mode") == "heading_hold",
+            lambda: _api_state(base).get("mode") == "drift",
             timeout_s=5,
         )
         assert engaged, (
-            f"heading_hold did not engage; got mode={_api_state(base).get('mode')!r}"
+            f"drift did not engage; got mode={_api_state(base).get('mode')!r}"
         )
 
         # Click the STOP rail button (data-mode="stop").

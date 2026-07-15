@@ -120,11 +120,9 @@
   // selecting Manual can't re-apply a stale throttle value.
 
   // ===== heading hold ======================================================
-  bindSlider("hdg", "hdg-val");
-  // Explicit engage control only — the rail button just opens this panel, so
-  // selecting Heading-hold no longer one-taps the motor to 40% throttle.
-  $("hdg-go").addEventListener("click", () =>
-    send({ type: "heading_hold", heading: parseFloat($("hdg").value), throttle: 0.4 }));
+  // REMOVED from the UI (2026-07-15): superseded by Manual mode's Absolute
+  // (hold a compass bearing) and Course (follow the track line) steering.
+  // The heading_hold COMMAND remains for the API / RF remotes / connectors.
 
   // ===== follow APB ========================================================
   const apbGo = $("apb-go");
