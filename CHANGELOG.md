@@ -2,6 +2,18 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## Unreleased
+
+- **Haptic feedback** (`haptics.js`): a short vibration pulse on every
+  button-like control (buttons, mode tiles, menu tiles, switches, segmented
+  controls) via one document-level pointerdown listener; heavier pulse on
+  STOP/destructive controls; a distinct buzz when a safety **alarm** is logged
+  (hooked into `VA.logAlert`); and a "press" pulse the moment a 3 s waypoint
+  or map long-press registers. Toggle in Settings → Display → Appearance
+  (default on, persisted). Uses the Vibration API — works on Android
+  Chrome/PWA, degrades to a no-op on iOS (no API; the toggle says so).
+  Modules can pulse explicitly via `VA.haptic("tap"|"press"|"heavy"|"alert")`.
+
 ## [1.5.0a4] — 2026-07-15
 
 - **Routes: Replace/Append delivery, per-waypoint speeds, save the active

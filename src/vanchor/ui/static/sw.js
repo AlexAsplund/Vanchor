@@ -69,6 +69,7 @@ const SHELL = [
   "/static/icons/apple-touch-icon.png",
   // App scripts (every <script src="/static/*.js"> in index.html).
   "/static/core.js",
+  "/static/haptics.js",
   "/static/map-core.js",
   "/static/map-boaticon.js",
   "/static/map-boat.js",

@@ -216,6 +216,7 @@
   // that point instead of silently dropping a marker: place a marker, or navigate
   // there (fastest direct line, or a water-only route around the shoreline).
   function openMapMenu(latlng) {
+    if (VA.haptic) VA.haptic("press");   // confirm the long-press registered
     const lat = latlng.lat, lon = latlng.lng;
     const popup = L.popup({ className: "map-menu-wrap", closeButton: true, autoPanPadding: [24, 24] })
       .setLatLng(latlng)

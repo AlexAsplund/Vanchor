@@ -381,6 +381,13 @@ your browser's *Add to Home Screen* (iPhone: the share button → *Add to Home
 Screen*; Android: the menu → *Install app*). You get a full-screen helm with
 its own icon that keeps working even if the network hiccups.
 
+**Feel the buttons:** on Android phones every button press gives a short
+**vibration pulse** — heavier on STOP, a distinct buzz when a safety alarm
+fires, and a confirmation pulse when a press-and-hold (waypoint menu, map
+menu) registers. Handy with wet fingers on a rocking boat. Toggle it under
+**Settings → Display → Appearance**. (iPhones don't expose vibration to
+browsers, so the switch is greyed out there.)
+
 ## 10. Stopping and staying safe
 
 The golden rule, worth repeating: **the big STOP halts all motor commands

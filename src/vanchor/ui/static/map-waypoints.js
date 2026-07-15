@@ -216,6 +216,7 @@
   }
   function openWpMenu(marker, ix) {
     closeWpMenu();
+    if (VA.haptic) VA.haptic("press");   // confirm the 3 s hold registered
     editing = true;
     activeEditObj = editCommitted[lastActiveIx] || null;
     const pt = map.latLngToContainerPoint(marker.getLatLng());
@@ -310,6 +311,7 @@
 
   function openPendingMenu(marker, ix) {
     closeWpMenu();
+    if (VA.haptic) VA.haptic("press");   // confirm the 3 s hold registered
     const pt = map.latLngToContainerPoint(marker.getLatLng());
     const menu = document.createElement("div");
     menu.className = "wp-menu glass";

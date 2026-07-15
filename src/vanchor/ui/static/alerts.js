@@ -73,6 +73,9 @@
 
     alerts.push({ ts: now, severity, message });
     if (alerts.length > MAX) alerts = alerts.slice(-MAX);
+    // A newly-logged ALARM gets a distinct haptic buzz (haptics.js; no-op when
+    // unsupported/disabled) — the de-dup above keeps it from repeating.
+    if (severity === "alarm" && VA.haptic) VA.haptic("alert");
     // If the dialog is open, treat as read; otherwise bump the unread badge.
     const dlg = $("alerts-dialog");
     const open = dlg && dlg.open;

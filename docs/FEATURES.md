@@ -26,6 +26,9 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **Mode rail + contextual panels** — Manual, Anchor, Heading-hold, Route, APB,
   Drift, Stop, Remote, and a **"🎣 More"** group for the fishing modes.
 - **Remote helm** — full-screen, big-button mode for use at the helm/phone.
+- **Haptic feedback** — vibration pulse on button presses (heavier on STOP,
+  distinct buzz on safety alarms, long-press confirmation); Android/PWA,
+  toggleable in Settings → Display.
 - **Markers** — drop/import, selectable icons, with **"Take me here"** (Fastest /
   Along-shoreline) straight from a marker.
 - **Route editor** — explicit **"Add waypoint"** mode (taps don't litter pins),
