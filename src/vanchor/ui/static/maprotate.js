@@ -60,11 +60,21 @@
   if (map._controlContainer) viewport.appendChild(map._controlContainer);
 
   let bearing = 0;          // rotation applied to the chart (deg, CSS clockwise)
+  // Perspective TILT (heading-up only): lean the chart away so more of it is
+  // visible AHEAD of the boat, navigator-style. 0 = flat (off). Persisted.
+  const TILT_KEY = "vanchor-map-tilt";
+  let tilt = 0;
+  try {
+    const tv = parseFloat(localStorage.getItem(TILT_KEY));
+    if (Number.isFinite(tv)) tilt = Math.max(0, Math.min(60, tv));
+  } catch (e) { /* ignore */ }
+  const PERSPECTIVE_PX = 1100;
 
   function applyLayout() {
     if (mode === "head") {
       const w = viewport.clientWidth, h = viewport.clientHeight;
-      const d = Math.ceil(Math.hypot(w, h));
+      const tiltBoost = 1 + Math.sin((mode === "head" ? tilt : 0) * Math.PI / 180) * 0.9;
+      const d = Math.ceil(Math.hypot(w, h) * tiltBoost);
       mapEl.style.inset = "auto";
       mapEl.style.width = d + "px";
       mapEl.style.height = d + "px";
@@ -80,24 +90,52 @@
 
   function applyRotation(b) {
     bearing = b;
-    mapEl.style.transform = b ? `rotate(${b}deg)` : "";
+    const t = mode === "head" ? tilt : 0;
+    const parts = [];
+    if (t) parts.push(`perspective(${PERSPECTIVE_PX}px)`, `rotateX(${t}deg)`);
+    if (b) parts.push(`rotate(${b}deg)`);
+    mapEl.style.transform = parts.join(" ");
     mapEl.style.setProperty("--map-derot", `${-b}deg`);
-    mapEl.classList.toggle("map-rotated", !!b);
+    mapEl.classList.toggle("map-rotated", !!(b || t));
     if (btnNeedle) btnNeedle.style.transform = `rotate(${b}deg)`;
+  }
+
+  function setTilt(deg, persist) {
+    tilt = Math.max(0, Math.min(60, deg));
+    if (persist) { try { localStorage.setItem(TILT_KEY, String(tilt)); } catch (e) { /* ignore */ } }
+    applyLayout();
+    applyRotation(bearing);
+  }
+
+  // ---- client -> container-point unprojection (rotation AND tilt) -----------
+  // With perspective in play a screen point maps to a RAY; invert the full CSS
+  // matrix and intersect the ray with the map's z=0 plane. Falls back to plain
+  // subtraction when no transform is applied.
+  function clientToLocal(clientX, clientY) {
+    const vrect = viewport.getBoundingClientRect();
+    const w = mapEl.clientWidth, h = mapEl.clientHeight;
+    // The UNTRANSFORMED box of #map inside the viewport (we set left/top/size).
+    const ox = (parseFloat(mapEl.style.left) || 0) + w / 2;
+    const oy = (parseFloat(mapEl.style.top) || 0) + h / 2;
+    const vx = clientX - vrect.left - ox, vy = clientY - vrect.top - oy;
+    const tr = getComputedStyle(mapEl).transform;
+    if (!tr || tr === "none") return new L.Point(vx + w / 2, vy + h / 2);
+    const inv = new DOMMatrix(tr).inverse();
+    const p0 = inv.transformPoint(new DOMPoint(vx, vy, 0, 1));
+    const p1 = inv.transformPoint(new DOMPoint(vx, vy, 1, 1));
+    const dz = p0.z - p1.z;
+    const f = Math.abs(dz) < 1e-9 ? 0 : p0.z / dz;
+    return new L.Point(
+      p0.x + (p1.x - p0.x) * f + w / 2,
+      p0.y + (p1.y - p0.y) * f + h / 2
+    );
   }
 
   // ---- seam 1: pointer -> container point (un-rotate around the centre) -----
   const origM2C = map.mouseEventToContainerPoint.bind(map);
   map.mouseEventToContainerPoint = function (e) {
-    if (!bearing) return origM2C(e);
-    const rect = mapEl.getBoundingClientRect();          // AABB of the rotated square
-    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-    const rad = -bearing * Math.PI / 180;
-    const dx = e.clientX - cx, dy = e.clientY - cy;
-    return new L.Point(
-      dx * Math.cos(rad) - dy * Math.sin(rad) + mapEl.clientWidth / 2,
-      dx * Math.sin(rad) + dy * Math.cos(rad) + mapEl.clientHeight / 2
-    );
+    if (!bearing && !(mode === "head" && tilt)) return origM2C(e);
+    return clientToLocal(e.clientX, e.clientY);
   };
 
   // ---- seam 2: drag deltas (map pan + marker drags) --------------------------
@@ -105,16 +143,16 @@
   // START plus the de-rotated delta, so dragging feels screen-true.
   const origOnMove = L.Draggable.prototype._onMove;
   L.Draggable.prototype._onMove = function (e) {
-    if (!bearing || !this._element || !mapEl.contains(this._element) ||
+    if ((!bearing && !(mode === "head" && tilt)) || !this._element || !mapEl.contains(this._element) ||
         (e.touches && e.touches.length > 1) || !this._startPoint) {
       return origOnMove.call(this, e);
     }
     const src = (e.touches && e.touches.length === 1) ? e.touches[0] : e;
-    const rad = -bearing * Math.PI / 180;
-    const dx = src.clientX - this._startPoint.x, dy = src.clientY - this._startPoint.y;
-    const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
-    const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
-    const cx = this._startPoint.x + rx, cy = this._startPoint.y + ry;
+    // Exact under rotation AND tilt: convert both points to map-local space
+    // and re-express the delta in screen coords for the original handler.
+    const a = clientToLocal(this._startPoint.x, this._startPoint.y);
+    const b = clientToLocal(src.clientX, src.clientY);
+    const cx = this._startPoint.x + (b.x - a.x), cy = this._startPoint.y + (b.y - a.y);
     const pt = { clientX: cx, clientY: cy };
     const shim = {
       type: e.type, target: e.target,
@@ -198,7 +236,23 @@
   });
   map.addControl(new Ctl());
 
-  VA.mapRot = { mode: () => mode, bearing: () => bearing, setMode: (m) => setMode(m, true) };
+  // Settings: heading-up tilt slider (Map & charts card).
+  const tiltSlider = document.getElementById("map-tilt");
+  const tiltOut = document.getElementById("map-tilt-val");
+  if (tiltSlider) {
+    tiltSlider.value = String(tilt);
+    if (tiltOut) tiltOut.textContent = String(Math.round(tilt));
+    tiltSlider.addEventListener("input", () => {
+      const v = parseFloat(tiltSlider.value) || 0;
+      if (tiltOut) tiltOut.textContent = String(Math.round(v));
+      setTilt(v, true);
+    });
+  }
+
+  VA.mapRot = {
+    mode: () => mode, bearing: () => bearing, setMode: (m) => setMode(m, true),
+    tilt: () => tilt, setTilt: (d) => setTilt(d, true),
+  };
 
   setMode(mode, false);
   requestAnimationFrame(tick);

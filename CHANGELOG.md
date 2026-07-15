@@ -4,6 +4,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Heading-up map tilt** — in heading-up mode the chart can lean away
+  navigator-style (0–60°, Settings → Map & charts → Map orientation,
+  persisted) so more water is visible AHEAD of the boat. Pointer mapping and
+  drag deltas were generalized from plane rotation to full 3D-matrix ray
+  unprojection, so taps/long-presses/drags stay exact under perspective; the
+  oversized map square grows with tilt so edges never show.
+
 - **Auto Follow-APB** (opt-in, default OFF): when an external autopilot's APB
   sentence appears on any NMEA input, the boat auto-engages Follow-APB — but
   ONLY from idle Manual (it never hijacks an anchor hold, a route, or a hand
