@@ -173,9 +173,42 @@
         ${ports}`;
   }
 
+  // Kayak — slim double-ended touring hull: narrow tapered deck with a bright
+  // sheer line, oval cockpit with a paddler, deck bungees fore and aft, and a
+  // paddle laid across the cockpit.
+  function bodyKayak() {
+    return `
+        <defs>
+          <linearGradient id="kayakHull" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#ffb020"/>
+            <stop offset="1" stop-color="#c96f00"/>
+          </linearGradient>
+        </defs>
+        <!-- slim double-ended hull (pointed both ends) -->
+        <path class="boat-glow" d="M17,1 C20.5,10 21.5,16 21.5,24 C21.5,32 20.5,38 17,47 C13.5,38 12.5,32 12.5,24 C12.5,16 13.5,10 17,1 Z"/>
+        <path d="M17,1 C20.5,10 21.5,16 21.5,24 C21.5,32 20.5,38 17,47 C13.5,38 12.5,32 12.5,24 C12.5,16 13.5,10 17,1 Z"
+              fill="url(#kayakHull)" stroke="#ffe2b0" stroke-width="1" stroke-linejoin="round"/>
+        <!-- centre seam -->
+        <line x1="17" y1="3" x2="17" y2="45" stroke="#8a4d00" stroke-width="0.5" opacity="0.7"/>
+        <!-- deck bungees fore + aft -->
+        <path d="M14.4,10 L19.6,13 M19.6,10 L14.4,13" stroke="#2b2f36" stroke-width="0.6" opacity="0.8"/>
+        <path d="M14.6,36 L19.4,39 M19.4,36 L14.6,39" stroke="#2b2f36" stroke-width="0.6" opacity="0.8"/>
+        <!-- paddle laid across, ahead of the cockpit -->
+        <g transform="rotate(14 17 19.5)">
+          <line x1="5" y1="19.5" x2="29" y2="19.5" stroke="#e8e2d2" stroke-width="1.1" stroke-linecap="round"/>
+          <ellipse cx="5.5" cy="19.5" rx="2.4" ry="1.3" fill="#e8e2d2"/>
+          <ellipse cx="28.5" cy="19.5" rx="2.4" ry="1.3" fill="#e8e2d2"/>
+        </g>
+        <!-- oval cockpit + paddler -->
+        <ellipse cx="17" cy="25.5" rx="3.6" ry="5.2" fill="#101418" stroke="#ffd68a" stroke-width="0.7"/>
+        <circle cx="17" cy="24.6" r="1.7" fill="#e0a96d"/>
+        <path d="M14.2,27.8 A2.8,2.2 0 0 0 19.8,27.8 L19,29.4 L15,29.4 Z" fill="#c0392b"/>`;
+  }
+
   const BOAT_DESIGNS = {
     current: { label: "Current", body: bodyCurrent },
     bass: { label: "Bass boat", body: bodyBass },
+    kayak: { label: "Kayak", body: bodyKayak },
     titanic: { label: "Titanic", body: bodyTitanic },
     narco: { label: "Narco sub", body: bodyNarco },
     yellowsub: { label: "Yellow submarine", body: bodyYellowSub },

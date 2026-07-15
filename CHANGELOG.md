@@ -4,6 +4,25 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **CI regression gate re-baselined** — the gate had been red since the
+  Fossen `Dnu_c` current-rotation fix (2026-07-09): the corrected physics
+  legitimately lengthens the settle-against-current transient
+  (anchor_drift 20.7 → 80.7 s, anchor_gusty → 94.2 s) while steady-state
+  hold quality is unchanged; the committed baselines were never regenerated.
+  Bisected to the physics commit (its parent passes), baselines updated.
+  Also: sim steering quantization refined from the legacy CMD granularity
+  (1.8°) to the v2.1 STEERD wire resolution (0.1°).
+
+- **Pseudo-3D boat under tilt** — in tilted heading-up mode every boat
+  design gets hull height: the silhouette is extruded with a stack of
+  drop-shadows toward the near edge (thickness scales with tilt and icon
+  size) plus a soft ground shadow. Works generically for any design since
+  it extrudes whatever alpha silhouette the SVG has.
+
+- **Kayak boat icon** — a slim double-ended touring kayak (deck bungees,
+  cockpit + paddler, paddle across) joins the boat-icon pack next to the
+  bass boat, Titanic and the submarines.
+
 - **Sim-vs-real fidelity review** (docs/sim-vs-real.md): three-way audit of
   actuation, sensors/timing and controls/config parity. Fixed: the sim motor
   now mirrors the firmware by DEFAULT (thrust slew 1.0/s + 1 s reverse

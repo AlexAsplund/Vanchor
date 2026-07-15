@@ -151,8 +151,35 @@
     if (!_boatEl || _boatLat === null) return;
     const rot = VA.continuousAngle("boat", _boatHdg);
     _boatEl.style.transform = `rotate(${rot}deg) scale(${boatScale(_boatLat).toFixed(3)})`;
+    applyBoatLift(rot);
+  }
+
+  // Pseudo-3D hull under heading-up TILT: extrude the silhouette with a stack
+  // of 1px drop-shadows toward screen-down (the "near" edge), plus a soft
+  // ground shadow. Works for EVERY boat design (it extrudes whatever alpha
+  // silhouette the SVG has) and scales with the icon (filter offsets are in
+  // the icon's local px, so a bigger boat gets a proportionally thicker hull).
+  function applyBoatLift(rot) {
+    const mr = VA.mapRot;
+    const tilt = (mr && mr.mode && mr.mode() === "head" && mr.tilt) ? mr.tilt() : 0;
+    if (!tilt) {
+      if (_boatEl.style.filter) _boatEl.style.filter = "";
+      return;
+    }
+    // Screen-down mapped into the ICON's local frame: the icon's total screen
+    // rotation is its own map-frame rotation plus the chart bearing.
+    const theta = ((rot + ((mr.bearing && mr.bearing()) || 0)) * Math.PI) / 180;
+    const ux = Math.sin(theta), uy = Math.cos(theta);
+    const layers = Math.max(2, Math.round(tilt / 9));   // 0..60° -> 2..7 px of hull
+    let f = "";
+    for (let i = 1; i <= layers; i++) {
+      f += `drop-shadow(${(ux * i).toFixed(2)}px ${(uy * i).toFixed(2)}px 0 rgba(7, 24, 36, 0.92)) `;
+    }
+    f += `drop-shadow(${(ux * (layers + 2)).toFixed(2)}px ${(uy * (layers + 2)).toFixed(2)}px 3px rgba(0, 0, 0, 0.45))`;
+    _boatEl.style.filter = f;
   }
   map.on("zoomend", applyBoatTransform);
+  VA.mapBoat = { setIcon: (id) => setBoatIcon(id) };
 
   // ---- boat icon design picker (#84) -------------------------------------
   // Rebuild the boat marker's icon with the selected design, then re-grab the
