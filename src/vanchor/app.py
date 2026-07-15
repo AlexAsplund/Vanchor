@@ -1810,7 +1810,10 @@ class Runtime:
                 )
                 if name == "thrust":
                     return SerialThrustChannel(transport)
-                return SerialSteeringChannel(transport)
+                # v2.1: the channel speaks DEGREES on the wire; the one scale
+                # constant (max_steer_angle_deg) converts the normalized command.
+                return SerialSteeringChannel(
+                    transport, full_scale_deg=cfg.boat.max_steer_angle_deg)
             else:
                 logger.warning(
                     "unknown source %r for split %s channel; skipping", src, name)

@@ -57,23 +57,26 @@ logger = logging.getLogger("vanchor.hardware.serial")
 class SerialSteeringChannel(MotorChannel):
     """Drives a steering-only split board over a serial line.
 
-    Line protocol (Pi → Arduino)::
+    Line protocol (Pi → Arduino), protocol v2.1 — the target azimuth goes in
+    plain DEGREES so there is no normalized-scale contract between the two
+    codebases (the pre-v2.1 normalized ``STEER -100..100`` token was silently
+    rescaled when the firmware's range constant changed; degrees can't be)::
 
-        STEER <steer>\\r\\n
+        STEERD <deg>\\r\\n
 
-    where ``steer`` is an integer in ``-100..100``
-    (``round(normalized * 100)``; −100 hard port, +100 hard starboard, 0
-    centred).
+    where ``deg`` is the signed target azimuth in decimal degrees off the bow
+    (port −, starboard +), ``normalized * full_scale_deg``. The firmware
+    clamps to its own soft endstops (±steer_range_deg).
 
     Feedback (Arduino → Pi): the standard steering report ``A <angle_deg>
-    <ok> <wrap_pct> [<seq>]`` at ~10 Hz, parsed with
-    :func:`~vanchor.hardware.serial_devices.parse_steering_feedback`.
+    <ok> <wrap_pct> [<seq>]`` at ~10 Hz — the SAME degrees, so command and
+    feedback compare directly on a bench console.
 
     Example lines::
 
-        STEER 0          # centred
-        STEER 100        # hard starboard
-        STEER -50        # half port
+        STEERD 0.0       # centred
+        STEERD 180.0     # full mechanical swing (astern)
+        STEERD -35.0     # 35° to port (the autopilot's authority)
 
     BENCH-VERIFY: no physical split steering board exists as of 2026-07-06.
     This protocol is the planned split-channel variant; it must be verified
@@ -85,11 +88,15 @@ class SerialSteeringChannel(MotorChannel):
         self,
         transport: SerialTransport,
         *,
+        full_scale_deg: float = 180.0,
         sleep: SleepFn = asyncio.sleep,
         backoff_start: float = 1.0,
         backoff_max: float = 15.0,
     ) -> None:
         self.transport = transport
+        # Physical degrees a full-scale normalized command maps to — the ONE
+        # steering scale constant (BoatConfig.max_steer_angle_deg).
+        self.full_scale_deg = float(full_scale_deg)
         self._value: float = 0.0
         self.last_feedback: SteeringFeedback | None = None
         self._feedback_task: asyncio.Task | None = None
@@ -128,7 +135,7 @@ class SerialSteeringChannel(MotorChannel):
             self._feedback_task = None
         # Best-effort: command a centred stop before closing.
         try:
-            await self.transport.write_line(append_crc(self._format(0)))
+            await self.transport.write_line(append_crc(self._format(0.0)))
         except Exception:  # pragma: no cover - defensive
             logger.debug("%s: failed to send stop command on shutdown", type(self).__name__)
         await self.transport.close()
@@ -144,8 +151,8 @@ class SerialSteeringChannel(MotorChannel):
         service the other channel.
         """
         value = self._value if math.isfinite(self._value) else 0.0
-        steer = min(100, max(-100, round(value * 100)))
-        line = append_crc(self._format(steer))   # protocol v2 (*HH)
+        deg = max(-1.0, min(1.0, value)) * self.full_scale_deg
+        line = append_crc(self._format(deg))     # protocol v2 (*HH)
         self._last_frame = line
         try:
             await self.transport.write_line(line)
@@ -173,8 +180,8 @@ class SerialSteeringChannel(MotorChannel):
             self._rx_count += 1
 
     @staticmethod
-    def _format(steer: int) -> str:
-        return f"STEER {steer}"
+    def _format(deg: float) -> str:
+        return f"STEERD {deg:.1f}"
 
     def debug(self) -> str:
         """Human-readable snapshot; never raises."""
@@ -185,7 +192,7 @@ class SerialSteeringChannel(MotorChannel):
             status = "ok" if self._last_frame_ok else "write failed (link down)"
             lines = [
                 cls,
-                f"  value   : {self._value:+.3f} ({round(self._value * 100):+d} int)",
+                f"  value   : {self._value:+.3f} ({self._value * self.full_scale_deg:+.1f}°)",
                 f"  frame   : {self._last_frame!r} ({status})",
                 f"  healthy : {self.healthy}",
                 f"  rx_count: {self._rx_count}",

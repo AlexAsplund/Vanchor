@@ -55,6 +55,36 @@
  *   not broadcast; a USB hub does not fan the data out to all connected devices).
  *   The Pi opens one port per device and sends the same CMD line to both.
  *
+ *   STEERING FULL SCALE (v2.1): the normalized <steer> field maps to PHYSICAL
+ *   degrees via ONE shared constant — BoatConfig.max_steer_angle_deg on the Pi
+ *   and STEER_FULL_SCALE_DEG in steering.ino, both 180.0:
+ *       target_deg = (steer/100) * 180.0        (clamped to the endstops)
+ *   The head's mechanical rotation limit (steer_range_deg, ±360) is a soft
+ *   ENDSTOP only — it is NOT the command full scale. (Pre-v2.1 firmware
+ *   mapped <steer> to STEER_RANGE_DEG, which silently doubled every physical
+ *   angle when the range was raised 185 → 360.)
+ *
+ * ------------------------------- STEERING IN DEGREES (v2.1, split channel)
+ * The split steering channel sends the target azimuth in PLAIN DEGREES, so no
+ * scale contract exists between the two codebases at all:
+ *
+ *     STEERD <deg> [<seq>]\r\n
+ *
+ *   <deg>   signed decimal degrees off the bow (port -, stbd +), e.g. -35.0.
+ *           The firmware clamps to its soft endstops (±STEER_RANGE_DEG).
+ *   <seq>   OPTIONAL heartbeat seq, same semantics as CMD.
+ *
+ *   Examples (with real CRCs):
+ *       STEERD 0.0*46         centred
+ *       STEERD -35.0*52       35° to port
+ *
+ *   This replaces the never-deployed normalized "STEER <-100..100>" split
+ *   token (BENCH-VERIFY note in serial_channels.py; no board ever shipped
+ *   with it). Command/feedback are now symmetric — STEERD commands degrees,
+ *   the A line reports degrees — so a bench console shows apples to apples.
+ *   Mixed versions stay safe: pre-v2.1 firmware ignores unknown STEERD lines,
+ *   its watchdog holds the head (visible, safe) instead of moving it wrong.
+ *
  * --------------------------------------------------- FEEDBACK (Arduino -> Pi)
  * The Pi's telemetry (app.py ~line 1095) publishes a closed-loop steering block:
  *     steering.target_deg   desired angle  (Pi-side, pre-slew)
@@ -199,6 +229,55 @@ inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer,
   *pwm = (int)v;
   *dir = d;
   *steer = (int)s;
+  if (seq) *seq = (int)q;
+  return true;
+}
+
+/*
+ * Parsed degrees-steering line (protocol v2.1, split steering channel).
+ * Returns true on a well-formed "STEERD <deg> [<seq>]".
+ *  deg   filled with the signed decimal degrees (clamped to +/-720 as a
+ *        sanity bound; the sketch clamps to its real endstops)
+ *  seq   OPTIONAL out (may be NULL), same semantics as vanchorParseCmd.
+ * Tolerates extra spaces and a trailing '\r'; leaves outputs untouched and
+ * returns false on any malformed line.
+ */
+inline bool vanchorParseSteerDeg(const char *line, float *deg, int *seq = 0) {
+  while (*line == ' ') line++;
+  const char hdr[] = "STEERD";
+  for (int i = 0; hdr[i]; i++) { if (line[i] != hdr[i]) return false; }
+  const char *p = line + 6;
+  if (*p != ' ') return false;              // require a separator (not STEERDX)
+  while (*p == ' ') p++;
+
+  // --- signed decimal degrees ---
+  int sign = 1;
+  if (*p == '-') { sign = -1; p++; }
+  else if (*p == '+') { p++; }
+  if (*p < '0' || *p > '9') return false;
+  float v = 0.0f;
+  while (*p >= '0' && *p <= '9') { v = v * 10.0f + (float)(*p - '0'); p++; }
+  if (*p == '.') {
+    p++;
+    if (*p < '0' || *p > '9') return false; // "12." is malformed
+    float scale = 0.1f;
+    while (*p >= '0' && *p <= '9') { v += (float)(*p - '0') * scale; scale *= 0.1f; p++; }
+  }
+  v *= (float)sign;
+  if (v > 720.0f) v = 720.0f;
+  if (v < -720.0f) v = -720.0f;
+
+  // --- seq (OPTIONAL trailing non-negative integer; like vanchorParseCmd) ---
+  long q = -1;
+  const char *pq = p;
+  while (*pq == ' ') pq++;
+  if (*pq >= '0' && *pq <= '9') {
+    q = 0;
+    while (*pq >= '0' && *pq <= '9') { q = q * 10 + (*pq - '0'); pq++; }
+    if (q > VANCHOR_SEQ_MAX) q = VANCHOR_SEQ_MAX;
+  }
+
+  *deg = v;
   if (seq) *seq = (int)q;
   return true;
 }

@@ -4,6 +4,31 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Steering unit contract fixed (calibration flip + real-hardware angle
+  doubling)** — field report: calibration's turn test "flips 180°". Root
+  cause was three disagreeing conventions for what steering=±1 means:
+  the calibration assumed "a sane hard rudder", the Pi model maps full scale
+  to `max_steer_angle_deg` (180°), and the ±360 firmware change accidentally
+  tied full scale to the endstop range (so real hardware would rotate 2× the
+  commanded angle). Fixes:
+  - Calibration turn tests now steer at the **autopilot's authority** (35°),
+    not manual full-lock (which is 180° = prop astern; the boat just backed
+    up and the measured turn rate/steering sign were garbage). A guardrail
+    aborts the run — applying nothing — when the measured turn is
+    implausible (<1°/s).
+  - Firmware: `STEER_FULL_SCALE_DEG = 180` (matches the Pi) is now the
+    normalized-command scale; `STEER_RANGE_DEG` (±360) is soft endstops only.
+  - **Protocol v2.1**: the split steering channel now commands **degrees on
+    the wire** (`STEERD <deg>`, replacing the never-deployed normalized
+    `STEER` token) so no cross-codebase scale constant exists at all;
+    command and `A` feedback are now the same unit. Golden vectors + host
+    tests extended (also fixed: the CRC vector suite was unreachable in the
+    firmware host test's success path).
+  - Live data repaired: boat profiles carried stale steering facts
+    (range 185, rate 50) and the broken calibration's outputs
+    (max_turn_rate 53°/s, thrust_yaw_ff_trim 0.1035) — reset; re-run
+    calibration to re-measure.
+
 - **Sound feedback** (`sounds.js`): fully synthesized Web Audio cues — no
   audio files, works offline. Safety **alarms** come in three severities with
   distinct, escalating sounds — low (calm double beep: battery/RTL), medium

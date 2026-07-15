@@ -70,6 +70,21 @@ class CalibrationRunner:
     def _manual(self, thrust: float, steering: float) -> None:
         self.runtime.handle_command({"type": "manual", "thrust": thrust, "steering": steering})
 
+    def _hard_over_norm(self) -> float:
+        """Normalized steering for the turn tests: the AUTOPILOT'S authority
+        (autopilot_steer_deg), not manual full-lock.
+
+        Manual full-scale is the full mechanical swing (max_steer_angle_deg,
+        180°) — full-lock points the prop dead astern and the boat just backs
+        up, so a "hard turn" at steering=1.0 measures nothing (and can even
+        flip the measured steering sign). The turn rate the calibration is
+        after is the one the autopilot can actually command, which is also
+        what maneuver planning (turn_rate_dps) consumes."""
+        bc = self.runtime.config.boat
+        if bc.max_steer_angle_deg <= 0:
+            return 1.0
+        return max(0.05, min(1.0, bc.autopilot_steer_deg / bc.max_steer_angle_deg))
+
     async def _settle(self, seconds: float, phase: str, base: float, span: float) -> None:
         """Wait, updating progress, aborting early if cancelled."""
         steps = max(1, int(seconds / 0.1))
@@ -133,8 +148,12 @@ class CalibrationRunner:
             drag_tau = _time_constant(d_samples, v0, rising=False)
 
             # --- turn: max turn rate + steering sign --------------------- #
+            # Steer at the autopilot's authority (see _hard_over_norm) — NOT
+            # manual full-lock, which is the full mechanical swing (180° =
+            # prop astern) and measures no turn at all.
+            hard_over = self._hard_over_norm()
             self._set("turn", 0.56, "Hard turn — measuring steering response…")
-            self._manual(0.5, 1.0)
+            self._manual(0.5, hard_over)
             await asyncio.sleep(1.0)  # let it spin up
             headings = []
             t0 = 0.0
@@ -147,6 +166,7 @@ class CalibrationRunner:
                 self.progress = 0.58 + 0.17 * (i + 1) / steps
                 await asyncio.sleep(0.1)
             turn_rate, sign = _turn_rate(headings)
+            _guard_turn(turn_rate)
             self._manual(0.0, 0.0)
             self.runtime.handle_command({"type": "stop"})
 
@@ -167,8 +187,8 @@ class CalibrationRunner:
                 self.progress = 0.74 + 0.02 * (i + 1) / steps
                 await asyncio.sleep(0.1)
             v_rev = max((v for _, v in rv_samples), default=0.0)
-            # Reverse turn rate: steer hard while making way astern.
-            self._manual(-0.5, 1.0)
+            # Reverse turn rate: steer at autopilot authority while making way astern.
+            self._manual(-0.5, hard_over)
             await asyncio.sleep(1.0)
             rev_headings: list[tuple[float, float]] = []
             t0 = 0.0
@@ -237,6 +257,14 @@ class CalibrationRunner:
             self._manual(0.0, 0.0)
             self.runtime.handle_command({"type": "stop"})
             self._set("idle", 0.0, "Calibration cancelled.")
+        except CalibrationAbort as exc:
+            # A measurement guardrail tripped: stop the boat and report WITHOUT
+            # applying anything (a garbage measurement must never overwrite the
+            # boat's tuning).
+            self._manual(0.0, 0.0)
+            self.runtime.handle_command({"type": "stop"})
+            logger.warning("calibration aborted: %s", exc)
+            self._set("error", self.progress, f"Calibration aborted: {exc}")
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("calibration failed")
             self._set("error", self.progress, f"Calibration error: {exc}")
@@ -303,6 +331,24 @@ class CalibrationRunner:
             except Exception:
                 logger.exception("auto-tune %s failed", job)
         return out
+
+
+class CalibrationAbort(RuntimeError):
+    """A calibration measurement is implausible — abort without applying."""
+
+
+# Below this measured hard-turn rate (deg/s) the steering clearly isn't turning
+# the boat (a healthy trolling-motor skiff turns >5 deg/s at authority): abort
+# rather than writing a garbage max_turn_rate/steering_sign into the boat config.
+_MIN_SANE_TURN_DPS = 1.0
+
+
+def _guard_turn(turn_rate_dps: float) -> None:
+    if turn_rate_dps < _MIN_SANE_TURN_DPS:
+        raise CalibrationAbort(
+            f"turn test measured no meaningful turn ({turn_rate_dps:.2f} deg/s) — "
+            "steering may not be responding; nothing was applied"
+        )
 
 
 def _mps(knots: float) -> float:

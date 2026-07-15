@@ -3,7 +3,7 @@
 All tests use :class:`~vanchor.hardware.serial_link.FakeSerialTransport` so no
 physical port is opened. Tests cover:
 
-  * Frame format (STEER / THRUST line protocol)
+  * Frame format (STEERD / THRUST line protocol; steering in DEGREES since v2.1)
   * Value clamping before format (out-of-range values)
   * Neutral output on zero
   * Feedback line parsing -> healthy + feedback stored
@@ -66,69 +66,69 @@ class TestSerialSteeringChannel:
     # -- frame format -------------------------------------------------------- #
 
     async def test_frame_zero(self) -> None:
-        """Zero value -> STEER 0"""
+        """Zero value -> STEERD 0.0"""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(0.0)
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER 0")]
+        assert t.written == [append_crc("STEERD 0.0")]
 
     async def test_frame_full_port(self) -> None:
-        """Full port (-1.0) -> STEER -100"""
+        """Full port (-1.0) -> STEERD -180.0 (full mechanical swing)"""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(-1.0)
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER -100")]
+        assert t.written == [append_crc("STEERD -180.0")]
 
     async def test_frame_full_starboard(self) -> None:
-        """Full starboard (+1.0) -> STEER 100"""
+        """Full starboard (+1.0) -> STEERD 180.0"""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(1.0)
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER 100")]
+        assert t.written == [append_crc("STEERD 180.0")]
 
     async def test_frame_midpoint(self) -> None:
-        """Half starboard (0.5) -> STEER 50"""
+        """Half starboard (0.5) -> STEERD 90.0"""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(0.5)
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER 50")]
+        assert t.written == [append_crc("STEERD 90.0")]
 
     async def test_frame_rounding(self) -> None:
-        """Round-to-int: 0.156 -> round(15.6) = 16"""
+        """Degrees with one decimal: 0.156 * 180 = 28.1"""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(0.156)
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER 16")]
+        assert t.written == [append_crc("STEERD 28.1")]
 
     # -- clamping ------------------------------------------------------------ #
 
     async def test_clamp_high(self) -> None:
-        """set_normalized(2.0) -> clamped to +1.0 -> STEER 100"""
+        """set_normalized(2.0) -> clamped to +1.0 -> STEERD 180.0"""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(2.0)
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER 100")]
+        assert t.written == [append_crc("STEERD 180.0")]
 
     async def test_clamp_low(self) -> None:
-        """set_normalized(-5.0) -> clamped to -1.0 -> STEER -100"""
+        """set_normalized(-5.0) -> clamped to -1.0 -> STEERD -180.0"""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(-5.0)
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER -100")]
+        assert t.written == [append_crc("STEERD -180.0")]
 
     async def test_flush_clamps_independently(self) -> None:
         """flush() re-clamps before formatting: avoids out-of-range frames
@@ -139,12 +139,12 @@ class TestSerialSteeringChannel:
         ch._value = 1.5  # pyright: ignore[reportPrivateUsage]
         await t.open()
         await ch.flush()
-        assert t.written == [append_crc("STEER 100")]
+        assert t.written == [append_crc("STEERD 180.0")]
 
     # -- neutral on stop ----------------------------------------------------- #
 
     async def test_neutral_after_stop(self) -> None:
-        """stop() writes STEER 0 as a best-effort neutral command."""
+        """stop() writes STEERD 0.0 as a best-effort neutral command."""
         t = FakeSerialTransport()
         ch = SerialSteeringChannel(t)
         ch.set_normalized(0.8)
@@ -153,7 +153,7 @@ class TestSerialSteeringChannel:
         t.feed_eof()  # unblock the supervisor read loop
         await channel_start_stop(ch, t)
         # The stop command is the last written line.
-        assert t.written and t.written[-1] == append_crc("STEER 0")
+        assert t.written and t.written[-1] == append_crc("STEERD 0.0")
 
     # -- feedback parsing -> healthy ----------------------------------------- #
 
@@ -286,7 +286,7 @@ class TestSerialSteeringChannel:
         await ch.flush()
         await ch.flush()
         assert len(t.written) == 2
-        assert t.written[0] == t.written[1] == append_crc("STEER 50")
+        assert t.written[0] == t.written[1] == append_crc("STEERD 90.0")
 
     # -- debug --------------------------------------------------------------- #
 
@@ -314,7 +314,7 @@ class TestSerialSteeringChannel:
         await t.open()
         await ch.flush()
         text = ch.debug()
-        assert "STEER 50" in text
+        assert "STEERD 90.0" in text
 
     async def test_debug_contains_feedback(self) -> None:
         """debug() shows feedback when available."""
@@ -345,7 +345,7 @@ class TestSerialSteeringChannel:
         ch._value = float("nan")  # pyright: ignore[reportPrivateUsage]
         await t.open()
         await ch.flush()  # must not raise
-        assert t.written == [append_crc("STEER 0")]
+        assert t.written == [append_crc("STEERD 0.0")]
 
 
 # =========================================================================== #
@@ -663,7 +663,7 @@ class TestChannelIntegration:
         await motor.flush()
 
         assert t_thrust.written == [append_crc("THRUST 128 F")]
-        assert t_steer.written == [append_crc("STEER -25")]
+        assert t_steer.written == [append_crc("STEERD -45.0")]
 
     async def test_split_motor_stop_zeroes_both(self) -> None:
         """A STOP-shaped command zeroes both channels (Constraint 4)."""
@@ -688,7 +688,7 @@ class TestChannelIntegration:
         await motor.flush()
 
         assert t_thrust.written[-1] == append_crc("THRUST 0 F")
-        assert t_steer.written[-1] == append_crc("STEER 0")
+        assert t_steer.written[-1] == append_crc("STEERD 0.0")
 
     async def test_one_channel_write_failure_does_not_block_other(self) -> None:
         """Write failure on thrust must not prevent steering from being written."""
@@ -709,7 +709,7 @@ class TestChannelIntegration:
         await motor.flush()  # Must not raise, even with thrust transport down.
 
         # Steering still gets its frame.
-        assert t_steer.written == [append_crc("STEER 30")]
+        assert t_steer.written == [append_crc("STEERD 54.0")]
         # Thrust transport was down -> nothing written.
         assert t_thrust.written == []
 

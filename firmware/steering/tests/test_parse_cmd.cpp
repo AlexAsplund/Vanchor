@@ -78,6 +78,29 @@ static void expectReject(const char *line) {
 
 static void runCrcVectors();  // protocol v2 vectors (defined below)
 
+// Assert a STEERD line parses OK and yields the expected degrees (± tolerance
+// for the float accumulation) and seq.
+static void expectSteerDeg(const char *line, float wdeg, int wseq) {
+  float deg = -9999.0f;
+  int seq = -999;
+  bool ok = vanchorParseSteerDeg(line, &deg, &seq);
+  CHECK(ok);
+  CHECK(deg > wdeg - 0.01f && deg < wdeg + 0.01f);
+  CHECK(seq == wseq);
+  if (!ok || !(deg > wdeg - 0.01f && deg < wdeg + 0.01f) || seq != wseq) {
+    std::printf("  ^ line=\"%s\" got ok=%d deg=%.2f seq=%d\n", line, ok, deg, seq);
+  }
+}
+
+static void expectSteerDegReject(const char *line) {
+  const float SENT = 12.5f;
+  float deg = SENT;
+  bool ok = vanchorParseSteerDeg(line, &deg);
+  CHECK(!ok);
+  CHECK(deg == SENT);   // outputs untouched on rejection
+  if (ok) std::printf("  ^ line=\"%s\" was accepted but should be rejected\n", line);
+}
+
 int main() {
   // ---- Well-formed lines from the header's own examples ----------------
   expectOk("CMD 0 F 0", 0, 'F', 0);       // stopped, centred
@@ -144,12 +167,39 @@ int main() {
   expectReject("!@#$%^&*()");       // pure garbage
   expectReject("$GPRMC,123519,A");  // an NMEA sentence is not a CMD
 
+  // ---- STEERD (v2.1: split steering channel, degrees-native) -----------
+  expectSteerDeg("STEERD 0.0", 0.0f, -1);
+  expectSteerDeg("STEERD -35.0", -35.0f, -1);
+  expectSteerDeg("STEERD 180.0", 180.0f, -1);
+  expectSteerDeg("STEERD 95.5", 95.5f, -1);
+  expectSteerDeg("STEERD +12.25", 12.25f, -1);
+  expectSteerDeg("STEERD 42", 42.0f, -1);            // integer degrees OK
+  expectSteerDeg("STEERD   -7.5  ", -7.5f, -1);      // whitespace tolerated
+  expectSteerDeg("STEERD -35.0 42", -35.0f, 42);     // heartbeat seq
+  expectSteerDeg("STEERD 10.0 999999", 10.0f, VANCHOR_SEQ_MAX);  // seq clamps
+  expectSteerDeg("STEERD 9000.0", 720.0f, -1);       // sanity clamp ±720
+  expectSteerDegReject("STEERD");                    // no value
+  expectSteerDegReject("STEERD ");                   // no digits
+  expectSteerDegReject("STEERD abc");                // non-numeric
+  expectSteerDegReject("STEERD -");                  // sign only
+  expectSteerDegReject("STEERD 12.");                // dangling decimal point
+  expectSteerDegReject("STEERDX 10");                // header must be exact
+  expectSteerDegReject("STEER -50");                 // dead pre-v2.1 token
+  expectSteerDegReject("CMD 0 F 0");                 // not a STEERD line
+  // A CMD line must NOT parse as STEERD and vice versa (dispatch order safe).
+  {
+    int pwm; char dir; int steer;
+    CHECK(!vanchorParseCmd("STEERD -35.0", &pwm, &dir, &steer));
+  }
+
+  // Protocol v2 CRC vectors — ALWAYS run (previously only reachable when the
+  // parse checks above had already failed, so CI never exercised them).
+  runCrcVectors();
+
   if (g_failures == 0) {
     std::printf("OK: all %d checks passed\n", g_checks);
     return 0;
   }
-  runCrcVectors();
-
   std::printf("FAILED: %d of %d checks failed\n", g_failures, g_checks);
   return 1;
 }
@@ -194,6 +244,12 @@ static void runCrcVectors() {
   CHECK(vanchorAcceptLine(cmd));
   CHECK(vanchorParseCmd(cmd, &pwm, &dir, &steer, &seq));
   CHECK(pwm == 128 && dir == 'R' && steer == -100 && seq == 42);
+  // ...and a stripped OK STEERD line must parse as degrees + seq.
+  char sd[64] = "STEERD -35.0 42*82";
+  float deg; int sdseq;
+  CHECK(vanchorAcceptLine(sd));
+  CHECK(vanchorParseSteerDeg(sd, &deg, &sdseq));
+  CHECK(deg > -35.01f && deg < -34.99f && sdseq == 42);
   // Round-trip the append helper against a known value.
   char out[64] = "A -12.4 1 -7 42";
   vanchorAppendCrc(out, sizeof out);

@@ -306,28 +306,37 @@ The framing (baud / parity / stop bits) is the same as the combined protocol
 (8N1, default 4800 baud, `\r\n` line endings) unless overridden per channel in
 the Pi config.
 
-### 6.1 Steering-only board — `STEER` command
+### 6.1 Steering-only board — `STEERD` command (degrees, v2.1)
 
 ```
-STEER <steer>\r\n
+STEERD <deg>\r\n
 ```
 
-* `steer`  integer `-100..100` — steering angle (`round(normalized * 100)`;
-  −100 hard port, +100 hard starboard, 0 centred).
+* `deg`  signed decimal degrees off the bow (port −, starboard +), e.g.
+  `-35.0`. The board clamps to its soft endstops (`STEER_RANGE_DEG`, ±360).
+
+The wire carries **plain degrees** — there is deliberately NO normalized
+scale in this protocol. (The pre-v2.1 draft used `STEER <-100..100>`, whose
+full-scale constant lived separately in both codebases; when the firmware's
+range constant changed 185 → 360 every physical angle silently doubled.
+Degrees cannot drift like that, and they match the `A <angle_deg> …`
+feedback line one-to-one on a bench console.)
 
 Examples:
 
 ```
-STEER 0          # centred
-STEER 100        # hard starboard
-STEER -50        # half port
+STEERD 0.0       # centred
+STEERD -35.0     # 35 deg to port (the autopilot's authority)
+STEERD 180.0     # full mechanical swing (astern)
 ```
 
 Feedback: the board sends the standard `A <angle_deg> <ok> <wrap_pct>` line
 (same format as the combined firmware — Section 1) at ~10 Hz.
 
 Loss-of-signal failsafe (same 800 ms watchdog as the combined firmware): the
-board holds the current angle when no `STEER` arrives within the window.
+board holds the current angle when no `STEERD` arrives within the window.
+Mixed versions stay safe: pre-v2.1 firmware ignores unknown `STEERD` lines
+and its watchdog holds the head — visibly stuck, never wrongly scaled.
 
 ### 6.2 Thrust-only board — `THRUST` command
 
@@ -354,9 +363,10 @@ Loss-of-signal failsafe: same 800 ms watchdog; engine ramps to neutral/stop
 
 ### 6.3 Implementing the split firmware
 
-A split steering board can be a fork of `firmware/steering/steering.ino` that
-reads `STEER <steer>` instead of the `steer` field of `CMD`; it can discard the
-`pwm` and `dir` fields entirely. A split thrust board is similarly a fork of
-`firmware/engine/engine.ino` that reads `THRUST <pwm> <dir>` instead of `CMD`.
-The shared protocol header (`firmware/common/vanchor_protocol.h`) will need
-a new parser for each split command variant.
+`firmware/steering/steering.ino` already parses BOTH `STEERD` (degrees,
+preferred) and the legacy combined `CMD` line (its `steer` field maps
+±100 → ±`STEER_FULL_SCALE_DEG` = 180, matching the Pi's
+`max_steer_angle_deg`; the ±360 endstop range is NOT the command scale). A
+split thrust board is a fork of `firmware/engine/engine.ino` that reads
+`THRUST <pwm> <dir>` instead of `CMD`. The shared protocol header
+(`firmware/common/vanchor_protocol.h`) provides `vanchorParseSteerDeg()`.

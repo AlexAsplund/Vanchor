@@ -12,17 +12,19 @@
  *   selected; an AS5600 drop-in is documented in firmware/README.md: replace
  *   readAngleDeg() with an I2C read and you are done -- the loop is identical.)
  *
- * Protocol: see ../common/vanchor_protocol.h. The Pi sends
- *     CMD <pwm> <dir> <steer>\r\n
- * This board uses <steer> (-100..100, normalized) and ignores <pwm>/<dir>.
- *   target_deg = (steer/100) * STEER_RANGE_DEG
+ * Protocol: see ../common/vanchor_protocol.h. The Pi sends either
+ *     STEERD <deg>\r\n              (v2.1 split channel: target azimuth in DEGREES)
+ *     CMD <pwm> <dir> <steer>\r\n   (legacy combined line; <steer> -100..100)
+ * For the legacy CMD form:
+ *   target_deg = (steer/100) * STEER_FULL_SCALE_DEG   (NOT the endstop range!)
  * It reports actual angle back so the Pi's closed-loop telemetry
  * (steering.angle_deg / feedback_ok / wrap_pct, app.py) works:
  *     A <angle_deg> <ok> <wrap_pct>\r\n
  *
  * Mechanical params come from core/config.py BoatConfig:
- *     steer_range_deg     = 360.0   (+/- head rotation limit; servo design allows >=360)
- *     max_steer_rate_dps  = 50.0    (head rotation speed; bounds PID output)
+ *     max_steer_angle_deg = 180.0   (normalized full scale; STEER_FULL_SCALE_DEG)
+ *     steer_range_deg     = 360.0   (+/- head rotation limit; soft endstops only)
+ *     max_steer_rate_dps  = 95.0    (head rotation speed; bounds PID output)
  *
  * Safety / robustness:
  *   - clamp target to +/- STEER_RANGE_DEG (soft endstops),
@@ -50,10 +52,18 @@ const uint8_t PIN_STATUS_LED = 13;
 
 // --------------------- mechanical / sensor calibration --------------------- //
 // Head rotation limit, deg each side of centre (BoatConfig.steer_range_deg).
-// The servo/gearbox design allows at least +/-360; set to YOUR build's limit.
+// SOFT ENDSTOPS ONLY -- never the command scale. The servo/gearbox design
+// allows at least +/-360; set to YOUR build's limit.
 const float STEER_RANGE_DEG = 360.0f;
+// Normalized-command full scale (BoatConfig.max_steer_angle_deg): a legacy
+// "CMD ... <steer>" of +/-100 maps to +/- this many degrees. MUST match the
+// Pi's max_steer_angle_deg or every commanded angle is silently rescaled
+// (that mismatch -- full scale accidentally tied to the endstop range -- is
+// exactly the bug v2.1 fixes). The degrees-native STEERD command needs no
+// scale at all.
+const float STEER_FULL_SCALE_DEG = 180.0f;
 // Head rotation speed (BoatConfig.max_steer_rate_dps) -- used only as a sanity ref.
-const float MAX_STEER_RATE_DPS = 50.0f;
+const float MAX_STEER_RATE_DPS = 95.0f;
 
 // Feedback-pot calibration. A single-turn pot can only cover ~ +/-150deg of its
 // ~300deg track; for +/-185deg use a multi-turn pot or gear the pot up. Measure
@@ -160,12 +170,18 @@ static void brakeMotor() {
 }
 
 // --------------------------- command parsing ------------------------------- //
-static void onCommand(int /*pwm*/, char /*dir*/, int steer) {
-  float t = (float)steer / 100.0f;                 // -1..1
-  g_targetDeg = t * STEER_RANGE_DEG;               // -> degrees
-  if (g_targetDeg >  STEER_RANGE_DEG) g_targetDeg =  STEER_RANGE_DEG;
-  if (g_targetDeg < -STEER_RANGE_DEG) g_targetDeg = -STEER_RANGE_DEG;
+static void setTargetDeg(float deg) {
+  // Soft endstops (head rotation limit).
+  if (deg >  STEER_RANGE_DEG) deg =  STEER_RANGE_DEG;
+  if (deg < -STEER_RANGE_DEG) deg = -STEER_RANGE_DEG;
+  g_targetDeg = deg;
   g_lastCmdMs = millis();
+}
+
+static void onCommand(int /*pwm*/, char /*dir*/, int steer) {
+  // Legacy normalized command: full scale is max_steer_angle_deg (180), never
+  // the endstop range.
+  setTargetDeg(((float)steer / 100.0f) * STEER_FULL_SCALE_DEG);
 }
 
 static void pollSerial() {
@@ -175,12 +191,18 @@ static void pollSerial() {
       if (g_lineLen > 0) {
         g_line[g_lineLen] = '\0';
         int pwm, steer, seq; char dir;
+        float deg;
         // Protocol v2: verify + strip the *HH CRC before parsing. A corrupted
         // (or, with VANCHOR_REQUIRE_CRC, CRC-less) line is dropped whole; the
         // watchdog holds the safe state if that persists.
-        if (vanchorAcceptLine(g_line) && vanchorParseCmd(g_line, &pwm, &dir, &steer, &seq)) {
-          onCommand(pwm, dir, steer);
-          g_lastSeq = seq;              // echo this back in the A feedback line
+        if (vanchorAcceptLine(g_line)) {
+          if (vanchorParseSteerDeg(g_line, &deg, &seq)) {   // v2.1: degrees-native
+            setTargetDeg(deg);
+            g_lastSeq = seq;            // echo this back in the A feedback line
+          } else if (vanchorParseCmd(g_line, &pwm, &dir, &steer, &seq)) {
+            onCommand(pwm, dir, steer);
+            g_lastSeq = seq;
+          }
         }
       }
       g_lineLen = 0;
