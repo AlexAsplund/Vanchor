@@ -2,41 +2,41 @@
   "_comment": "Committed sim-regression baseline (scripts/regression_check.py, roadmap #39). Regenerate with --update after an INTENDED control/sim change and review the diff. 'nan' = metric undefined (e.g. never settled). Deterministic: every sim noise source is seeded.",
   "scenarios": {
     "anchor_drift": {
-      "settling_time_s": 20.7,
-      "overshoot_m": 5.434008,
-      "steady_rms_m": 2.464493,
+      "settling_time_s": 80.7,
+      "overshoot_m": 5.399115,
+      "steady_rms_m": 2.93122,
       "within_radius_pct": 100.0,
-      "control_effort": 17.290874
+      "control_effort": 17.173819
     },
     "anchor_gusty": {
-      "settling_time_s": 0.0,
-      "overshoot_m": 5.823351,
-      "steady_rms_m": 2.373954,
+      "settling_time_s": 94.15,
+      "overshoot_m": 6.013791,
+      "steady_rms_m": 2.311729,
       "within_radius_pct": 100.0,
-      "control_effort": 16.587206
+      "control_effort": 17.777382
     },
     "anchor_tight": {
       "settling_time_s": 21.55,
-      "overshoot_m": 0.583549,
-      "steady_rms_m": 0.499648,
+      "overshoot_m": 0.595201,
+      "steady_rms_m": 0.492432,
       "within_radius_pct": 100.0,
-      "control_effort": 3.518363
+      "control_effort": 3.503941
     },
     "anchor_tight_simple": {
       "settling_time_s": 22.25,
-      "overshoot_m": 0.340751,
-      "steady_rms_m": 0.456349,
+      "overshoot_m": 0.308384,
+      "steady_rms_m": 0.411962,
       "within_radius_pct": 100.0,
-      "control_effort": 5.755966
+      "control_effort": 5.801176
     },
     "heading_step": {
-      "settling_time_s": 15.75,
-      "overshoot_deg": 0.202509,
-      "steady_error_deg": 0.116475
+      "settling_time_s": 15.7,
+      "overshoot_deg": 0.202235,
+      "steady_error_deg": 0.116241
     },
     "waypoint_box": {
-      "max_cross_track_m": 4.641861,
-      "final_dist_waypoint_m": 4.725527
+      "max_cross_track_m": 4.047497,
+      "final_dist_waypoint_m": 4.270386
     }
   }
 }

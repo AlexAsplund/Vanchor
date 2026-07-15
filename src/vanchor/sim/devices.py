@@ -169,10 +169,13 @@ class SimMotorController(MotorController):
 
     def _quantize(self, cmd: MotorCommand) -> MotorCommand:
         """Mirror the wire encoding: thrust rides as 8-bit PWM (0..255) and
-        steering as an integer percent/degree step — the real boat can only
-        ever realize these quantized values."""
+        steering at the v2.1 STEERD resolution (0.1° of the ±180° full scale
+        = 1/1800 steps) — the real boat can only realize quantized values.
+        (The legacy combined CMD line is far coarser, ±100 integer = 1.8°
+        steps; anyone still on that path should expect coarser station-
+        keeping than the sim shows.)"""
         t = round(cmd.thrust * 255.0) / 255.0
-        st = round(cmd.steering * 100.0) / 100.0
+        st = round(cmd.steering * 1800.0) / 1800.0
         return MotorCommand(thrust=t, steering=st)
 
     @property
