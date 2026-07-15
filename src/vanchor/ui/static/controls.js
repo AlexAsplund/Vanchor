@@ -55,8 +55,11 @@
     if (Math.abs(parseFloat(thrust.value)) < 0.12) { thrust.value = "0"; thrust.dispatchEvent(new Event("input")); }
   });
   // Mode toggle: converts the CURRENT head direction between frames (so
-  // switching never moves the head) and sends nothing — the motor engages
-  // solely from wheel/slider input.
+  // switching never moves the head). While ACTIVELY driving in manual it
+  // re-sends the converted command, so the server's hold semantics switch
+  // immediately (e.g. the head starts holding its compass bearing without
+  // waiting for the next wheel touch). When idle it sends nothing — the
+  // motor never ENGAGES from a mode switch.
   const steerSeg = $("steer-mode-seg");
   const modeListeners = [];
   let onStateEdit = null;   // wheel's re-render hook (set via VA.manualCtl)
@@ -64,11 +67,18 @@
     const prev = steerMode;
     steerMode = mode === "absolute" ? "absolute" : "relative";
     if (steerMode !== prev) {
+      // "Actively driving": the boat is in manual AND something is commanded
+      // (our thrust, or a live motor command from this manual session).
+      const motor = (VA.last && VA.last.motor) || {};
+      const driving = VA.last && VA.last.mode === "manual" &&
+        (mstate.thrust !== 0 || Math.abs(motor.thrust || 0) > 0.005 ||
+         Math.abs(motor.steering || 0) > 0.005);
       if (steerMode === "absolute") {
         mstate.steerBearing = ((heading() + mstate.steerNorm * 180) % 360 + 360) % 360;
       } else {
         mstate.steerNorm = wrap180(mstate.steerBearing - heading()) / 180;
       }
+      if (driving) sendManual();
     }
     if (steerSeg) steerSeg.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("on", b.dataset.steermode === steerMode));

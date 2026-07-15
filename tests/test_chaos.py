@@ -194,7 +194,9 @@ def test_depth_freeze_treated_as_unknown_by_shallow_stop():
 # 5. UI link loss while GUIDED -> anchor-hold; while DRIVING MANUALLY -> stop.
 #    (app.py::evaluate_link_failsafe lines ~1155-1181, _underway ~1143-1153)
 # --------------------------------------------------------------------------- #
-def test_link_loss_guided_engages_anchor_hold():
+def test_link_loss_guided_continues_mission_by_default():
+    """Field report (2026-07-15): locking the phone during an active route
+    must NOT park the boat — guided modes keep flying by default."""
     rt = Runtime(mono_fn=lambda: rt._mono_box[0])
     rt._mono_box = [1000.0]  # type: ignore[attr-defined]
     rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
@@ -207,10 +209,28 @@ def test_link_loss_guided_engages_anchor_hold():
     assert rt.evaluate_link_failsafe(now=1015.0) is False
     assert rt.state.mode == ControlModeName.HEADING_HOLD
 
+    # Past the timeout -> latched, but the mission CONTINUES (no anchor-hold).
+    assert rt.evaluate_link_failsafe(now=1021.0) is True
+    assert rt.state.mode == ControlModeName.HEADING_HOLD
+    assert rt._link_failsafe_engaged
+    assert rt._link_failsafe_action == "continue"
+
+
+def test_link_loss_guided_engages_anchor_hold_when_opted_out():
+    rt = Runtime(mono_fn=lambda: rt._mono_box[0])
+    rt._mono_box = [1000.0]  # type: ignore[attr-defined]
+    rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
+    rt.state.mode = ControlModeName.HEADING_HOLD  # a guided mode: making way
+    rt.config.safety.link_loss_timeout_s = 20.0
+    rt.config.safety.link_loss_continue_mission = False  # park-and-hold
+    rt.client_connected()
+    rt.client_disconnected()
+
     # Past the timeout -> guided mode holds position (anchor-hold).
     assert rt.evaluate_link_failsafe(now=1021.0) is True
     assert rt.state.mode == ControlModeName.ANCHOR_HOLD
     assert rt._link_failsafe_engaged
+    assert rt._link_failsafe_action == "hold"
 
 
 def test_link_loss_manual_driving_stops():
@@ -380,6 +400,7 @@ def test_wall_clock_step_does_not_disturb_link_failsafe():
     rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
     rt.state.mode = ControlModeName.HEADING_HOLD
     rt.config.safety.link_loss_timeout_s = 20.0
+    rt.config.safety.link_loss_continue_mission = False  # test the hold path
     rt.client_connected()
     rt.client_disconnected()  # stamped at mono=5000
 

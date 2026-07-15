@@ -763,9 +763,11 @@ class Runtime:
         # Number of connected UI clients and the last time one was seen alive.
         self._ui_clients = 0
         self._last_client_seen: float | None = None
-        # True once the failsafe has auto-engaged hold-position (so we don't
-        # repeatedly re-engage it; cleared on reconnect).
+        # True once the failsafe has auto-engaged (so we don't repeatedly
+        # re-engage it; cleared on reconnect), plus what it DID:
+        # "continue" | "hold" | "stop" | None (for telemetry/alerts).
         self._link_failsafe_engaged = False
+        self._link_failsafe_action: str | None = None
         # Route-planning cancellation flag (#54): set by cancel_route_plan(),
         # reset at the start of every plan_route() call.
         self._route_plan_cancelled = False
@@ -2369,6 +2371,7 @@ class Runtime:
         if self._link_failsafe_engaged:
             logger.info("UI client reconnected; link failsafe cleared")
         self._link_failsafe_engaged = False
+        self._link_failsafe_action = None
 
     def client_activity(self) -> None:
         """Mark the link alive (any inbound client traffic)."""
@@ -2413,16 +2416,19 @@ class Runtime:
             # deadman is part of the safety floor and is NOT configurable.
             logger.warning("link lost %.0fs while driving manually; STOP (zero thrust)", timeout)
             self.controller.handle_command({"type": "stop"})
+            self._link_failsafe_action = "stop"
         elif self.config.safety.link_loss_continue_mission:
-            # Opted-in unsupervised missions (pocket-the-phone workflow): keep
-            # flying the guided mode; geofence/depth/battery failsafes still
-            # apply. Logged + latched so this fires once per link loss.
+            # Unsupervised missions (the default: a locked phone must not park
+            # an active route): keep flying the guided mode; geofence/depth/
+            # battery failsafes still apply. Logged + latched (fires once).
             logger.warning("link lost %.0fs while underway; continuing mission "
                            "(safety.link_loss_continue_mission)", timeout)
+            self._link_failsafe_action = "continue"
         else:
-            # Guided mode -> hold position (anchor-hold here).
+            # Guided mode with continue-mission off -> hold position here.
             logger.warning("link lost %.0fs while underway; engaging hold-position", timeout)
             self.controller.handle_command({"type": "anchor_hold"})
+            self._link_failsafe_action = "hold"
         self._link_failsafe_engaged = True
         return True
 
@@ -4001,6 +4007,10 @@ class Runtime:
                 else None
             ),
             "failsafe_engaged": self._link_failsafe_engaged,
+            # What the failsafe DID: "continue" | "hold" | "stop" | None. Lets
+            # the UI report "continuing mission" instead of a blanket
+            # "holding position" when continue-mission is on.
+            "failsafe_action": self._link_failsafe_action,
         }
         ctrl = self.controller
         payload["cruise"] = {

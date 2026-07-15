@@ -348,11 +348,13 @@ class SafetyConfig:
     # underway before auto-engaging anchor-hold (hold position).
     link_loss_timeout_s: float = 20.0
     # Lost-link behaviour for GUIDED modes (routes/cruise/drift/...): default
-    # False = park-and-hold where the boat is (#64). True = keep flying the
-    # mission unsupervised (geofence / depth / battery failsafes still apply) —
-    # for the pocket-the-phone workflow. MANUAL driving always STOPS on link
+    # True = keep flying the mission unsupervised (the pocket-the-phone /
+    # locked-screen workflow: an active route must NOT park just because the
+    # phone stopped talking — field report 2026-07-15). Geofence / depth /
+    # battery failsafes still apply while unsupervised. False = park-and-hold
+    # (anchor) where the boat is (#64). MANUAL driving always STOPS on link
     # loss; that deadman is part of the safety floor and is NOT configurable.
-    link_loss_continue_mission: bool = False
+    link_loss_continue_mission: bool = True
     # --- Low-battery thrust-derating ladder (#49) ----------------------- #
     # As the battery state-of-charge falls through these rungs the maximum
     # applied thrust is capped in progressive steps (a SOFT derate) BEFORE the
@@ -1104,8 +1106,8 @@ safety:
   nogo_lookahead_m: 5.0      # also stop within this distance of a no-go zone (#62)
   rtl_margin_m: 100.0        # warn when range-home nears battery range (#61)
   auto_rtl: false            # if true, auto-engage Return-to-Launch (not just recommend) (#61)
-  link_loss_timeout_s: 20.0  # no-UI-client time before hold-position failsafe (#64)
-  link_loss_continue_mission: false  # true = guided modes keep flying unsupervised
+  link_loss_timeout_s: 20.0  # no-UI-client time before the link-loss failsafe (#64)
+  link_loss_continue_mission: true  # guided modes keep flying unsupervised (false = anchor-hold); manual ALWAYS stops
                                      # (pocket-the-phone); MANUAL always stops
   # Low-battery thrust-derating ladder (#49): as SoC falls through each
   # [soc_pct, thrust_cap] rung the max applied thrust is capped in steps (a soft

@@ -4,6 +4,23 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Link loss no longer parks an active route** (field report: locking the
+  phone anchored the boat): `link_loss_continue_mission` now defaults to
+  **true** — guided modes (routes, heading-hold, drift, patterns) keep
+  flying the mission unsupervised when the UI link drops; geofence / depth /
+  battery failsafes still apply. Set it to `false` to restore park-and-hold.
+  MANUAL driving still ALWAYS stops on link loss (non-configurable safety
+  floor). Telemetry `link.failsafe_action` ("continue"|"hold"|"stop") now
+  says what the failsafe did, and the alert message matches (a warn chime
+  for "continuing mission", the high alarm only for hold/stop).
+
+- **Steering wheel: mode switch hands over while driving** — toggling
+  Relative/Absolute while actively steering now re-sends the frame-converted
+  command, so the server's hold semantics switch immediately (e.g. the head
+  starts holding its compass bearing) instead of waiting for the next wheel
+  touch. The head itself never moves on a switch, and an idle toggle still
+  engages nothing.
+
 - **Manual steering wheel** (`steerwheel.js`) — the steering slider is
   replaced by a dual-ring gyro dial: outer ring is a LIVE compass card
   (rotates with the real heading), inner ring is the boat frame (bow up).

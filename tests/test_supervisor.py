@@ -39,6 +39,7 @@ def test_supervisor_engages_link_failsafe_with_no_client():
     now = [1000.0]
     rt = _underway_runtime(now)
     rt.config.safety.link_loss_timeout_s = 10.0
+    rt.config.safety.link_loss_continue_mission = False  # test the hold path
     rt.client_connected()
     rt.client_disconnected()
     now[0] = 1011.0  # past the timeout
@@ -54,6 +55,7 @@ def test_supervisor_engages_link_failsafe_during_replay():
     now = [1000.0]
     rt = _underway_runtime(now)
     rt.config.safety.link_loss_timeout_s = 10.0
+    rt.config.safety.link_loss_continue_mission = False  # test the hold path
     rt.client_connected()
     rt.client_disconnected()
     rt.replay.active = True  # telemetry() would now early-return the replay frame
@@ -177,6 +179,7 @@ def test_supervise_once_survives_failing_evaluator():
     now = [1000.0]
     rt = _underway_runtime(now)
     rt.config.safety.link_loss_timeout_s = 10.0
+    rt.config.safety.link_loss_continue_mission = False  # test the hold path
     rt.client_connected()
     rt.client_disconnected()
     now[0] = 1011.0

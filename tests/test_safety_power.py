@@ -386,6 +386,7 @@ def test_link_failsafe_engages_after_timeout():
     now = [1000.0]
     rt = _underway_runtime(now)
     rt.config.safety.link_loss_timeout_s = 20.0
+    rt.config.safety.link_loss_continue_mission = False  # test the hold path
     # A client connected, then disconnected at t=1000.
     rt.client_connected()
     rt.client_disconnected()
@@ -477,6 +478,7 @@ def test_link_failsafe_engages_in_work_area():
     rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
     rt.state.mode = ControlModeName.WORK_AREA
     rt.config.safety.link_loss_timeout_s = 10.0
+    rt.config.safety.link_loss_continue_mission = False  # test the hold path
     rt.client_connected()
     rt.client_disconnected()
     now[0] = 1011.0
@@ -516,7 +518,7 @@ async def test_auto_rtl_schedules_off_the_loop():
 def test_link_telemetry_shape():
     rt = Runtime()
     link = rt.telemetry()["link"]
-    assert set(link) == {"client_connected", "since_s", "failsafe_engaged"}
+    assert set(link) == {"client_connected", "since_s", "failsafe_engaged", "failsafe_action"}
 
 
 # --------------------------------------------------------------------------- #
@@ -527,7 +529,7 @@ def test_state_endpoint_has_new_fields():
     with TestClient(app) as c:
         data = c.get("/api/state").json()
         assert set(data["battery"]) >= {"soc_pct", "voltage_v", "range_m", "time_to_empty_s"}
-        assert set(data["link"]) == {"client_connected", "since_s", "failsafe_engaged"}
+        assert set(data["link"]) == {"client_connected", "since_s", "failsafe_engaged", "failsafe_action"}
         assert "rtl_recommended" in data
         assert set(data["launch"]) == {"lat", "lon", "set"}
         assert set(data["mob"]) == {"active", "lat", "lon"}

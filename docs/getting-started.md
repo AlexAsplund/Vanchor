@@ -448,7 +448,11 @@ don't need to configure them today, but it's good to know they exist: open
 the menu (the **☰** button, top right) and look under **Safety** to find
 the shallow-water auto-stop (**Min depth**), red **no-go zones** you can
 draw on the map, a **Stop motor on GPS-fix loss** failsafe, low-battery
-**Return to Launch**, and the remote-link failsafe that holds position if
+**Return to Launch**, and the remote-link failsafe: if you're driving
+**manually** and the connection drops, the motor stops (a dead-man's
+switch); on an **active route or autopilot mode** the boat keeps flying its
+mission — so locking your phone mid-route is fine — unless you set
+`link_loss_continue_mission: false`, which instead holds position if
 your phone drops off the network (if you were *hand-driving* at that moment
 it stops the motor instead — a lost link while driving means stop, never
 sail on).

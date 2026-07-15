@@ -216,7 +216,17 @@
     prev.nogo = nogo;
 
     const failsafe = !!(link && link.failsafe_engaged);
-    if (failsafe && !prev.failsafe) VA.logAlert("alarm", "Connection lost — holding position (failsafe)", { level: "high" });
+    if (failsafe && !prev.failsafe) {
+      // What the failsafe DID depends on the mode + continue-mission setting.
+      const action = link.failsafe_action;
+      if (action === "continue") {
+        VA.logAlert("warn", "Connection lost — continuing mission unsupervised");
+      } else if (action === "stop") {
+        VA.logAlert("alarm", "Connection lost while driving — motor stopped", { level: "high" });
+      } else {
+        VA.logAlert("alarm", "Connection lost — holding position (failsafe)", { level: "high" });
+      }
+    }
     prev.failsafe = failsafe;
 
     const fixLost = !!safety.fix_lost;
