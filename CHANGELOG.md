@@ -19,9 +19,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   size) plus a soft ground shadow. Works generically for any design since
   it extrudes whatever alpha silhouette the SVG has.
 
-- **Kayak boat icon** — a slim double-ended touring kayak (deck bungees,
-  cockpit + paddler, paddle across) joins the boat-icon pack next to the
-  bass boat, Titanic and the submarines.
+- **Kayak, Rubber duck, Moby Dick and Kraken boat icons** — four new
+  designs join the pack next to the bass boat, Titanic and the submarines:
+  a slim double-ended touring kayak (deck bungees, cockpit + paddler), the
+  bathtub classic (beak at the bow), the white whale (blunt forehead,
+  scars, two old harpoons, tail flukes astern) and a kraken (glowing eyes,
+  eight tentacles trailing).
 
 - **Sim-vs-real fidelity review** (docs/sim-vs-real.md): three-way audit of
   actuation, sensors/timing and controls/config parity. Fixed: the sim motor

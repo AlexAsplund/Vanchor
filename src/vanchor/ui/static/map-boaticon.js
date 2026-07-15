@@ -205,10 +205,131 @@
         <path d="M14.2,27.8 A2.8,2.2 0 0 0 19.8,27.8 L19,29.4 L15,29.4 Z" fill="#c0392b"/>`;
   }
 
+  // Rubber duck — the bathtub classic from above: round yellow body, round
+  // head up front with an orange beak at the bow, wing bumps, a tail nub.
+  function bodyDuck() {
+    return `
+        <defs>
+          <radialGradient id="duckBody" cx="50%" cy="42%">
+            <stop offset="0" stop-color="#ffe14d"/>
+            <stop offset="1" stop-color="#f0b400"/>
+          </radialGradient>
+          <radialGradient id="duckHead" cx="50%" cy="40%">
+            <stop offset="0" stop-color="#ffe97a"/>
+            <stop offset="1" stop-color="#f5c211"/>
+          </radialGradient>
+        </defs>
+        <!-- glow silhouette -->
+        <ellipse class="boat-glow" cx="17" cy="30" rx="11" ry="15"/>
+        <!-- beak (the bow) -->
+        <path d="M17,1.5 C19.6,2 20.8,3.4 20.6,5.2 C20.4,6.9 18.9,7.8 17,7.8 C15.1,7.8 13.6,6.9 13.4,5.2 C13.2,3.4 14.4,2 17,1.5 Z"
+              fill="#ff8a1e" stroke="#c95f00" stroke-width="0.7"/>
+        <line x1="14" y1="5" x2="20" y2="5" stroke="#c95f00" stroke-width="0.5" opacity="0.8"/>
+        <!-- head -->
+        <circle cx="17" cy="12.5" r="7.2" fill="url(#duckHead)" stroke="#c98f00" stroke-width="0.9"/>
+        <!-- eyes -->
+        <circle cx="13.7" cy="10.6" r="1.25" fill="#181a1e"/>
+        <circle cx="20.3" cy="10.6" r="1.25" fill="#181a1e"/>
+        <circle cx="14.1" cy="10.2" r="0.4" fill="#ffffff"/>
+        <circle cx="20.7" cy="10.2" r="0.4" fill="#ffffff"/>
+        <!-- body -->
+        <path d="M17,17 C24,17 27.5,22 27.5,29 C27.5,37.5 23.5,44.5 17,45.5 C10.5,44.5 6.5,37.5 6.5,29 C6.5,22 10,17 17,17 Z"
+              fill="url(#duckBody)" stroke="#c98f00" stroke-width="0.9"/>
+        <!-- wing bumps -->
+        <path d="M9,25 C7,29 7.5,34 10,38 C11.5,35 11.5,28 9,25 Z" fill="#f5c211" stroke="#c98f00" stroke-width="0.6"/>
+        <path d="M25,25 C27,29 26.5,34 24,38 C22.5,35 22.5,28 25,25 Z" fill="#f5c211" stroke="#c98f00" stroke-width="0.6"/>
+        <!-- tail nub -->
+        <path d="M14,44.5 C15.5,47.2 18.5,47.2 20,44.5 C18.5,45.8 15.5,45.8 14,44.5 Z"
+              fill="#f0b400" stroke="#c98f00" stroke-width="0.6"/>`;
+  }
+
+  // Moby Dick — the white whale from above: huge blunt sperm-whale forehead at
+  // the bow, tapering scarred body, side fins, broad tail flukes astern — with
+  // a couple of old harpoons still stuck in his back.
+  function bodyMoby() {
+    return `
+        <defs>
+          <linearGradient id="mobyBody" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#f4f1e8"/>
+            <stop offset="1" stop-color="#cfc9b8"/>
+          </linearGradient>
+        </defs>
+        <!-- glow silhouette -->
+        <path class="boat-glow" d="M17,1.5 C24,1.5 26.5,7 26.5,13 C26.5,22 24,30 21,37 L26,45 L17,41.5 L8,45 L13,37 C10,30 7.5,22 7.5,13 C7.5,7 10,1.5 17,1.5 Z"/>
+        <!-- body: blunt head, taper, tail root -->
+        <path d="M17,1.5 C24,1.5 26.5,7 26.5,13 C26.5,22 24,30 21,37 L17,40 L13,37 C10,30 7.5,22 7.5,13 C7.5,7 10,1.5 17,1.5 Z"
+              fill="url(#mobyBody)" stroke="#9d9686" stroke-width="0.9" stroke-linejoin="round"/>
+        <!-- tail flukes -->
+        <path d="M17,38.5 C18.5,41 22,42.5 26,44.8 C24.5,40 21.5,37.5 18.6,36.6 Z" fill="#e8e4d6" stroke="#9d9686" stroke-width="0.7"/>
+        <path d="M17,38.5 C15.5,41 12,42.5 8,44.8 C9.5,40 12.5,37.5 15.4,36.6 Z" fill="#e8e4d6" stroke="#9d9686" stroke-width="0.7"/>
+        <!-- side fins -->
+        <path d="M8.4,18 C5.5,20 4.5,23.5 5.5,26.5 C7.5,24.5 8.8,21.5 8.4,18 Z" fill="#e8e4d6" stroke="#9d9686" stroke-width="0.6"/>
+        <path d="M25.6,18 C28.5,20 29.5,23.5 28.5,26.5 C26.5,24.5 25.2,21.5 25.6,18 Z" fill="#e8e4d6" stroke="#9d9686" stroke-width="0.6"/>
+        <!-- blowhole + spout hint -->
+        <circle cx="17" cy="6.5" r="1" fill="#8b8474"/>
+        <path d="M17,5.5 C15.8,4 15.8,2.8 17,1.8 C18.2,2.8 18.2,4 17,5.5 Z" fill="#bfe6f2" opacity="0.75"/>
+        <!-- the famous scars -->
+        <path d="M12,12 L16,14.5 M13,22 L18,20 M19,27 L23,29" stroke="#b3ab98" stroke-width="0.7" opacity="0.9"/>
+        <!-- two old harpoons, lines trailing -->
+        <g transform="rotate(28 21 15)">
+          <line x1="21" y1="15" x2="21" y2="9.5" stroke="#5a4632" stroke-width="0.9"/>
+          <path d="M21,8 L19.9,10 L22.1,10 Z" fill="#3c3229"/>
+        </g>
+        <g transform="rotate(-24 12.6 27)">
+          <line x1="12.6" y1="27" x2="12.6" y2="21.5" stroke="#5a4632" stroke-width="0.9"/>
+          <path d="M12.6,20 L11.5,22 L13.7,22 Z" fill="#3c3229"/>
+        </g>
+        <path d="M22.5,10 C25,12 26,15 25.5,18" stroke="#7a6a52" stroke-width="0.5" fill="none" opacity="0.8"/>`;
+  }
+
+  // Kraken — from above: bulbous mantle at the bow, huge glowing eyes, and
+  // eight curling tentacles trailing astern with sucker dots.
+  function bodyKraken() {
+    const tent = (x0, cx1, cx2, x1, w, flip) => `
+        <path d="M${x0},26 C${cx1},32 ${cx2},38 ${x1},45.5" fill="none"
+              stroke="#123a3f" stroke-width="${w}" stroke-linecap="round"/>
+        <path d="M${x1},45.5 q ${flip ? "-" : ""}2.6,1.8 ${flip ? "-" : ""}1.4,3" fill="none"
+              stroke="#123a3f" stroke-width="${Math.max(1, w - 1)}" stroke-linecap="round"/>`;
+    return `
+        <defs>
+          <radialGradient id="krakenHead" cx="50%" cy="38%">
+            <stop offset="0" stop-color="#2c7a72"/>
+            <stop offset="1" stop-color="#0d3b3f"/>
+          </radialGradient>
+        </defs>
+        <!-- glow silhouette -->
+        <ellipse class="boat-glow" cx="17" cy="17" rx="11.5" ry="14"/>
+        <!-- tentacles (drawn first, trailing astern) -->
+        ${tent(10, 4, 2.5, 4, 2.6, true)}
+        ${tent(13, 10, 8, 9, 3, true)}
+        ${tent(16, 15, 13.5, 13.5, 3.2, true)}
+        ${tent(18, 19, 20.5, 20.5, 3.2, false)}
+        ${tent(21, 24, 26, 25, 3, false)}
+        ${tent(24, 30, 31.5, 30, 2.6, false)}
+        <!-- sucker dots on the two centre tentacles -->
+        <circle cx="12.6" cy="34" r="0.55" fill="#7fd9c8"/><circle cx="12" cy="38" r="0.55" fill="#7fd9c8"/>
+        <circle cx="20.9" cy="34" r="0.55" fill="#7fd9c8"/><circle cx="21.6" cy="38" r="0.55" fill="#7fd9c8"/>
+        <!-- mantle (the bow) -->
+        <path d="M17,1.5 C24.5,1.5 28.5,8 28.5,15.5 C28.5,23 23.5,28.5 17,28.5 C10.5,28.5 5.5,23 5.5,15.5 C5.5,8 9.5,1.5 17,1.5 Z"
+              fill="url(#krakenHead)" stroke="#7fd9c8" stroke-width="0.9"/>
+        <!-- mantle ridge -->
+        <path d="M17,2.5 C19.5,7 19.5,12 17,16 C14.5,12 14.5,7 17,2.5 Z" fill="#3d9c8f" opacity="0.5"/>
+        <!-- eyes -->
+        <circle cx="11.8" cy="19.5" r="2.6" fill="#eafff6"/>
+        <circle cx="22.2" cy="19.5" r="2.6" fill="#eafff6"/>
+        <circle cx="11.8" cy="19.9" r="1.3" fill="#082026"/>
+        <circle cx="22.2" cy="19.9" r="1.3" fill="#082026"/>
+        <circle cx="12.3" cy="19.2" r="0.45" fill="#9ff5df"/>
+        <circle cx="22.7" cy="19.2" r="0.45" fill="#9ff5df"/>`;
+  }
+
   const BOAT_DESIGNS = {
     current: { label: "Current", body: bodyCurrent },
     bass: { label: "Bass boat", body: bodyBass },
     kayak: { label: "Kayak", body: bodyKayak },
+    duck: { label: "Rubber duck", body: bodyDuck },
+    moby: { label: "Moby Dick", body: bodyMoby },
+    kraken: { label: "Kraken", body: bodyKraken },
     titanic: { label: "Titanic", body: bodyTitanic },
     narco: { label: "Narco sub", body: bodyNarco },
     yellowsub: { label: "Yellow submarine", body: bodyYellowSub },
