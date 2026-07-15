@@ -2,7 +2,7 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## Unreleased
+## [1.5.0a5] — 2026-07-15
 
 - **Steering unit contract fixed (calibration flip + real-hardware angle
   doubling)** — field report: calibration's turn test "flips 180°". Root
