@@ -162,15 +162,33 @@ class SimMotorController(MotorController):
         else:
             self._applied_thrust = target
 
+    # Mirror the real firmware's loss-of-signal watchdog (VANCHOR_WATCHDOG_MS):
+    # if the control loop stops calling apply(), the real board ramps thrust to
+    # neutral — the sim boat must not drive forever on a stale command.
+    _WATCHDOG_S = 0.8
+
+    def _quantize(self, cmd: MotorCommand) -> MotorCommand:
+        """Mirror the wire encoding: thrust rides as 8-bit PWM (0..255) and
+        steering as an integer percent/degree step — the real boat can only
+        ever realize these quantized values."""
+        t = round(cmd.thrust * 255.0) / 255.0
+        st = round(cmd.steering * 100.0) / 100.0
+        return MotorCommand(thrust=t, steering=st)
+
     @property
     def command(self) -> MotorCommand:
+        # Firmware watchdog: no apply() within the window -> neutral thrust,
+        # steering held (the worm gear self-locks on the real head).
+        if (self._last_apply_monotonic is not None
+                and time.monotonic() - self._last_apply_monotonic > self._WATCHDOG_S):
+            base = MotorCommand(thrust=0.0, steering=self._requested.steering)
+            return self._quantize(base)
         if not self._shaping_enabled():
-            # Default path: pass through instantly with no state mutation.
-            return self._requested
-        return MotorCommand(
+            return self._quantize(self._requested)
+        return self._quantize(MotorCommand(
             thrust=self._applied_thrust,
             steering=self._requested.steering,
-        )
+        ))
 
     def debug(self) -> str:
         cls = type(self).__name__

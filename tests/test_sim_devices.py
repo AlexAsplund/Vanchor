@@ -129,11 +129,12 @@ def test_defaults_passthrough_instantly() -> None:
 
 
 def test_defaults_step_is_noop() -> None:
-    """step() with default params must not change the applied command."""
+    """step() with default params applies no SHAPING — only the wire
+    quantization (thrust rides as 8-bit PWM, sim-vs-real review 2026-07-15)."""
     m = SimMotorController()
     m.apply(MotorCommand(thrust=0.5))
     m.step(1.0)
-    assert m.command.thrust == pytest.approx(0.5)
+    assert m.command.thrust == pytest.approx(round(0.5 * 255) / 255)
 
 
 def test_defaults_identity_with_reversal() -> None:

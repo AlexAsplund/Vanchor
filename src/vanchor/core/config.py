@@ -57,9 +57,14 @@ class SimMotorConfig:
     is editable live from Settings alongside the real-hardware knobs.
     """
 
-    reverse_delay_s: float = 0.0     # hold output at zero this long after a thrust sign flip
-    thrust_slew_per_s: float = 0.0   # max normalized thrust change per second (0 = unlimited)
-    thrust_lag_tau_s: float = 0.0    # first-order prop spin-up lag time-constant (0 = instant)
+    # DEFAULTS MIRROR THE REAL FIRMWARE (sim-vs-real review 2026-07-15):
+    # engine.ino applies THROTTLE_SLEW_PER_S = 1.0 and a 1000 ms reverse
+    # dead-time unconditionally, so the sim boat now feels those too. Set a
+    # field to 0 to restore the legacy transparent-passthrough motor (older
+    # recorded scenarios / gains were captured with instant actuation).
+    reverse_delay_s: float = 1.0     # hold output at zero this long after a thrust sign flip
+    thrust_slew_per_s: float = 1.0   # max normalized thrust change per second (0 = unlimited)
+    thrust_lag_tau_s: float = 0.0    # first-order prop spin-up lag (0 = instant; no firmware analog)
 
 
 @dataclass
@@ -204,7 +209,7 @@ class SensorConfig:
     ``SimCompass(update_hz)``.
     """
 
-    gps_hz: float = 5.0  # a reconfigured u-blox runs at 5 Hz; far tighter station-keeping
+    gps_hz: float = 10.0  # matches the M9N driver's marine config (cfg_marine_10hz)
     compass_hz: float = 5.0
     depth_hz: float = 2.0
     # Per-fix position jitter (m, 1-sigma). Real marine GPS/chart-plotters
@@ -1009,9 +1014,9 @@ sim:
   time_scale: 1.0
 
 sim_motor:               # simulated-motor actuation shaping (#36); all 0 = OFF (passthrough)
-  reverse_delay_s: 0.0     # hold output at zero this long after a thrust sign flip
-  thrust_slew_per_s: 0.0   # max normalized thrust change per second (0 = unlimited)
-  thrust_lag_tau_s: 0.0    # first-order prop spin-up lag time-constant (0 = instant)
+  reverse_delay_s: 1.0     # mirrors firmware REVERSE_DEADTIME_MS (0 = legacy instant motor)
+  thrust_slew_per_s: 1.0   # mirrors firmware THROTTLE_SLEW_PER_S (0 = unlimited)
+  thrust_lag_tau_s: 0.0    # first-order prop spin-up lag (0 = instant; no firmware analog)
 
 sea_state:               # deterministic wave model driving the sim IMU (#38)
   significant_wave_height_m: 0.0  # Hs; 0 = flat water (model OFF, IMU unchanged)
@@ -1052,7 +1057,7 @@ environment:
   current_variability: 0.0    # slow session-scale wander of current, [0,1] (0 = steady)
 
 sensors:
-  gps_hz: 5.0
+  gps_hz: 10.0
   compass_hz: 5.0
   depth_hz: 2.0
   gps_noise_m: 0.35   # denoised plotter output (steady), not raw-receiver scatter

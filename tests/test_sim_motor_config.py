@@ -64,11 +64,13 @@ def test_step_drives_reverse_delay_hold() -> None:
 
 
 def test_step_default_is_bitwise_passthrough() -> None:
-    """Default (no shaping) -> the applied command equals the request exactly."""
+    """Default (no shaping) -> the request passes straight through, modulo
+    the WIRE quantization the real boat always has (thrust = 8-bit PWM,
+    steering = integer 1/100 steps; sim-vs-real review 2026-07-15)."""
     sim = Simulator()
     sim.motor.apply(MotorCommand(thrust=0.42, steering=-0.2))
     sim.step(0.05)
-    assert sim.motor.command.thrust == 0.42
+    assert sim.motor.command.thrust == pytest.approx(round(0.42 * 255) / 255)
     assert sim.motor.command.steering == -0.2
 
 

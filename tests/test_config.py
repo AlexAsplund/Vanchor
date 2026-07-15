@@ -71,7 +71,7 @@ def test_defaults_with_no_file() -> None:
     assert isinstance(cfg, AppConfig)
     assert cfg.sim.start_lat == SimConfig().start_lat
     assert cfg.sim.physics_hz == 20.0
-    assert cfg.sensors.gps_hz == 5.0
+    assert cfg.sensors.gps_hz == 10.0  # matches the M9N marine config
     assert cfg.control.tick_hz == 5.0
     assert cfg.control.heading_kd == 0.012
     assert cfg.server.host == "127.0.0.1"

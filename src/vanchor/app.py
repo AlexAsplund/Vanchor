@@ -1926,7 +1926,13 @@ class Runtime:
             _jitter = {"indoor": dict(walk_sigma_m=5.5, walk_tau_s=40.0,
                                       vel_bias_sigma_mps=0.35, vel_tau_s=8.0,
                                       reported_hacc_m=15.0)}.get(cfg.sensors.gps_jitter, {})
-            gps = SimGps(simulator.truth, self.bus, update_hz=cfg.sensors.gps_hz,
+            # Sensor cadences are PER SIM-SECOND: scale by time_scale so a
+            # sped-up sim doesn't starve the navigator of fixes relative to the
+            # physics (sim-vs-real review 2026-07-15). At 1x this is a no-op;
+            # the control loop itself still runs wall-clock, so time_scale != 1
+            # remains a visualization tool, never a control-quality yardstick.
+            _ts = max(0.01, cfg.sim.time_scale)
+            gps = SimGps(simulator.truth, self.bus, update_hz=cfg.sensors.gps_hz * _ts,
                          position_noise_m=cfg.sensors.gps_noise_m,
                          emit_velocity=cfg.sensors.gps_velocity, **_jitter)
         elif registry.has("gps", src["gps"]):
@@ -1945,7 +1951,7 @@ class Runtime:
             # Deterministic sea-state model (#38) drives the sim IMU; Hs<=0 (the
             # default) leaves the flat-water IMU bit-for-bit unchanged.
             from .sim.sea_state import SeaState
-            compass = SimCompass(simulator.truth, self.bus, update_hz=cfg.sensors.compass_hz,
+            compass = SimCompass(simulator.truth, self.bus, update_hz=cfg.sensors.compass_hz * max(0.01, cfg.sim.time_scale),
                                  heading_noise_deg=cfg.sensors.compass_noise_deg,
                                  sea_state=SeaState.from_config(cfg.sea_state))
         elif registry.has("compass", src["compass"]):
@@ -1965,7 +1971,7 @@ class Runtime:
             depth = SimDepthSounder(
                 simulator.truth,
                 Bathymetry(origin=GeoPoint(cfg.sim.start_lat, cfg.sim.start_lon)),
-                self.bus, update_hz=cfg.sensors.depth_hz)
+                self.bus, update_hz=cfg.sensors.depth_hz * max(0.01, cfg.sim.time_scale))
         battery_monitor = self._build_battery_monitor(cfg, simulator)
         return {"simulator": simulator, "gps": gps, "compass": compass,
                 "depth_sounder": depth, "motor": motor,

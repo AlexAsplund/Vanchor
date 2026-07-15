@@ -4,6 +4,19 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Sim-vs-real fidelity review** (docs/sim-vs-real.md): three-way audit of
+  actuation, sensors/timing and controls/config parity. Fixed: the sim motor
+  now mirrors the firmware by DEFAULT (thrust slew 1.0/s + 1 s reverse
+  dead-time — set the sim_motor fields to 0 for the legacy instant motor),
+  a simulated 800 ms firmware watchdog (a dead control loop can no longer
+  drive the sim boat forever), wire quantization (8-bit PWM thrust, integer
+  steering steps), sim sensor cadences scaled by time_scale (a sped-up sim
+  no longer starves the navigator relative to the physics), and the sim GPS
+  default raised to the M9N's 10 Hz. Documented (bench/water data needed):
+  steering-head settle dynamics + feedback channel, prop spin-up lag,
+  velocity-fusion coverage (set sensors.gps_velocity: true to exercise it),
+  multipath/compass realism knobs, and the GPIO hardware watchdog.
+
 - **Land-collision guard** (manual driving, default ON): the safety governor
   probes the offline water chart along the boat's TRACK and auto-stops the
   configured number of metres before the shoreline (default 15 m, plus a
