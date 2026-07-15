@@ -779,8 +779,14 @@ async def test_ingress_reconnects_on_eof() -> None:
     try:
         # Trigger an EOF
         transport.feed_eof()
-        await asyncio.sleep(0.05)
-        # After reconnect, open() will have been called more than once
+        # After reconnect, open() will have been called more than once. Poll
+        # with a generous deadline instead of one fixed sleep: on a slow CI
+        # runner the reconnect task can lose the race against a 50 ms nap
+        # (observed on the Python 3.11 runner 2026-07-15).
+        for _ in range(200):
+            if transport.open_calls >= 2:
+                break
+            await asyncio.sleep(0.01)
         assert transport.open_calls >= 2
     finally:
         await conn.stop()
