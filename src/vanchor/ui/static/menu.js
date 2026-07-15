@@ -26,6 +26,7 @@
     boat: "Boat & tuning",
     map: "Map & charts",
     display: "Display",
+    feedback: "Sound & touch",
     safety: "Safety",
     fishing: "Fishing",
     devices: "Devices",

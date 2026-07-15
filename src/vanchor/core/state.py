@@ -268,6 +268,7 @@ class NavigationState:
                 for w in self.waypoints
             ],
             "active_waypoint": self.active_waypoint,
+            "route_complete": self.route_complete,
             "route_loop": self.route_loop,
             "route_patrol": self.route_patrol,
             "work_holding": self.work_holding,

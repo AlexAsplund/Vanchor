@@ -4,15 +4,33 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Sound feedback** (`sounds.js`): fully synthesized Web Audio cues — no
+  audio files, works offline. Safety **alarms** get an urgent two-tone;
+  **notifications** a chime (warn) / soft note (info), both driven by the
+  `VA.logAlert` hook; every **mode engagement** plays a distinct little motif
+  (anchors descend low, underway modes ascend) so the active mode is
+  recognizable by ear; **waypoints** ding as each mark is reached and a
+  fanfare plays on route completion (new `route_complete` telemetry field);
+  **button presses** tick subtly, heavier on STOP. Customizable in the new
+  **Settings → Sound & touch** category: master enable, volume, and a
+  per-category switch (alarms / notifications / mode changes / waypoints &
+  route / button clicks) each with a preview button; persisted in
+  localStorage. AudioContext unlocks on the first tap (autoplay policy).
+  Modules can play cues via `VA.sound.play(name)`.
+
 - **Haptic feedback** (`haptics.js`): a short vibration pulse on every
   button-like control (buttons, mode tiles, menu tiles, switches, segmented
   controls) via one document-level pointerdown listener; heavier pulse on
   STOP/destructive controls; a distinct buzz when a safety **alarm** is logged
   (hooked into `VA.logAlert`); and a "press" pulse the moment a 3 s waypoint
-  or map long-press registers. Toggle in Settings → Display → Appearance
+  or map long-press registers. Toggle in Settings → **Sound & touch**
   (default on, persisted). Uses the Vibration API — works on Android
   Chrome/PWA, degrades to a no-op on iOS (no API; the toggle says so).
   Modules can pulse explicitly via `VA.haptic("tap"|"press"|"heavy"|"alert")`.
+
+- **New "Sound & touch" settings category**: the command menu gained a ninth
+  tile hosting the Sound and Touch/haptics cards, so all tactile/audible
+  feedback is configured in one place.
 
 ## [1.5.0a4] — 2026-07-15
 

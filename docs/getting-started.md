@@ -381,12 +381,21 @@ your browser's *Add to Home Screen* (iPhone: the share button → *Add to Home
 Screen*; Android: the menu → *Install app*). You get a full-screen helm with
 its own icon that keeps working even if the network hiccups.
 
-**Feel the buttons:** on Android phones every button press gives a short
-**vibration pulse** — heavier on STOP, a distinct buzz when a safety alarm
-fires, and a confirmation pulse when a press-and-hold (waypoint menu, map
-menu) registers. Handy with wet fingers on a rocking boat. Toggle it under
-**Settings → Display → Appearance**. (iPhones don't expose vibration to
-browsers, so the switch is greyed out there.)
+**Feel and hear the buttons:** on Android phones every button press gives a
+short **vibration pulse** — heavier on STOP, a distinct buzz when a safety
+alarm fires, and a confirmation pulse when a press-and-hold (waypoint menu,
+map menu) registers. Handy with wet fingers on a rocking boat. (iPhones
+don't expose vibration to browsers, so that switch is greyed out there.)
+
+There are **sounds** too, synthesized on the device so they work offline:
+an urgent two-tone for safety alarms, chimes for notifications, a distinct
+little melody for each mode you engage (you'll learn to *hear* "anchor
+dropped" without looking), a ding each time a waypoint is reached and a
+fanfare when the route completes, plus subtle button ticks.
+
+Both live under **Settings → Sound & touch**: a master switch and volume,
+plus per-category switches (each with a ▶ preview button) so you can, say,
+keep alarms and waypoint dings but silence button clicks.
 
 ## 10. Stopping and staying safe
 

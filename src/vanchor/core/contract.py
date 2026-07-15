@@ -47,6 +47,7 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "cross_track_m": {"type": "number", "unit": "m", "desc": "cross-track error off the leg"},
     "nav": {"type": "object", "desc": "guided-nav status (paused, suspended mode, leg index)"},
     "last_apb": {"type": "object|null", "desc": "last received APB autopilot sentence (Follow-APB)"},
+    "route_complete": {"type": "boolean", "desc": "the active route has finished (all marks reached)"},
     "route_loop": {"type": "object|null", "desc": "loop-route state"},
     "route_patrol": {"type": "object|null", "desc": "patrol-route state"},
     # --- fishing / survey modes ---

@@ -70,6 +70,7 @@ const SHELL = [
   // App scripts (every <script src="/static/*.js"> in index.html).
   "/static/core.js",
   "/static/haptics.js",
+  "/static/sounds.js",
   "/static/map-core.js",
   "/static/map-boaticon.js",
   "/static/map-boat.js",

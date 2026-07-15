@@ -9,8 +9,9 @@ from vanchor.ui.server import _render_shell, create_app
 def test_shell_assembles_with_no_unresolved_includes():
     html = _render_shell()
     assert "#include" not in html  # every marker was resolved
-    # all eight settings panels are inlined
-    for cat in ("boat", "display", "map", "fishing", "safety", "devices", "data", "sim"):
+    # all nine settings panels are inlined
+    for cat in ("boat", "display", "feedback", "map", "fishing", "safety",
+                "devices", "data", "sim"):
         assert f'data-cat="{cat}"' in html
 
 

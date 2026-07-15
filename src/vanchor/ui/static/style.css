@@ -1285,6 +1285,11 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 .wp-menu .wp-speed-val:disabled { opacity: 0.45; }
 .wp-speed-tag { color: var(--accent); font: 700 11px var(--font-num); white-space: nowrap; }
 
+/* ---- Sound & touch settings (sounds.js / haptics.js) ---- */
+.snd-row { display: flex; align-items: center; gap: 8px; }
+.snd-row .switch { flex: 1 1 auto; }
+.snd-row .snd-test { flex: 0 0 auto; padding: 4px 10px; }
+
 /* ---- Replace/Append route delivery dialog (routechoice.js) ---- */
 .route-choice-overlay {
   position: fixed; inset: 0; z-index: 2600;

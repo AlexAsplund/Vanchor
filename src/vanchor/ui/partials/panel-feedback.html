@@ -1,0 +1,24 @@
+      <section class="cm-panel hidden" data-cat="feedback">
+
+      <details class="card" id="sound-card" open>
+        <summary>Sound</summary>
+        <label class="switch"><input type="checkbox" id="snd-master" checked /><span class="track"></span> Enable sounds</label>
+        <label class="slider-row">Volume <output id="snd-volume-val">60</output>%
+          <input type="range" id="snd-volume" min="0" max="100" step="5" value="60" />
+        </label>
+        <div class="ctx-sub">Categories</div>
+        <div class="snd-row"><label class="switch"><input type="checkbox" class="snd-cat" data-cat="alarm" checked /><span class="track"></span> Safety alarms</label><button type="button" class="btn-ghost snd-test" data-cat="alarm" aria-label="preview alarm sound">▶</button></div>
+        <div class="snd-row"><label class="switch"><input type="checkbox" class="snd-cat" data-cat="notify" checked /><span class="track"></span> Notifications</label><button type="button" class="btn-ghost snd-test" data-cat="notify" aria-label="preview notification sound">▶</button></div>
+        <div class="snd-row"><label class="switch"><input type="checkbox" class="snd-cat" data-cat="mode" checked /><span class="track"></span> Mode changes (distinct per mode)</label><button type="button" class="btn-ghost snd-test" data-cat="mode" aria-label="preview mode sound">▶</button></div>
+        <div class="snd-row"><label class="switch"><input type="checkbox" class="snd-cat" data-cat="nav" checked /><span class="track"></span> Waypoints &amp; route</label><button type="button" class="btn-ghost snd-test" data-cat="nav" aria-label="preview waypoint sound">▶</button></div>
+        <div class="snd-row"><label class="switch"><input type="checkbox" class="snd-cat" data-cat="ui" checked /><span class="track"></span> Button clicks</label><button type="button" class="btn-ghost snd-test" data-cat="ui" aria-label="preview click sound">▶</button></div>
+        <div class="hint" id="sound-hint">All sounds are synthesized on the device — nothing to download, works offline. Browsers unlock audio on your first tap.</div>
+      </details>
+
+      <details class="card" id="haptics-card" open>
+        <summary>Touch / haptics</summary>
+        <label class="switch"><input type="checkbox" id="haptics-toggle" checked /><span class="track"></span> Haptic feedback (vibrate on button presses)</label>
+        <div class="hint" id="haptics-hint">Short pulse on taps, heavier on STOP, a distinct buzz on safety alarms, and a confirmation pulse when a press-and-hold registers. Android phones/tablets; iOS has no vibration API.</div>
+      </details>
+
+      </section><!-- /feedback -->
