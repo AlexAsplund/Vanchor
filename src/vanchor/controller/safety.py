@@ -40,7 +40,7 @@ from math import copysign
 from typing import Any
 
 from shapely.affinity import scale
-from shapely.geometry import Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 from shapely.prepared import prep
 
 from ..core.models import ControlModeName, MotorCommand
@@ -93,6 +93,13 @@ class SafetyConfig:
     # -- a no-go polygon. The lookahead gives the boat room to stop before it
     # actually enters the zone.
     nogo_lookahead_m: float = 5.0
+    # Land-collision guard (manual modes): when the boat's TRACK points at land
+    # (from the offline water chart), cut thrust ``land_guard_margin_m`` metres
+    # before the shoreline (plus a small coasting allowance). Active only in
+    # MANUAL — guided modes plan around land / have their own failsafes. The
+    # guard is inert until a water chart is provided (set_water_geometry).
+    land_guard_enabled: bool = True
+    land_guard_margin_m: float = 15.0
 
 
 @dataclass
@@ -109,6 +116,14 @@ class SafetyStatus:
     # Shallow-water / geofence auto-stop (#62).
     shallow_stop: bool = False
     nogo_stop: bool = False
+    # Land guard: active (enabled + chart + manual mode), the probed distance
+    # to land along the current track (None = clear/unknown), the predicted
+    # stop point, and whether the guard is currently cutting thrust.
+    land_guard_active: bool = False
+    land_stop: bool = False
+    land_distance_m: float | None = None
+    land_stop_lat: float | None = None
+    land_stop_lon: float | None = None
     min_depth_m: float = 0.0
     # Low-battery thrust-derating ladder (#49): the current max-thrust CAP
     # (1.0 = full) and whether a derate is actually in force this tick. Exposed on
@@ -128,6 +143,14 @@ class SafetyStatus:
             "heading_stale": self.heading_stale,
             "shallow_stop": self.shallow_stop,
             "nogo_stop": self.nogo_stop,
+            "land_guard": {
+                "active": self.land_guard_active,
+                "tripped": self.land_stop,
+                "distance_m": (round(self.land_distance_m, 1)
+                               if self.land_distance_m is not None else None),
+                "stop": ({"lat": self.land_stop_lat, "lon": self.land_stop_lon}
+                         if self.land_stop_lat is not None else None),
+            },
             "min_depth_m": self.min_depth_m,
             "messages": list(self.messages),
         }
@@ -221,6 +244,14 @@ class SafetyGovernor:
         # No-go polygons in (lon, lat) order, prepared for fast contains/distance.
         self._nogo: list[Polygon] = []
         self._nogo_prepared: list = []
+        # Land guard: the water chart (scaled so 1 deg = 111.32 km on both
+        # axes), its boundary (the shoreline), and a probe cache (the shapely
+        # ray query runs at most ~2x/second, not every 5 Hz tick).
+        self._water_scaled = None
+        self._water_boundary = None
+        self._water_coslat = 1.0
+        self._land_probe_acc = 10.0     # force a probe on the first tick
+        self._land_probe_last: tuple | None = None
 
     def set_nogo_zones(self, zones: list[list[tuple[float, float]]]) -> None:
         """Replace the no-go polygons. ``zones`` is a list of rings, each a list
@@ -241,6 +272,97 @@ class SafetyGovernor:
     @property
     def nogo_zone_count(self) -> int:
         return len(self._nogo)
+
+    def set_water_geometry(self, water) -> None:
+        """Provide the WATER polygons (shapely, (lon, lat)) the land guard
+        probes against; ``None`` clears (guard inert). Pre-scales longitude by
+        cos(lat) so planar distances are metric, and pre-extracts the boundary
+        (= the shoreline) for the ray query."""
+        if water is None or water.is_empty:
+            self._water_scaled = None
+            self._water_boundary = None
+            self._water_coslat = 1.0
+            return
+        c = water.centroid
+        self._water_coslat = max(0.05, math.cos(math.radians(c.y)))
+        self._water_scaled = scale(water, xfact=self._water_coslat, yfact=1.0,
+                                   origin=(0.0, 0.0))
+        self._water_boundary = self._water_scaled.boundary
+        self._land_probe_acc = 10.0
+        self._land_probe_last = None
+
+    @property
+    def has_water_geometry(self) -> bool:
+        return self._water_scaled is not None
+
+    # Probe horizon: land beyond this is "clear" (nothing to show or stop for).
+    _LAND_HORIZON_M = 400.0
+
+    def _land_probe(self, state: NavigationState, dt: float, cmd_thrust: float):
+        """Distance to land along the boat's TRACK + the predicted stop point.
+
+        Returns ``None`` (unknown: no chart / no position), ``(inf, None,
+        None, track)`` (clear within the horizon) or ``(d_m, stop_lat,
+        stop_lon, track)``. Track = COG when making way, else the heading —
+        flipped when reverse thrust is COMMANDED (backing toward land is
+        caught; the commanded sign is used, not the applied one, so a guard
+        cut can't freeze the probe's direction). Throttled to ~2 Hz; between
+        probes the cached result is reused."""
+        if self._water_scaled is None:
+            return None
+        pos = state.position
+        if pos is None or pos.is_null():
+            return None
+        self._land_probe_acc += dt
+        if self._land_probe_last is not None and self._land_probe_acc < 0.5:
+            return self._land_probe_last
+        self._land_probe_acc = 0.0
+
+        fix = state.fix
+        if state.sog_knots > 0.4 and fix is not None:
+            track = fix.cog_deg
+        else:
+            track = state.heading_deg
+            if cmd_thrust < -0.05:
+                track += 180.0
+        k = self._water_coslat
+        coslat_here = max(0.05, math.cos(math.radians(pos.lat)))
+        deg = self._LAND_HORIZON_M / 111320.0
+        rad = math.radians(track)
+        end_lon = pos.lon + math.sin(rad) * deg / coslat_here
+        end_lat = pos.lat + math.cos(rad) * deg
+        p0 = Point(pos.lon * k, pos.lat)
+        line = LineString([(pos.lon * k, pos.lat), (end_lon * k, end_lat)])
+
+        if not self._water_scaled.covers(p0):
+            out = (0.0, pos.lat, pos.lon, track)  # already at/on land: stop HERE
+            self._land_probe_last = out
+            return out
+        hits = line.intersection(self._water_boundary)
+        d_deg = None
+        if not hits.is_empty:
+            geoms = getattr(hits, "geoms", [hits])
+            for g in geoms:
+                if g.geom_type == "Point":
+                    cand = line.project(g)
+                elif g.geom_type == "LineString":
+                    cand = line.project(Point(g.coords[0]))
+                else:
+                    continue
+                if d_deg is None or cand < d_deg:
+                    d_deg = cand
+        if d_deg is None:
+            out = (math.inf, None, None, track)
+            self._land_probe_last = out
+            return out
+        d_m = d_deg * 111320.0
+        stop_d = max(0.0, d_m - self.config.land_guard_margin_m)
+        s_rad = math.radians(track)
+        stop_lat = pos.lat + math.cos(s_rad) * stop_d / 111320.0
+        stop_lon = pos.lon + math.sin(s_rad) * stop_d / (111320.0 * coslat_here)
+        out = (d_m, stop_lat, stop_lon, track)
+        self._land_probe_last = out
+        return out
 
     @property
     def thrust_cap(self) -> float:
@@ -383,6 +505,38 @@ class SafetyGovernor:
             status.nogo_stop = True
             status.messages.append("inside/near a no-go zone; stop")
             desired = 0.0
+
+        # --- Land-collision guard (manual modes, #field-request) ------- #
+        # Probe the shoreline along the boat's TRACK; cut thrust margin_m
+        # before land (plus a small coasting allowance for carried way). The
+        # probe is direction-aware, so once stopped the operator can always
+        # thrust AWAY from the shore — that direction probes clear.
+        status.land_guard_active = (
+            cfg.land_guard_enabled
+            and self._water_scaled is not None
+            and state.mode == ControlModeName.MANUAL
+        )
+        if status.land_guard_active:
+            probe = self._land_probe(state, dt, command.thrust)
+            if probe is not None and math.isfinite(probe[0]):
+                d_m, sp_lat, sp_lon, track = probe
+                status.land_distance_m = d_m
+                status.land_stop_lat = sp_lat
+                status.land_stop_lon = sp_lon
+                coast_m = state.sog_knots * 0.5144 * 2.0   # ~2 s of carried way
+                if d_m <= cfg.land_guard_margin_m + coast_m:
+                    # Cut only thrust that PUSHES TOWARD the land side; thrust
+                    # away (reversing off a shore the bow faces, or braking)
+                    # must always work, or the guard would trap the boat.
+                    push_dir = state.heading_deg + (180.0 if command.thrust < 0 else 0.0)
+                    d_ang = ((push_dir - track + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+                    if abs(d_ang) <= 90.0 and abs(command.thrust) > _THRUST_EPSILON:
+                        status.land_stop = True
+                        status.messages.append(
+                            f"land {d_m:.0f}m ahead <= guard "
+                            f"{cfg.land_guard_margin_m:.0f}m; stop"
+                        )
+                        desired = 0.0
 
         # --- Loss-of-fix failsafe ------------------------------------- #
         if fix_is_fresh:

@@ -89,6 +89,8 @@ class SafetyGeometryStore:
         self.min_depth_m: float | None = None
         self.fix_failsafe_enabled: bool | None = None
         self.auto_follow_apb: bool | None = None
+        self.land_guard_enabled: bool | None = None
+        self.land_guard_margin_m: float | None = None
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -112,6 +114,12 @@ class SafetyGeometryStore:
         aa = data.get("auto_follow_apb")
         if isinstance(aa, bool):
             self.auto_follow_apb = aa
+        lg = data.get("land_guard_enabled")
+        if isinstance(lg, bool):
+            self.land_guard_enabled = lg
+        lm = data.get("land_guard_margin_m")
+        if isinstance(lm, (int, float)) and not isinstance(lm, bool):
+            self.land_guard_margin_m = float(lm)
 
     def _save(self) -> None:
         _atomic_write_json(self._path, self.to_dict())
@@ -122,6 +130,8 @@ class SafetyGeometryStore:
             "min_depth_m": self.min_depth_m,
             "fix_failsafe_enabled": self.fix_failsafe_enabled,
             "auto_follow_apb": self.auto_follow_apb,
+            "land_guard_enabled": self.land_guard_enabled,
+            "land_guard_margin_m": self.land_guard_margin_m,
         }
 
     # ------------------------------------------------------------------ #
@@ -141,6 +151,13 @@ class SafetyGeometryStore:
 
     def set_auto_follow_apb(self, enabled: bool) -> None:
         self.auto_follow_apb = bool(enabled)
+        self._save()
+
+    def set_land_guard(self, enabled: bool | None, margin_m: float | None) -> None:
+        if enabled is not None:
+            self.land_guard_enabled = bool(enabled)
+        if margin_m is not None:
+            self.land_guard_margin_m = float(margin_m)
         self._save()
 
 

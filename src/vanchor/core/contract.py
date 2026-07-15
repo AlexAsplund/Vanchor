@@ -126,6 +126,7 @@ COMMANDS: dict[str, dict] = {
     "set_launch": {"desc": "capture the launch point for RTL"},
     "set_min_depth": {"desc": "set the minimum-depth safety limit"},
     "set_auto_apb": {"desc": "enable/disable auto Follow-APB engage on a live APB feed"},
+    "set_land_guard": {"desc": "land-collision guard: {enabled?, margin_m?} — auto-stop before land in manual modes"},
     "set_fix_failsafe": {"desc": "enable/disable the GPS-fix-loss failsafe"},
     "set_nogo_zones": {"desc": "set the no-go zone geometry"},
 }

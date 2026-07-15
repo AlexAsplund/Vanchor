@@ -19,6 +19,12 @@
 
         <div class="ctx-sub">Failsafes</div>
         <label class="switch" title="When ON, the motor is cut if the GPS fix is lost for longer than the timeout. OFF (default) holds the last command through a fix dropout."><input type="checkbox" id="fix-failsafe" /><span class="track"></span> Stop motor on GPS-fix loss</label>
+        <label class="switch" title="When ON (default), driving MANUALLY toward land auto-stops the boat the set number of metres before the shoreline (from the offline water chart). The predicted stop point shows on the map. Needs the offline chart for your area (download via Offline maps / use any Take-me-here once)."><input type="checkbox" id="land-guard" checked /><span class="track"></span> Stop before land (manual driving)</label>
+        <div class="slider-row">
+          <label>Stop distance <output id="land-guard-m-val">15</output> m</label>
+          <input type="range" id="land-guard-m" min="5" max="100" step="5" value="15" />
+        </div>
+        <div class="hint" id="land-guard-hint"></div>
         <label class="switch" title="When ON, receiving an external autopilot's APB sentence auto-engages Follow-APB — only from idle Manual (never hijacks an anchor hold, a route or a hand on the throttle). A banner shows while auto-engaged."><input type="checkbox" id="auto-apb" /><span class="track"></span> Auto-engage Follow-APB on APB feed</label>
 
         <div class="ctx-sub">No-go / shallow zones</div>

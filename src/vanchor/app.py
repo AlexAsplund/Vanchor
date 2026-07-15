@@ -772,6 +772,10 @@ class Runtime:
         # mode by hand isn't instantly overridden; re-arms when the APB feed
         # goes stale. ``engaged`` drives the UI banner.
         self._auto_apb_latched = False
+        # Land guard water chart: next cache-lookup time + the bbox currently
+        # loaded, so the supervisor only re-queries when the boat nears an edge.
+        self._land_water_next = 0.0
+        self._land_water_bbox: tuple | None = None
         # Route-planning cancellation flag (#54): set by cancel_route_plan(),
         # reset at the start of every plan_route() call.
         self._route_plan_cancelled = False
@@ -897,6 +901,10 @@ class Runtime:
             )
         if geo.auto_follow_apb is not None:
             self.config.safety.auto_follow_apb = geo.auto_follow_apb
+        if geo.land_guard_enabled is not None:
+            gov.config.land_guard_enabled = geo.land_guard_enabled
+        if geo.land_guard_margin_m is not None:
+            gov.config.land_guard_margin_m = max(1.0, geo.land_guard_margin_m)
         logger.info(
             "safety geometry applied: %d no-go zones, min_depth=%s, fix_failsafe=%s",
             len(geo.nogo_zones), geo.min_depth_m, geo.fix_failsafe_enabled,
@@ -2193,6 +2201,21 @@ class Runtime:
                 )
         elif ctype == "clear_gps_offset":
             self.navigator.clear_gps_offset()
+        elif ctype == "set_land_guard":
+            gov = self.controller.safety
+            enabled = command.get("enabled")
+            margin = command.get("margin_m")
+            if enabled is not None:
+                gov.config.land_guard_enabled = bool(enabled)
+            if margin is not None:
+                gov.config.land_guard_margin_m = max(1.0, min(200.0, float(margin)))
+            self.safety_geometry.set_land_guard(
+                None if enabled is None else bool(enabled),
+                None if margin is None else gov.config.land_guard_margin_m,
+            )
+            logger.info("land guard: enabled=%s margin=%.0fm",
+                        gov.config.land_guard_enabled,
+                        gov.config.land_guard_margin_m)
         elif ctype == "set_auto_apb":
             enabled = bool(command.get("enabled", False))
             self.config.safety.auto_follow_apb = enabled
@@ -2490,6 +2513,44 @@ class Runtime:
         self._auto_apb_latched = True
         return True
 
+    def refresh_land_guard_water(self) -> bool:
+        """Keep the safety governor supplied with the water chart around the
+        boat for the land guard. CACHE-ONLY (the offline chart the routing
+        features already store) — the safety path never touches the network.
+        Re-checks every 20 s, or sooner when the boat leaves the loaded bbox.
+        Returns True when a (new) chart was handed to the governor."""
+        gov = self.controller.safety
+        if not gov.config.land_guard_enabled:
+            return False
+        pos = self.state.position
+        if pos is None or pos.is_null():
+            return False
+        now = self._mono_fn()
+        bb = self._land_water_bbox
+        inside = (bb is not None and
+                  bb[0] <= pos.lat <= bb[2] and bb[1] <= pos.lon <= bb[3])
+        if now < self._land_water_next and inside and gov.has_water_geometry:
+            return False
+        self._land_water_next = now + 20.0
+        try:
+            from .nav import water as _water
+            bbox = _water.bbox_around(pos.lat, pos.lon, pos.lat, pos.lon,
+                                      pad_m=1500.0)
+            cached = _water.WaterCache(self.config.data_dir).find_covering(bbox)
+        except Exception:  # noqa: BLE001 — chart lookup must never hurt safety
+            logger.exception("land guard water lookup failed")
+            return False
+        if cached is None or cached.is_empty:
+            return False
+        # Shrink the re-query trigger box so we reload BEFORE the edge.
+        south, west, north, east = bbox
+        mlat = (north - south) * 0.25
+        mlon = (east - west) * 0.25
+        self._land_water_bbox = (south + mlat, west + mlon, north - mlat, east - mlon)
+        gov.set_water_geometry(cached)
+        logger.info("land guard: water chart loaded around the boat")
+        return True
+
     def evaluate_rtl_recommend(self) -> bool:
         """Set ``state.rtl_recommended`` when the battery range has dropped to
         within ``rtl_margin_m`` of the distance home (so the boat can *just* make
@@ -2629,6 +2690,7 @@ class Runtime:
             ("evaluate_rtl_recommend", self.evaluate_rtl_recommend),
             ("evaluate_link_failsafe", self.evaluate_link_failsafe),
             ("evaluate_auto_apb", self.evaluate_auto_apb),
+            ("refresh_land_guard_water", self.refresh_land_guard_water),
             ("trip_update", lambda: self.trip.update(
                 self.state.position, self.state.sog_knots, self._now_fn())),
             # Hardware watchdog heartbeat (#44): pet the GPIO line every tick. If
@@ -4037,6 +4099,13 @@ class Runtime:
 
         payload = self.state.to_dict()
         payload["safety"] = self.controller.safety_status.to_dict()
+        # Land guard settings ride the safety block (the status part comes from
+        # the governor; enabled/margin/chart come from config + runtime).
+        payload["safety"]["land_guard"].update({
+            "enabled": self.controller.safety.config.land_guard_enabled,
+            "margin_m": self.controller.safety.config.land_guard_margin_m,
+            "have_chart": self.controller.safety.has_water_geometry,
+        })
         # Server-side safety geometry (#23) so the browser becomes a CACHE, not
         # the source of truth: a freshly-opened client renders the SERVER's
         # zones/min-depth/failsafe. Raw no-go rings come from the persistence

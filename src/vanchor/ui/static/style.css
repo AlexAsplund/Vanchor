@@ -1320,6 +1320,15 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 }
 .snd-sub .snd-test { padding: 3px 8px; font-size: 12px; }
 
+/* ---- land guard predicted stop point (safety.js) ---- */
+.land-stop-pin {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 176, 32, 0.18); border: 2px dashed #ffb020;
+  font-size: 13px; opacity: 0.9;
+}
+.land-stop-pin.tripped { background: rgba(255, 77, 94, 0.25); border: 2px solid #ff4d5e; }
+
 /* ---- Replace/Append route delivery dialog (routechoice.js) ---- */
 .route-choice-overlay {
   position: fixed; inset: 0; z-index: 2600;

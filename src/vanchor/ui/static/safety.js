@@ -330,6 +330,53 @@
     });
   }
 
+  // Land-collision guard: switch + stop-distance (persisted server-side) and
+  // the predicted stop point drawn on the map (amber = watching, red = tripped).
+  const lgBox = $("land-guard"), lgSlider = $("land-guard-m"), lgVal = $("land-guard-m-val");
+  const lgHint = $("land-guard-hint");
+  if (lgBox) lgBox.addEventListener("change", () =>
+    send({ type: "set_land_guard", enabled: lgBox.checked }));
+  if (lgSlider) lgSlider.addEventListener("change", () => {
+    send({ type: "set_land_guard", margin_m: parseFloat(lgSlider.value) });
+  });
+  if (lgSlider && lgVal) lgSlider.addEventListener("input", () => { lgVal.textContent = lgSlider.value; });
+  let landMarker = null;
+  function landStopIcon(tripped) {
+    return L.divIcon({
+      className: "",
+      html: `<div class="land-stop-pin${tripped ? " tripped" : ""}"><span>⛔</span></div>`,
+      iconSize: [26, 26], iconAnchor: [13, 13],
+    });
+  }
+  VA.onTelemetry((t) => {
+    const lg = t && t.safety && t.safety.land_guard;
+    if (!lg) return;
+    if (lgBox && document.activeElement !== lgBox && lg.enabled !== undefined) lgBox.checked = !!lg.enabled;
+    if (lgSlider && document.activeElement !== lgSlider && Number.isFinite(lg.margin_m)) {
+      lgSlider.value = String(lg.margin_m);
+      if (lgVal) lgVal.textContent = String(Math.round(lg.margin_m));
+    }
+    if (lgHint) {
+      lgHint.textContent = !lg.enabled ? ""
+        : (lg.have_chart ? (lg.active ? "" : "Active while driving manually.")
+                         : "No offline water chart for this area yet — guard idle.");
+    }
+    const show = lg.active && lg.stop && map;
+    if (show) {
+      const ll = [lg.stop.lat, lg.stop.lon];
+      if (!landMarker) {
+        landMarker = L.marker(ll, { icon: landStopIcon(lg.tripped), zIndexOffset: 900, interactive: false }).addTo(map);
+      } else {
+        landMarker.setLatLng(ll);
+        landMarker.setIcon(landStopIcon(lg.tripped));
+      }
+    } else if (landMarker) {
+      map.removeLayer(landMarker);
+      landMarker = null;
+    }
+    if (lg.tripped && VA.logAlert) VA.logAlert("alarm", "Land ahead — stopped by the land guard", { level: "medium" });
+  });
+
   // Auto Follow-APB (opt-in): the switch reflects + drives the server-side
   // setting (persisted in safety.json); the banner shows while a Follow-APB
   // session was AUTO-engaged, with a one-tap disengage.

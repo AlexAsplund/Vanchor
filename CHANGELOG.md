@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Land-collision guard** (manual driving, default ON): the safety governor
+  probes the offline water chart along the boat's TRACK and auto-stops the
+  configured number of metres before the shoreline (default 15 m, plus a
+  small coasting allowance). Direction-aware — thrusting away from the shore
+  always works — and manual-modes-only (guided modes plan around land).
+  The predicted stop point shows on the chart (amber ring, red when
+  tripped); switch + stop-distance in Settings → Safety, persisted
+  server-side (`set_land_guard`). Cache-only: the guard uses the offline
+  chart the routing features store and never touches the network; without a
+  chart for the area it stays inert (the settings hint says so).
+
 - **Heading-hold removed from the UI** — superseded by Manual mode's
   Absolute (hold a compass bearing) and Course (follow the track line)
   steering: the rail tile, its panel and the remote-helm button are gone.

@@ -315,6 +315,7 @@ def test_status_to_dict_shape():
         "heading_stale",
         "shallow_stop",
         "nogo_stop",
+        "land_guard",
         "min_depth_m",
         "messages",
     }
