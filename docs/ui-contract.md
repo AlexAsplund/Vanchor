@@ -51,7 +51,8 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 ## Commands (WS up, or `POST /api/command`) — `{type, ...}`
 
 **Motion / modes**
-- `manual {thrust(-1..1), steering(-1..1)}` · `stop {}`
+- `manual {thrust(-1..1), steering(-1..1)}` · `stop {}` — relative steering (deflection off the bow)
+- `manual {thrust(-1..1), steer_bearing(0..360)}` — ABSOLUTE steering: the motor head holds the compass bearing (0=N, 180=S) while the boat yaws (recomputed from the live heading each tick); any relative `manual` clears it
 - `anchor_hold {anchor?{lat,lon}, radius_m?}` — drop anchor at current position (or supplied point)
 - `anchor_ml {anchor?{lat,lon}, radius_m?}` — ML-trained anchor hold; falls back to PID if model absent
 - `heading_hold {throttle?, heading?}` — hold a compass heading (defaults to current heading)

@@ -676,9 +676,18 @@ class Controller:
                 return
         try:
             if ctype == "manual":
-                self.manual.set(
-                    float(command.get("thrust", 0.0)), float(command.get("steering", 0.0))
-                )
+                bearing = command.get("steer_bearing")
+                if bearing is not None:
+                    # Absolute steering: hold the motor head on a compass
+                    # bearing (0=N, 180=S) while the boat yaws underneath.
+                    self.manual.set_bearing(
+                        float(command.get("thrust", 0.0)), float(bearing)
+                    )
+                else:
+                    self.manual.set(
+                        float(command.get("thrust", 0.0)),
+                        float(command.get("steering", 0.0)),
+                    )
                 self.set_mode(ControlModeName.MANUAL)
             elif ctype == "anchor_hold":
                 anchor = command.get("anchor")

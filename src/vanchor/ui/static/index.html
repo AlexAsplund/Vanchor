@@ -395,10 +395,15 @@
           <label>Thrust <output id="thrust-val">0.0</output></label>
           <input type="range" id="thrust" min="-1" max="1" step="0.05" value="0" />
         </div>
+        <div class="seg" id="steer-mode-seg" role="group" aria-label="Steering mode">
+          <button type="button" data-steermode="relative" class="on">Relative (boat)</button>
+          <button type="button" data-steermode="absolute">Absolute (compass)</button>
+        </div>
         <div class="slider-row">
-          <label>Steering <output id="steer-val">0.0</output></label>
+          <label id="steer-label">Steering <output id="steer-val">0.0</output></label>
           <input type="range" id="steer" min="-1" max="1" step="0.05" value="0" />
         </div>
+        <div class="hint" id="steer-mode-hint">Relative: steering is an angle off the bow. Absolute: the motor holds a compass bearing (0 = north, 180 = south) while the boat swings.</div>
       </div>
 
       <!-- ANCHOR -->

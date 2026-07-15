@@ -52,17 +52,39 @@ class ControlMode(abc.ABC):
 
 
 class ManualMode(ControlMode):
+    """Direct helm. Steering is either boat-RELATIVE (a fixed normalized
+    deflection off the bow — the default) or ABSOLUTE (hold the motor head on
+    a COMPASS bearing: 0 = north, 180 = south). Absolute recomputes the
+    deflection from the live heading every tick, so the head stays put in the
+    world while the boat yaws underneath it."""
+
     name = ControlModeName.MANUAL
 
     def __init__(self) -> None:
         self.thrust = 0.0
         self.steering = 0.0
+        # Absolute steering target (compass deg) — None = relative mode.
+        self.steer_bearing: float | None = None
 
     def set(self, thrust: float, steering: float) -> None:
         self.thrust = thrust
         self.steering = steering
+        self.steer_bearing = None          # relative command clears absolute
+
+    def set_bearing(self, thrust: float, bearing_deg: float) -> None:
+        self.thrust = thrust
+        self.steer_bearing = normalize_deg(bearing_deg)
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
+        if self.steer_bearing is not None:
+            # Point the head at the compass bearing: normalized steering is the
+            # boat-relative offset over the full mechanical scale (±180 covers
+            # every direction). Recomputed per tick from the live heading.
+            full = state.max_steer_angle_deg if state.max_steer_angle_deg > 0 else 180.0
+            offset = angle_difference(state.heading_deg, self.steer_bearing)
+            return ManualSetpoint(
+                thrust=self.thrust, steering=_clamp(offset / full, -1.0, 1.0)
+            )
         return ManualSetpoint(thrust=self.thrust, steering=self.steering)
 
 

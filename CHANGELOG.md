@@ -2,6 +2,17 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## Unreleased
+
+- **Manual steering: Relative / Absolute mode** — a toggle on the Manual
+  panel (relative is default). Relative: the slider is a deflection off the
+  bow, as before. Absolute: the slider is a **compass bearing** (0 = north,
+  180 = south) that the motor head HOLDS while the boat yaws — the deflection
+  is recomputed from the live heading every controller tick
+  (`ManualMode.set_bearing`, `manual {steer_bearing}` command). Switching
+  modes never engages the motor; absolute seeds from the current heading so
+  the first touch doesn't swing the head. Persisted per device.
+
 ## [1.5.0a5] — 2026-07-15
 
 - **Steering unit contract fixed (calibration flip + real-hardware angle

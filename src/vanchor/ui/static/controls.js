@@ -15,7 +15,17 @@
 
   // ===== manual ============================================================
   const thrust = $("thrust"), steer = $("steer");
-  const manual = () => send({ type: "manual", thrust: parseFloat(thrust.value), steering: parseFloat(steer.value) });
+  // Steering mode: RELATIVE (default; the slider is a normalized deflection
+  // off the bow) or ABSOLUTE (the slider is a compass bearing 0..359 the motor
+  // head HOLDS server-side while the boat yaws — 0 north, 180 south).
+  const STEER_MODE_KEY = "vanchor-steer-mode";
+  let steerMode = "relative";
+  try { if (localStorage.getItem(STEER_MODE_KEY) === "absolute") steerMode = "absolute"; } catch (e) { /* ignore */ }
+  const manual = () => {
+    const t = parseFloat(thrust.value);
+    if (steerMode === "absolute") send({ type: "manual", thrust: t, steer_bearing: parseFloat(steer.value) });
+    else send({ type: "manual", thrust: t, steering: parseFloat(steer.value) });
+  };
   // Force the motor-engaging sliders to a dead-stop 0 at load: a browser can
   // restore a non-zero value from bfcache/form-restore across a reload (incl.
   // the service-worker auto-reload), which — combined with any load-time send —
@@ -24,13 +34,38 @@
   [thrust, steer].forEach((el) => { if (el) el.value = "0"; });
   bindSlider("thrust", "thrust-val", manual);
   bindSlider("steer", "steer-val", manual);
-  // Snap to dead-center 0 when released near zero (avoids tiny residual nudges).
+  // Snap to dead-center 0 when released near zero (avoids tiny residual
+  // nudges). Relative steering only — in absolute mode 0 means "north".
   [thrust, steer].forEach((el) => {
     if (!el) return;
     el.addEventListener("change", () => {
+      if (el === steer && steerMode === "absolute") return;
       if (Math.abs(parseFloat(el.value)) < 0.12) { el.value = "0"; el.dispatchEvent(new Event("input")); }
     });
   });
+  // Mode toggle: reconfigures the slider WITHOUT sending anything (the motor
+  // engages solely from slider input). Absolute seeds the bearing from the
+  // live heading so the first touch doesn't swing the head somewhere new.
+  const steerSeg = $("steer-mode-seg"), steerLabel = $("steer-label");
+  function applySteerMode(mode, persist) {
+    steerMode = mode === "absolute" ? "absolute" : "relative";
+    if (steerMode === "absolute") {
+      const hdg = (VA.last && Number.isFinite(VA.last.heading_deg)) ? Math.round(VA.last.heading_deg) : 0;
+      steer.min = "0"; steer.max = "359"; steer.step = "1"; steer.value = String(hdg);
+      if (steerLabel) steerLabel.firstChild.textContent = "Motor bearing ° ";
+    } else {
+      steer.min = "-1"; steer.max = "1"; steer.step = "0.05"; steer.value = "0";
+      if (steerLabel) steerLabel.firstChild.textContent = "Steering ";
+    }
+    const out = $("steer-val");
+    if (out) out.textContent = steer.value;
+    if (steerSeg) steerSeg.querySelectorAll("button").forEach((b) =>
+      b.classList.toggle("on", b.dataset.steermode === steerMode));
+    if (persist) { try { localStorage.setItem(STEER_MODE_KEY, steerMode); } catch (e) { /* ignore */ } }
+  }
+  if (steerSeg) steerSeg.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => applySteerMode(b.dataset.steermode, true)));
+  applySteerMode(steerMode, false);
   // NOTE: no modeCommands.manual — tapping the Manual rail button selects the
   // panel only (see appcore.js). The motor engages solely from slider input, so
   // selecting Manual can't re-apply a stale throttle value.
