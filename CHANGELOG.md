@@ -2,7 +2,7 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## Unreleased
+## [1.5.0a4] — 2026-07-15
 
 - **Routes: Replace/Append delivery, per-waypoint speeds, save the active
   route** — three route-workflow features:
