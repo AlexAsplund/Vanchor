@@ -470,6 +470,7 @@ class Navigator:
         elif isinstance(parsed, nmea.APB):
             self.state.last_apb = sentence.strip()
             self.state.has_apb = True
+            self.state.apb_received_mono = self._mono_fn()
             self.state.apb_cross_track_m = parsed.cross_track_m
             self.state.apb_steer_to = parsed.steer_to
             self.state.apb_bearing_to_dest = parsed.bearing_to_dest

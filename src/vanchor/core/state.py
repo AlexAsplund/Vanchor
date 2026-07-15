@@ -207,6 +207,8 @@ class NavigationState:
     # Latest parsed APB (decomposed to keep core/ free of nav imports) used by
     # the external-autopilot FollowAPB mode.
     has_apb: bool = False
+    # ``time.monotonic()`` stamp of the last APB sentence (auto-APB freshness).
+    apb_received_mono: float | None = None
     apb_cross_track_m: float = 0.0
     apb_steer_to: str = "L"
     apb_bearing_to_dest: float = 0.0

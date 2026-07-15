@@ -330,6 +330,30 @@
     });
   }
 
+  // Auto Follow-APB (opt-in): the switch reflects + drives the server-side
+  // setting (persisted in safety.json); the banner shows while a Follow-APB
+  // session was AUTO-engaged, with a one-tap disengage.
+  const autoApbEl = $("auto-apb");
+  if (autoApbEl) {
+    autoApbEl.addEventListener("change", () =>
+      send({ type: "set_auto_apb", enabled: autoApbEl.checked }));
+  }
+  const autoApbBanner = $("auto-apb-banner");
+  const autoApbStop = $("auto-apb-banner-stop");
+  if (autoApbStop) autoApbStop.addEventListener("click", () => send({ type: "stop" }));
+  let prevAutoApb = false;
+  VA.onTelemetry((t) => {
+    const aa = t && t.auto_apb;
+    if (!aa) return;
+    if (autoApbEl && document.activeElement !== autoApbEl) autoApbEl.checked = !!aa.enabled;
+    const engaged = !!aa.engaged;
+    if (autoApbBanner) autoApbBanner.classList.toggle("hidden", !engaged);
+    if (engaged && !prevAutoApb && VA.logAlert) {
+      VA.logAlert("warn", "External autopilot detected — Follow-APB engaged automatically", { level: "low" });
+    }
+    prevAutoApb = engaged;
+  });
+
   // ======================================================================
   // #63 MAN-OVERBOARD
   // ======================================================================

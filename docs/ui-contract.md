@@ -86,6 +86,7 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 - `set_nogo_zones {zones:[[[lat,lon],...],...]}`  — update geofence no-go polygon rings (empty list clears)
 - `set_min_depth {min_depth_m}` — shallow-water auto-stop threshold
 - `set_fix_failsafe {enabled}` — enable/disable loss-of-fix motor cut
+- `set_auto_apb {enabled}` — auto-engage Follow-APB when an APB feed appears (idle-manual only; persisted; telemetry `auto_apb {enabled, engaged}`)
 
 **Return-to-launch / MOB**
 - `set_launch {}` — record the current position as the launch/home point

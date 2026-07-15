@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Auto Follow-APB** (opt-in, default OFF): when an external autopilot's APB
+  sentence appears on any NMEA input, the boat auto-engages Follow-APB — but
+  ONLY from idle Manual (it never hijacks an anchor hold, a route, or a hand
+  on the throttle). Latched so disengaging by hand isn't instantly overridden;
+  re-arms once the feed has been silent >10 s. A persistent banner ("EXTERNAL
+  AUTOPILOT — Follow-APB engaged automatically", with one-tap disengage) shows
+  while an auto-engaged session runs, plus an alert chime. Toggle in Settings
+  → Safety (`set_auto_apb`, persisted server-side in safety.json; telemetry
+  `auto_apb {enabled, engaged}`).
+
 - **Fix: GPS "adjust my position" in the SIM displaced chart-relative modes**
   (field report: contour follow ran the contour "at its original unadjusted
   position"). The sim depth sounder samples the boat's TRUE position, so

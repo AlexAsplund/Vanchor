@@ -355,6 +355,13 @@ class SafetyConfig:
     # (anchor) where the boat is (#64). MANUAL driving always STOPS on link
     # loss; that deadman is part of the safety floor and is NOT configurable.
     link_loss_continue_mission: bool = True
+    # Auto Follow-APB: when an external autopilot's APB sentence appears on any
+    # NMEA input, auto-engage Follow-APB — but ONLY from idle MANUAL (it never
+    # hijacks an anchor hold / route / a hand on the throttle). Re-arms only
+    # after the APB feed has been silent for a while, so leaving the mode
+    # manually isn't instantly overridden. Default OFF; toggle in Settings →
+    # Safety (persisted server-side in safety.json).
+    auto_follow_apb: bool = False
     # --- Low-battery thrust-derating ladder (#49) ----------------------- #
     # As the battery state-of-charge falls through these rungs the maximum
     # applied thrust is capped in progressive steps (a SOFT derate) BEFORE the
@@ -1108,6 +1115,7 @@ safety:
   auto_rtl: false            # if true, auto-engage Return-to-Launch (not just recommend) (#61)
   link_loss_timeout_s: 20.0  # no-UI-client time before the link-loss failsafe (#64)
   link_loss_continue_mission: true  # guided modes keep flying unsupervised (false = anchor-hold); manual ALWAYS stops
+  auto_follow_apb: false     # auto-engage Follow-APB when an APB sentence appears (from idle manual only)
                                      # (pocket-the-phone); MANUAL always stops
   # Low-battery thrust-derating ladder (#49): as SoC falls through each
   # [soc_pct, thrust_cap] rung the max applied thrust is capped in steps (a soft

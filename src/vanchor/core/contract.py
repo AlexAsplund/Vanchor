@@ -49,6 +49,7 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "last_apb": {"type": "object|null", "desc": "last received APB autopilot sentence (Follow-APB)"},
     "route_complete": {"type": "boolean", "desc": "the active route has finished (all marks reached)"},
     "manual_course": {"type": "object|null", "desc": "manual course-hold line: {bearing, lat, lon} of the anchored track"},
+    "auto_apb": {"type": "object", "desc": "auto Follow-APB: {enabled, engaged}"},
     "route_loop": {"type": "object|null", "desc": "loop-route state"},
     "route_patrol": {"type": "object|null", "desc": "patrol-route state"},
     # --- fishing / survey modes ---
@@ -124,6 +125,7 @@ COMMANDS: dict[str, dict] = {
     "mob_clear": {"desc": "clear the man-overboard mark"},
     "set_launch": {"desc": "capture the launch point for RTL"},
     "set_min_depth": {"desc": "set the minimum-depth safety limit"},
+    "set_auto_apb": {"desc": "enable/disable auto Follow-APB engage on a live APB feed"},
     "set_fix_failsafe": {"desc": "enable/disable the GPS-fix-loss failsafe"},
     "set_nogo_zones": {"desc": "set the no-go zone geometry"},
 }

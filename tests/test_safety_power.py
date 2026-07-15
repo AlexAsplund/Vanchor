@@ -538,3 +538,68 @@ def test_state_endpoint_has_new_fields():
 @pytest.fixture()
 def _runtime():
     return Runtime()
+
+
+# --------------------------------------------------------------------------- #
+# Auto Follow-APB (opt-in): engage from idle manual on a live APB feed only.
+# --------------------------------------------------------------------------- #
+def _apb_runtime(now):
+    rt = Runtime(mono_fn=lambda: now[0])
+    rt.state.fix = GpsFix(point=GeoPoint(59.0, 18.0))
+    rt.config.safety.auto_follow_apb = True
+    rt.state.apb_received_mono = now[0]          # feed is live
+    return rt
+
+
+def test_auto_apb_engages_from_idle_manual():
+    now = [1000.0]
+    rt = _apb_runtime(now)
+    assert rt.evaluate_auto_apb() is True
+    assert rt.state.mode == ControlModeName.FOLLOW_APB
+    assert rt.telemetry()["auto_apb"] == {"enabled": True, "engaged": True}
+
+
+def test_auto_apb_disabled_by_default_and_by_setting():
+    now = [1000.0]
+    rt = _apb_runtime(now)
+    rt.config.safety.auto_follow_apb = False
+    assert rt.evaluate_auto_apb() is False
+    assert rt.state.mode == ControlModeName.MANUAL
+
+
+def test_auto_apb_never_hijacks_active_modes_or_driving():
+    now = [1000.0]
+    rt = _apb_runtime(now)
+    rt.state.mode = ControlModeName.ANCHOR_HOLD
+    assert rt.evaluate_auto_apb() is False
+    assert rt.state.mode == ControlModeName.ANCHOR_HOLD
+    rt.state.mode = ControlModeName.MANUAL
+    rt.state.motor_command = MotorCommand(thrust=0.5, steering=0.0)
+    assert rt.evaluate_auto_apb() is False       # hand on the throttle
+
+
+def test_auto_apb_does_not_rehijack_until_feed_restarts():
+    now = [1000.0]
+    rt = _apb_runtime(now)
+    assert rt.evaluate_auto_apb() is True
+    # The user disengages by hand while the feed is still live.
+    rt.handle_command({"type": "stop"})
+    assert rt.state.mode == ControlModeName.MANUAL
+    rt.state.apb_received_mono = now[0]
+    assert rt.evaluate_auto_apb() is False       # latched: no instant re-hijack
+    # Feed goes silent >10 s -> re-arms; a fresh feed engages again.
+    now[0] += 60.0
+    assert rt.evaluate_auto_apb() is False
+    rt.state.apb_received_mono = now[0]
+    assert rt.evaluate_auto_apb() is True
+
+
+def test_auto_apb_setting_persists_via_safety_store(tmp_path):
+    rt = Runtime()
+    rt.config.data_dir = str(tmp_path)
+    from vanchor.core.prefs import SafetyGeometryStore
+    rt.safety_geometry = SafetyGeometryStore(str(tmp_path))
+    rt.handle_command({"type": "set_auto_apb", "enabled": True})
+    assert rt.config.safety.auto_follow_apb is True
+    # A fresh store (restart) sees the persisted flag.
+    assert SafetyGeometryStore(str(tmp_path)).auto_follow_apb is True

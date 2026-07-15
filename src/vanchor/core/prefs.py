@@ -88,6 +88,7 @@ class SafetyGeometryStore:
         self.nogo_zones: list[list[list[float]]] = []
         self.min_depth_m: float | None = None
         self.fix_failsafe_enabled: bool | None = None
+        self.auto_follow_apb: bool | None = None
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -108,6 +109,9 @@ class SafetyGeometryStore:
         ff = data.get("fix_failsafe_enabled")
         if isinstance(ff, bool):
             self.fix_failsafe_enabled = ff
+        aa = data.get("auto_follow_apb")
+        if isinstance(aa, bool):
+            self.auto_follow_apb = aa
 
     def _save(self) -> None:
         _atomic_write_json(self._path, self.to_dict())
@@ -117,6 +121,7 @@ class SafetyGeometryStore:
             "nogo_zones": self.nogo_zones,
             "min_depth_m": self.min_depth_m,
             "fix_failsafe_enabled": self.fix_failsafe_enabled,
+            "auto_follow_apb": self.auto_follow_apb,
         }
 
     # ------------------------------------------------------------------ #
@@ -132,6 +137,10 @@ class SafetyGeometryStore:
 
     def set_fix_failsafe(self, enabled: bool) -> None:
         self.fix_failsafe_enabled = bool(enabled)
+        self._save()
+
+    def set_auto_follow_apb(self, enabled: bool) -> None:
+        self.auto_follow_apb = bool(enabled)
         self._save()
 
 

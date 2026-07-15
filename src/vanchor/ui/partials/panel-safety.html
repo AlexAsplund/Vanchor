@@ -19,6 +19,7 @@
 
         <div class="ctx-sub">Failsafes</div>
         <label class="switch" title="When ON, the motor is cut if the GPS fix is lost for longer than the timeout. OFF (default) holds the last command through a fix dropout."><input type="checkbox" id="fix-failsafe" /><span class="track"></span> Stop motor on GPS-fix loss</label>
+        <label class="switch" title="When ON, receiving an external autopilot's APB sentence auto-engages Follow-APB — only from idle Manual (never hijacks an anchor hold, a route or a hand on the throttle). A banner shows while auto-engaged."><input type="checkbox" id="auto-apb" /><span class="track"></span> Auto-engage Follow-APB on APB feed</label>
 
         <div class="ctx-sub">No-go / shallow zones</div>
         <div class="hint">Draw red no-go polygons the boat must avoid. Min depth triggers a shallow auto-stop. Zones persist on this device.</div>

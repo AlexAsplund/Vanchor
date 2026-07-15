@@ -768,6 +768,10 @@ class Runtime:
         # "continue" | "hold" | "stop" | None (for telemetry/alerts).
         self._link_failsafe_engaged = False
         self._link_failsafe_action: str | None = None
+        # Auto Follow-APB (opt-in): latched once auto-engaged so leaving the
+        # mode by hand isn't instantly overridden; re-arms when the APB feed
+        # goes stale. ``engaged`` drives the UI banner.
+        self._auto_apb_latched = False
         # Route-planning cancellation flag (#54): set by cancel_route_plan(),
         # reset at the start of every plan_route() call.
         self._route_plan_cancelled = False
@@ -891,6 +895,8 @@ class Runtime:
             gov.config.fix_failsafe_enabled = self.safety_floor.enforce_fix_failsafe(
                 geo.fix_failsafe_enabled
             )
+        if geo.auto_follow_apb is not None:
+            self.config.safety.auto_follow_apb = geo.auto_follow_apb
         logger.info(
             "safety geometry applied: %d no-go zones, min_depth=%s, fix_failsafe=%s",
             len(geo.nogo_zones), geo.min_depth_m, geo.fix_failsafe_enabled,
@@ -2187,6 +2193,11 @@ class Runtime:
                 )
         elif ctype == "clear_gps_offset":
             self.navigator.clear_gps_offset()
+        elif ctype == "set_auto_apb":
+            enabled = bool(command.get("enabled", False))
+            self.config.safety.auto_follow_apb = enabled
+            self.safety_geometry.set_auto_follow_apb(enabled)
+            logger.info("auto Follow-APB %s", "enabled" if enabled else "disabled")
         elif ctype == "load_route":
             self._load_route(command)
         elif ctype == "set_battery":
@@ -2449,6 +2460,36 @@ class Runtime:
         self._link_failsafe_engaged = True
         return True
 
+    def evaluate_auto_apb(self, now: float | None = None) -> bool:
+        """Auto-engage Follow-APB when an external autopilot's APB feed is live
+        (opt-in, ``safety.auto_follow_apb``). Engages ONLY from idle MANUAL --
+        never hijacks an anchor hold / route / a hand on the throttle. Latched:
+        leaving the mode by hand isn't overridden until the feed has been
+        silent for >10 s and returns. Returns True when it engaged."""
+        if not self.config.safety.auto_follow_apb:
+            self._auto_apb_latched = False
+            return False
+        if now is None:
+            now = self._mono_fn()
+        st = self.state
+        fresh = (st.apb_received_mono is not None
+                 and now - st.apb_received_mono < 10.0)
+        if not fresh:
+            self._auto_apb_latched = False       # feed gone -> re-arm
+            return False
+        if st.mode == ControlModeName.FOLLOW_APB:
+            self._auto_apb_latched = True        # (covers manual engagement too)
+            return False
+        if self._auto_apb_latched:
+            return False                          # user left the mode on purpose
+        if st.mode != ControlModeName.MANUAL or abs(st.motor_command.thrust) > 0.05:
+            return False
+        logger.warning("APB feed detected -- auto-engaging Follow-APB "
+                       "(safety.auto_follow_apb)")
+        self.controller.handle_command({"type": "follow_apb"})
+        self._auto_apb_latched = True
+        return True
+
     def evaluate_rtl_recommend(self) -> bool:
         """Set ``state.rtl_recommended`` when the battery range has dropped to
         within ``rtl_margin_m`` of the distance home (so the boat can *just* make
@@ -2587,6 +2628,7 @@ class Runtime:
             ("evaluate_battery_ladder", self.evaluate_battery_ladder),
             ("evaluate_rtl_recommend", self.evaluate_rtl_recommend),
             ("evaluate_link_failsafe", self.evaluate_link_failsafe),
+            ("evaluate_auto_apb", self.evaluate_auto_apb),
             ("trip_update", lambda: self.trip.update(
                 self.state.position, self.state.sog_knots, self._now_fn())),
             # Hardware watchdog heartbeat (#44): pet the GPIO line every tick. If
@@ -4038,6 +4080,12 @@ class Runtime:
             if mc.course_bearing is not None and mc.course_origin is not None
             else None
         )
+        payload["auto_apb"] = {
+            "enabled": self.config.safety.auto_follow_apb,
+            # engaged = the CURRENT Follow-APB session was started by auto-APB
+            "engaged": (self._auto_apb_latched
+                        and self.state.mode == ControlModeName.FOLLOW_APB),
+        }
         payload["cruise"] = {
             "enabled": ctrl.cruise_knots is not None,
             "target_knots": ctrl.cruise_knots or 0.0,
