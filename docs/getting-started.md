@@ -206,29 +206,43 @@ Before letting the autopilot do anything, get a feel for the boat by driving
 it yourself — like a video-game joystick for the boat, and in the simulator
 a completely consequence-free one.
 
-1. Tap the **Manual** tile on the mode rail. A panel with two sliders
-   appears.
-2. The two sliders:
-   - **Thrust** — how hard the propeller pushes. Slide right for forward,
-     left of centre for reverse, middle for none.
-   - **Steering** — which way the motor head points, left or right.
-3. Nudge **Thrust** up a little. Watch the **SOG** chip climb from 0.0 and
-   the boat start leaving a track on the map.
-4. Give **Steering** a small push and watch the compass rose in the HUD
-   rotate as the boat carves a curve.
-5. Ease **Thrust** back to the middle. The boat coasts to a stop.
+1. Tap the **Manual** tile on the mode rail. A panel with a **steering
+   wheel** (and a thrust slider above it) appears.
+2. The wheel is the whole control in one place — a dial around a little
+   boat, bow up:
+   - **Drag the glowing handle around** the dial to point the motor head:
+     up is straight ahead, right is starboard, straight down is astern.
+   - **Drag it outward** for more power — the faint rings are 25/50/75/100%.
+     Pull it back to the hub for zero. (The **Thrust** slider above does the
+     same thing, with reverse left of centre.)
+   - The **outer gold ring is a live compass** (N/E/S/W) that turns with the
+     real boat; the readouts in the hub always show the head's angle both
+     ways — relative to the bow *and* as a true bearing.
+   - A small grey **ghost tick** on the inner ring is the *actual* head
+     angle reported by the steering hardware, so you can see the head
+     physically swing to your command.
+3. Drag the handle a little to one side and outward. Watch the **SOG** chip
+   climb from 0.0 and the boat carve a curve on the map.
+4. Ease the handle back to the hub. The boat coasts to a stop.
 
-**What success looks like:** SOG rises when you add thrust, the heading
-changes when you steer, and the boat glides to a halt when thrust returns to
-zero. That's the whole cause-and-effect the autopilot will use on your
-behalf.
+**Relative vs Absolute** (the toggle above the wheel): in *Relative* (the
+default) the handle stays where you put it relative to the boat. In
+*Absolute* the handle holds a **compass bearing** — set it to N and the
+motor keeps pushing north while the boat swings underneath, handy for
+holding against wind you can see on the water.
+
+**What success looks like:** SOG rises when you drag outward, the heading
+changes when you drag sideways, and the boat glides to a halt when the
+handle returns to the hub. That's the whole cause-and-effect the autopilot
+will use on your behalf.
 
 <video src="media/manual-driving.mp4" controls muted playsinline width="640">
   Your browser can't show the clip inline — <a href="media/manual-driving.mp4">open manual-driving.mp4</a> instead.
 </video>
 
-*Clip: the Thrust and Steering sliders. The boat accelerates, turns while
-steering is applied, and coasts to a stop when thrust returns to zero.*
+*Clip: one drag on the steering wheel sets direction and power; the boat
+accelerates and turns, then coasts to a stop when the handle is eased back
+to the hub.*
 
 ## 7. Drop a virtual anchor (the main event)
 

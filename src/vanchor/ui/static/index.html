@@ -399,11 +399,8 @@
           <button type="button" data-steermode="relative" class="on">Relative (boat)</button>
           <button type="button" data-steermode="absolute">Absolute (compass)</button>
         </div>
-        <div class="slider-row">
-          <label id="steer-label">Steering <output id="steer-val">0.0</output></label>
-          <input type="range" id="steer" min="-1" max="1" step="0.05" value="0" />
-        </div>
-        <div class="hint" id="steer-mode-hint">Relative: steering is an angle off the bow. Absolute: the motor holds a compass bearing (0 = north, 180 = south) while the boat swings.</div>
+        <div id="steer-wheel" class="steer-wheel"></div>
+        <div class="hint" id="steer-mode-hint">Drag the handle: around = direction, outward = power. Outer ring is the live compass; inner ring is the boat (bow up). Relative: the handle stays with the boat. Absolute: it holds its compass bearing while the boat swings.</div>
       </div>
 
       <!-- ANCHOR -->
@@ -1148,6 +1145,7 @@
   <script src="/static/debug.js"></script>
   <script src="/static/appcore.js"></script>
   <script src="/static/controls.js"></script>
+  <script src="/static/steerwheel.js"></script>
   <script src="/static/route.js"></script>
   <script src="/static/settings.js"></script>
   <script src="/static/menu.js"></script>

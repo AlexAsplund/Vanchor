@@ -89,6 +89,7 @@ const SHELL = [
   "/static/appcore.js",
   "/static/health.js",
   "/static/controls.js",
+  "/static/steerwheel.js",
   "/static/route.js",
   "/static/settings.js",
   "/static/menu.js",

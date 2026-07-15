@@ -100,6 +100,29 @@ def glide_click(page, selector, settle_ms: int = 350) -> None:
     page.wait_for_timeout(settle_ms)
 
 
+def drag_wheel(page, angle_deg: float, thrust: float, steps: int = 18) -> None:
+    """Drag the manual steering wheel's knob to (angle off the bow, thrust
+    0..1) — direction and power in one visible gesture (steerwheel.js)."""
+    import math
+    svg = page.locator("#steer-wheel svg")
+    svg.scroll_into_view_if_needed()
+    page.wait_for_timeout(80)
+    box = svg.bounding_box()
+    k = box["width"] / 270.0                     # viewBox units -> screen px
+    knob = page.evaluate(
+        "() => { const c = document.querySelector('#sw-knob-c');"
+        " return {x: parseFloat(c.getAttribute('cx')), y: parseFloat(c.getAttribute('cy'))}; }")
+    r = 40 + (96 - 40) * max(0.0, min(1.0, thrust))
+    tx = box["x"] + (135 + r * math.sin(math.radians(angle_deg))) * k
+    ty = box["y"] + (135 - r * math.cos(math.radians(angle_deg))) * k
+    page.mouse.move(box["x"] + knob["x"] * k, box["y"] + knob["y"] * k, steps=10)
+    page.wait_for_timeout(100)
+    page.mouse.down()
+    page.mouse.move(tx, ty, steps=steps)
+    page.wait_for_timeout(140)
+    page.mouse.up()
+
+
 def drag_slider(page, selector: str, target: float, steps: int = 20) -> None:
     """Drag a range input's thumb to `target` with the mouse so the motion is
     visible, then snap the exact value (one deterministic input event)."""
@@ -188,20 +211,21 @@ def clip_first_launch(page, base):
 
 
 # --------------------------------------------------------------------------- #
-# 2. manual-driving (~12 s): thrust + steering sliders, boat arcs off, coasts.
+# 2. manual-driving (~12 s): the steering wheel — one drag sets direction +
+#    power; the boat arcs off, then the handle is eased back in to coast.
 # --------------------------------------------------------------------------- #
 @clip("manual-driving")
 def clip_manual_driving(page, base):
     fresh_scene(page, base, CALM, LAKE[0], LAKE[1], heading=25)
     set_view(page, LAKE[0], LAKE[1], 16.8)
-    # Take direct control: the Manual tile, then the two sliders.
+    # Take direct control: the Manual tile, then one wheel gesture
+    # (45° to starboard at ~60% power).
     glide_click(page, ".mode-btn[data-mode='manual']", settle_ms=200)
-    drag_slider(page, "#thrust", 0.6)
-    drag_slider(page, "#steer", 0.25)
+    drag_wheel(page, angle_deg=45, thrust=0.6)
     # Let the boat accelerate and carve a visible arc (sim runs 5x).
     page.wait_for_timeout(2900)
-    # Ease the thrust back to zero and coast.
-    drag_slider(page, "#thrust", 0.0)
+    # Ease the handle back to the hub (zero power) and coast.
+    drag_wheel(page, angle_deg=45, thrust=0.0)
     page.wait_for_timeout(1500)
     cmd(base, {"type": "stop"})
 

@@ -14,58 +14,86 @@
   const { $, send, bindSlider, modeCommands } = VA.ui;
 
   // ===== manual ============================================================
-  const thrust = $("thrust"), steer = $("steer");
-  // Steering mode: RELATIVE (default; the slider is a normalized deflection
-  // off the bow) or ABSOLUTE (the slider is a compass bearing 0..359 the motor
+  // The steering slider is replaced by the steering WHEEL (steerwheel.js);
+  // this section owns the shared manual state, the thrust slider and the
+  // Relative/Absolute mode toggle, exposed to the wheel via VA.manualCtl.
+  const thrust = $("thrust");
+  // Steering mode: RELATIVE (default; the wheel handle is a deflection off
+  // the bow) or ABSOLUTE (the handle is a compass bearing 0..359 the motor
   // head HOLDS server-side while the boat yaws — 0 north, 180 south).
   const STEER_MODE_KEY = "vanchor-steer-mode";
   let steerMode = "relative";
   try { if (localStorage.getItem(STEER_MODE_KEY) === "absolute") steerMode = "absolute"; } catch (e) { /* ignore */ }
-  const manual = () => {
-    const t = parseFloat(thrust.value);
-    if (steerMode === "absolute") send({ type: "manual", thrust: t, steer_bearing: parseFloat(steer.value) });
-    else send({ type: "manual", thrust: t, steering: parseFloat(steer.value) });
-  };
-  // Force the motor-engaging sliders to a dead-stop 0 at load: a browser can
+  // Shared manual state: the wheel and the thrust slider both read/write it;
+  // sendManual() turns it into the mode-appropriate command.
+  const mstate = { thrust: 0.0, steerNorm: 0.0, steerBearing: 0.0 };
+  const wrap180 = (d) => ((d + 180) % 360 + 360) % 360 - 180;
+  const heading = () => (VA.last && Number.isFinite(VA.last.heading_deg)) ? VA.last.heading_deg : 0;
+  function sendManual() {
+    mstate.lastSentMs = Date.now();
+    if (steerMode === "absolute") {
+      send({ type: "manual", thrust: mstate.thrust,
+             steer_bearing: Math.round(((mstate.steerBearing % 360) + 360) % 360) });
+    } else {
+      send({ type: "manual", thrust: mstate.thrust,
+             steering: Math.round(mstate.steerNorm * 1000) / 1000 });
+    }
+  }
+  // Force the motor-engaging slider to a dead-stop 0 at load: a browser can
   // restore a non-zero value from bfcache/form-restore across a reload (incl.
   // the service-worker auto-reload), which — combined with any load-time send —
   // would be a hands-free motor command. bindSlider only refreshes the display
-  // now, so neither of these sends anything; genuine slider input does.
-  [thrust, steer].forEach((el) => { if (el) el.value = "0"; });
-  bindSlider("thrust", "thrust-val", manual);
-  bindSlider("steer", "steer-val", manual);
-  // Snap to dead-center 0 when released near zero (avoids tiny residual
-  // nudges). Relative steering only — in absolute mode 0 means "north".
-  [thrust, steer].forEach((el) => {
-    if (!el) return;
-    el.addEventListener("change", () => {
-      if (el === steer && steerMode === "absolute") return;
-      if (Math.abs(parseFloat(el.value)) < 0.12) { el.value = "0"; el.dispatchEvent(new Event("input")); }
-    });
+  // now, so this sends nothing; genuine slider input does.
+  if (thrust) thrust.value = "0";
+  bindSlider("thrust", "thrust-val", () => {
+    mstate.thrust = parseFloat(thrust.value);
+    sendManual();
+    if (onStateEdit) onStateEdit();
   });
-  // Mode toggle: reconfigures the slider WITHOUT sending anything (the motor
-  // engages solely from slider input). Absolute seeds the bearing from the
-  // live heading so the first touch doesn't swing the head somewhere new.
-  const steerSeg = $("steer-mode-seg"), steerLabel = $("steer-label");
+  // Snap to dead-center 0 when released near zero (avoids tiny residual nudges).
+  if (thrust) thrust.addEventListener("change", () => {
+    if (Math.abs(parseFloat(thrust.value)) < 0.12) { thrust.value = "0"; thrust.dispatchEvent(new Event("input")); }
+  });
+  // Mode toggle: converts the CURRENT head direction between frames (so
+  // switching never moves the head) and sends nothing — the motor engages
+  // solely from wheel/slider input.
+  const steerSeg = $("steer-mode-seg");
+  const modeListeners = [];
+  let onStateEdit = null;   // wheel's re-render hook (set via VA.manualCtl)
   function applySteerMode(mode, persist) {
+    const prev = steerMode;
     steerMode = mode === "absolute" ? "absolute" : "relative";
-    if (steerMode === "absolute") {
-      const hdg = (VA.last && Number.isFinite(VA.last.heading_deg)) ? Math.round(VA.last.heading_deg) : 0;
-      steer.min = "0"; steer.max = "359"; steer.step = "1"; steer.value = String(hdg);
-      if (steerLabel) steerLabel.firstChild.textContent = "Motor bearing ° ";
-    } else {
-      steer.min = "-1"; steer.max = "1"; steer.step = "0.05"; steer.value = "0";
-      if (steerLabel) steerLabel.firstChild.textContent = "Steering ";
+    if (steerMode !== prev) {
+      if (steerMode === "absolute") {
+        mstate.steerBearing = ((heading() + mstate.steerNorm * 180) % 360 + 360) % 360;
+      } else {
+        mstate.steerNorm = wrap180(mstate.steerBearing - heading()) / 180;
+      }
     }
-    const out = $("steer-val");
-    if (out) out.textContent = steer.value;
     if (steerSeg) steerSeg.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("on", b.dataset.steermode === steerMode));
     if (persist) { try { localStorage.setItem(STEER_MODE_KEY, steerMode); } catch (e) { /* ignore */ } }
+    modeListeners.forEach((cb) => { try { cb(steerMode); } catch (e) { /* ignore */ } });
   }
   if (steerSeg) steerSeg.querySelectorAll("button").forEach((b) =>
     b.addEventListener("click", () => applySteerMode(b.dataset.steermode, true)));
   applySteerMode(steerMode, false);
+  // API for the steering wheel (steerwheel.js).
+  VA.manualCtl = {
+    state: mstate,
+    mode: () => steerMode,
+    sendManual,
+    onModeChange(cb) { modeListeners.push(cb); },
+    onStateEdit(cb) { onStateEdit = cb; },
+    // The wheel's radial thrust gesture drives the slider display (without
+    // re-triggering its input handler, which would double-send).
+    setThrust(v) {
+      mstate.thrust = v;
+      if (thrust) thrust.value = String(v);
+      const out = $("thrust-val");
+      if (out) out.textContent = v.toFixed(2);
+    },
+  };
   // NOTE: no modeCommands.manual — tapping the Manual rail button selects the
   // panel only (see appcore.js). The motor engages solely from slider input, so
   // selecting Manual can't re-apply a stale throttle value.
