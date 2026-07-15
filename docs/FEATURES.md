@@ -16,6 +16,9 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **Map backdrop** — Leaflet with selectable basemaps: CARTO Dark / Light, **Esri
   World Imagery** (satellite), **OpenTopoMap**, plus an **OpenSeaMap sea-marks**
   overlay. Deep-zoom tile upscaling (no "no data" tiles).
+- **North-up / heading-up orientation** — compass toggle rotates the chart so
+  up = the bow (stabilized against compass jitter: low-pass + deadband +
+  slew-limited easing); markers and menus stay upright.
 - **Top status bar** — connection, GPS fix, SOG, heading, depth, **battery**,
   **remote-link** and **route-progress** (traveled ▸ remaining, m/km) chips.
 - **Customizable HUD** — Speed, Heading (compass rose), Depth, Dist→Anchor,

@@ -157,6 +157,12 @@ If the page doesn't load, jump to [chapter 12](#12-if-something-goes-wrong-troub
 
 Everything lives on one screen. From top to bottom:
 
+**Map orientation:** the small compass button under the zoom controls flips
+the chart between **north-up** (the default) and **heading-up**, where the
+map rotates so "up" is wherever the bow points — like a car navigator. The
+rotation is smoothed and ignores small compass wiggle, so the chart doesn't
+wobble while you sit still. The needle on the button always points at north.
+
 **The top status bar (the "chips").** Small live readouts:
 
 - **The connection chip** (green dot, says *connected*) — the browser is

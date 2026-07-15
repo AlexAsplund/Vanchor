@@ -74,6 +74,7 @@ const SHELL = [
   "/static/map-core.js",
   "/static/map-boaticon.js",
   "/static/map-boat.js",
+  "/static/maprotate.js",
   "/static/map-anchor.js",
   "/static/map-track.js",
   "/static/map-waypoints.js",

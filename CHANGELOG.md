@@ -4,6 +4,19 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Heading-up map mode** (`maprotate.js`): a compass button on the map
+  (top-left, under zoom) toggles between **north-up** (default) and
+  **heading-up** — the chart rotates so "up" is where the bow points, and
+  the boat icon rides bow-up like a car navigator. Rotation is STABILIZED
+  against compass jitter: the heading is low-passed (tau ~1.2 s), a 4°
+  deadband with hysteresis keeps at-rest wiggle from moving the chart at
+  all, and corrections glide in slew-limited (≤60°/s). Marker pins, popups
+  and long-press menus stay upright; zoom/layers/attribution stay pinned.
+  Implemented natively (viewport-wrapped CSS rotation + two patched seams
+  for pointer mapping and drag deltas) — the only maintained Leaflet
+  rotation plugin is GPL-licensed, which this MIT project can't vendor.
+  North-up mode is byte-for-byte the old layout and costs nothing.
+
 - **Link loss no longer parks an active route** (field report: locking the
   phone anchored the boat): `link_loss_continue_mission` now defaults to
   **true** — guided modes (routes, heading-hold, drift, patterns) keep

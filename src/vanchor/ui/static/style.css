@@ -1285,6 +1285,22 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 .wp-menu .wp-speed-val:disabled { opacity: 0.45; }
 .wp-speed-tag { color: var(--accent); font: 700 11px var(--font-num); white-space: nowrap; }
 
+/* ---- map orientation: heading-up rotation (maprotate.js) ---- */
+#map-viewport { position: absolute; inset: 0; z-index: 0; overflow: hidden; }
+/* Leaflet's control container is reparented into the viewport so controls
+   neither rotate nor ride the oversized map square. */
+#map-viewport > .leaflet-control-container { position: absolute; inset: 0; z-index: 800; pointer-events: none; }
+#map.map-rotated { will-change: transform; }
+/* Keep marker glyphs upright while the chart rotates — EXCEPT the boat, which
+   must rotate with the chart (in heading-up it then points up naturally). */
+#map.map-rotated .leaflet-marker-icon > :not(.boat-icon) { transform: rotate(var(--map-derot, 0deg)); }
+#map.map-rotated .leaflet-marker-icon > .map-marker-pin { transform-origin: 50% 100%; }
+#map.map-rotated .leaflet-popup-content-wrapper { transform: rotate(var(--map-derot, 0deg)); transform-origin: 50% 100%; }
+#map.map-rotated .wp-menu { transform: translate(-50%, -100%) translateY(-14px) rotate(var(--map-derot, 0deg)); }
+.maprot-ctl .maprot-btn { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; }
+.maprot-ctl .maprot-btn.on { background: color-mix(in srgb, var(--accent) 25%, #0b1520); }
+.maprot-ctl .maprot-needle { display: block; transition: transform 0.15s linear; }
+
 /* ---- manual steering wheel (steerwheel.js) ---- */
 .steer-wheel { display: flex; justify-content: center; margin: 6px 0 2px; }
 .steer-wheel .sw-svg {
