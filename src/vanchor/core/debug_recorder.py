@@ -14,7 +14,12 @@ power-loss may lose the un-fsynced tail of the open part only). Replay/download
 transparently concatenate the parts (gzip members concatenate into one stream).
 
 Each NDJSON line is ``{"t": <unix seconds>, "kind": "telemetry|nmea|command|log|
-device_debug|meta", "data": ...}``. ``device_debug`` records ``{kind: debug_str}``
+device_debug|meta", "data": ...}``. Telemetry frames are DELTA-COMPRESSED:
+near-static heavy keys (``HEAVY_TELEMETRY_KEYS`` — the depth overlay, route,
+boat profile, ...) are written only when their content changes, with a full
+keepalive frame every ``FULL_FRAME_INTERVAL`` seconds; an omitted key means
+"unchanged" (the same convention the live WS decimator uses) and ReplayPlayer
+reconstructs full frames on load. ``device_debug`` records ``{kind: debug_str}``
 for every device ~1 Hz -- capturing raw device state (incl. a UBX GPS, which does
 not go through the per-sentence ``nmea`` capture). Log lines are captured by
 attaching a logging handler to
@@ -36,6 +41,17 @@ logger = logging.getLogger("vanchor.debug")
 CHUNK_SECONDS = 300.0             # rotate a part after 5 minutes ...
 CHUNK_BYTES = 1 * 1024 * 1024     # ... or 1 MB (compressed), whichever comes first
 FLUSH_INTERVAL = 2.0             # flush the open part to disk at least this often
+# Telemetry delta-compression: these keys are big and near-static (the depth
+# overlay alone was 76% of a measured session, byte-identical frame after
+# frame), so they are written only when their content CHANGES, plus a full
+# keepalive frame every FULL_FRAME_INTERVAL seconds (so a crash-truncated tail
+# or a mid-session seek still has a recent complete frame). ReplayPlayer
+# carries the last-seen values forward, so playback is lossless.
+HEAVY_TELEMETRY_KEYS = (
+    "depth_points", "waypoints", "track", "boat", "mode_availability",
+    "devices", "safety_geometry",
+)
+FULL_FRAME_INTERVAL = 30.0
 _SUFFIX = ".ndjson.gz"
 
 
@@ -86,6 +102,10 @@ class DebugRecorder:
         self._part_start = 0.0
         self._last_flush = 0.0
         self._log_handler: _DebugLogHandler | None = None
+        # Telemetry delta-compression state: fingerprint per heavy key + the
+        # time of the last FULL frame (see HEAVY_TELEMETRY_KEYS).
+        self._heavy_fp: dict[str, int] = {}
+        self._last_full_frame = 0.0
 
     # ---- lifecycle ------------------------------------------------------ #
     def start(self, name: str, now: float) -> dict:
@@ -105,6 +125,8 @@ class DebugRecorder:
             os.makedirs(self.path, exist_ok=True)
             self.counts = {}
             self._part = 0
+            self._heavy_fp = {}
+            self._last_full_frame = 0.0
             self.active = True
             self._open_part(now)
             # Log the lifecycle line BEFORE attaching the capture handler, so our
@@ -144,11 +166,38 @@ class DebugRecorder:
     def _current_part_size(self) -> int:
         return _safe_size(os.path.join(self.path, f"{self._part:04d}{_SUFFIX}"))  # type: ignore[arg-type]  # only called while recording, where self.path is set
 
+    def _strip_unchanged_heavy(self, data: dict, now: float) -> dict:
+        """Delta-compress a telemetry frame: omit HEAVY_TELEMETRY_KEYS whose
+        content is unchanged since last written. A full frame is forced every
+        FULL_FRAME_INTERVAL seconds. Never mutates ``data`` (the broadcaster
+        shares it); returns the dict to serialize."""
+        force_full = now - self._last_full_frame >= FULL_FRAME_INTERVAL
+        omit = []
+        for key in HEAVY_TELEMETRY_KEYS:
+            if key not in data:
+                continue
+            try:
+                fp = hash(json.dumps(data[key], separators=(",", ":")))
+            except (TypeError, ValueError):
+                continue                      # unserializable -> leave it in
+            if not force_full and self._heavy_fp.get(key) == fp:
+                omit.append(key)
+            else:
+                self._heavy_fp[key] = fp
+        if force_full:
+            self._last_full_frame = now
+            return data
+        if not omit:
+            return data
+        return {k: v for k, v in data.items() if k not in omit}
+
     def write(self, kind: str, data, now: float) -> None:
         with self._lock:
             if not self.active or self._fh is None:
                 return
             try:
+                if kind == "telemetry" and isinstance(data, dict):
+                    data = self._strip_unchanged_heavy(data, now)
                 self._fh.write(json.dumps({"t": now, "kind": kind, "data": data}) + "\n")
                 self.counts[kind] = self.counts.get(kind, 0) + 1
             except (OSError, TypeError, ValueError):  # pragma: no cover - defensive
@@ -237,7 +286,13 @@ class ReplayPlayer:
                         except ValueError:
                             continue
                         if rec.get("kind") == "telemetry" and isinstance(rec.get("data"), dict):
-                            frames.append((float(rec.get("t", 0.0)), rec["data"]))
+                            # Recorder delta-compression omits unchanged heavy
+                            # keys; carry the last-seen values forward so every
+                            # replayed frame is complete. update() copies
+                            # REFERENCES, so repeated arrays share memory.
+                            merged = dict(frames[-1][1]) if frames else {}
+                            merged.update(rec["data"])
+                            frames.append((float(rec.get("t", 0.0)), merged))
             except (OSError, EOFError):
                 # A crash-truncated final part: keep everything recovered so far
                 # (completed parts + this part's readable prefix) and stop.

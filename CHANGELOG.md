@@ -2,6 +2,18 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## Unreleased
+
+- **Debug recordings ~85% smaller** — sessions were huge even for short runs
+  because the recorder wrote the FULL telemetry frame ~7×/s: a measured 31 s
+  session was 2.8 MB gzipped, 76% of it the byte-identical depth-overlay
+  array re-serialized every frame (plus the route at 11%). Telemetry frames
+  are now DELTA-COMPRESSED: near-static heavy keys (depth overlay, route,
+  track, boat profile, device/mode maps, safety geometry) are written only
+  when their content changes, with a full keepalive frame every 30 s;
+  ReplayPlayer carries omitted keys forward so playback is lossless. A/B on
+  the same scenario: 30 s = 415 KB (was 2825 KB).
+
 ## [1.5.0a6] — 2026-07-15
 
 - **CI regression gate re-baselined** — the gate had been red since the

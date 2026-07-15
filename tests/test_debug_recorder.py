@@ -167,3 +167,75 @@ def test_start_traversal_name_stays_inside_dir(tmp_path):
         rec2.stop()
         assert rec2.path is not None
         assert os.path.commonpath([rec2.path, rec2.dir]) == rec2.dir
+
+
+# --------------------------------------------------------------------------- #
+# Telemetry delta-compression (field report: 31 s session = 2.8 MB gz, 76% of
+# it a byte-identical depth overlay re-serialized 7x/second).
+# --------------------------------------------------------------------------- #
+def _read_all(path):
+    import gzip as _gz
+    import json as _json
+    import os as _os
+    lines = []
+    for f in sorted(_os.listdir(path)):
+        if not f.endswith(".ndjson.gz"):
+            continue
+        with _gz.open(_os.path.join(path, f), "rt", encoding="utf-8") as fh:
+            lines += [_json.loads(ln) for ln in fh if ln.strip()]
+    return lines
+
+
+def _frame(depth_pts, wp, sog):
+    return {"sog_knots": sog, "depth_points": depth_pts, "waypoints": wp,
+            "heading_deg": 42.0}
+
+
+def test_unchanged_heavy_keys_are_written_once(tmp_path):
+    from vanchor.core.debug_recorder import DebugRecorder
+    rec = DebugRecorder(str(tmp_path))
+    rec.start("delta", 1000.0)
+    pts = [[59.0, 18.0, 5.0]] * 50
+    wp = [{"name": "A", "lat": 59.0, "lon": 18.0}]
+    for i in range(5):
+        rec.write("telemetry", _frame(pts, wp, sog=float(i)), 1000.0 + i * 0.2)
+    rec.stop()
+    tele = [r["data"] for r in _read_all(rec.path) if r["kind"] == "telemetry"]
+    assert len(tele) == 5
+    assert "depth_points" in tele[0] and "waypoints" in tele[0]   # first = full
+    for t in tele[1:]:
+        assert "depth_points" not in t and "waypoints" not in t  # unchanged -> omitted
+        assert "sog_knots" in t and "heading_deg" in t           # fast keys kept
+
+
+def test_changed_heavy_key_is_rewritten_and_keepalive_forces_full(tmp_path):
+    from vanchor.core.debug_recorder import DebugRecorder
+    rec = DebugRecorder(str(tmp_path))
+    rec.start("delta2", 1000.0)
+    pts = [[59.0, 18.0, 5.0]] * 50
+    rec.write("telemetry", _frame(pts, [], 0.0), 1000.0)
+    rec.write("telemetry", _frame(pts, [], 1.0), 1000.2)          # unchanged
+    pts2 = pts + [[59.1, 18.1, 6.0]]
+    rec.write("telemetry", _frame(pts2, [], 2.0), 1000.4)         # depth changed
+    rec.write("telemetry", _frame(pts2, [], 3.0), 1035.0)         # 30s keepalive
+    rec.stop()
+    tele = [r["data"] for r in _read_all(rec.path) if r["kind"] == "telemetry"]
+    assert "depth_points" in tele[0]
+    assert "depth_points" not in tele[1]
+    assert "depth_points" in tele[2]      # content changed -> written
+    assert "depth_points" in tele[3]      # keepalive full frame
+
+
+def test_replay_carries_omitted_keys_forward(tmp_path):
+    from vanchor.core.debug_recorder import DebugRecorder, ReplayPlayer
+    rec = DebugRecorder(str(tmp_path))
+    rec.start("delta3", 1000.0)
+    pts = [[59.0, 18.0, 5.0]] * 10
+    rec.write("telemetry", _frame(pts, [], 0.0), 1000.0)
+    rec.write("telemetry", _frame(pts, [], 1.5), 1000.2)          # omitted on disk
+    rec.stop()
+    rp = ReplayPlayer()
+    assert rp.load(rec.path, now=0.0)
+    late = rp.current(0.3)                                        # second frame
+    assert late["sog_knots"] == 1.5
+    assert late["depth_points"] == pts                            # carried forward
