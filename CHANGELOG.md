@@ -2,7 +2,7 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## Unreleased
+## [1.5.0a6] — 2026-07-15
 
 - **CI regression gate re-baselined** — the gate had been red since the
   Fossen `Dnu_c` current-rotation fix (2026-07-09): the corrected physics
