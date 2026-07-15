@@ -75,6 +75,7 @@ const SHELL = [
   "/static/map-anchor.js",
   "/static/map-track.js",
   "/static/map-waypoints.js",
+  "/static/routechoice.js",
   "/static/map-depth.js",
   "/static/hudframe.js",
   "/static/hud.js",

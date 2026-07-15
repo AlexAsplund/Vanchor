@@ -228,7 +228,12 @@
            <button class="mm-btn" data-act="shore">🌊 Along shoreline</button>
          </div>`)
       .openOn(map);
-    const goto = () => VA.send({ type: "goto", waypoints: [{ name: "GOTO", lat, lon }], throttle: 0.6, on_arrival: "anchor" });
+    const engage = () => VA.send({ type: "goto", waypoints: [{ name: "GOTO", lat, lon }], throttle: 0.6, on_arrival: "anchor" });
+    // With an active/pending route the user chooses Replace vs Append (routechoice.js).
+    const goto = () => {
+      if (VA.routeChoice) VA.routeChoice.deliver([{ name: "GOTO", lat, lon }], engage);
+      else engage();
+    };
     const node = popup.getElement();
     if (!node) return;
 
@@ -253,8 +258,10 @@
     node.querySelector('[data-act="shore"]').addEventListener("click", async () => {
       map.closePopup(popup);
       if (VA.routing && VA.routing.planTo) {
-        const ok = await VA.routing.planTo(lat, lon, "shoreline");
-        if (ok && VA.routeEditor && VA.routeEditor.startRoute) VA.routeEditor.startRoute();
+        // Auto-start only when the plan REPLACED the route: an append-to-active
+        // is already underway, and an append-to-pending stays for review.
+        const r = await VA.routing.planTo(lat, lon, "shoreline");
+        if (r === "replaced" && VA.routeEditor && VA.routeEditor.startRoute) VA.routeEditor.startRoute();
       } else {
         goto();  // smart routing module absent -> fall back to a direct goto
       }

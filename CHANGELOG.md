@@ -4,6 +4,28 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Routes: Replace/Append delivery, per-waypoint speeds, save the active
+  route** — three route-workflow features:
+  - Every *Take me here* action (go-to card, map press-and-hold menu, marker
+    route buttons, smart-routing panel) now asks **Replace or Append** when a
+    route is already active or pending. Appending to a running route re-sends
+    it through the live-edit path (resume index preserved) so the boat keeps
+    navigating; appending to a pending route extends the editor unstarted.
+    (`routechoice.js`, wired into route/markers/routing.)
+  - Waypoints can carry an optional speed — **engine %** or **boat knots** —
+    set via the pin's press-and-hold menu (pending *and* active routes, shown
+    in tooltips + the editor list). The boat adopts the speed **on arrival**
+    at the mark for the legs that follow, by feeding the existing
+    throttle-override / Cruise Control channels — so a manual speed change
+    mid-route wins until the next speed-carrying waypoint, exactly like a
+    hand-set speed. Speeds ride the goto command, telemetry, live edits,
+    pause/resume and saved routes. (`Waypoint.throttle_pct/speed_kn`,
+    `WaypointMode._post_speed`, controller `route_speed_request`; unit tests
+    in `tests/test_waypoint_speed.py`, browser e2e in
+    `tests/test_e2e_playwright.py`.)
+  - **Save / Load routes** now saves the **active** route when nothing is
+    pending, so a route the boat is currently running can be banked.
+
 - **Smart station-keeping policy retrained** on the corrected Fossen physics
   with a realistic steering-actuator model (95 deg/s effective slew): held-out
   hold-rate 83.7% → **90.1%** within the 5 m circle, mean distance 9.24 →

@@ -1,11 +1,14 @@
 /* Vanchor-NG — Save / Load named routes (task #48).
  *
- * Saves the current pending (pre-start) waypoints under a name in localStorage
- * (`vanchor-routes`) and loads them back into the route editor *unstarted* via
+ * Saves the current pending (pre-start) waypoints -- or, when none are pending,
+ * the ACTIVE (running) route -- under a name in localStorage (`vanchor-routes`)
+ * and loads them back into the route editor *unstarted* via
  * VA.map.setPending(...) + VA.routeEditor.refresh(). Supports delete and
  * GPX export / import.
  *
- * Routes are stored as { name: [{name,lat,lon}, ...] }.
+ * Routes are stored as { name: [{name,lat,lon,throttle_pct,speed_kn}, ...] }
+ * (the optional per-waypoint speed attributes survive save/load; GPX
+ * export/import carries coordinates + names only).
  */
 "use strict";
 
@@ -64,15 +67,25 @@
   }
 
   if (saveBtn) saveBtn.addEventListener("click", () => {
-    const pending = VA.map.pending();
-    if (!pending.length) { setStatus("No waypoints to save. Drop some first.", "err"); return; }
+    // Save the pending (unstarted) route if there is one; otherwise fall back
+    // to the ACTIVE/committed route, so a running route can always be saved.
+    let wps = VA.map.pending();
+    let src = "";
+    if (!wps.length && VA.map.committedRoute) {
+      wps = VA.map.committedRoute().waypoints;
+      src = "active ";
+    }
+    if (!wps.length) { setStatus("No waypoints to save. Drop some first.", "err"); return; }
     let name = (window.prompt("Save route as:", "Route " + (Object.keys(routes).length + 1)) || "").trim();
     if (!name) return;
     if (routes[name] && !window.confirm(`Overwrite route "${name}"?`)) return;
-    routes[name] = pending.map((w) => ({ name: w.name, lat: w.lat, lon: w.lon }));
+    routes[name] = wps.map((w) => ({
+      name: w.name, lat: w.lat, lon: w.lon,
+      throttle_pct: w.throttle_pct ?? null, speed_kn: w.speed_kn ?? null,
+    }));
     save();
     sel.value = name;
-    setStatus(`Saved "${name}" (${routes[name].length} waypoints).`, "ok");
+    setStatus(`Saved ${src}route "${name}" (${routes[name].length} waypoints).`, "ok");
   });
 
   function loadSelected() {
@@ -80,7 +93,10 @@
     if (!name || !routes[name]) { setStatus("Pick a saved route.", "err"); return; }
     const wps = routes[name]
       .filter((w) => w && Number.isFinite(w.lat) && Number.isFinite(w.lon))
-      .map((w, i) => ({ name: w.name || ("WP" + (i + 1)), lat: w.lat, lon: w.lon }));
+      .map((w, i) => ({
+        name: w.name || ("WP" + (i + 1)), lat: w.lat, lon: w.lon,
+        throttle_pct: w.throttle_pct ?? null, speed_kn: w.speed_kn ?? null,
+      }));
     VA.map.setPending(wps);
     if (VA.routeEditor && VA.routeEditor.clearLoop) VA.routeEditor.clearLoop();
     if (VA.routeEditor && VA.routeEditor.refresh) VA.routeEditor.refresh();

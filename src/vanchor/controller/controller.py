@@ -80,6 +80,25 @@ _CRUISING_MODES = frozenset(
 # Boat-relative jog directions -> heading offset (degrees).
 _JOG_OFFSETS = {"forward": 0.0, "back": 180.0, "left": -90.0, "right": 90.0}
 
+
+def _wp_speed(w: dict) -> tuple[float | None, float | None]:
+    """Optional per-waypoint speed attributes from a goto waypoint dict:
+    ``(throttle_pct, speed_kn)``. Engine-% wins if both are present; malformed
+    or non-positive values are dropped (no speed change at that mark)."""
+    tp: float | None
+    kn: float | None
+    try:
+        raw = w.get("throttle_pct")
+        tp = min(100.0, float(raw)) if raw is not None and float(raw) > 0.0 else None
+    except (TypeError, ValueError):
+        tp = None
+    try:
+        raw = w.get("speed_kn")
+        kn = float(raw) if raw is not None and float(raw) > 0.0 else None
+    except (TypeError, ValueError):
+        kn = None
+    return (tp, None) if tp is not None else (None, kn)
+
 # Modes that actively station-keep on ``state.anchor`` (they refresh
 # ``state.distance_to_anchor_m`` every tick) -- the hold quality metric is
 # accumulated only while one of these is holding, so PID anchor-hold and the
@@ -469,6 +488,21 @@ class Controller:
         self.estimator.update(self.state, dt)
         mode = self.modes[self.state.mode]
         setpoint = mode.update(self.state, dt)
+        # Per-waypoint speed: WaypointMode posts a request when the boat ARRIVES
+        # at a mark carrying a speed attribute. Adopt it as the new default by
+        # routing it into the same channels a manual speed command uses -- so a
+        # later manual set_throttle/cruise overrides it, and the next
+        # speed-carrying waypoint overrides that in turn.
+        req = self.state.route_speed_request
+        if req is not None:
+            self.state.route_speed_request = None
+            kind, value = req
+            if kind == "speed_kn":
+                self.throttle_override = None
+                self._set_cruise(value)
+            else:
+                self.cruise_knots = None
+                self._set_throttle(value)
         setpoint = self._apply_cruise(setpoint, dt)
         setpoint = self._apply_throttle_override(setpoint)
         command = self.helm.compute(setpoint, self.state, dt)
@@ -715,6 +749,8 @@ class Controller:
                     Waypoint(
                         name=str(w.get("name", f"WP{i}")),
                         point=GeoPoint(float(w["lat"]), float(w["lon"])),
+                        throttle_pct=_wp_speed(w)[0],
+                        speed_kn=_wp_speed(w)[1],
                     )
                     for i, w in enumerate(wps)
                 ]

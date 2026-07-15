@@ -560,6 +560,20 @@ class WaypointMode(ControlMode):
         self._step = 1
         state.route_complete = False
 
+    @staticmethod
+    def _post_speed(state: NavigationState, ix: int) -> None:
+        """Post the arrived-at waypoint's optional speed attribute for the
+        controller to adopt (per-waypoint speed: the speed at a mark becomes
+        the default for the legs that follow). No-op for a mark without one --
+        the previously-adopted speed simply keeps applying."""
+        if not 0 <= ix < len(state.waypoints):
+            return
+        w = state.waypoints[ix]
+        if w.throttle_pct is not None:
+            state.route_speed_request = ("throttle_pct", w.throttle_pct)
+        elif w.speed_kn is not None:
+            state.route_speed_request = ("speed_kn", w.speed_kn)
+
     def _wrap_or_bounce(self, state: NavigationState, pos: GeoPoint) -> bool:
         """``active_waypoint`` has run off an END of the route. ``route_loop``
         wraps to the start and keeps circling; ``route_patrol`` reverses direction
@@ -615,6 +629,7 @@ class WaypointMode(ControlMode):
 
         if arrived:
             # Advance to the next leg (in the current traversal direction).
+            self._post_speed(state, state.active_waypoint)
             state.active_waypoint += self._step
             self._leg_start = target
             # Multi-advance: consume stacked waypoints already within the arrival
@@ -624,6 +639,7 @@ class WaypointMode(ControlMode):
                     break
                 nxt = state.waypoints[state.active_waypoint].point
                 if haversine_m(pos, nxt) <= self.config.arrival_radius_m:
+                    self._post_speed(state, state.active_waypoint)
                     state.active_waypoint += self._step
                     self._leg_start = nxt
                 else:

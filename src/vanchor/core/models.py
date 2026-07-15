@@ -118,6 +118,13 @@ class Waypoint:
     # Optional desired boat heading (deg) to hold while holding here in Work
     # Area mode. None = don't force a heading (the boat weathervanes naturally).
     heading: float | None = None
+    # Optional speed to adopt ON ARRIVAL at this waypoint, applying to the legs
+    # that follow (until a later waypoint carries its own speed, or the user
+    # sets one manually). Mutually exclusive: engine power as a percent
+    # (0..100), or a speed-over-ground target in knots (held by Cruise
+    # Control). None/None = no speed change at this mark.
+    throttle_pct: float | None = None
+    speed_kn: float | None = None
 
 
 @dataclass(frozen=True)

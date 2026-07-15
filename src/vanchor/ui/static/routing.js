@@ -113,17 +113,28 @@
     const wps = r.waypoints
       .filter((w) => w && Number.isFinite(w.lat) && Number.isFinite(w.lon))
       .map((w, i) => ({ name: w.name || ("WP" + (i + 1)), lat: w.lat, lon: w.lon }));
-    VA.map.setPending(wps);
-    // A smart route is a normal point-to-point route, not a loop: drop any
-    // lingering island-loop flag so it doesn't circle.
-    if (VA.routeEditor && VA.routeEditor.clearLoop) VA.routeEditor.clearLoop();
-    // Refresh the route editor list (app.js owns it; expose a hook).
-    if (VA.routeEditor && VA.routeEditor.refresh) VA.routeEditor.refresh();
-    // Surface the route panel so the user can review + press Start.
-    document.querySelectorAll(".ctx-panel").forEach((p) => p.classList.toggle("active", p.dataset.for === "waypoint"));
-    setStatus((r.message ? r.message + " — " : "") + wps.length + " waypoints loaded. Review and press Start route.", "ok");
+    // Replace-path delivery: load the planned route into the editor unstarted.
+    const loadPending = () => {
+      VA.map.setPending(wps);
+      // A smart route is a normal point-to-point route, not a loop: drop any
+      // lingering island-loop flag so it doesn't circle.
+      if (VA.routeEditor && VA.routeEditor.clearLoop) VA.routeEditor.clearLoop();
+      // Refresh the route editor list (app.js owns it; expose a hook).
+      if (VA.routeEditor && VA.routeEditor.refresh) VA.routeEditor.refresh();
+      // Surface the route panel so the user can review + press Start.
+      document.querySelectorAll(".ctx-panel").forEach((p) => p.classList.toggle("active", p.dataset.for === "waypoint"));
+      setStatus((r.message ? r.message + " — " : "") + wps.length + " waypoints loaded. Review and press Start route.", "ok");
+    };
+    // With an active/pending route the user chooses Replace vs Append
+    // (routechoice.js); the append paths are handled inside deliver().
+    let outcome = "replaced";
+    if (VA.routeChoice) outcome = await VA.routeChoice.deliver(wps, loadPending);
+    else loadPending();
+    if (outcome === "appended-active") setStatus("Added " + wps.length + " waypoints to the active route.", "ok");
+    else if (outcome === "appended-pending") setStatus("Added " + wps.length + " waypoints to the pending route. Review and press Start route.", "ok");
+    else if (!outcome) setStatus("Cancelled.", "");
     if (planBtn) planBtn.disabled = false;
-    return true;
+    return outcome;
   }
   async function plan() {
     if (!dest) { setStatus("Pick a destination on the map first.", "err"); return; }

@@ -51,11 +51,16 @@
       name.className = "wp-name"; name.type = "text"; name.value = w.name;
       name.setAttribute("aria-label", "waypoint name");
       name.addEventListener("input", () => { w.name = name.value; });
+      // Optional per-waypoint speed (set via press-and-hold on the map pin).
+      const speed = document.createElement("span");
+      speed.className = "wp-speed-tag";
+      speed.textContent = w.throttle_pct != null ? Math.round(w.throttle_pct) + "%"
+        : (w.speed_kn != null ? w.speed_kn + " kn" : "");
       const del = document.createElement("button");
       del.className = "del"; del.textContent = "✕";
       del.setAttribute("aria-label", "delete waypoint");
       del.addEventListener("click", () => { pending.splice(i, 1); renderWpList(); });
-      li.append(ix, name, del);
+      li.append(ix, name, speed, del);
       list.appendChild(li);
     });
     VA.map.redrawWaypoints();
@@ -95,7 +100,14 @@
   function startRoute() {
     const pending = VA.map.pending();
     if (!pending.length) { VA.logLine("start route: no waypoints"); return; }
-    const cmd = { type: "goto", waypoints: pending.map((w) => ({ name: w.name, lat: w.lat, lon: w.lon })), throttle: 0.6 };
+    const cmd = {
+      type: "goto",
+      waypoints: pending.map((w) => ({
+        name: w.name, lat: w.lat, lon: w.lon,
+        throttle_pct: w.throttle_pct ?? null, speed_kn: w.speed_kn ?? null,
+      })),
+      throttle: 0.6,
+    };
     if (routeIsLoop) cmd.loop = true;       // circle continuously around the island
     if (routeIsPatrol()) cmd.patrol = true; // run the route there-and-back continuously
     send(cmd);
@@ -238,8 +250,14 @@
   }
   function gotoTo(lat, lon) {
     const on_arrival = gotoAction ? gotoAction.value : "anchor";
-    VA.map.setGotoMarker(lat, lon);
-    send({ type: "goto", waypoints: [{ name: "GOTO", lat, lon }], throttle: 0.6, on_arrival });
+    const engage = () => {
+      VA.map.setGotoMarker(lat, lon);
+      send({ type: "goto", waypoints: [{ name: "GOTO", lat, lon }], throttle: 0.6, on_arrival });
+    };
+    // With an active or pending route, offer Replace vs Append instead of
+    // silently replacing (routechoice.js). Falls back to direct engage.
+    if (VA.routeChoice) VA.routeChoice.deliver([{ name: "GOTO", lat, lon }], engage);
+    else engage();
   }
   if (gotoArm) gotoArm.addEventListener("click", () => setGotoArmed(!VA.map.isGotoArmed()));
 

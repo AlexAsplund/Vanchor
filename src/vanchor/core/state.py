@@ -126,6 +126,11 @@ class NavigationState:
 
     waypoints: list[Waypoint] = field(default_factory=list)
     active_waypoint: int = 0
+    # Transient per-waypoint speed request: set by WaypointMode when the boat
+    # ARRIVES at a waypoint carrying a speed attribute; consumed (and cleared)
+    # by the controller the same tick, which routes it into the throttle-%
+    # override or the Cruise Control (knots) channel. ("throttle_pct"|"speed_kn", value).
+    route_speed_request: tuple[str, float] | None = None
     route_on_arrival: str = "none"  # "anchor" | "stop" | "none" when route done
     route_complete: bool = False
     # When True, reaching the last waypoint wraps back to the first (closed loop,
@@ -258,7 +263,8 @@ class NavigationState:
             "drift_target_knots": round(self.drift_target_knots, 2),
             "waypoints": [
                 {"name": w.name, "lat": w.point.lat, "lon": w.point.lon,
-                 "heading": w.heading}
+                 "heading": w.heading,
+                 "throttle_pct": w.throttle_pct, "speed_kn": w.speed_kn}
                 for w in self.waypoints
             ],
             "active_waypoint": self.active_waypoint,

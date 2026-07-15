@@ -29,8 +29,14 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **Markers** — drop/import, selectable icons, with **"Take me here"** (Fastest /
   Along-shoreline) straight from a marker.
 - **Route editor** — explicit **"Add waypoint"** mode (taps don't litter pins),
-  drag waypoints (pending *and* active), long-press menu (insert/delete),
-  **Save / Load** named routes.
+  drag waypoints (pending *and* active), long-press menu (insert/delete/**set
+  speed**), **Save / Load** named routes (pending *or* the active route).
+- **Per-waypoint speeds** — a waypoint can carry an engine-**%** or boat-**knots**
+  speed, adopted on arrival for the following legs (a manual speed change wins
+  until the next speed-carrying waypoint).
+- **Replace or Append** — any *Take me here* action onto an existing
+  active/pending route asks whether to replace it or append to its end
+  (appending to a running route doesn't restart it).
 - **Depth map overlay** — averaged, **colour-ramped depth chart** (marine
   shallow→deep) with a legend, not raw dots; sonar-cone-scaled footprints.
 - **Catch logger** — floating launcher; log species + length + weight; **catch

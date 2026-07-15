@@ -1277,6 +1277,35 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 .wp-menu button.danger { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
 .wp-menu button.cancel { color: var(--muted); }
 
+/* per-waypoint speed form (inside the wp-menu) + the editor list's speed tag */
+.wp-menu .wp-speed-kind, .wp-menu .wp-speed-val {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--faint); color: var(--text); font-size: 13px;
+}
+.wp-menu .wp-speed-val:disabled { opacity: 0.45; }
+.wp-speed-tag { color: var(--accent); font: 700 11px var(--font-num); white-space: nowrap; }
+
+/* ---- Replace/Append route delivery dialog (routechoice.js) ---- */
+.route-choice-overlay {
+  position: fixed; inset: 0; z-index: 2600;
+  background: rgba(4, 10, 18, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.route-choice {
+  display: flex; flex-direction: column; gap: 6px; padding: 14px;
+  min-width: 250px; max-width: 340px;
+  border-radius: var(--r-sm); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.route-choice .rc-title { color: var(--muted); font: 700 11px var(--font-display); text-transform: uppercase; letter-spacing: 0.06em; }
+.route-choice .rc-sub { color: var(--text); font-size: 13px; margin-bottom: 4px; }
+.route-choice button {
+  text-align: left; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--faint); color: var(--text); font-size: 13px; cursor: pointer;
+}
+.route-choice button:hover { border-color: var(--accent); }
+.route-choice button.danger { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
+.route-choice button.cancel { color: var(--muted); }
+
 /* ---- catch logger (#56) ---- */
 /* Standalone floating launcher: anchored just above the HUD's left edge so it
    never wraps the numeric HUD row onto a second line. */

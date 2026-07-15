@@ -316,6 +316,27 @@ destination**, tap a spot, and it plans a route that stays on the water
 instead of cutting across land and islands. It loads the waypoints for your
 review; press **▶ Start route** when they look right.
 
+A few extras once you're comfortable with routes:
+
+- **Replace or Append** — if a route is already running (or unstarted
+  waypoints are sitting in the editor) and you use any *Take me here*
+  action — the go-to card, the map's press-and-hold menu, or a marker's
+  route buttons — the app asks whether to **replace** the route or
+  **append** the new waypoints to its end. Appending to a running route
+  doesn't restart it; the boat keeps navigating.
+- **Waypoint speeds** — press **and hold** a waypoint pin (about 3 s,
+  works on pending and active routes) to open its menu and **Set speed…**:
+  engine power in **%** or boat speed in **knots**. The boat adopts that
+  speed *when it arrives at that waypoint* and keeps it for the following
+  legs, until a later waypoint carries its own speed. If you change the
+  speed by hand mid-route, your setting wins — until the next
+  speed-carrying waypoint. Speed-carrying pins show their speed in the
+  pin's tooltip and in the route editor list.
+- **Save any route** — the **Save / Load routes** card saves the pending
+  route, or, when nothing is pending, the route the boat is currently
+  running — so you can bank a route you're already on. Waypoint speeds are
+  saved with it.
+
 ## 9. Use your phone as the remote
 
 On the water you'll want the controls in your hand, not on a laptop balanced

@@ -341,3 +341,81 @@ def test_reconnect_and_staleness(live_server: _ServerHandle, pw_browser):
     finally:
         page.close()
         ctx.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 3: Replace/Append delivery for take-me-here destinations
+# ---------------------------------------------------------------------------
+
+def test_routechoice_append_and_replace(live_server: _ServerHandle, pw_browser):
+    """With a route RUNNING, delivering a new destination must offer
+    Replace/Append; Append extends the backend route without restarting it,
+    and with PENDING pins Append extends the editor route."""
+    base = live_server.base
+    ctx = pw_browser.new_context(viewport={"width": 1200, "height": 860})
+    page = ctx.new_page()
+    page.set_default_timeout(10_000)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    try:
+        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
+        page.wait_for_timeout(1500)
+
+        pos = _api_state(base).get("position") or {"lat": 59.0, "lon": 18.0}
+        lat, lon = float(pos["lat"]), float(pos["lon"])
+        wp = lambda name, dlat, dlon, **extra: {  # noqa: E731 - tiny local builder
+            "name": name, "lat": lat + dlat, "lon": lon + dlon, **extra,
+        }
+
+        # Engage a 2-waypoint route (with a per-waypoint speed on WP2).
+        _api_post(base, "/api/command", {
+            "type": "goto", "throttle": 0.6,
+            "waypoints": [wp("A", 0.01, 0.0), wp("B", 0.02, 0.0, throttle_pct=40)],
+        })
+        assert _poll(lambda: _api_state(base).get("mode") == "waypoint", timeout_s=5)
+        # Wait for the committed route to reach the UI via telemetry.
+        assert _poll(lambda: page.evaluate(
+            "VA.map.committedRoute().waypoints.length") == 2, timeout_s=5)
+
+        # Deliver a new destination -> the choice dialog must appear. NOTE:
+        # deliver() resolves only after a dialog click, so the promise must NOT
+        # be returned to evaluate() (the sync API would await it -> deadlock).
+        page.evaluate(
+            "() => { VA.routeChoice.deliver([{name:'C', lat: %f, lon: %f}], () => {}); }"
+            % (lat + 0.03, lon)
+        )
+        page.wait_for_selector(".route-choice", timeout=5000)
+        page.click('.route-choice [data-act="append"]')
+
+        # Backend route grows to 3 marks, still navigating (not restarted), and
+        # the appended list preserved WP2's speed attribute.
+        def _appended() -> bool:
+            st = _api_state(base)
+            return st.get("mode") == "waypoint" and len(st.get("waypoints") or []) == 3
+        assert _poll(_appended, timeout_s=5), "append did not extend the active route"
+        wps = _api_state(base)["waypoints"]
+        assert [w["name"] for w in wps] == ["A", "B", "C"]
+        assert wps[1]["throttle_pct"] == 40
+
+        # Now the PENDING path: stop, drop pending pins, deliver again. Wait
+        # until the PAGE has seen mode=manual (deliver() decides on the latest
+        # telemetry frame, which lags the backend by up to one frame).
+        _api_post(base, "/api/command", {"type": "stop"})
+        assert _poll(lambda: page.evaluate("VA.last && VA.last.mode") == "manual",
+                     timeout_s=5)
+        page.evaluate(
+            "VA.map.setPending([{name:'P1', lat: %f, lon: %f}])" % (lat + 0.005, lon)
+        )
+        page.evaluate(
+            "() => { VA.routeChoice.deliver([{name:'P2', lat: %f, lon: %f}], () => {}); }"
+            % (lat + 0.006, lon)
+        )
+        page.wait_for_selector(".route-choice", timeout=5000)
+        page.click('.route-choice [data-act="append"]')
+        assert _poll(lambda: page.evaluate("VA.map.pending().length") == 2, timeout_s=5)
+
+        assert not errors, f"Page JS errors: {errors[:3]}"
+    finally:
+        page.close()
+        ctx.close()
