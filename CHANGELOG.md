@@ -5,8 +5,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 ## Unreleased
 
 - **Sound feedback** (`sounds.js`): fully synthesized Web Audio cues — no
-  audio files, works offline. Safety **alarms** get an urgent two-tone;
-  **notifications** a chime (warn) / soft note (info), both driven by the
+  audio files, works offline. Safety **alarms** come in three severities with
+  distinct, escalating sounds — low (calm double beep: battery/RTL), medium
+  (two-tone warble: control fault, compass stale), high (fast siren: anchor
+  drag, GPS fix lost, no-go stop, failsafe, MOB) — with one exception:
+  **depth warnings** (shallow-water stop, sounder-vs-chart divergence, depth
+  sensor stale) play a distinct sonar-style **ping + echo**, noticeable
+  without being grating. Severity/kind ride `VA.logAlert(sev, msg, {level,
+  kind})`; each has a preview button in the menu.
+  **Notifications** get a chime (warn) / soft note (info), both driven by the
   `VA.logAlert` hook; every **mode engagement** plays a distinct little motif
   (anchors descend low, underway modes ascend) so the active mode is
   recognizable by ear; **waypoints** ding as each mark is reached and a

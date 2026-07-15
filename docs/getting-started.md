@@ -387,11 +387,16 @@ alarm fires, and a confirmation pulse when a press-and-hold (waypoint menu,
 map menu) registers. Handy with wet fingers on a rocking boat. (iPhones
 don't expose vibration to browsers, so that switch is greyed out there.)
 
-There are **sounds** too, synthesized on the device so they work offline:
-an urgent two-tone for safety alarms, chimes for notifications, a distinct
-little melody for each mode you engage (you'll learn to *hear* "anchor
-dropped" without looking), a ding each time a waypoint is reached and a
-fanfare when the route completes, plus subtle button ticks.
+There are **sounds** too, synthesized on the device so they work offline.
+Safety alarms escalate through three distinct sounds — a calm double beep
+(low: battery reminders), a two-tone warble (medium: compass trouble) and a
+fast siren (high: anchor drag, lost GPS, man overboard). Depth warnings are
+the exception: they play a **sonar-style ping** — unmistakable but easy on
+the ears, since shallow-water alerts can repeat on a long day. On top of
+that: chimes for notifications, a distinct little melody for each mode you
+engage (you'll learn to *hear* "anchor dropped" without looking), a ding
+each time a waypoint is reached and a fanfare when the route completes,
+plus subtle button ticks.
 
 Both live under **Settings → Sound & touch**: a master switch and volume,
 plus per-category switches (each with a ▶ preview button) so you can, say,

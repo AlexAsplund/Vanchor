@@ -61,7 +61,11 @@
   }
 
   // ---- public: log an alert ------------------------------------------------
-  VA.logAlert = function (severity, message) {
+  // opts (optional): { level: "low"|"medium"|"high", kind: "depth" } — grades
+  // the ALARM SOUND only (the log badge stays on severity). kind:"depth" plays
+  // the distinct sonar-ping regardless of level; an alarm without a level
+  // sounds as medium.
+  VA.logAlert = function (severity, message, opts) {
     severity = normSeverity(severity);
     message = String(message == null ? "" : message).trim();
     if (!message) return;
@@ -73,13 +77,19 @@
 
     alerts.push({ ts: now, severity, message });
     if (alerts.length > MAX) alerts = alerts.slice(-MAX);
-    // A newly-logged ALARM gets a distinct haptic buzz + alarm sound; warn and
+    // A newly-logged ALARM gets a distinct haptic buzz + a severity-graded
+    // alarm sound (low/medium/high, or the sonar ping for depth); warn and
     // info get the notification chimes (haptics.js / sounds.js; no-ops when
     // unsupported/disabled) — the de-dup above keeps them from repeating.
     if (severity === "alarm" && VA.haptic) VA.haptic("alert");
     if (VA.sound) {
-      VA.sound.play(severity === "alarm" ? "alarm"
-        : severity === "warn" ? "notify" : "notify.info");
+      const o = opts || {};
+      if (o.kind === "depth") VA.sound.play("alarm.depth");
+      else if (severity === "alarm") {
+        const level = (o.level === "low" || o.level === "high") ? o.level : "medium";
+        VA.sound.play("alarm." + level);
+      } else if (o.level === "low") VA.sound.play("alarm.low");  // graded warn
+      else VA.sound.play(severity === "warn" ? "notify" : "notify.info");
     }
     // If the dialog is open, treat as read; otherwise bump the unread badge.
     const dlg = $("alerts-dialog");
@@ -177,34 +187,44 @@
   // ---- telemetry watcher: log the banner conditions ------------------------
   // Edge-triggered: log only on the false→true transition of each condition so
   // we don't spam, but VA.logAlert's own de-dup is a second safety net.
-  const prev = { rtl: false, shallow: false, nogo: false, failsafe: false, fixLost: false, drag: false };
+  // Severity grading (drives the alarm SOUND, see logAlert opts): high = the
+  // boat did/needs something drastic right now; low = attention, no urgency.
+  // Depth conditions play the distinct sonar ping instead (kind:"depth").
+  const prev = { rtl: false, shallow: false, nogo: false, failsafe: false,
+                 fixLost: false, drag: false, diverge: false };
   VA.onTelemetry(function (t) {
     if (!t || typeof t !== "object") return;
     const safety = t.safety || {};
     const link = t.link || null;
 
     const rtl = !!t.rtl_recommended;
-    if (rtl && !prev.rtl) VA.logAlert("warn", "Low battery — return to launch recommended");
+    if (rtl && !prev.rtl) VA.logAlert("warn", "Low battery — return to launch recommended", { level: "low" });
     prev.rtl = rtl;
 
     const shallow = !!safety.shallow_stop;
-    if (shallow && !prev.shallow) VA.logAlert("alarm", "Shallow water — auto-stopped");
+    if (shallow && !prev.shallow) VA.logAlert("alarm", "Shallow water — auto-stopped", { kind: "depth" });
     prev.shallow = shallow;
 
+    // Live sounder reads materially shallower than the chart (#45) — a
+    // possible uncharted shoal ahead of the shallow-stop tripping.
+    const diverge = !!(t.sonar && t.sonar.divergence_alert);
+    if (diverge && !prev.diverge) VA.logAlert("warn", "Sounder disagrees with chart — possible uncharted shoal", { kind: "depth" });
+    prev.diverge = diverge;
+
     const nogo = !!safety.nogo_stop;
-    if (nogo && !prev.nogo) VA.logAlert("alarm", "No-go zone — auto-stopped");
+    if (nogo && !prev.nogo) VA.logAlert("alarm", "No-go zone — auto-stopped", { level: "high" });
     prev.nogo = nogo;
 
     const failsafe = !!(link && link.failsafe_engaged);
-    if (failsafe && !prev.failsafe) VA.logAlert("alarm", "Connection lost — holding position (failsafe)");
+    if (failsafe && !prev.failsafe) VA.logAlert("alarm", "Connection lost — holding position (failsafe)", { level: "high" });
     prev.failsafe = failsafe;
 
     const fixLost = !!safety.fix_lost;
-    if (fixLost && !prev.fixLost) VA.logAlert("alarm", "GPS fix lost");
+    if (fixLost && !prev.fixLost) VA.logAlert("alarm", "GPS fix lost", { level: "high" });
     prev.fixLost = fixLost;
 
     const drag = !!safety.drag_alarm;
-    if (drag && !prev.drag) VA.logAlert("alarm", "Anchor drag alarm");
+    if (drag && !prev.drag) VA.logAlert("alarm", "Anchor drag alarm", { level: "high" });
     prev.drag = drag;
   });
 

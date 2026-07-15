@@ -86,7 +86,7 @@
         const msgEl = $(FAULT_ID + "-msg");
         if (msgEl) msgEl.textContent = "CONTROL FAULT — motor zeroed: " + fault;
         setBanner(faultBanner, true);
-        if (VA.logAlert) VA.logAlert("alarm", "Control fault: " + fault);
+        if (VA.logAlert) VA.logAlert("alarm", "Control fault: " + fault, { level: "medium" });
       } else {
         setBanner(faultBanner, false);
       }
@@ -97,7 +97,7 @@
     if (hdgStale !== prevHdgStale) {
       prevHdgStale = hdgStale;
       setBanner(hdgStaleBanner, hdgStale);
-      if (hdgStale && VA.logAlert) VA.logAlert("alarm", "Compass stale — coasting on last heading");
+      if (hdgStale && VA.logAlert) VA.logAlert("alarm", "Compass stale — coasting on last heading", { level: "medium" });
     }
 
     // ---- fix_lost --------------------------------------------------------
@@ -105,7 +105,7 @@
     if (fixLost !== prevFixLost) {
       prevFixLost = fixLost;
       setBanner(fixLostBanner, fixLost);
-      if (fixLost && VA.logAlert) VA.logAlert("alarm", "GPS fix lost");
+      if (fixLost && VA.logAlert) VA.logAlert("alarm", "GPS fix lost", { level: "high" });
     }
 
     // ---- depth_stale -----------------------------------------------------
@@ -113,7 +113,7 @@
     if (depthStale !== prevDepthStale) {
       prevDepthStale = depthStale;
       setBanner(depthStaleBanner, depthStale);
-      if (depthStale && VA.logAlert) VA.logAlert("warn", "Depth sensor stale");
+      if (depthStale && VA.logAlert) VA.logAlert("warn", "Depth sensor stale", { kind: "depth" });
     }
 
     // ---- sensor age chips ------------------------------------------------

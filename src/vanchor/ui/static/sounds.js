@@ -1,7 +1,9 @@
 /* Vanchor-NG — sound feedback (Web Audio, fully synthesized).
  *
  * Short synthesized cues for the things worth hearing with your eyes on the
- * water: safety ALARMS (urgent two-tone), NOTIFICATIONS (chime), MODE changes
+ * water: safety ALARMS in three severities (low = calm double beep, medium =
+ * two-tone warble, high = fast siren) plus a sonar-ping exception for depth
+ * warnings, NOTIFICATIONS (chime), MODE changes
  * (a distinct little motif per control mode, so "the boat just went into
  * anchor hold" is recognizable without looking), WAYPOINTS (a ding per mark
  * reached + a fanfare when the route completes) and UI button clicks (subtle
@@ -74,9 +76,11 @@
   document.addEventListener("pointerdown", () => { if (cfg.master) ensureCtx(); }, true);
 
   // ---- tiny synth ------------------------------------------------------------
-  // A sound is a sequence of notes {f: Hz, d: seconds, w: waveform, g: gain}.
-  // f=0 is a rest. A short linear envelope avoids clicks.
-  const N = (f, d, w, g) => ({ f, d, w: w || "sine", g: g == null ? 0.5 : g });
+  // A sound is a sequence of notes {f: Hz, d: seconds, w: waveform, g: gain,
+  // e: envelope}. f=0 is a rest. The default envelope is attack-hold-release
+  // (short ramps avoid clicks); e:"ping" is attack + exponential decay — a
+  // sonar-like ping (used by the depth warning).
+  const N = (f, d, w, g, e) => ({ f, d, w: w || "sine", g: g == null ? 0.5 : g, e });
 
   function playSeq(notes) {
     const c = ensureCtx();
@@ -88,11 +92,16 @@
         o.type = n.w;
         o.frequency.value = n.f;
         const peak = Math.max(0.001, n.g);
-        const hold = Math.max(0.012, n.d - 0.03);
         g.gain.setValueAtTime(0.0001, t);
-        g.gain.linearRampToValueAtTime(peak, t + 0.008);
-        g.gain.setValueAtTime(peak, t + hold);
-        g.gain.linearRampToValueAtTime(0.0001, t + n.d);
+        if (n.e === "ping") {
+          g.gain.linearRampToValueAtTime(peak, t + 0.006);
+          g.gain.exponentialRampToValueAtTime(0.0001, t + n.d);
+        } else {
+          const hold = Math.max(0.012, n.d - 0.03);
+          g.gain.linearRampToValueAtTime(peak, t + 0.008);
+          g.gain.setValueAtTime(peak, t + hold);
+          g.gain.linearRampToValueAtTime(0.0001, t + n.d);
+        }
         o.connect(g);
         g.connect(master);
         o.start(t);
@@ -104,10 +113,22 @@
 
   // ---- the sound set ----------------------------------------------------------
   const SOUNDS = {
-    // Safety alarm: urgent square-wave two-tone (logAlert severity "alarm").
-    "alarm": { cat: "alarm", notes: [N(880, .12, "square", .5), N(660, .12, "square", .5),
-                                     N(880, .12, "square", .5), N(660, .12, "square", .5),
-                                     N(880, .20, "square", .5)] },
+    // Safety alarms by severity — three distinct, escalating patterns:
+    //   low    = calm double beep (attention, no urgency)
+    //   medium = two-tone warble (act soon)
+    //   high   = fast aggressive siren (act NOW)
+    // plus the depth exception: a sonar-style ping with a quieter echo —
+    // unmistakably "depth", noticeable without being grating.
+    "alarm.low": { cat: "alarm", notes: [N(587, .12, "triangle", .4), N(587, .18, "triangle", .35)] },
+    "alarm.medium": { cat: "alarm", notes: [N(880, .12, "square", .5), N(660, .12, "square", .5),
+                                            N(880, .12, "square", .5), N(660, .12, "square", .5),
+                                            N(880, .20, "square", .5)] },
+    "alarm.high": { cat: "alarm", notes: [N(988, .08, "square", .55), N(740, .08, "square", .55),
+                                          N(988, .08, "square", .55), N(740, .08, "square", .55),
+                                          N(988, .08, "square", .55), N(740, .08, "square", .55),
+                                          N(1175, .25, "square", .55)] },
+    "alarm.depth": { cat: "alarm", notes: [N(1175, .5, "sine", .45, "ping"),
+                                           N(1175, .38, "sine", .16, "ping")] },
     // Notifications: warn = rising chime, info = single soft note.
     "notify": { cat: "notify", notes: [N(660, .09), N(880, .16)] },
     "notify.info": { cat: "notify", notes: [N(740, .12, "sine", .3)] },
@@ -137,6 +158,7 @@
   };
 
   function play(name) {
+    if (name === "alarm") name = "alarm.medium";   // legacy alias
     const s = SOUNDS[name];
     if (!s || !supported || !cfg.master || !cfg.cats[s.cat]) return;
     playSeq(s.notes);
@@ -149,7 +171,10 @@
   // still go through the master volume.
   function preview(cat) {
     if (!supported) return;
-    if (cat === "alarm") playSeq(SOUNDS["alarm"].notes);
+    if (cat === "alarm" || cat === "alarm-high") playSeq(SOUNDS["alarm.high"].notes);
+    else if (cat === "alarm-medium") playSeq(SOUNDS["alarm.medium"].notes);
+    else if (cat === "alarm-low") playSeq(SOUNDS["alarm.low"].notes);
+    else if (cat === "alarm-depth") playSeq(SOUNDS["alarm.depth"].notes);
     else if (cat === "notify") playSeq(SOUNDS["notify"].notes);
     else if (cat === "mode") playSeq(MODE_MOTIFS.anchor_hold);
     else if (cat === "nav") playSeq(SOUNDS["nav.waypoint"].notes);

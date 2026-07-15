@@ -1289,6 +1289,11 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 .snd-row { display: flex; align-items: center; gap: 8px; }
 .snd-row .switch { flex: 1 1 auto; }
 .snd-row .snd-test { flex: 0 0 auto; padding: 4px 10px; }
+.snd-sub {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 6px 12px; color: var(--muted); font-size: 12px;
+}
+.snd-sub .snd-test { padding: 3px 8px; font-size: 12px; }
 
 /* ---- Replace/Append route delivery dialog (routechoice.js) ---- */
 .route-choice-overlay {

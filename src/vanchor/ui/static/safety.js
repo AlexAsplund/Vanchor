@@ -342,7 +342,7 @@
     const m = (t && t.mob) || null;
     const active = !!(m && m.active);
     // Log to the alert history (#97) on the false→true edge.
-    if (active && !mobWasActive && VA.logAlert) VA.logAlert("alarm", "Man overboard — returning");
+    if (active && !mobWasActive && VA.logAlert) VA.logAlert("alarm", "Man overboard — returning", { level: "high" });
     mobWasActive = active;
     const mobBanner = $("mob-banner");
     if (mobBanner) mobBanner.classList.toggle("hidden", !active);
