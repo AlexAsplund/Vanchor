@@ -443,3 +443,17 @@ def test_handle_command_jog_no_anchor_no_exception():
     ctrl = _controller_at(GeoPoint(59.0, 18.0))
     ctrl.handle_command({"type": "jog"})
     assert ctrl.state.mode == ControlModeName.MANUAL
+
+
+def test_gps_offset_on_sim_gps_teleports_instead(client):
+    """Field report: with a GPS offset active in the SIM, chart-relative modes
+    (contour follow etc.) ran displaced by the offset — the sim sounder samples
+    TRUTH, so biasing the perceived frame away from truth breaks alignment.
+    On a simulated GPS, "adjust my position" therefore MOVES the boat and
+    installs NO offset."""
+    client.post("/api/command",
+                json={"type": "set_gps_offset", "true_lat": 59.1, "true_lon": 18.1})
+    st = client.get("/api/state").json()
+    assert st["gps_offset"]["active"] is False          # no lying offset in sim
+    truth = st.get("truth")
+    assert truth and abs(truth["lat"] - 59.1) < 1e-6 and abs(truth["lon"] - 18.1) < 1e-6

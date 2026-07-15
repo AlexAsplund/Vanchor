@@ -48,6 +48,7 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "nav": {"type": "object", "desc": "guided-nav status (paused, suspended mode, leg index)"},
     "last_apb": {"type": "object|null", "desc": "last received APB autopilot sentence (Follow-APB)"},
     "route_complete": {"type": "boolean", "desc": "the active route has finished (all marks reached)"},
+    "manual_course": {"type": "object|null", "desc": "manual course-hold line: {bearing, lat, lon} of the anchored track"},
     "route_loop": {"type": "object|null", "desc": "loop-route state"},
     "route_patrol": {"type": "object|null", "desc": "patrol-route state"},
     # --- fishing / survey modes ---

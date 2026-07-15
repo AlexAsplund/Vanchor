@@ -19,21 +19,30 @@
   // Relative/Absolute mode toggle, exposed to the wheel via VA.manualCtl.
   const thrust = $("thrust");
   // Steering mode: RELATIVE (default; the wheel handle is a deflection off
-  // the bow) or ABSOLUTE (the handle is a compass bearing 0..359 the motor
-  // head HOLDS server-side while the boat yaws — 0 north, 180 south).
+  // the bow), ABSOLUTE (the handle is a compass bearing 0..359 the motor
+  // head HOLDS server-side while the boat yaws — 0 north, 180 south), or
+  // COURSE (the boat FOLLOWS the ground-track line drawn from the engage
+  // position along the bearing — cross-track corrected server-side).
   const STEER_MODE_KEY = "vanchor-steer-mode";
+  const STEER_MODES = ["relative", "absolute", "course"];
   let steerMode = "relative";
-  try { if (localStorage.getItem(STEER_MODE_KEY) === "absolute") steerMode = "absolute"; } catch (e) { /* ignore */ }
+  try {
+    const saved = localStorage.getItem(STEER_MODE_KEY);
+    if (STEER_MODES.includes(saved)) steerMode = saved;
+  } catch (e) { /* ignore */ }
   // Shared manual state: the wheel and the thrust slider both read/write it;
-  // sendManual() turns it into the mode-appropriate command.
+  // sendManual() turns it into the mode-appropriate command. steerBearing is
+  // the compass value shared by BOTH absolute and course modes.
   const mstate = { thrust: 0.0, steerNorm: 0.0, steerBearing: 0.0 };
   const wrap180 = (d) => ((d + 180) % 360 + 360) % 360 - 180;
   const heading = () => (VA.last && Number.isFinite(VA.last.heading_deg)) ? VA.last.heading_deg : 0;
   function sendManual() {
     mstate.lastSentMs = Date.now();
-    if (steerMode === "absolute") {
-      send({ type: "manual", thrust: mstate.thrust,
-             steer_bearing: Math.round(((mstate.steerBearing % 360) + 360) % 360) });
+    const brg = Math.round(((mstate.steerBearing % 360) + 360) % 360);
+    if (steerMode === "course") {
+      send({ type: "manual", thrust: mstate.thrust, steer_course: brg });
+    } else if (steerMode === "absolute") {
+      send({ type: "manual", thrust: mstate.thrust, steer_bearing: brg });
     } else {
       send({ type: "manual", thrust: mstate.thrust,
              steering: Math.round(mstate.steerNorm * 1000) / 1000 });
@@ -65,7 +74,7 @@
   let onStateEdit = null;   // wheel's re-render hook (set via VA.manualCtl)
   function applySteerMode(mode, persist) {
     const prev = steerMode;
-    steerMode = mode === "absolute" ? "absolute" : "relative";
+    steerMode = STEER_MODES.includes(mode) ? mode : "relative";
     if (steerMode !== prev) {
       // "Actively driving": the boat is in manual AND something is commanded
       // (our thrust, or a live motor command from this manual session).
@@ -73,9 +82,11 @@
       const driving = VA.last && VA.last.mode === "manual" &&
         (mstate.thrust !== 0 || Math.abs(motor.thrust || 0) > 0.005 ||
          Math.abs(motor.steering || 0) > 0.005);
-      if (steerMode === "absolute") {
+      // Convert the current direction between frames so the head/track never
+      // jumps on a switch. absolute<->course share the compass bearing.
+      if (prev === "relative" && steerMode !== "relative") {
         mstate.steerBearing = ((heading() + mstate.steerNorm * 180) % 360 + 360) % 360;
-      } else {
+      } else if (steerMode === "relative" && prev !== "relative") {
         mstate.steerNorm = wrap180(mstate.steerBearing - heading()) / 180;
       }
       if (driving) sendManual();

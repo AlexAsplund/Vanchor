@@ -316,4 +316,33 @@
       gpsMarker.setLatLng([_gpsLat, _gpsLon]);
     }
   });
+
+  // ---- manual COURSE-hold track line (steer_course) -------------------------
+  // The line the boat is following: from the anchored engage point along the
+  // set bearing (a little behind it, far ahead). Removed when course mode ends.
+  let courseLine = null;
+  VA.onTelemetry((t) => {
+    if (!t || t.manual_course === undefined) return;   // decimated frame: no change
+    const mc = t.manual_course;
+    if (!mc || t.mode !== "manual") {
+      if (courseLine) { map.removeLayer(courseLine); courseLine = null; }
+      return;
+    }
+    const R = 6371000, rad = Math.PI / 180;
+    const dest = (lat, lon, d, brg) => {
+      const f1 = lat * rad, l1 = lon * rad, tc = brg * rad, dr = d / R;
+      const f2 = Math.asin(Math.sin(f1) * Math.cos(dr) + Math.cos(f1) * Math.sin(dr) * Math.cos(tc));
+      const l2 = l1 + Math.atan2(Math.sin(tc) * Math.sin(dr) * Math.cos(f1),
+                                 Math.cos(dr) - Math.sin(f1) * Math.sin(f2));
+      return [f2 / rad, l2 / rad];
+    };
+    const pts = [dest(mc.lat, mc.lon, -200, mc.bearing),
+                 [mc.lat, mc.lon],
+                 dest(mc.lat, mc.lon, 20000, mc.bearing)];
+    if (!courseLine) {
+      courseLine = L.polyline(pts, { color: "#27f5b1", weight: 2, dashArray: "10,8", opacity: 0.75 }).addTo(map);
+    } else {
+      courseLine.setLatLngs(pts);
+    }
+  });
 })();

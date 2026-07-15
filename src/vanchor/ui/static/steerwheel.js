@@ -9,11 +9,13 @@
  * so direction + power is a single thumb gesture. A ghost tick on the inner
  * rim shows the ACTUAL head angle from steering feedback.
  *
- * Relative vs Absolute (the toggle above the wheel, see controls.js): the
- * dial looks identical in both — the mode only decides which ring the handle
- * is GLUED to while the boat yaws. Relative: it keeps its boat-frame angle
- * (stays put on screen). Absolute: it keeps its compass bearing (rides the
- * card; the server holds the head there via `manual {steer_bearing}`).
+ * Relative / Absolute / Course (the toggle above the wheel, see controls.js):
+ * the dial looks identical in all three — the mode only decides which ring
+ * the handle is GLUED to while the boat yaws, and what the server holds.
+ * Relative: boat-frame angle (stays put on screen). Absolute: compass bearing
+ * (rides the card; `manual {steer_bearing}` holds the head there). Course:
+ * compass bearing too, but the server follows the ground-track LINE drawn
+ * from the engage position (`manual {steer_course}`, XTE-corrected).
  *
  * Safety: drags must START on the handle knob — taps elsewhere never engage
  * the motor. When the boat leaves manual mode (STOP, any autopilot) the
@@ -104,7 +106,8 @@
 
   // Handle's boat-frame angle for the current steering mode.
   function screenAngle() {
-    return ctl.mode() === "absolute"
+    // Absolute AND course modes are compass-frame (the handle rides the card).
+    return ctl.mode() !== "relative"
       ? wrap180(ctl.state.steerBearing - heading)
       : ctl.state.steerNorm * 180;
   }
@@ -157,7 +160,7 @@
     // Radius -> thrust, with a snap-to-zero deadzone at the hub.
     let t = clamp((Math.hypot(dx, dy) - R_H_MIN) / (R_H_MAX - R_H_MIN), 0, 1);
     if (t < 0.05) t = 0;
-    if (ctl.mode() === "absolute") ctl.state.steerBearing = norm360(a + heading);
+    if (ctl.mode() !== "relative") ctl.state.steerBearing = norm360(a + heading);
     else ctl.state.steerNorm = a / 180;
     ctl.setThrust(Math.round(t * 100) / 100);
     const now = Date.now();

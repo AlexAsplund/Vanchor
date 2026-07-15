@@ -53,6 +53,7 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 **Motion / modes**
 - `manual {thrust(-1..1), steering(-1..1)}` · `stop {}` — relative steering (deflection off the bow)
 - `manual {thrust(-1..1), steer_bearing(0..360)}` — ABSOLUTE steering: the motor head holds the compass bearing (0=N, 180=S) while the boat yaws (recomputed from the live heading each tick); any relative `manual` clears it
+- `manual {thrust(-1..1), steer_course(0..360)}` — COURSE hold: follow the ground-track LINE drawn from the engage position along the bearing (cross-track corrected, ±45° authority). The line anchors when the course value changes; re-sending the same course (thrust tweaks) keeps it. Telemetry `manual_course {bearing,lat,lon}|null` carries the anchored line for the chart overlay
 - link-loss failsafe: telemetry `link.failsafe_action` reports what engaged — `"continue"` (guided modes keep flying; the default), `"hold"` (anchor-hold, `link_loss_continue_mission: false`), `"stop"` (manual deadman)
 - `anchor_hold {anchor?{lat,lon}, radius_m?}` — drop anchor at current position (or supplied point)
 - `anchor_ml {anchor?{lat,lon}, radius_m?}` — ML-trained anchor hold; falls back to PID if model absent

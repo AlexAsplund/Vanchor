@@ -231,11 +231,14 @@ a completely consequence-free one.
    climb from 0.0 and the boat carve a curve on the map.
 4. Ease the handle back to the hub. The boat coasts to a stop.
 
-**Relative vs Absolute** (the toggle above the wheel): in *Relative* (the
-default) the handle stays where you put it relative to the boat. In
-*Absolute* the handle holds a **compass bearing** — set it to N and the
-motor keeps pushing north while the boat swings underneath, handy for
-holding against wind you can see on the water.
+**Relative / Absolute / Course** (the toggle above the wheel): in
+*Relative* (the default) the handle stays where you put it relative to the
+boat. In *Absolute* the handle holds a **compass bearing** — set it to N
+and the motor keeps pushing north while the boat swings underneath. In
+*Course* the boat **follows the straight line** drawn from where you
+engaged it along that bearing (shown dashed on the chart) — wind can push
+an *Absolute* boat sideways off its line, but *Course* steers back onto
+it, like an invisible one-leg route.
 
 **What success looks like:** SOG rises when you drag outward, the heading
 changes when you drag sideways, and the boat glides to a halt when the

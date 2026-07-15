@@ -52,30 +52,80 @@ class ControlMode(abc.ABC):
 
 
 class ManualMode(ControlMode):
-    """Direct helm. Steering is either boat-RELATIVE (a fixed normalized
-    deflection off the bow — the default) or ABSOLUTE (hold the motor head on
-    a COMPASS bearing: 0 = north, 180 = south). Absolute recomputes the
-    deflection from the live heading every tick, so the head stays put in the
-    world while the boat yaws underneath it."""
+    """Direct helm, three steering flavours:
+
+    - RELATIVE (default): a fixed normalized deflection off the bow.
+    - ABSOLUTE: hold the motor HEAD on a compass bearing (0 = north,
+      180 = south) — the deflection is recomputed from the live heading every
+      tick, so the head stays put in the world while the boat yaws.
+    - COURSE: follow the GROUND TRACK line drawn from the engage position
+      along a compass bearing — like a one-leg route with no endpoint. Where
+      absolute merely points the thrust west (wind still sets the boat
+      sideways off the line), course cross-track-corrects back onto the line.
+    """
 
     name = ControlModeName.MANUAL
+
+    # Course-hold cross-track feedback (mirrors WaypointConfig's defaults).
+    COURSE_XTE_GAIN = 2.0            # deg of heading correction per metre off
+    COURSE_MAX_CORRECTION_DEG = 45.0
 
     def __init__(self) -> None:
         self.thrust = 0.0
         self.steering = 0.0
-        # Absolute steering target (compass deg) — None = relative mode.
+        # Absolute steering target (compass deg) — None = not absolute.
         self.steer_bearing: float | None = None
+        # Course hold: bearing + the line's anchor point — None = not course.
+        self.course_bearing: float | None = None
+        self.course_origin: GeoPoint | None = None
 
     def set(self, thrust: float, steering: float) -> None:
         self.thrust = thrust
         self.steering = steering
-        self.steer_bearing = None          # relative command clears absolute
+        self.steer_bearing = None          # relative command clears the holds
+        self.course_bearing = None
+        self.course_origin = None
 
     def set_bearing(self, thrust: float, bearing_deg: float) -> None:
         self.thrust = thrust
         self.steer_bearing = normalize_deg(bearing_deg)
+        self.course_bearing = None
+        self.course_origin = None
+
+    def set_course(self, thrust: float, bearing_deg: float,
+                   position: GeoPoint | None) -> None:
+        """Follow the line from ``position`` along ``bearing_deg``. The line
+        anchors when the bearing CHANGES (or no line exists yet) — re-sending
+        the same course (e.g. a thrust tweak) must not re-draw the line at the
+        boat's current, possibly off-track position."""
+        self.thrust = thrust
+        self.steer_bearing = None
+        bearing = normalize_deg(bearing_deg)
+        if self.course_bearing != bearing or self.course_origin is None:
+            self.course_bearing = bearing
+            self.course_origin = position
+        # else: same course re-sent -> keep the anchored line.
 
     def update(self, state: NavigationState, dt: float) -> Setpoint:
+        if self.course_bearing is not None:
+            # Anchor lazily if engaged before the first fix.
+            if self.course_origin is None:
+                self.course_origin = state.position
+            pos = state.position
+            target = self.course_bearing
+            if pos is not None and self.course_origin is not None:
+                # Signed cross-track error off the infinite line (a far-ahead
+                # point stands in for the leg end). Positive = starboard of
+                # track -> steer left (reduce heading).
+                far = destination_point(self.course_origin, 100000.0, target)
+                xte = cross_track(self.course_origin, far, pos)
+                state.cross_track_m = xte.distance_m
+                correction = _clamp(
+                    self.COURSE_XTE_GAIN * xte.distance_m,
+                    -self.COURSE_MAX_CORRECTION_DEG, self.COURSE_MAX_CORRECTION_DEG,
+                )
+                target = normalize_deg(self.course_bearing - correction)
+            return GuidedSetpoint(target_heading=target, thrust=self.thrust)
         if self.steer_bearing is not None:
             # Point the head at the compass bearing: normalized steering is the
             # boat-relative offset over the full mechanical scale (±180 covers

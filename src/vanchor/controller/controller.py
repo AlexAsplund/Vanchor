@@ -677,7 +677,15 @@ class Controller:
         try:
             if ctype == "manual":
                 bearing = command.get("steer_bearing")
-                if bearing is not None:
+                course = command.get("steer_course")
+                if course is not None:
+                    # Course hold: follow the ground-track line drawn from the
+                    # engage position along the bearing (XTE-corrected).
+                    self.manual.set_course(
+                        float(command.get("thrust", 0.0)), float(course),
+                        self.state.position,
+                    )
+                elif bearing is not None:
                     # Absolute steering: hold the motor head on a compass
                     # bearing (0=N, 180=S) while the boat yaws underneath.
                     self.manual.set_bearing(

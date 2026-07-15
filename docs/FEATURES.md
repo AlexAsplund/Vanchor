@@ -71,8 +71,9 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **Manual steering wheel** — dual-ring gyro dial (live compass card over a
   boat-frame ring): drag around = direction, outward = power; hub reads
   relative° + true° + thrust; ghost tick shows the actual head angle;
-  Relative/Absolute steering modes (absolute holds a compass bearing while
-  the boat yaws).
+  Relative/Absolute/Course steering modes (absolute holds a compass bearing
+  while the boat yaws; course follows the straight track line drawn from the
+  engage point, cross-track corrected).
 - **Heading-hold** autopilot.
 - **Waypoint / Route** following with cross-track correction **and predictive
   drift compensation** (crabs into wind/current so the ground track holds).

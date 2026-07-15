@@ -4,6 +4,24 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Fix: GPS "adjust my position" in the SIM displaced chart-relative modes**
+  (field report: contour follow ran the contour "at its original unadjusted
+  position"). The sim depth sounder samples the boat's TRUE position, so
+  installing a perceived-frame offset on a bias-free simulated GPS shifted
+  perception away from physics by exactly the offset. On a simulated GPS the
+  calibration now TELEPORTS the boat to the clicked true position (no lying
+  offset); real GPS sources keep the normal offset calibration, where it
+  corrects a genuine receiver bias and everything stays aligned.
+
+- **Manual "Course" steering mode** — third option beside Relative/Absolute:
+  set a compass course and the boat follows the straight **track line** drawn
+  from the engage position along it (`manual {steer_course}`), cross-track
+  corrected with ±45° of authority — where Absolute merely points the thrust
+  (wind sets the boat sideways off the line), Course steers back onto it.
+  The line anchors when the course value changes (thrust tweaks keep it) and
+  is drawn dashed on the chart (`manual_course` telemetry). Any relative/
+  absolute manual command or STOP clears it.
+
 - **Heading-up map mode** (`maprotate.js`): a compass button on the map
   (top-left, under zoom) toggles between **north-up** (default) and
   **heading-up** — the chart rotates so "up" is where the bow points, and

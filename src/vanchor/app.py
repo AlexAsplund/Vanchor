@@ -2165,9 +2165,26 @@ class Runtime:
         elif ctype == "inject_nmea":
             asyncio.ensure_future(self.bus.publish(events.NMEA_IN, str(command["sentence"])))
         elif ctype == "set_gps_offset":
-            self.navigator.set_gps_offset(
-                float(command["true_lat"]), float(command["true_lon"])
-            )
+            # On a SIMULATED GPS, "adjust my position" must MOVE the boat, not
+            # install an offset: the sim GPS has no bias to correct, so an
+            # offset would shift the PERCEIVED frame away from the sim truth —
+            # the depth sounder keeps sampling truth, and chart-relative
+            # behaviours (contour follow, charted depth, divergence) then run
+            # displaced by exactly the offset (field report: contour followed
+            # "at its original unadjusted position"). Real GPS sources keep the
+            # normal offset calibration — there the offset corrects a real
+            # bias, so perception and physics align.
+            if type(self.gps).__name__ == "SimGps" and self.simulator is not None:
+                self.navigator.clear_gps_offset()
+                self._teleport({
+                    "lat": float(command["true_lat"]),
+                    "lon": float(command["true_lon"]),
+                })
+                logger.info("gps offset on sim GPS -> teleported the sim boat instead")
+            else:
+                self.navigator.set_gps_offset(
+                    float(command["true_lat"]), float(command["true_lon"])
+                )
         elif ctype == "clear_gps_offset":
             self.navigator.clear_gps_offset()
         elif ctype == "load_route":
@@ -4013,6 +4030,14 @@ class Runtime:
             "failsafe_action": self._link_failsafe_action,
         }
         ctrl = self.controller
+        # Manual course-hold line (bearing + anchor), for the chart overlay.
+        mc = ctrl.manual
+        payload["manual_course"] = (
+            {"bearing": mc.course_bearing,
+             "lat": mc.course_origin.lat, "lon": mc.course_origin.lon}
+            if mc.course_bearing is not None and mc.course_origin is not None
+            else None
+        )
         payload["cruise"] = {
             "enabled": ctrl.cruise_knots is not None,
             "target_knots": ctrl.cruise_knots or 0.0,
