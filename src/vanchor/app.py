@@ -1756,9 +1756,9 @@ class Runtime:
 
     def _build_serial_motor(self, cfg: AppConfig):
         from .hardware.serial_devices import SerialMotorController
-        from .hardware.serial_link import PySerialTransport
+        from .hardware.i2c_link import make_motor_transport
         hw = cfg.hardware
-        return SerialMotorController(PySerialTransport(
+        return SerialMotorController(make_motor_transport(
             hw.motor_port, baudrate=hw.motor_baud, bytesize=hw.motor_bytesize,
             parity=hw.motor_parity, stopbits=hw.motor_stopbits))
 
@@ -1816,8 +1816,8 @@ class Runtime:
                     SerialSteeringChannel,
                     SerialThrustChannel,
                 )
-                from .hardware.serial_link import PySerialTransport
-                transport = PySerialTransport(
+                from .hardware.i2c_link import make_motor_transport
+                transport = make_motor_transport(
                     link["port"],
                     baudrate=link["baud"],
                     bytesize=link["bytesize"],

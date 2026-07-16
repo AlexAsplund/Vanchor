@@ -63,6 +63,45 @@ driver, while thrust is driven by a separate ESC/driver board:
 > fakes, but no physical split board has been driven yet — verify on the bench
 > before first water use, exactly like the combined firmware was.
 
+## Helm PCB I²C tunnel
+
+The helm printed-circuit board (companion repo `vanchor-pcb`) hosts a Pico 2
+(RP2350) that **is** the real-time motor controller; the Orange Pi Zero 3 SBC
+drives it as I²C master.  From vanchor's perspective this is just a different
+transport: the same ASCII line protocol (`CMD`/`STEERD`/`THRUST` out,
+`A`/`E`/`C` in, CRC-8 `*HH`) is tunnelled byte-identically through two FIFOs
+in the Pico 2's register map.
+
+**Configuration** — set `motor_port` to the I²C scheme:
+
+```yaml
+hardware:
+  enabled: true
+  motor_source: serial
+  motor_port: "i2c:3:0x42"   # Linux bus number + Pico I²C address
+```
+
+`3` is the bus number (the `N` in `/dev/i2c-N`); `0x42` is the 7-bit slave
+address as wired on the helm PCB (decimal `66` is equally valid).  Serial
+framing settings (`motor_baud`, `motor_bytesize`, etc.) are ignored when an
+`i2c:` port is used.
+
+**Dependency** — install the `i2c` extra (wraps the `smbus2` Linux I²C
+library):
+
+```
+pip install vanchor[i2c]
+```
+
+**Spec and bench test** — the full register-map specification and a one-liner
+interactive bench-test session are in
+`vanchor-pcb/firmware/helm-pico/docs/I2C-TUNNEL.md`.
+
+> **BENCH-VERIFY**: no physical helm PCB existed as of 2026-07-16.  The
+> transport implements the wire spec exactly (WHOAMI/VERSION probe, TXA latch
+> protocol, FLAGS polling) — bench-verify against real firmware before boat
+> deployment (see §4 of I2C-TUNNEL.md).
+
 ## Driver packs
 
 Both channel kinds participate in the #43 driver registry, so a pack can ship a

@@ -1155,7 +1155,7 @@ hardware:
   enabled: false            # master switch: false = full sim, true = all serial
   gps_port: /dev/ttyUSB0
   compass_port: /dev/ttyUSB1
-  motor_port: /dev/ttyUSB2
+  motor_port: /dev/ttyUSB2    # serial device path, or i2c:<bus>:<addr> for the helm-Pico tunnel
   baudrate: 4800            # shared fallback; prefer per-device keys below
   # Per-device baud rates. gps_baud is 38400 by default: a 5 Hz GPS sending
   # RMC+GGA (~8200 bit/s) saturates a 4800-baud link and causes ever-growing
