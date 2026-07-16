@@ -43,8 +43,15 @@
     VA.setText("hud-ms", sog === null ? "—" : (sog * 0.514444).toFixed(2));
     VA.setText("hud-hdg", hdg === null ? "—" : Math.round(hdg).toString());
     // North-up compass: the needle rotates to point at the heading (N stays up).
+    // Quantized to 0.5° so heading jitter doesn't repaint the rose every frame. (perf)
     const rose = document.getElementById("hud-rose");
-    if (rose && hdg !== null) rose.style.transform = `rotate(${VA.continuousAngle("compass-needle", hdg)}deg)`;
+    if (rose && hdg !== null) {
+      const rot = Math.round(VA.smoothAngle("compass-needle", hdg) * 2) / 2;
+      if (rot !== renderHud._roseRot) {
+        renderHud._roseRot = rot;
+        rose.style.transform = `rotate(${rot}deg)`;
+      }
+    }
     VA.setText("hud-depth", depth === null ? "—" : depth.toFixed(1));
     VA.setText("hud-anchor", Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—");
 

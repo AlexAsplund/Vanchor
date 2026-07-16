@@ -67,6 +67,23 @@ VA.continuousAngle = function (key, deg) {
   return _contRot[key];
 };
 
+// Display-angle smoother: continuous (no 360° wrap jumps, safe under CSS
+// transitions) AND low-passed. Compass jitter otherwise restarts the needle
+// transform transitions (rose, wheel card, boat icon) on every 5-10 Hz frame,
+// so an "idle" UI animates — and repaints — forever; smoothed + quantized by
+// the caller, a moored boat's needles genuinely settle. Snaps on big jumps so
+// real turns aren't dragged behind the filter. (perf)
+const _smoothRot = {};
+VA.smoothAngle = function (key, deg, k, snapDeg) {
+  if (!Number.isFinite(deg)) return _smoothRot[key] || 0;
+  k = k || 0.25; snapDeg = snapDeg || 8;
+  const last = _smoothRot[key];
+  if (last === undefined) { _smoothRot[key] = deg; return deg; }
+  const delta = ((deg - (last % 360) + 540) % 360) - 180; // shortest, [-180,180)
+  _smoothRot[key] = last + (Math.abs(delta) > snapDeg ? delta : delta * k);
+  return _smoothRot[key];
+};
+
 // ---- NMEA / event console ------------------------------------------------
 const MAX_LOG = 40;
 const logBuf = [];

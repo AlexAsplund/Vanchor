@@ -112,10 +112,25 @@
       : ctl.state.steerNorm * 180;
   }
 
+  let lastSig = null;
   function render() {
-    card.setAttribute("transform", `rotate(${-heading} ${C} ${C})`);
-    const a = screenAngle();
+    // Display heading: low-passed + 0.5°-quantized so compass jitter doesn't
+    // restart the card's transform transition (and repaint the whole SVG) on
+    // every telemetry frame. Command math elsewhere keeps the RAW heading;
+    // the same hd drives both the card and the knob so they stay consistent.
+    const hd = Math.round(VA.smoothAngle("wheel-heading", heading) * 2) / 2;
+    const a = ctl.mode() !== "relative"
+      ? wrap180(ctl.state.steerBearing - hd)
+      : ctl.state.steerNorm * 180;
     const t = Math.abs(ctl.state.thrust);
+    // Repaint gate: telemetry re-renders at 5-10 Hz with mostly-unchanged
+    // values; skip the ~13 attribute writes (each an SVG style invalidation)
+    // unless something visible moved by at least its display resolution. (perf)
+    const sig = `${hd}|${a.toFixed(1)}|${t.toFixed(2)}|` +
+      `${ctl.state.thrust < 0}|${ghostDeg === null ? "-" : ghostDeg.toFixed(1)}`;
+    if (sig === lastSig) return;
+    lastSig = sig;
+    card.setAttribute("transform", `rotate(${-hd} ${C} ${C})`);
     const r = R_H_MIN + (R_H_MAX - R_H_MIN) * clamp(t, 0, 1);
     const rad = a * Math.PI / 180;
     const x = C + r * Math.sin(rad), y = C - r * Math.cos(rad);
@@ -127,7 +142,7 @@
     knobC.setAttribute("stroke", rev ? "#ffb020" : "#1be4ff");
     knobDot.setAttribute("fill", rev ? "#ffb020" : "#1be4ff");
     relTxt.textContent = `${a >= 0 ? "+" : ""}${Math.round(a)}°`;
-    trueTxt.textContent = `${String(Math.round(norm360(a + heading))).padStart(3, "0")}° TRUE`;
+    trueTxt.textContent = `${String(Math.round(norm360(a + hd))).padStart(3, "0")}° TRUE`;
     thrTxt.textContent = `${rev ? "−" : ""}${Math.round(t * 100)}%`;
     if (ghostDeg === null) { ghost.setAttribute("opacity", "0"); }
     else {

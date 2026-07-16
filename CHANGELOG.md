@@ -4,6 +4,34 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **UI performance pass (profiled: CDP CPU profiles + devtools traces on an
+  isolated sim rig; idle chart view main-thread −34%, paint −50%, layer
+  commits −48%)** — five findings fixed:
+  1. *Follow-pan cascade*: while driving, the boat-follow pan now shifts the
+     map pane directly per frame (Leaflet's own drag primitive) and fires the
+     real `move`/`moveend` (tile loads, overlay re-glue) at most every 400 ms
+     with a trailing flush — instead of a full setView cascade per telemetry
+     frame.
+  2. *Style-churn gating*: the steering-wheel SVG, boat-marker transform +
+     3D-lift filter, HUD compass rose, motor needle and all boat-attached
+     markers now skip their DOM writes unless the displayed value visibly
+     changed; needle headings are low-pass smoothed (`VA.smoothAngle`) so
+     compass jitter no longer restarts their CSS transitions every frame — a
+     moored boat's UI genuinely settles (also a battery win).
+  3. *Trail append*: the live trail appends points (max 2 Hz, amortized trim)
+     instead of rebuilding the full 600-point polyline every moving frame.
+     (A dedicated canvas renderer was measured WORSE — it adds a second
+     full-container composited layer — and deliberately not used.)
+  4. *Heading-up tilt sizing*: the oversized rotation square is now sized by
+     exact perspective unprojection of the viewport corners instead of a
+     `1+0.9·sin(tilt)` fudge — smaller (fewer tiles/raster/composite) below
+     ~40° tilt, and no more clipped top corners at 45°+ while turning
+     (capped at 2× the viewport diagonal).
+  5. *Tile object-URL LRU*: re-entered tiles reuse their blob object URL from
+     a 256-slot in-memory LRU instead of re-running IndexedDB get → blob →
+     `createObjectURL` → revoke on every pan/zoom (−56% `createObjectURL`
+     time while panning, less GC).
+
 - **I²C tunnel for motor (`motor_port: "i2c:<bus>:<addr>"`)** — the helm-Pico
   board (companion repo `vanchor-pcb`) tunnels the motor ASCII line-protocol
   through an I²C register map; `I2cTransport` is now wired in via

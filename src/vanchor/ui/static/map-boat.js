@@ -59,13 +59,26 @@
   };
   const modeMeta = (m) => MODE_META[m] || ["•", m || "—"];
 
+  // Pixel-gated setLatLng: GPS/compass noise moves the markers by fractions of
+  // a pixel on every 5-10 Hz frame; each ungated set repositions the marker
+  // element and repaints, so an idle chart view never stops rastering. Only
+  // reposition once a marker would visibly move (>=0.5 px at current zoom). (perf)
+  function setLatLngIfMoved(marker, lat, lon) {
+    const p = map.project([lat, lon], map.getZoom());
+    const c = marker._vaPt;
+    if (c && c.z === map.getZoom()
+        && Math.abs(c.x - p.x) < 0.5 && Math.abs(c.y - p.y) < 0.5) return;
+    marker._vaPt = { x: p.x, y: p.y, z: map.getZoom() };
+    marker.setLatLng([lat, lon]);
+  }
+
   const modeBadge = L.marker(START, {
     icon: L.divIcon({ className: "", html: "", iconSize: [0, 0] }),
     interactive: false, keyboard: false, zIndexOffset: 1100,
   }).addTo(map);
   let _badgeMode;
   function updateModeBadge(t, lat, lon) {
-    modeBadge.setLatLng([lat, lon]);
+    setLatLngIfMoved(modeBadge, lat, lon);
     if (t.mode === _badgeMode) return;          // rebuild the icon only on change
     _badgeMode = t.mode;
     const [g, label] = modeMeta(t.mode);
@@ -132,8 +145,15 @@
   let _gpsLat = null, _gpsLon = null;  // low-passed GPS dot position (display only)
 
   // ---- live trail --------------------------------------------------------
-  const trail = L.polyline([], { color: "#1be4ff", weight: 2, opacity: 0.45 }).addTo(map);
+  // Shared SVG renderer on purpose: a dedicated canvas renderer was measured
+  // WORSE here — it adds a second full-container-sized composited layer (huge
+  // under the heading-up oversized square) for an overlay pane that is nearly
+  // empty anyway. The wins live in the append/throttle logic below. (perf)
+  const trail = L.polyline([], {
+    color: "#1be4ff", weight: 2, opacity: 0.45, interactive: false,
+  }).addTo(map);
   const trailPts = [];
+  let _trailMs = 0;
 
   // ---- boat icon scaling -------------------------------------------------
   // The boat is a fixed-pixel icon by default, so it looks tiny when zoomed
@@ -147,10 +167,23 @@
     const lenM = (VA.last && VA.last.boat && VA.last.boat.length_m) || 4.1;
     return Math.max(1, lenM / mpp / BASE_ICON_PX);
   }
+  let _lastBoatTf = null;
   function applyBoatTransform() {
     if (!_boatEl || _boatLat === null) return;
-    const rot = VA.continuousAngle("boat", _boatHdg);
-    _boatEl.style.transform = `rotate(${rot}deg) scale(${boatScale(_boatLat).toFixed(3)})`;
+    // Quantize to 1° / 0.001 scale: compass jitter on a moored boat otherwise
+    // rewrites the transform (and the drop-shadow lift filter) on every 5-10 Hz
+    // telemetry frame for a change nobody can see at 48 px (1° = 0.4 px at the
+    // icon edge). The gate key includes the LIFT inputs (tilt + chart bearing)
+    // too, so toggling tilt or a rotating chart still refreshes the filter. (perf)
+    const rot = Math.round(VA.smoothAngle("boat", _boatHdg));
+    const tf = `rotate(${rot}deg) scale(${boatScale(_boatLat).toFixed(3)})`;
+    const mr = VA.mapRot;
+    const tilt = (mr && mr.mode && mr.mode() === "head" && mr.tilt) ? mr.tilt() : 0;
+    const brg = tilt && mr.bearing ? Math.round(mr.bearing()) : 0;
+    const key = `${tf}|${tilt}|${brg}`;
+    if (key === _lastBoatTf) return;
+    _lastBoatTf = key;
+    _boatEl.style.transform = tf;
     applyBoatLift(rot);
   }
 
@@ -194,6 +227,7 @@
     const el = boatMarker.getElement()?.querySelector(".boat-icon");
     if (el) {
       _boatEl = el;
+      _lastBoatTf = null;   // fresh DOM node: force the transform re-apply
       applyBoatTransform();
       updateMotorIndicator(el, VA.last && VA.last.motor);
     }
@@ -271,6 +305,36 @@
     injectBoatIconPicker();
   }
 
+  // ---- follow-pan --------------------------------------------------------
+  // While driving, the boat outruns the 2 px gate on EVERY telemetry frame, so
+  // a plain panTo would run the full move/moveend cascade (tile-layer updates,
+  // overlay re-glue, layer-tree commit) at up to 10 Hz — the single biggest
+  // main-thread cost found by profiling. Instead: shift the map pane directly
+  // (Leaflet's own drag/animation primitive — all panes, markers and overlays
+  // ride along, and getCenter()/coordinate math read the pane position so they
+  // stay exact), and fire the real move/moveend at most every 400 ms plus a
+  // trailing one when the motion stops, so tile loading and moveend listeners
+  // still catch up promptly. (perf)
+  let _lastMoveEndMs = 0, _panTrailer = null;
+  function fireMoveEnd() {
+    _lastMoveEndMs = Date.now();
+    map.fire("move");
+    map.fire("moveend");
+  }
+  function followPan(dx, dy) {
+    if (map._animatingZoom) return;
+    if (!map._rawPanBy) {   // Leaflet internal gone: fall back to plain pan
+      map.panBy([dx, dy], { animate: false });
+      return;
+    }
+    map._rawPanBy(L.point(Math.round(dx), Math.round(dy)));
+    if (Date.now() - _lastMoveEndMs >= 400) fireMoveEnd();
+    else {
+      clearTimeout(_panTrailer);
+      _panTrailer = setTimeout(fireMoveEnd, 450);
+    }
+  }
+
   // ---- per-frame render --------------------------------------------------
   // Prefer sim ground truth when present; otherwise use the GPS position +
   // heading so the boat still renders on a real boat (truth is sim-only).
@@ -288,7 +352,7 @@
     const lon = src ? src.lon : null;
     const hdg = useTruth && Number.isFinite(truth.heading_deg) ? truth.heading_deg : t.heading_deg;
     if (lat !== null && lon !== null && Number.isFinite(lat) && Number.isFinite(lon)) {
-      boatMarker.setLatLng([lat, lon]);
+      setLatLngIfMoved(boatMarker, lat, lon);
       // Show the recenter FAB when the boat is off-screen (auto-hidden while
       // following, since the boat is then kept in view).
       if (followFab) followFab.classList.toggle("offscreen", !map.getBounds().contains([lat, lon]));
@@ -299,15 +363,25 @@
         applyBoatTransform();
         updateMotorIndicator(el, t.motor);
       }
-      // Only grow the trail (and re-set the polyline) when the boat has actually
-      // moved since the last pushed point — a stationary boat's 5 Hz frames would
-      // otherwise churn a 600-point polyline every tick for no visible change.
+      // Only grow the trail when the boat has actually moved since the last
+      // pushed point, and at most 2 Hz — while driving, a 10 Hz telemetry rate
+      // would otherwise repaint the full 600-point line every frame for ~0.3 m
+      // of new track. addLatLng appends without rebuilding the latlng array.
       const lastPt = trailPts[trailPts.length - 1];
       const TRAIL_EPS = 1e-6;   // ~0.1 m in lat/lon
-      if (!lastPt || Math.abs(lastPt[0] - lat) > TRAIL_EPS || Math.abs(lastPt[1] - lon) > TRAIL_EPS) {
+      const nowMs = Date.now();
+      if ((!lastPt || Math.abs(lastPt[0] - lat) > TRAIL_EPS || Math.abs(lastPt[1] - lon) > TRAIL_EPS)
+          && nowMs - _trailMs >= 500) {
+        _trailMs = nowMs;
         trailPts.push([lat, lon]);
-        if (trailPts.length > 600) trailPts.shift();
-        trail.setLatLngs(trailPts);
+        if (trailPts.length > 600) {
+          // Amortize the trim: drop the oldest 60 in one rebuild instead of
+          // shifting + full re-set on every appended point past the cap.
+          trailPts.splice(0, 60);
+          trail.setLatLngs(trailPts);
+        } else {
+          trail.addLatLng([lat, lon]);
+        }
       }
       if (follow.boat) {
         // Skip the follow-pan when the boat is already ~centred: at 5 Hz the
@@ -318,16 +392,8 @@
         const bp = map.latLngToContainerPoint([lat, lon]);
         const wantX = size.x / 2 + (follow.offsetX || 0);
         const wantY = size.y / 2 + (follow.offsetY || 0);
-        if (Math.abs(bp.x - wantX) >= 2 || Math.abs(bp.y - wantY) >= 2) {
-          if (follow.offsetX || follow.offsetY) {
-            // Keep the boat at an off-centre point (e.g. right of the wizard panel).
-            const z = map.getZoom();
-            const p = map.project([lat, lon], z);
-            map.panTo(map.unproject([p.x - follow.offsetX, p.y - follow.offsetY], z), { animate: false });
-          } else {
-            map.panTo([lat, lon], { animate: false });
-          }
-        }
+        const dx = bp.x - wantX, dy = bp.y - wantY;
+        if (Math.abs(dx) >= 2 || Math.abs(dy) >= 2) followPan(dx, dy);
       }
     }
     // Smooth the displayed GPS dot. Raw 1 Hz fixes carry a few metres of noise
@@ -340,7 +406,7 @@
         _gpsLat += (t.position.lat - _gpsLat) * a;
         _gpsLon += (t.position.lon - _gpsLon) * a;
       }
-      gpsMarker.setLatLng([_gpsLat, _gpsLon]);
+      setLatLngIfMoved(gpsMarker, _gpsLat, _gpsLon);
     }
   });
 

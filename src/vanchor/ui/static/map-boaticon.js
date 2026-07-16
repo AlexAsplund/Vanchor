@@ -346,13 +346,20 @@
     return L.divIcon({ className: "", html: svg, iconSize: [34, 48], iconAnchor: [17, 24] });
   }
 
+  const _miCache = new WeakMap();   // svgEl -> last needle signature (perf gate)
   function updateMotorIndicator(svgEl, motor) {
+    const ang = motor && Number.isFinite(motor.steer_angle_deg) ? motor.steer_angle_deg : null;
+    const thrust = motor && Number.isFinite(motor.thrust) ? motor.thrust : null;
+    // Skip the querySelectors + 8 attribute writes when the needle wouldn't
+    // visibly move — telemetry re-renders at 5-10 Hz with a mostly-steady motor. (perf)
+    const sig = (ang === null || thrust === null || Math.abs(thrust) < 0.02)
+      ? "off" : `${Math.round(ang)}|${Math.round(thrust * 50)}`;
+    if (_miCache.get(svgEl) === sig) return;
+    _miCache.set(svgEl, sig);
     const g = svgEl.querySelector("#motor");
     if (!g) return;
     const line = g.querySelector("#motor-line");
     const head = g.querySelector("#motor-head");
-    const ang = motor && Number.isFinite(motor.steer_angle_deg) ? motor.steer_angle_deg : null;
-    const thrust = motor && Number.isFinite(motor.thrust) ? motor.thrust : null;
     if (ang === null || thrust === null || Math.abs(thrust) < 0.02) {
       g.style.visibility = "hidden";
       return;

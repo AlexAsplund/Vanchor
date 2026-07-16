@@ -70,11 +70,32 @@
   } catch (e) { /* ignore */ }
   const PERSPECTIVE_PX = 1100;
 
+  // Side of the oversized square the chart needs so no blank corner shows at
+  // ANY bearing: 2x the map-plane distance of the farthest viewport corner,
+  // unprojected through perspective(p) rotateX(tilt). Exact, replacing the old
+  // 1+0.9*sin(tilt) fudge that oversized low tilts (wasted raster/composite
+  // area) and UNDERsized 45°+ (clipped top corners while turning). Capped at
+  // 2x the viewport diagonal so extreme tilt can't explode the tile count. (perf)
+  function neededSide(w, h) {
+    const diag = Math.hypot(w, h);
+    if (!tilt) return diag;
+    const th = (tilt * Math.PI) / 180, p = PERSPECTIVE_PX;
+    const cos = Math.cos(th), sin = Math.sin(th);
+    let r = 0;
+    for (const Y of [-h / 2, h / 2]) {          // screen corners, centre origin
+      const denom = p * cos + Y * sin;          // -> 0 at the on-screen horizon
+      if (denom <= p * 0.1) { r = Infinity; break; }
+      const y = (Y * p) / denom;                // map-plane row for that corner
+      const x = (w / 2) * (p - y * sin) / p;    // and its column half-extent
+      r = Math.max(r, Math.hypot(x, y));
+    }
+    return Math.min(2 * r * 1.02, 2 * diag);    // 2% margin, hard cap
+  }
+
   function applyLayout() {
     if (mode === "head") {
       const w = viewport.clientWidth, h = viewport.clientHeight;
-      const tiltBoost = 1 + Math.sin((mode === "head" ? tilt : 0) * Math.PI / 180) * 0.9;
-      const d = Math.ceil(Math.hypot(w, h) * tiltBoost);
+      const d = Math.ceil(neededSide(w, h));
       mapEl.style.inset = "auto";
       mapEl.style.width = d + "px";
       mapEl.style.height = d + "px";

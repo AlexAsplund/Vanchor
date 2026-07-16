@@ -203,6 +203,32 @@
   // Promise<Blob|null> and VA.tileCache.put(url, blob). We patch createTile on
   // each base layer to consult the cache first (and store fetched tiles), so the
   // map keeps working offline. The patch is a no-op until offline.js is loaded.
+  //
+  // In-memory object-URL LRU on top of the IndexedDB store: panning back and
+  // forth otherwise re-runs IDB get -> blob -> createObjectURL -> revoke for
+  // EVERY re-entered tile (profiling showed ~270 ms of createObjectURL + heavy
+  // GC per 15 s of panning). A hit here re-uses the same object URL, so the
+  // browser also re-uses the already-decoded image. ~256 tiles x ~20 KB. (perf)
+  const _tileUrlLru = new Map();     // url -> object URL (Map preserves insert order)
+  const TILE_LRU_MAX = 256;
+  function lruGet(url) {
+    const obj = _tileUrlLru.get(url);
+    if (obj !== undefined) {         // refresh recency
+      _tileUrlLru.delete(url);
+      _tileUrlLru.set(url, obj);
+    }
+    return obj;
+  }
+  function lruPut(url, blob) {
+    const obj = URL.createObjectURL(blob);
+    _tileUrlLru.set(url, obj);
+    if (_tileUrlLru.size > TILE_LRU_MAX) {
+      const [oldUrl, oldObj] = _tileUrlLru.entries().next().value;
+      _tileUrlLru.delete(oldUrl);
+      try { URL.revokeObjectURL(oldObj); } catch (e) { /* ignore */ }
+    }
+    return obj;
+  }
   Object.keys(base).forEach((name) => {
     const layer = base[name];
     const origCreate = layer.createTile;
@@ -216,11 +242,18 @@
         // no cache installed — fall back to default network behaviour
         return origCreate.call(this, coords, done);
       }
+      const hot = lruGet(url);
+      if (hot !== undefined) {
+        img.onload = () => done(null, img);
+        img.onerror = () => done(new Error("cached tile decode failed"), img);
+        img.src = hot;
+        return img;
+      }
       cache.get(url).then((blob) => {
         if (blob) {
-          img.src = URL.createObjectURL(blob);
-          img.onload = () => { try { URL.revokeObjectURL(img.src); } catch (e) {} done(null, img); };
+          img.onload = () => done(null, img);
           img.onerror = () => done(new Error("cached tile decode failed"), img);
+          img.src = lruPut(url, blob);
           return;
         }
         // not cached: download the tile ONCE via fetch, then use that single blob
@@ -231,10 +264,9 @@
         fetch(url)
           .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("tile fetch failed"))))
           .then((blob) => {
-            const obj = URL.createObjectURL(blob);
-            img.onload = () => { try { URL.revokeObjectURL(obj); } catch (e) {} done(null, img); };
-            img.onerror = () => { try { URL.revokeObjectURL(obj); } catch (e) {} done(new Error("tile load failed"), img); };
-            img.src = obj;
+            img.onload = () => done(null, img);
+            img.onerror = () => done(new Error("tile load failed"), img);
+            img.src = lruPut(url, blob);
             if (cache.put) { try { cache.put(url, blob); } catch (e) {} }
           })
           .catch(() => {
