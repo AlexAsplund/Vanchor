@@ -158,6 +158,50 @@ while turning in current, so the corrected world is easier to hold in. The
 ranking is unchanged and the policies transfer without retraining; a future
 training run on the corrected physics may claw back a little more.
 
+## The orbit exploit (2026-07-16)
+
+Leif was observed on the water doing something *technically correct*: holding
+its watch-circle score by **driving full speed in a tight circle inside the
+radius**. Reward-hacking, textbook edition.
+
+**Diagnosis.** The reward was `-dist − 0.6·outside − 0.05·thrust² −
+action-rate`. Nothing penalizes *speed*: a 2 m orbit at full thrust keeps
+`dist` small, never pays the outside penalty, and the energy term is noise
+(0.05/step vs ~1/step per metre of distance). Constant way also buys cheap
+steering authority, so the orbit is a *stable ES attractor*. It was visible in
+the shipped policy's training log all along — `energy 0.997` = mean thrust² ≈ 1
+— and the eval metric couldn't see it: "% of settled samples inside the
+radius" is exactly what an orbit maximises.
+
+**Fix (two halves):**
+
+1. **Reward** (`env.py`): new `speed_pen` term — quadratic ground-speed
+   penalty applied *only inside the watch circle* (`−0.35·sog²`). Trim speeds
+   (~0.3 m/s) cost nothing; an orbit at 2 m/s costs ~1.4/step — decisively
+   worse than an honest hold's residual error. Recovery sprints outside the
+   circle stay free. Trained via `--speed-pen 0.35`.
+2. **Metrics** (`train.py`/`eval.py`): the headline number is now **hold%** =
+   settled samples that are inside the radius **and** ≤ 0.5 m/s SOG, with
+   mean settled SOG alongside. Containment alone is gameable; hold% is not.
+
+**Baseline with the new metrics** (held-out k=64, native envs, 95 °/s
+actuator) — the cheat quantified:
+
+| Controller | within 5 m | **hold** | settled SOG | energy |
+|---|---|---|---|---|
+| Leif (shipped, orbiter) | 59.5% | **21.6%** | 0.66 m/s | 0.97 |
+| Smart (shipped hybrid) | 90.0% | **88.7%** | 0.23 m/s | 0.99 |
+| PID (±35 native) | 76.8% | **76.5%** | 0.13 m/s | 0.25 |
+
+An honest controller's within ≈ hold (Smart, PID — the PID base damps
+velocity, so the hybrid never learned to orbit). Two-thirds of Leif's
+containment was orbiting.
+
+**Retrain:** two runs with `--speed-pen 0.35` (recipe otherwise identical to
+the shipped leif120b: pure, ±120°, capped regime, 95 °/s actuator) — one
+warm-started from the orbiter, one from scratch in case the warm start can't
+leave the orbit basin. Results below when complete.
+
 ## Reproducing
 
 ```bash
@@ -165,9 +209,10 @@ training run on the corrected physics may claw back a little more.
 python -m experiments.anchor_policy.train --steer-range 120 --history 4 \
   --wind-cap 6 --current-cap 0.6 --gust-cap 1.5 --gens 1600 --workers 18
 
-# Leif (pure + full azimuth)
+# Leif (pure + full azimuth; --speed-pen guards against the orbit exploit)
 python -m experiments.anchor_policy.train --pure --steer-range 120 --history 4 \
-  --wind-cap 6 --current-cap 0.6 --gust-cap 1.5 --gens 2600 --workers 18
+  --wind-cap 6 --current-cap 0.6 --gust-cap 1.5 --steer-rate-dps 95 \
+  --speed-pen 0.35 --gens 2600 --workers 18
 ```
 
 Ship a trained checkpoint by copying `best_policy.json` to

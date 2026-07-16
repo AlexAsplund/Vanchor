@@ -51,20 +51,26 @@ _ENV_KW = {}   # native-env options threaded from the CLI (see main)
 
 def _evaluate(action_fn, dt, dur, rad, k, history):
     env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, **_ENV_KW)
-    win, md, en = [], [], []
+    win, hold, msog, md, en = [], [], [], [], []
     for sc in validation_batch(k):
         obs = env.reset(sc)
-        dists, energy, done = [], 0.0, False
+        dists, sogs, energy, done = [], [], 0.0, False
         while not done:
             a = action_fn(obs)
             obs, _, done, info = env.step(a)
-            dists.append(info["dist"]); energy += a[0] * a[0]
-        dists = np.asarray(dists)
-        settled = dists[len(dists) // 2:]
+            dists.append(info["dist"]); sogs.append(info["sog"]); energy += a[0] * a[0]
+        dists, sogs = np.asarray(dists), np.asarray(sogs)
+        n2 = len(dists) // 2
+        settled, ssog = dists[n2:], sogs[n2:]
         win.append(float(np.mean(settled <= rad) * 100.0))
+        # hold% = inside the circle AND actually stationary (<= 0.5 m/s):
+        # plain containment is gameable by orbiting at speed inside the radius
+        # (the Leif v1 exploit), so the headline number requires sitting still.
+        hold.append(float(np.mean((settled <= rad) & (ssog <= 0.5)) * 100.0))
+        msog.append(float(np.mean(ssog)))
         md.append(float(np.mean(settled)))
         en.append(energy / len(dists))
-    return np.mean(win), np.mean(md), np.mean(en)
+    return np.mean(win), np.mean(hold), np.mean(msog), np.mean(md), np.mean(en)
 
 
 def main():
@@ -91,10 +97,12 @@ def main():
     print(f"validation: {args.k} held-out scenarios, {args.duration}s episodes, deployment pipeline\n")
 
     # Deployment conditions (5 Hz control, 1 Hz noisy/stale GPS) are baked into the env.
-    w, d, e = _evaluate(lambda o: pol.forward(o), 0.2, args.duration, args.radius, args.k, history)
-    print(f"  POLICY            : within {w:5.1f}% | mean_dist {d:4.2f} m | energy {e:.3f}")
-    w2, d2, e2 = _evaluate(_anchor_pid, 0.2, args.duration, args.radius, args.k, 1)
-    print(f"  PID AnchorHoldMode: within {w2:5.1f}% | mean_dist {d2:4.2f} m | energy {e2:.3f}")
+    w, h, sg, d, e = _evaluate(lambda o: pol.forward(o), 0.2, args.duration, args.radius, args.k, history)
+    print(f"  POLICY            : within {w:5.1f}% | hold {h:5.1f}% | sog {sg:4.2f} m/s | "
+          f"mean_dist {d:4.2f} m | energy {e:.3f}")
+    w2, h2, sg2, d2, e2 = _evaluate(_anchor_pid, 0.2, args.duration, args.radius, args.k, 1)
+    print(f"  PID AnchorHoldMode: within {w2:5.1f}% | hold {h2:5.1f}% | sog {sg2:4.2f} m/s | "
+          f"mean_dist {d2:4.2f} m | energy {e2:.3f}")
 
 
 if __name__ == "__main__":

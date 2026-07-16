@@ -52,7 +52,8 @@ class AnchorEnv:
                  wind_cap: float | None = None, current_cap: float | None = None,
                  gust_cap: float | None = None,
                  steer_rate_dps: float | None = None,
-                 pid_cal_deg: float | None = None):
+                 pid_cal_deg: float | None = None,
+                 speed_pen: float = 0.0):
         # EXPERIMENT: pure=True makes the net output the command DIRECTLY
         # (command = clip(net), no PID base) -- a from-scratch learned controller
         # rather than a PID refiner. steer_range_deg widens the boat's physical
@@ -86,6 +87,17 @@ class AnchorEnv:
         # the anchor -- rewards arresting drift *before* it becomes position error,
         # i.e. anticipatory / feed-forward control rather than chase-after-the-fact.
         self.anticip = float(anticip)
+        # speed_pen: quadratic ground-speed penalty INSIDE the watch circle.
+        # Station-keeping means being STATIONARY at the mark: without this term
+        # a pure policy discovers the "orbit exploit" -- circle at full thrust
+        # inside the radius, which scores near-perfect containment (dist small,
+        # outside-penalty never fires) while burning the battery and being the
+        # opposite of anchored (shipped Leif v1 did exactly this; its training
+        # log shows mean thrust^2 = 0.997). Quadratic: trim speeds (~0.3 m/s)
+        # cost nothing, an orbit at 2 m/s costs ~1.4/step -- decisively worse
+        # than an honest hold's residual position error. No penalty outside the
+        # circle, so recovery sprints stay free. (2026-07-16 orbit-exploit fix)
+        self.speed_pen = float(speed_pen)
         # v5 RESIDUAL: the command is the robust PID base + a bounded learned
         # correction: clip(pid + residual_scale * policy(obs)). residual_scale=0
         # => pure PID; the policy starts near zero so it begins at PID quality and
@@ -250,15 +262,17 @@ class AnchorEnv:
         # the mark) so the policy learns to arrest drift before it becomes error.
         s = self.boat.state
         out = max(0.0, -(s.ground_vn * dn + s.ground_ve * de) / dist) if dist > 0.1 else 0.0
+        sog2 = s.ground_vn * s.ground_vn + s.ground_ve * s.ground_ve
         # Lighter shaping than the pure-ML versions: the PID base already provides
         # smoothness + anti-saturation, so the residual just needs to improve the hold.
         reward = (-dist
                   - (0.6 if dist > self.radius_m else 0.0)
                   - 0.05 * (th * th)
                   - self.arate * (dth * dth + dst * dst)
-                  - self.anticip * out)
+                  - self.anticip * out
+                  - (self.speed_pen * sog2 if dist <= self.radius_m else 0.0))
         done = self._t >= self.duration_s
         new_f = self._frame()
         self._hist.append(new_f)
         self._cur_frame = new_f
-        return np.concatenate(self._hist), reward, done, {"dist": dist}
+        return np.concatenate(self._hist), reward, done, {"dist": dist, "sog": math.sqrt(sog2)}

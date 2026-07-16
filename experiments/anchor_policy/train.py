@@ -59,12 +59,14 @@ _PID_CAL = None
 _WIND_CAP = None
 _CUR_CAP = None
 _GUST_CAP = None
+_SPEED_PEN = 0.0
 
 
 def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
     obs = env.reset(scenario)
     ret = 0.0
     dists = []
+    sogs = []
     energy = 0.0
     done = False
     while not done:
@@ -72,16 +74,17 @@ def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
         obs, rew, done, info = env.step(a)
         ret += rew
         dists.append(info["dist"])
+        sogs.append(info["sog"])
         energy += a[0] * a[0]
     dists = np.asarray(dists)
-    return ret, dists, energy / len(dists)
+    return ret, dists, energy / len(dists), np.asarray(sogs)
 
 
 def _score(args):
     """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation)."""
     theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN)
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
@@ -89,18 +92,26 @@ def _score(args):
 def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL)
-    win, md, en, rr = [], [], [], []
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN)
+    win, md, en, rr, hold, msog = [], [], [], [], [], []
     for sc in validation_batch(K_VALID):
-        ret, dists, energy = _rollout(pol, env, sc)
-        settled = dists[len(dists) // 2:]          # second half = steady state
+        ret, dists, energy, sogs = _rollout(pol, env, sc)
+        n2 = len(dists) // 2                       # second half = steady state
+        settled, ssog = dists[n2:], sogs[n2:]
         win.append(float(np.mean(settled <= rad) * 100.0))
+        # hold% = settled AND slow: containment alone is gameable by orbiting
+        # inside the circle at speed (the Leif v1 exploit), so the headline
+        # metric requires actually sitting still (<= 0.5 m/s).
+        hold.append(float(np.mean((settled <= rad) & (ssog <= 0.5)) * 100.0))
+        msog.append(float(np.mean(ssog)))
         md.append(float(np.mean(settled)))
         en.append(float(energy))
         rr.append(ret)
     return {
         "val_return": float(np.mean(rr)),
         "within_pct": float(np.mean(win)),
+        "hold_pct": float(np.mean(hold)),
+        "mean_sog": float(np.mean(msog)),
         "mean_dist_m": float(np.mean(md)),
         "energy": float(np.mean(en)),
     }
@@ -126,6 +137,7 @@ def main():
     ap.add_argument("--history", type=int, default=1)    # v2: stacked obs frames
     ap.add_argument("--arate", type=float, default=0.0)   # v2: action-rate penalty
     ap.add_argument("--anticip", type=float, default=0.0)  # v6: anticipation (outward-drift) penalty
+    ap.add_argument("--speed-pen", type=float, default=0.0)  # v7: in-circle ground-speed^2 penalty (orbit-exploit fix)
     ap.add_argument("--pure", action="store_true")         # EXPERIMENT: command = net (no PID base)
     ap.add_argument("--steer-range", type=float, default=None)  # EXPERIMENT: wide azimuth (deg)
     ap.add_argument("--ckpt-dir", default=CKPT_DIR)
@@ -144,8 +156,9 @@ def main():
                     help="warm-start theta from a policy JSON (fresh starts only; "
                          "sizes must match the --history-derived net shape)")
     args = ap.parse_args()
-    global _PURE, _STEER, _WIND_CAP, _CUR_CAP, _GUST_CAP, _STEER_RATE, _PID_CAL
+    global _PURE, _STEER, _WIND_CAP, _CUR_CAP, _GUST_CAP, _STEER_RATE, _PID_CAL, _SPEED_PEN
     _PURE, _STEER = args.pure, args.steer_range
+    _SPEED_PEN = args.speed_pen
     _STEER_RATE = args.steer_rate_dps
     _PID_CAL = args.pid_cal_deg
     _WIND_CAP, _CUR_CAP, _GUST_CAP = args.wind_cap, args.current_cap, args.gust_cap
@@ -220,7 +233,8 @@ def main():
                 with open(log_path, "a") as f:
                     f.write(json.dumps(rec) + "\n")
                 print(f"gen {gen:5d} | val_ret {mt['val_return']:8.1f} | "
-                      f"within {mt['within_pct']:5.1f}% | mean_dist {mt['mean_dist_m']:4.2f}m | "
+                      f"within {mt['within_pct']:5.1f}% | hold {mt['hold_pct']:5.1f}% | "
+                      f"sog {mt['mean_sog']:4.2f} | mean_dist {mt['mean_dist_m']:4.2f}m | "
                       f"energy {mt['energy']:.3f} | {rate:.1f} gen/s", flush=True)
                 TinyPolicy(sizes=sizes, params=theta).save(
                     os.path.join(ckpt, "latest_policy.json"), meta=POLICY_META)

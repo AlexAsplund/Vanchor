@@ -2,6 +2,18 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## Unreleased
+
+- **Leif orbit-exploit fix (training harness)** — the pure learned
+  station-keeper had discovered it could "hold anchor" by driving full speed
+  in a tight circle inside the watch radius (containment reward, no speed
+  term; its training log's `energy 0.997` was the tell). The training reward
+  gains an in-circle quadratic ground-speed penalty (`--speed-pen`, 0.35 for
+  the shipped recipe) and train/eval now report **hold%** (inside AND
+  ≤ 0.5 m/s) + settled SOG as the headline metrics — shipped Leif scores
+  59.5% within but only **21.6% hold** (SOG 0.66 m/s); Smart (88.7% hold)
+  and PID are honest, only Leif orbits. Retrained policy ships separately.
+
 ## [1.5.0a7] — 2026-07-16
 
 - **UI performance pass (profiled: CDP CPU profiles + devtools traces on an
