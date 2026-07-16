@@ -469,3 +469,71 @@ class I2cTransport(SerialTransport):
             )
             if text:
                 self._queue.put_nowait(text)
+
+
+# --------------------------------------------------------------------------- #
+# Transport factory
+# --------------------------------------------------------------------------- #
+
+def make_motor_transport(port: str, **serial_kwargs) -> SerialTransport:
+    """Return the right transport for *port*.
+
+    * ``i2c:<bus>`` or ``i2c:<bus>:<addr>`` → :class:`I2cTransport`.
+    * Anything else → :class:`~.serial_link.PySerialTransport` (with
+      *serial_kwargs* forwarded verbatim).
+
+    *bus* must be a non-negative integer (the ``N`` in ``/dev/i2c-N``).
+    *addr* may be given in hex (``0x42``) or decimal (``66``); the default
+    when omitted is ``0x42`` (the helm PCB wiring).
+
+    Raises :class:`ValueError` for a malformed ``i2c:`` scheme — e.g.
+    ``i2c:`` (missing bus), ``i2c:abc`` (non-integer bus), ``i2c:3:xyz``
+    (non-integer addr), ``i2c:-1`` (negative bus).
+
+    Serial kwargs (``baudrate``, ``bytesize``, ``parity``, ``stopbits``) are
+    silently ignored for ``i2c:`` ports; a single DEBUG message is emitted so
+    the caller can confirm the kwargs were intentionally dropped.
+    """
+    from .serial_link import PySerialTransport
+
+    if not port.startswith("i2c:"):
+        return PySerialTransport(port, **serial_kwargs)
+
+    # ---- parse i2c:<bus>[:<addr>] ----------------------------------------- #
+    rest = port[len("i2c:"):]
+    parts = rest.split(":", 1)
+    if not parts[0]:
+        raise ValueError(
+            f"malformed i2c port {port!r}: expected i2c:<bus> or i2c:<bus>:<addr> "
+            f"(e.g. i2c:3 or i2c:3:0x42)"
+        )
+    try:
+        bus = int(parts[0])
+    except ValueError:
+        raise ValueError(
+            f"malformed i2c port {port!r}: bus must be a non-negative integer "
+            f"(e.g. i2c:3 or i2c:3:0x42)"
+        ) from None
+    if bus < 0:
+        raise ValueError(
+            f"malformed i2c port {port!r}: bus must be non-negative (got {bus})"
+        )
+
+    if len(parts) == 2 and parts[1]:
+        try:
+            addr = int(parts[1], 0)   # accepts 0x42 (hex) or 66 (decimal)
+        except ValueError:
+            raise ValueError(
+                f"malformed i2c port {port!r}: addr must be an integer "
+                f"(e.g. 0x42 or 66)"
+            ) from None
+    else:
+        addr = 0x42  # helm PCB default
+
+    if serial_kwargs:
+        logger.debug(
+            "make_motor_transport: i2c: port %r — serial kwargs %s are ignored",
+            port, sorted(serial_kwargs),
+        )
+
+    return I2cTransport(bus=bus, addr=addr)
