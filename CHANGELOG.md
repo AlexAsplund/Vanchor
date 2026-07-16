@@ -2,7 +2,7 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## Unreleased
+## [1.5.0a7] — 2026-07-16
 
 - **UI performance pass (profiled: CDP CPU profiles + devtools traces on an
   isolated sim rig; idle chart view main-thread −34%, paint −50%, layer
