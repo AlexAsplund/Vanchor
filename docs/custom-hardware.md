@@ -65,12 +65,12 @@ driver, while thrust is driven by a separate ESC/driver board:
 
 ## Helm PCB I²C tunnel
 
-The helm printed-circuit board (companion repo `vanchor-pcb`) hosts a Raspberry
-Pi Pico that bridges the I²C bus (from a Pi Zero 2W or Pi 4) to the motor
-controller.  From vanchor's perspective this is just a different transport: the
-same ASCII line protocol (`CMD`/`STEERD`/`THRUST` out, `A`/`E`/`C` in, CRC-8
-`*HH`) is tunnelled byte-identically through two FIFOs in the Pico's register
-map.
+The helm printed-circuit board (companion repo `vanchor-pcb`) hosts a Pico 2
+(RP2350) that **is** the real-time motor controller; the Orange Pi Zero 3 SBC
+drives it as I²C master.  From vanchor's perspective this is just a different
+transport: the same ASCII line protocol (`CMD`/`STEERD`/`THRUST` out,
+`A`/`E`/`C` in, CRC-8 `*HH`) is tunnelled byte-identically through two FIFOs
+in the Pico 2's register map.
 
 **Configuration** — set `motor_port` to the I²C scheme:
 

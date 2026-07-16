@@ -6,7 +6,7 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 - **I²C tunnel for motor (`motor_port: "i2c:<bus>:<addr>"`)** — the helm-Pico
   board (companion repo `vanchor-pcb`) tunnels the motor ASCII line-protocol
-  through an I²C register map; `I2cTransport` (Task 1–2) is now wired in via
+  through an I²C register map; `I2cTransport` is now wired in via
   `make_motor_transport()` at both motor construction sites in `app.py`, so any
   `motor_port`, `steering_port`, or `thrust_port` accepts the
   `i2c:<bus>[:<addr>]` scheme with no other config change.  Non-i2c ports are

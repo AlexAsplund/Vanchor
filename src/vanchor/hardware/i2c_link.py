@@ -238,19 +238,36 @@ class I2cTransport(SerialTransport):
         """Cancel the poll task and close the bus (idempotent)."""
         if self._poll_task is not None:
             self._poll_task.cancel()
+            # Reap the poll task.  The expected outcome is CancelledError from
+            # our cancel() above — absorb it.  However, if close() itself is
+            # being cancelled concurrently (cur.cancelling() > 0), that outer
+            # CancelledError also surfaces here; re-raise it so the caller's
+            # cancel is honoured.
             try:
                 await self._poll_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except asyncio.CancelledError:
+                cur = asyncio.current_task()
+                if cur is not None and cur.cancelling():
+                    raise
+            except Exception:
+                pass  # Poll loop exited with an error; already logged inside.
             self._poll_task = None
 
+        # I1 fix: acquire the lock AFTER the poll task has been awaited.
+        # The poll task holds _lock inside its loop; cancelling it first lets
+        # the current lock-holding iteration complete and release the lock
+        # before we arrive here, avoiding deadlock.
+        # Residual window: a cancelled to_thread call releases the lock while
+        # its OS thread may still be running — accepted; EBADF is handled
+        # upstream by the supervisor reconnect loop.
         if self._bus is not None:
             bus, self._bus = self._bus, None
             self._write_msg = self._read_msg = None
-            try:
-                await asyncio.to_thread(bus.close)
-            except Exception:   # pragma: no cover - defensive
-                logger.debug("I2C bus %d: error on close", self._bus_num)
+            async with self._lock:
+                try:
+                    await asyncio.to_thread(bus.close)
+                except Exception:   # pragma: no cover - defensive
+                    logger.debug("I2C bus %d: error on close", self._bus_num)
 
     # ----------------------------------------------------------------------- #
     # Line I/O

@@ -35,7 +35,6 @@ from vanchor.hardware.i2c_link import (
     _POLL_ERR_LIMIT,
     _ReadMsg,
     _WriteMsg,
-    _time,
 )
 import vanchor.hardware.i2c_link as i2c_mod
 
