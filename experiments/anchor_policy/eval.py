@@ -14,6 +14,7 @@ every DP-RL paper includes). v2 frame-stacked policies are handled automatically
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -51,17 +52,19 @@ _ENV_KW = {}   # native-env options threaded from the CLI (see main)
 
 def _evaluate(action_fn, dt, dur, rad, k, history):
     env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, **_ENV_KW)
-    win, hold, msog, md, en = [], [], [], [], []
+    win, hold, msog, md, en, mhdg = [], [], [], [], [], []
     for sc in validation_batch(k):
         obs = env.reset(sc)
-        dists, sogs, energy, done = [], [], 0.0, False
+        dists, sogs, herrs, energy, done = [], [], [], 0.0, False
         while not done:
             a = action_fn(obs)
             obs, _, done, info = env.step(a)
-            dists.append(info["dist"]); sogs.append(info["sog"]); energy += a[0] * a[0]
+            dists.append(info["dist"]); sogs.append(info["sog"])
+            herrs.append(info["hdg_err"]); energy += a[0] * a[0]
         dists, sogs = np.asarray(dists), np.asarray(sogs)
         n2 = len(dists) // 2
         settled, ssog = dists[n2:], sogs[n2:]
+        mhdg.append(float(np.mean(np.asarray(herrs)[n2:])))
         win.append(float(np.mean(settled <= rad) * 100.0))
         # hold% = inside the circle AND actually stationary (<= 0.5 m/s):
         # plain containment is gameable by orbiting at speed inside the radius
@@ -70,7 +73,7 @@ def _evaluate(action_fn, dt, dur, rad, k, history):
         msog.append(float(np.mean(ssog)))
         md.append(float(np.mean(settled)))
         en.append(energy / len(dists))
-    return np.mean(win), np.mean(hold), np.mean(msog), np.mean(md), np.mean(en)
+    return np.mean(win), np.mean(hold), np.mean(msog), np.mean(mhdg), np.mean(md), np.mean(en)
 
 
 def main():
@@ -92,17 +95,22 @@ def main():
         "pid_cal_deg": args.pid_cal_deg,
     }.items() if v})
     pol = TinyPolicy.load(args.policy)
-    history = max(1, pol.sizes[0] // OBS_DIM)
+    with open(args.policy) as f:
+        _meta = json.load(f)
+    if _meta.get("obs_heading"):
+        _ENV_KW["hold_heading_obs"] = True
+    frame_dim = OBS_DIM + (2 if _meta.get("obs_heading") else 0)
+    history = max(1, pol.sizes[0] // frame_dim)
     print(f"policy: {os.path.basename(args.policy)}  sizes={pol.sizes}  history={history}")
     print(f"validation: {args.k} held-out scenarios, {args.duration}s episodes, deployment pipeline\n")
 
     # Deployment conditions (5 Hz control, 1 Hz noisy/stale GPS) are baked into the env.
-    w, h, sg, d, e = _evaluate(lambda o: pol.forward(o), 0.2, args.duration, args.radius, args.k, history)
+    w, h, sg, hd, d, e = _evaluate(lambda o: pol.forward(o), 0.2, args.duration, args.radius, args.k, history)
     print(f"  POLICY            : within {w:5.1f}% | hold {h:5.1f}% | sog {sg:4.2f} m/s | "
-          f"mean_dist {d:4.2f} m | energy {e:.3f}")
-    w2, h2, sg2, d2, e2 = _evaluate(_anchor_pid, 0.2, args.duration, args.radius, args.k, 1)
+          f"hdg_err {hd:5.1f} deg | mean_dist {d:4.2f} m | energy {e:.3f}")
+    w2, h2, sg2, hd2, d2, e2 = _evaluate(_anchor_pid, 0.2, args.duration, args.radius, args.k, 1)
     print(f"  PID AnchorHoldMode: within {w2:5.1f}% | hold {h2:5.1f}% | sog {sg2:4.2f} m/s | "
-          f"mean_dist {d2:4.2f} m | energy {e2:.3f}")
+          f"hdg_err {hd2:5.1f} deg | mean_dist {d2:4.2f} m | energy {e2:.3f}")
 
 
 if __name__ == "__main__":

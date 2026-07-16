@@ -146,7 +146,14 @@ class AnchorMLMode:
         # Absent (legacy policies) -> no rescaling, i.e. unchanged behaviour.
         _ta = d.get("train_azimuth_deg")
         self.train_azimuth_deg = float(_ta) if _ta else None
-        self.history = max(1, self._mlp.sizes[0] // _OBS_DIM)
+        # Heading-hold observation (obs v2h, 2026-07-16): policies trained with
+        # sin/cos of (heading - engage heading) appended to each frame declare
+        # "obs_heading": true. Frame dim becomes 10 and the engage heading is
+        # captured on activate(); legacy 8-dim policies are unaffected.
+        self.obs_heading = bool(d.get("obs_heading", False))
+        self._frame_dim = _OBS_DIM + (2 if self.obs_heading else 0)
+        self._target_heading: float | None = None
+        self.history = max(1, self._mlp.sizes[0] // self._frame_dim)
         self.residual_scale = residual_scale          # nominal (fresh-activation) scale
         # Boat mount sign, mirroring Helm.steer_sign (informational -- see class
         # docstring: the Helm applies it to the emitted command, not this mode).
@@ -179,6 +186,10 @@ class AnchorMLMode:
         self._hist = None
         self._prev = np.zeros(2)
         self._prev_heading = None
+        # Heading-hold target = the boat's heading when the mode engaged (only
+        # consumed when the loaded policy declares obs_heading).
+        h = getattr(state, "heading_deg", None)
+        self._target_heading = float(h) if h is not None and math.isfinite(h) else None
         # Fresh activation: nominal residual scale, benign holding estimate
         # (the guardrail only decays after ~guard_window_s of observed drift).
         self._scale_eff = self.residual_scale
@@ -229,10 +240,15 @@ class AnchorMLMode:
         else:
             r = math.radians(angle_difference(self._prev_heading, state.heading_deg)) / dt
         dist = math.hypot(dn, de)
-        return np.array([
+        base = np.array([
             e_fwd / 10.0, e_lat / 10.0, vg_fwd / 1.5, vg_lat / 1.5,
             r / 0.5, self._prev[0], self._prev[1], dist / 10.0,
         ])
+        if not self.obs_heading:
+            return base
+        tgt = self._target_heading if self._target_heading is not None else state.heading_deg
+        herr = math.radians(angle_difference(tgt, state.heading_deg))
+        return np.concatenate([base, [math.sin(herr), math.cos(herr)]])
 
     def update(self, state: NavigationState, dt: float) -> ManualSetpoint:
         # Keep the HUD range/bearing fresh AND feed the safety governor's drag

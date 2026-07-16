@@ -12,7 +12,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   the shipped recipe) and train/eval now report **hold%** (inside AND
   ≤ 0.5 m/s) + settled SOG as the headline metrics — shipped Leif scores
   59.5% within but only **21.6% hold** (SOG 0.66 m/s); Smart (88.7% hold)
-  and PID are honest, only Leif orbits. Retrained policy ships separately.
+  and PID are honest, only Leif orbits. Round 2: the retrain adapted by
+  orbiting ON the circle's edge to dodge the in-circle gate → penalty gate
+  widened to 1.6× radius. Plus a **heading-hold objective**: a bonus for
+  keeping the engage heading while inside the circle (bonus, not penalty —
+  no gate seam to hide in; an orbit sweeps heading 360° so it forfeits half)
+  and an optional heading-error observation (obs v2h, 8→10 dims,
+  `obs_heading` stamped in the policy JSON, `AnchorLeifMode` captures the
+  engage heading on activate). Retrained policy ships separately.
 
 ## [1.5.0a7] — 2026-07-16
 

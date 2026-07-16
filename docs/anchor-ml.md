@@ -197,10 +197,40 @@ An honest controller's within ≈ hold (Smart, PID — the PID base damps
 velocity, so the hybrid never learned to orbit). Two-thirds of Leif's
 containment was orbiting.
 
-**Retrain:** two runs with `--speed-pen 0.35` (recipe otherwise identical to
-the shipped leif120b: pure, ±120°, capped regime, 95 °/s actuator) — one
-warm-started from the orbiter, one from scratch in case the warm start can't
-leave the orbit basin. Results below when complete.
+**Round 2 — the policy found the seam.** After ~2 h with an *in-circle-only*
+gate at `--speed-pen 0.35`, the retrain adapted by **orbiting on the circle's
+edge** (`mean_dist 4.9 m` of a 5 m radius): half of every lap is outside the
+radius, where the speed penalty didn't apply. Countermeasures: the penalty
+gate widened to **1.6× radius** (any edge orbit is fully covered; far-away
+recovery sprints stay free, and a fast final approach pays for only a few
+steps — usefully teaching deceleration-on-arrival) and the weight raised to
+0.5.
+
+**Heading hold (owner requirement).** A real anchored boat also holds its
+heading — and heading is the orbit's Achilles' heel (an orbit sweeps it
+through 360°). Two additions:
+
+- **Reward:** `+2.0 · (1+cos(heading − h₀))/2` per step, **only while inside
+  the circle** (h₀ = heading at engage). Deliberately a *bonus*, not a
+  penalty: a penalty gated on "inside" makes loitering outside the circle a
+  dodge (the same seam as the edge orbit); forfeiting a bonus is never worth
+  leaving the circle for. An orbit collects at most half of it.
+- **Observation (obs v2h):** the frame gains `sin/cos(heading − h₀)`
+  (8 → 10 dims) via `--hold-heading-obs`; without it a policy can only learn
+  yaw *stiffness* from the yaw-rate input — it has no way to steer *back*
+  after a gust rotates the boat. Policies trained this way stamp
+  `obs_heading: true` in their JSON; `AnchorLeifMode` captures the engage
+  heading in `activate()` and builds the matching frame. Legacy 8-dim
+  policies (incl. shipped Smart) are untouched. Note the single-thruster
+  caveat: center mounts (`thruster_x_m = 0`) have ~no yaw authority, so the
+  heading term is unactionable there and washes out of ES ranking (common
+  batch).
+
+**Retrain:** two runs, recipe otherwise identical to the shipped leif120b
+(pure, ±120°, capped regime, 95 °/s actuator), both with `--speed-pen 0.5
+--heading-bonus 2.0`: one warm-started from the orbiter (8-dim obs, learns
+stiffness only), one from scratch with `--hold-heading-obs`. Results below
+when complete.
 
 ## Reproducing
 

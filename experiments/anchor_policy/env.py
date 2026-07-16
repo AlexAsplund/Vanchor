@@ -53,7 +53,9 @@ class AnchorEnv:
                  gust_cap: float | None = None,
                  steer_rate_dps: float | None = None,
                  pid_cal_deg: float | None = None,
-                 speed_pen: float = 0.0):
+                 speed_pen: float = 0.0,
+                 heading_bonus: float = 0.0,
+                 hold_heading_obs: bool = False):
         # EXPERIMENT: pure=True makes the net output the command DIRECTLY
         # (command = clip(net), no PID base) -- a from-scratch learned controller
         # rather than a PID refiner. steer_range_deg widens the boat's physical
@@ -94,10 +96,31 @@ class AnchorEnv:
         # outside-penalty never fires) while burning the battery and being the
         # opposite of anchored (shipped Leif v1 did exactly this; its training
         # log shows mean thrust^2 = 0.997). Quadratic: trim speeds (~0.3 m/s)
-        # cost nothing, an orbit at 2 m/s costs ~1.4/step -- decisively worse
-        # than an honest hold's residual position error. No penalty outside the
-        # circle, so recovery sprints stay free. (2026-07-16 orbit-exploit fix)
+        # cost nothing, an orbit at 2 m/s costs ~2/step -- decisively worse
+        # than an honest hold's residual position error. Gated at 1.6x radius,
+        # NOT the radius itself: with an in-circle-only gate the first retrain
+        # adapted by orbiting ON the circle's edge (mean_dist 4.9 m of 5), where
+        # half the lap dodges the penalty. 1.6x covers any edge orbit while
+        # far-away recovery sprints stay free (a fast final approach pays for
+        # only a few steps, which usefully teaches deceleration-on-arrival).
+        # (2026-07-16 orbit-exploit fix)
         self.speed_pen = float(speed_pen)
+        # heading_bonus: reward for holding the ENGAGE heading while inside the
+        # circle: +bonus * (1+cos(heading-h0))/2, ONLY when dist <= radius. A
+        # BONUS (not a penalty) on purpose -- a penalty gated on "inside" makes
+        # hovering outside the circle a way to dodge it (the same seam the edge
+        # orbit exploited); forfeiting a bonus is never worth leaving the circle
+        # for. Doubles as an orbit killer: an orbit sweeps heading through 360
+        # so it collects at most half the bonus. (2026-07-16)
+        self.heading_bonus = float(heading_bonus)
+        # hold_heading_obs: append [sin, cos] of (perceived heading - engage
+        # heading) to each obs frame (frame dim 8 -> 10). Without it a policy
+        # can only learn yaw STIFFNESS (resist rotation via the yaw-rate obs);
+        # with it, it can steer BACK after a disturbance rotates the boat.
+        # Policies trained with this stamp "obs_heading": true in their JSON
+        # and the runtime AnchorLeifMode builds the matching frame.
+        self.hold_heading_obs = bool(hold_heading_obs)
+        self._h0 = 0.0
         # v5 RESIDUAL: the command is the robust PID base + a bounded learned
         # correction: clip(pid + residual_scale * policy(obs)). residual_scale=0
         # => pure PID; the policy starts near zero so it begins at PID quality and
@@ -118,6 +141,7 @@ class AnchorEnv:
     def reset(self, scenario: dict) -> np.ndarray:
         self._head_st = 0.0
         s = scenario
+        self._h0 = float(s["heading"])   # engage heading (heading-hold target)
         self.anchor = ANCHOR
         coslat = math.cos(math.radians(self.anchor.lat))
         dn = s["start_dist"] * math.cos(s["start_bearing"])
@@ -199,8 +223,12 @@ class AnchorEnv:
         vg_lat = -vn * sh + ve * ch
         r = math.radians(normalize_deg(self._p_heading - self._prev_p_heading)) / self.dt
         dist = math.hypot(dn, de)
-        return np.array([e_fwd / 10.0, e_lat / 10.0, vg_fwd / 1.5, vg_lat / 1.5,
+        base = np.array([e_fwd / 10.0, e_lat / 10.0, vg_fwd / 1.5, vg_lat / 1.5,
                          r / 0.5, self._prev[0], self._prev[1], dist / 10.0])
+        if not self.hold_heading_obs:
+            return base
+        herr = math.radians((self._p_heading - self._h0 + 180.0) % 360.0 - 180.0)
+        return np.concatenate([base, [math.sin(herr), math.cos(herr)]])
 
     # -- step (sub-steps physics; samples sensors at their rates) --------- #
     def step(self, residual):
@@ -263,6 +291,7 @@ class AnchorEnv:
         s = self.boat.state
         out = max(0.0, -(s.ground_vn * dn + s.ground_ve * de) / dist) if dist > 0.1 else 0.0
         sog2 = s.ground_vn * s.ground_vn + s.ground_ve * s.ground_ve
+        herr_true = math.radians((s.heading_deg - self._h0 + 180.0) % 360.0 - 180.0)
         # Lighter shaping than the pure-ML versions: the PID base already provides
         # smoothness + anti-saturation, so the residual just needs to improve the hold.
         reward = (-dist
@@ -270,9 +299,13 @@ class AnchorEnv:
                   - 0.05 * (th * th)
                   - self.arate * (dth * dth + dst * dst)
                   - self.anticip * out
-                  - (self.speed_pen * sog2 if dist <= self.radius_m else 0.0))
+                  - (self.speed_pen * sog2 if dist <= 1.6 * self.radius_m else 0.0)
+                  + (self.heading_bonus * 0.5 * (1.0 + math.cos(herr_true))
+                     if dist <= self.radius_m else 0.0))
         done = self._t >= self.duration_s
         new_f = self._frame()
         self._hist.append(new_f)
         self._cur_frame = new_f
-        return np.concatenate(self._hist), reward, done, {"dist": dist, "sog": math.sqrt(sog2)}
+        return np.concatenate(self._hist), reward, done, {
+            "dist": dist, "sog": math.sqrt(sog2),
+            "hdg_err": abs(math.degrees(herr_true))}
