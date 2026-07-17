@@ -246,8 +246,77 @@ local perturbations never cross the valley. Fixes, each verified:
   heading sweep still collects half the heading bonus, and evidently buys
   control convenience worth more than the other half. New `--yaw-pen`
   (quadratic yaw rate, same 1.6× gate) charges the spin itself — no sweep
-  symmetry to hide behind. leif120f trains from the e-best with
-  `--heading-bonus 6.0 --yaw-pen 10.0`. Results below when complete.
+  symmetry to hide behind.
+
+**Round 4 — pressure works but converges slowly.** leif120f (from the e-best,
+`--heading-bonus 6.0 --yaw-pen 10.0`, 6 h / 4894 gens) halved the spin rather
+than eliminating it: held-out within 89.1% / hold 71.5% / SOG 0.37 — a
+different controller from the shipped orbiter — and the sim gauntlet showed
+2.2 m mean hold at thrust duty 0.51, but still turning at ~10.6 °/s (was 18).
+At `yaw-pen 10` that spin costs only ~0.34/step; every shaped penalty so far
+has been *negotiated down* like this (full-speed orbit → edge orbit →
+18 °/s → 10 °/s), each round buying roughly half the misbehavior.
+
+**Round 5 — disqualification (owner suggestion): ban the class, don't tax
+it.** `--dq-rotation 360`: a rollout is DISQUALIFIED (episode terminated,
+−2000 lump — an order of magnitude worse than any honest rollout earns) the
+moment its **net signed rotation** from the engage heading exceeds ±360°.
+Design points:
+
+- *Net signed* accumulation: gust-driven ±90° swings cancel out and never
+  trip it; only completed revolutions do. Weather-vaning stays legal.
+- *Gradient-preserving*: a slower rotator DQs later and keeps more earned
+  reward first, so ES is pushed smoothly toward "never complete a
+  revolution" even from a start where every candidate DQs.
+- *Un-negotiable*: unlike a per-step tax there is no spin rate at which the
+  behavior becomes worth its price.
+- New `dq%` learning-curve column = fraction of validation rollouts
+  disqualified. The f-best warm start opens at **17%**; the target is 0.
+
+leif120h (from the f-best, `--heading-bonus 8.0 --yaw-pen 40.0
+--dq-rotation 360`) is the current run. (A brief leif120g with only
+`bonus 8 / yaw-pen 40` was superseded by the DQ idea at gen ~10 and killed.)
+
+### Run ledger (the orbit saga in numbers)
+
+Held-out protocol: eval.py, k=64, 180 s, 5 m circle, 95 °/s actuator,
+uncapped scenarios. Sim = full-stack `anchor_leif` engagement on the real
+server (4 min, time_scale 1, settled half scored).
+
+| Run | Recipe delta | within | hold | SOG | hdg err | verdict |
+|---|---|---|---|---|---|---|
+| shipped Leif (v1, leif120b) | original reward | 59.5% | 21.6% | 0.66 | ~90° (orbit) | the complaint: full-speed orbit |
+| retrain-warm / retrain-scratch | +speed-pen, +heading-bonus 2 | ~75%* | ~32%* | 0.60* | ~90°* | stuck in orbit basin 1000+ gens; killed |
+| PID clone (bc_init) | supervised, no ES | 83.2%* | 80.9%* | 0.16* | 80°* | honest basin proven reachable |
+| leif120e | BC init + σ0.02 | 90.1% | 57.5% | 0.45 | 78.8° | sim: 1.2 m hold but 18 °/s pirouette — vetoed |
+| leif120f | +bonus 6, +yaw-pen 10 | 89.1% | 71.5% | 0.37 | 55.6° | sim: 2.2 m hold, 10.6 °/s spin — vetoed |
+| leif120h | +bonus 8, yaw-pen 40, **DQ 360°** | (training) | | | | dq 17%→? |
+| — Smart (shipped hybrid) | reference | 90.0% | 88.7% | 0.23 | — | honest (PID base damps velocity) |
+| — PID (±35 native) | reference | 76.8% | 76.5% | 0.13 | 78.4° | honest, gentle, weaker containment |
+
+\* capped-regime numbers (training/validation metric env), not directly
+comparable to the uncapped eval columns; shown for trend.
+
+### The promote gauntlet
+
+A Leif candidate ships only if it passes ALL of:
+
+1. **Held-out eval** (`eval.py`, uncapped, k=64): hold% and within% must
+   decisively beat the shipped policy; SOG and energy sane.
+2. **Full-stack sim check** (isolated server, real `anchor_leif` command,
+   time_scale 1, 4 min): settled hold ≥ the eval story, AND total heading
+   sweep < 360° in the settled window (no orbit, no pirouette), AND mean
+   |heading − engage heading| small.
+3. Anchor runtime tests green; policy JSON meta complete
+   (`steer_sign`, `train_azimuth_deg`, `obs_heading`).
+
+Lessons (the short version): *containment is not station-keeping* — score
+velocity and heading, not just position; *shaped penalties get negotiated,
+gates get exploited at their seams, hard disqualification bans the class*;
+*a correct reward is not sufficient — ES needs to start in the right basin*
+(behavior-clone first, and scale σ to the clone's weight magnitude); *always
+sim-check the actual deployed mode before promoting* — two candidates with
+excellent eval tables were vetoed by watching the boat for four minutes.
 
 ## Reproducing
 
@@ -256,15 +325,25 @@ local perturbations never cross the valley. Fixes, each verified:
 python -m experiments.anchor_policy.train --steer-range 120 --history 4 \
   --wind-cap 6 --current-cap 0.6 --gust-cap 1.5 --gens 1600 --workers 18
 
-# Leif (pure + full azimuth; --speed-pen guards against the orbit exploit)
+# Leif (pure + full azimuth) — current recipe, post orbit-saga:
+# 1) behavior-clone a PID station-keeper (starts ES in the honest basin)
+python -m experiments.anchor_policy.bc_init \
+  --out experiments/anchor_policy/checkpoints/bc_init_headobs.json
+# 2) ES from the clone. sigma MUST stay small (the default 0.1 is ~100% of
+#    the BC weights' median magnitude and destroys the clone in ~5 gens).
 python -m experiments.anchor_policy.train --pure --steer-range 120 --history 4 \
   --wind-cap 6 --current-cap 0.6 --gust-cap 1.5 --steer-rate-dps 95 \
-  --speed-pen 0.35 --gens 2600 --workers 18
+  --speed-pen 0.5 --heading-bonus 8.0 --yaw-pen 40.0 --dq-rotation 360 \
+  --hold-heading-obs --sigma 0.02 --lr 0.01 \
+  --init-policy experiments/anchor_policy/checkpoints/bc_init_headobs.json \
+  --hours 6 --workers 18
 ```
 
 Ship a trained checkpoint by copying `best_policy.json` to
 `src/vanchor/controller/anchor_policy.json` (Smart) or `anchor_leif.json`
-(Leif) and stamping `train_azimuth_deg` into it.
+(Leif) — train.py stamps `steer_sign`, `train_azimuth_deg` and
+`obs_heading` into the JSON automatically. Then run the promote gauntlet
+above before deploying.
 
 > **Future speedup.** ES is embarrassingly parallel; vectorising the Fossen sim
 > in JAX/CuPy would let the whole population roll out on a GPU (the box has a

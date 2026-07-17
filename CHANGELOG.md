@@ -19,7 +19,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   no gate seam to hide in; an orbit sweeps heading 360° so it forfeits half)
   and an optional heading-error observation (obs v2h, 8→10 dims,
   `obs_heading` stamped in the policy JSON, `AnchorLeifMode` captures the
-  engage heading on activate). Retrained policy ships separately.
+  engage heading on activate). Rounds 3–5: even with a correct reward the
+  orbit is an ES *optimization basin* — escaped by behavior-cloning a PID
+  station-keeper as the ES init (`bc_init.py`; needs `--sigma 0.02`, the
+  default 0.1 wrecks the clone), then a yaw-rate penalty (`--yaw-pen`) when
+  the bc-init policy pirouetted in place, then a hard disqualification
+  (`--dq-rotation 360`: episode terminated at ±360° net rotation) when the
+  spin merely slowed — shaped penalties get negotiated, DQ bans the class.
+  Full run-by-run ledger + promote gauntlet in docs/anchor-ml.md.
+  Retrained policy ships separately after passing the gauntlet.
 
 ## [1.5.0a7] — 2026-07-16
 

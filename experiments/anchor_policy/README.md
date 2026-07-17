@@ -39,9 +39,43 @@ is the learning curve; `checkpoints/best_policy.json` is the deployable policy.
 
 ## Reward
 
-Per step: `-distance − 0.08·thrust² − 0.6·(outside the watch circle)` — i.e.
-hold the anchor **tight** and **cheap**, with an extra pull back inside the
-radius. Maximised over full episodes across the randomised scenario batch.
+Per step (all optional terms 0 unless the flag is passed):
+
+```
+  -distance
+  -0.6·(outside the watch circle)
+  -0.05·thrust²
+  -arate·(Δthrust² + Δsteer²)              --arate      action-rate (CAPS)
+  -anticip·max(0, outward radial speed)    --anticip    arrest drift early
+  -speed_pen·SOG²        while dist ≤ 1.6R --speed-pen  orbit exploit fix
+  +bonus·(1+cos(hdg−h₀))/2 while dist ≤ R  --heading-bonus  hold engage heading
+  -yaw_pen·r²            while dist ≤ 1.6R --yaw-pen    pirouette fix
+  DQ (terminate, −2000) past ±360° net rotation  --dq-rotation
+```
+
+i.e. hold the anchor **tight**, **stationary**, **pointing where it was
+engaged**, and **cheap** — and a completed revolution disqualifies the
+rollout outright. The speed/yaw/heading/DQ terms exist because a pure policy
+otherwise reward-hacks station-keeping by orbiting; the full story (five
+rounds of exploit → countermeasure, with numbers) is in
+`docs/anchor-ml.md` § "The orbit exploit". Maximised over full episodes
+across the randomised scenario batch.
+
+## Escaping the orbit basin (BC init)
+
+A pure policy trained from scratch reliably converges to the orbit even
+under a correct reward — full thrust buys instant control authority, and
+ES's local perturbations can't cross the valley to hold-and-trim.
+`bc_init.py` behavior-clones a PID station-keeper into the policy
+(supervised regression, numpy backprop, minutes); start ES from that with
+`--init-policy ... --sigma 0.02 --lr 0.01`. The small sigma is mandatory:
+the default 0.1 is ~100% of the BC weights' median magnitude and wrecks the
+clone within ~5 generations.
+
+`--hold-heading-obs` appends sin/cos of (heading − engage heading) to each
+obs frame (8 → 10 dims) so the policy can steer *back* to the engage
+heading, not merely resist yaw; the trained JSON stamps `obs_heading: true`
+and the runtime `AnchorLeifMode` builds the matching frame.
 
 ## Deploying to the boat
 
