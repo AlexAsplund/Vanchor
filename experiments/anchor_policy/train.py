@@ -103,14 +103,23 @@ def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip, wts):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
     env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=wts[0], heading_bonus=wts[1], hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=wts[2], dq_rotation_deg=_DQ_ROT, osc_pen=wts[3])
+    # Heading/dq/oscillation are judged ONLY on yaw-controllable mounts
+    # (|thruster_x_m| > 0.2 m): a center-mount boat has no yaw lever arm, so
+    # it misses heading/rotation targets NO MATTER WHAT the policy does --
+    # including them makes those targets unreachable, which rails the
+    # adaptive weights at their cap and starves every other trait (observed:
+    # yaw_pen pinned at 16x while position hold degraded).
     win, md, en, rr, hold, msog, mhdg, dq, osc = [], [], [], [], [], [], [], [], []
     for sc in validation_batch(K_VALID):
         ret, dists, energy, sogs, herrs, osc_rpm = _rollout(pol, env, sc)
-        osc.append(osc_rpm)
+        yawable = abs(sc["thruster_x_m"]) > 0.2
+        if yawable:
+            osc.append(osc_rpm)
         n2 = len(dists) // 2                       # second half = steady state
         settled, ssog = dists[n2:], sogs[n2:]
-        mhdg.append(float(np.mean(herrs[n2:])))
-        dq.append(1.0 if env._dq else 0.0)
+        if yawable:
+            mhdg.append(float(np.mean(herrs[n2:])))
+            dq.append(1.0 if env._dq else 0.0)
         win.append(float(np.mean(settled <= rad) * 100.0))
         # hold% = settled AND slow: containment alone is gameable by orbiting
         # inside the circle at speed (the Leif v1 exploit), so the headline
@@ -125,9 +134,9 @@ def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip, wts):
         "within_pct": float(np.mean(win)),
         "hold_pct": float(np.mean(hold)),
         "mean_sog": float(np.mean(msog)),
-        "mean_hdg_err": float(np.mean(mhdg)),
-        "dq_pct": float(np.mean(dq) * 100.0),
-        "osc_rpm": float(np.mean(osc)),
+        "mean_hdg_err": float(np.mean(mhdg)) if mhdg else 0.0,
+        "dq_pct": float(np.mean(dq) * 100.0) if dq else 0.0,
+        "osc_rpm": float(np.mean(osc)) if osc else 0.0,
         "mean_dist_m": float(np.mean(md)),
         "energy": float(np.mean(en)),
     }
@@ -181,6 +190,7 @@ def main():
     ap.add_argument("--target-hdg", type=float, default=20.0)    # mean_hdg_err <=
     ap.add_argument("--target-dq", type=float, default=0.0)      # dq_pct <=
     ap.add_argument("--target-osc", type=float, default=8.0)     # yaw reversals/min <=
+    ap.add_argument("--reset-weights", action="store_true")     # ignore checkpointed adaptive weights (restart from CLI bases)
     ap.add_argument("--pure", action="store_true")         # EXPERIMENT: command = net (no PID base)
     ap.add_argument("--steer-range", type=float, default=None)  # EXPERIMENT: wide azimuth (deg)
     ap.add_argument("--ckpt-dir", default=CKPT_DIR)
@@ -242,7 +252,7 @@ def main():
         theta, m_adam, v_adam = st["theta"], st["m"], st["v"]
         start_gen, best_val = int(st["gen"]), float(st["best_val"])
         adam_t = int(st["adam_t"]) if "adam_t" in st.files else start_gen
-        if "wts" in st.files:
+        if "wts" in st.files and not args.reset_weights:
             saved = [float(x) for x in st["wts"]]
             wts[:len(saved)] = saved   # older 3-weight checkpoints: osc stays at CLI base
         if "best_canon" in st.files:
@@ -333,7 +343,7 @@ def main():
                             changes.append(f"{name} {old:.2f}->{wts[i]:.2f}")
                     def _decay(i, name):
                         old = wts[i]
-                        wts[i] = max(wts[i] * 0.95, w_base[i])
+                        wts[i] = max(wts[i] * 0.9, w_base[i])
                         if abs(wts[i] - old) > 1e-9:
                             changes.append(f"{name} {old:.2f}->{wts[i]:.2f} (relax)")
                     if mt["hold_pct"] < args.target_hold:

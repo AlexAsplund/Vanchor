@@ -64,8 +64,9 @@ def _evaluate(action_fn, dt, dur, rad, k, history):
         dists, sogs = np.asarray(dists), np.asarray(sogs)
         n2 = len(dists) // 2
         settled, ssog = dists[n2:], sogs[n2:]
-        mhdg.append(float(np.mean(np.asarray(herrs)[n2:])))
-        osc.append(info["osc_n"] * 60.0 / max(1e-6, len(dists) * env.dt))
+        if abs(sc["thruster_x_m"]) > 0.2:   # heading/osc judged on yaw-controllable mounts only
+            mhdg.append(float(np.mean(np.asarray(herrs)[n2:])))
+            osc.append(info["osc_n"] * 60.0 / max(1e-6, len(dists) * env.dt))
         win.append(float(np.mean(settled <= rad) * 100.0))
         # hold% = inside the circle AND actually stationary (<= 0.5 m/s):
         # plain containment is gameable by orbiting at speed inside the radius
