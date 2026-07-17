@@ -26,6 +26,10 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   the bc-init policy pirouetted in place, then a hard disqualification
   (`--dq-rotation 360`: episode terminated at ±360° net rotation) when the
   spin merely slowed — shaped penalties get negotiated, DQ bans the class.
+  Round 6: `--adapt` automates the weight tuning — traits missing their
+  targets (hold%, heading err, dq%) get their reward weights raised ×1.25
+  per 50 gens, met traits relax toward base, and the best checkpoint is
+  selected by a fixed canonical score so a moving reward can't bias it.
   Full run-by-run ledger + promote gauntlet in docs/anchor-ml.md.
   Retrained policy ships separately after passing the gauntlet.
 

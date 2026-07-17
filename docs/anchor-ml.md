@@ -277,6 +277,28 @@ leif120h (from the f-best, `--heading-bonus 8.0 --yaw-pen 40.0
 --dq-rotation 360`) is the current run. (A brief leif120g with only
 `bonus 8 / yaw-pen 40` was superseded by the DQ idea at gen ~10 and killed.)
 
+**Round 6 — adaptive trait pressure (owner idea): stop hand-tuning the
+weights.** Rounds 1–5 were a human doing gradient descent on reward weights
+(look at the lagging trait, bump its term, restart). `--adapt` automates
+exactly that, constrained-optimization style:
+
+- Targets: `--target-hold 80` (hold% ≥), `--target-hdg 20` (mean heading
+  err ≤), `--target-dq 0` (dq% ≤).
+- Every `--adapt-every` (50) gens: each trait MISSING its target gets its
+  weight ×1.25 (speed_pen ← hold, heading_bonus ← heading err, yaw_pen ←
+  dq), capped at 16× the CLI base; traits met **with margin** decay ×0.95
+  back toward base (never below), freeing optimization pressure. Met traits
+  are protected by hysteresis — regress past the target and the weight
+  climbs again.
+- Weights ride the per-generation job tuples (the worker pool forks once —
+  frozen globals would never see updates) and survive resume via the
+  checkpoint.
+- **Best-checkpoint selection switches to a FIXED canonical score**
+  (`hold + 0.25·within − 0.5·hdg_err − 2·dq%`, mirroring the promote
+  gauntlet). Under a moving reward, `val_return` is incomparable across
+  weight changes — selecting on it would make `best_policy.json` chase
+  whichever trait was most recently up-weighted.
+
 ### Run ledger (the orbit saga in numbers)
 
 Held-out protocol: eval.py, k=64, 180 s, 5 m circle, 95 °/s actuator,

@@ -87,18 +87,21 @@ def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
 
 
 def _score(args):
-    """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation)."""
-    theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip = args
+    """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation).
+
+    Reward weights ride the ARGS (not the frozen worker globals) so the
+    adaptive-curriculum controller (--adapt) can change them mid-run."""
+    theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip, wts = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN, heading_bonus=_HEADING_BONUS, hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=_YAW_PEN, dq_rotation_deg=_DQ_ROT)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=wts[0], heading_bonus=wts[1], hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=wts[2], dq_rotation_deg=_DQ_ROT)
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
 
-def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip):
+def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip, wts):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN, heading_bonus=_HEADING_BONUS, hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=_YAW_PEN, dq_rotation_deg=_DQ_ROT)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=wts[0], heading_bonus=wts[1], hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=wts[2], dq_rotation_deg=_DQ_ROT)
     win, md, en, rr, hold, msog, mhdg, dq = [], [], [], [], [], [], [], []
     for sc in validation_batch(K_VALID):
         ret, dists, energy, sogs, herrs = _rollout(pol, env, sc)
@@ -127,6 +130,16 @@ def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip):
     }
 
 
+def _canon_score(mt: dict) -> float:
+    """FIXED merit score for best-checkpoint selection, independent of the
+    (possibly adapting) reward weights. val_return is incomparable across
+    weight changes -- selecting on it would make best_policy chase whichever
+    trait was most recently up-weighted. Mirrors the promote gauntlet:
+    stationary containment first, then heading, dq heavily charged."""
+    return (mt["hold_pct"] + 0.25 * mt["within_pct"]
+            - 0.5 * mt["mean_hdg_err"] - 2.0 * mt["dq_pct"])
+
+
 def _centered_ranks(x: np.ndarray) -> np.ndarray:
     ranks = np.empty(len(x), dtype=np.float64)
     ranks[np.argsort(x)] = np.arange(len(x))
@@ -152,6 +165,17 @@ def main():
     ap.add_argument("--hold-heading-obs", action="store_true")   # v7: append sin/cos heading error to the obs (frame 8 -> 10)
     ap.add_argument("--yaw-pen", type=float, default=0.0)         # v7b: near-mark yaw-rate^2 penalty (pirouette fix)
     ap.add_argument("--dq-rotation", type=float, default=0.0)     # v8: disqualify past +/- this net rotation (deg, 0=off)
+    # v9: adaptive trait pressure (owner idea): every --adapt-every gens,
+    # raise the weight of each trait that misses its target (x1.25, capped at
+    # 16x the CLI base) and decay met-with-margin weights back toward base
+    # (x0.95, never below). Met traits are protected by hysteresis: if one
+    # regresses past its target its weight climbs again. Best checkpoint is
+    # selected by the FIXED _canon_score, not the moving val_return.
+    ap.add_argument("--adapt", action="store_true")
+    ap.add_argument("--adapt-every", type=int, default=50)
+    ap.add_argument("--target-hold", type=float, default=80.0)   # hold_pct >=
+    ap.add_argument("--target-hdg", type=float, default=20.0)    # mean_hdg_err <=
+    ap.add_argument("--target-dq", type=float, default=0.0)      # dq_pct <=
     ap.add_argument("--pure", action="store_true")         # EXPERIMENT: command = net (no PID base)
     ap.add_argument("--steer-range", type=float, default=None)  # EXPERIMENT: wide azimuth (deg)
     ap.add_argument("--ckpt-dir", default=CKPT_DIR)
@@ -202,12 +226,21 @@ def main():
     start_gen, best_val, adam_t = 0, -1e18, 0
     b1, b2, eps_a = 0.9, 0.999, 1e-8
 
+    # live reward weights (adapted when --adapt; constant otherwise)
+    wts = [args.speed_pen, args.heading_bonus, args.yaw_pen]
+    w_base = list(wts)
+    best_canon = -1e18
+
     state_path = os.path.join(ckpt, "state.npz")
     if os.path.exists(state_path) and not args.no_resume:
         st = np.load(state_path)
         theta, m_adam, v_adam = st["theta"], st["m"], st["v"]
         start_gen, best_val = int(st["gen"]), float(st["best_val"])
         adam_t = int(st["adam_t"]) if "adam_t" in st.files else start_gen
+        if "wts" in st.files:
+            wts = [float(x) for x in st["wts"]]
+        if "best_canon" in st.files:
+            best_canon = float(st["best_canon"])
         # Restore the perturbation RNG so a resume continues the EXACT stream
         # (previously a restart replayed a fresh stream from seed 0).
         if "rng_state" in st.files:
@@ -235,8 +268,9 @@ def main():
             gen_seed = (gen * 7919 + 1) & 0x7FFFFFFF
             eps = rng.standard_normal((args.pop, n))
             cands = np.concatenate([theta + args.sigma * eps, theta - args.sigma * eps])
+            wtup = tuple(wts)
             jobs = [(c, sizes, gen_seed, args.k, args.dt, args.duration, RADIUS,
-                     args.history, args.arate, args.anticip) for c in cands]
+                     args.history, args.arate, args.anticip, wtup) for c in cands]
             rewards = np.array(pool.map(_score, jobs))
             util = _centered_ranks(rewards)
             up, um = util[:args.pop], util[args.pop:]
@@ -254,10 +288,13 @@ def main():
 
             if gen % 5 == 0 or gen == args.gens - 1:
                 mt = _metrics(theta, sizes, args.dt, args.duration, RADIUS,
-                              args.history, args.arate, args.anticip)
+                              args.history, args.arate, args.anticip, tuple(wts))
+                canon = _canon_score(mt)
                 rate = (gen - start_gen + 1) / (time.time() - t0)
                 rec = {"gen": gen, "train_return": float(rewards.mean()),
-                       "gens_per_s": round(rate, 2), **mt}
+                       "gens_per_s": round(rate, 2), "canon": round(canon, 2),
+                       "w_speed": round(wts[0], 3), "w_head": round(wts[1], 3),
+                       "w_yaw": round(wts[2], 3), **mt}
                 with open(log_path, "a") as f:
                     f.write(json.dumps(rec) + "\n")
                 print(f"gen {gen:5d} | val_ret {mt['val_return']:8.1f} | "
@@ -266,12 +303,50 @@ def main():
                       f"energy {mt['energy']:.3f} | {rate:.1f} gen/s", flush=True)
                 TinyPolicy(sizes=sizes, params=theta).save(
                     os.path.join(ckpt, "latest_policy.json"), meta=POLICY_META)
-                if mt["val_return"] > best_val:
+                # Best selection: FIXED canon score under --adapt (val_return
+                # is incomparable across weight changes); legacy val_return
+                # otherwise (unchanged behaviour for old recipes).
+                if args.adapt:
+                    if canon > best_canon:
+                        best_canon = canon
+                        TinyPolicy(sizes=sizes, params=theta).save(
+                            os.path.join(ckpt, "best_policy.json"), meta=POLICY_META)
+                elif mt["val_return"] > best_val:
                     best_val = mt["val_return"]
                     TinyPolicy(sizes=sizes, params=theta).save(
                         os.path.join(ckpt, "best_policy.json"), meta=POLICY_META)
+                # Adaptive trait pressure: raise lagging traits' weights, decay
+                # met-with-margin ones back toward base (never below base).
+                if args.adapt and gen > start_gen and gen % args.adapt_every == 0:
+                    CAP = 16.0
+                    changes = []
+                    def _bump(i, name):
+                        old = wts[i]
+                        wts[i] = min(wts[i] * 1.25, w_base[i] * CAP)
+                        if wts[i] != old:
+                            changes.append(f"{name} {old:.2f}->{wts[i]:.2f}")
+                    def _decay(i, name):
+                        old = wts[i]
+                        wts[i] = max(wts[i] * 0.95, w_base[i])
+                        if abs(wts[i] - old) > 1e-9:
+                            changes.append(f"{name} {old:.2f}->{wts[i]:.2f} (relax)")
+                    if mt["hold_pct"] < args.target_hold:
+                        _bump(0, "speed_pen")
+                    elif mt["hold_pct"] > args.target_hold + 5:
+                        _decay(0, "speed_pen")
+                    if mt["mean_hdg_err"] > args.target_hdg:
+                        _bump(1, "heading_bonus")
+                    elif mt["mean_hdg_err"] < args.target_hdg * 0.7:
+                        _decay(1, "heading_bonus")
+                    if mt["dq_pct"] > args.target_dq:
+                        _bump(2, "yaw_pen")
+                    elif mt["dq_pct"] <= args.target_dq:
+                        _decay(2, "yaw_pen")
+                    if changes:
+                        print(f"adapt @gen {gen}: " + "; ".join(changes), flush=True)
                 np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
                          gen=gen + 1, best_val=best_val, adam_t=adam_t,
+                         best_canon=best_canon, wts=np.array(wts),
                          rng_state=json.dumps(rng.bit_generator.state))
     except KeyboardInterrupt:
         print("\ninterrupted -- state is checkpointed; rerun to resume.")
@@ -279,6 +354,7 @@ def main():
         pool.close(); pool.join()
         np.savez(state_path, theta=theta, m=m_adam, v=v_adam,
                  gen=gen + 1, best_val=best_val, adam_t=adam_t,
+                 best_canon=best_canon, wts=np.array(wts),
                  rng_state=json.dumps(rng.bit_generator.state))
         print("checkpoint saved.")
 

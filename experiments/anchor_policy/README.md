@@ -77,6 +77,17 @@ obs frame (8 → 10 dims) so the policy can steer *back* to the engage
 heading, not merely resist yaw; the trained JSON stamps `obs_heading: true`
 and the runtime `AnchorLeifMode` builds the matching frame.
 
+## Adaptive trait pressure (--adapt)
+
+`--adapt --target-hold 80 --target-hdg 20 --target-dq 0`: every
+`--adapt-every` (50) gens the trainer raises the weight of each trait
+missing its target (×1.25, ≤16× base) and relaxes met-with-margin weights
+back toward base — automated curriculum instead of hand-retuned restarts.
+Under `--adapt` the best checkpoint is picked by a FIXED canonical score
+(`hold + 0.25·within − 0.5·hdg_err − 2·dq%`), never by the moving
+`val_return`. Weight trajectory is logged per record (`w_speed`, `w_head`,
+`w_yaw`) and `adapt @gen …` lines mark every change.
+
 ## Deploying to the boat
 
 `best_policy.json` is the whole model. On the Pi, load it with `TinyPolicy.load`
