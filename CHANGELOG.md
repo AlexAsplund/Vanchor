@@ -4,6 +4,20 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Leif retrained: no more orbiting (promoted `leif120i best_g00240`)** —
+  the pure learned station-keeper no longer circles the anchor: live-sim
+  gauntlet over 4 episodes holds 83–88% (inside + stationary), 2.6–3.1 m
+  mean distance, net rotation 9–74° per 2 min (vs full revolutions every
+  ~20 s before), 3.5–7 yaw reversals/min, engage-heading error 28–46°.
+  Held-out eval hold 76.7% vs the old policy's 21.6%. Selection was
+  **sim-in-the-loop**: the training-env score proved gameable by
+  transfer-sensitive policies (one in-env "best" orbited only in the live
+  stack), so every archived snapshot runs the full-stack sim gauntlet and
+  the ranking happens there. Also fixes a real runtime obs bug
+  (`AnchorLeifMode` under-reported its own steering by the azimuth rescale
+  in the prev-action channel). Open item: engage-heading lock is ~40° mean
+  error vs the 20° goal (scripted-teacher experiment next).
+
 - **Leif orbit-exploit fix (training harness)** — the pure learned
   station-keeper had discovered it could "hold anchor" by driving full speed
   in a tight circle inside the watch radius (containment reward, no speed

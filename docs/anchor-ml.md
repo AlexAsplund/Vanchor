@@ -309,6 +309,39 @@ train/eval, and it's the fourth adapted trait (`--target-osc 8`/min).
 Measurement immediately justified it: the in-training policy was reversing
 yaw **30×/min** — invisible in every prior metric.
 
+**Round 7 — the training env lied; the sim gauntlet became the judge.**
+leif120h's final in-env "best" (hold 83%, dq 0%) **orbited in the live
+full-stack sim** (net 1100°+/2 min) — behavior the training env can't even
+express (DQ terminates it). Bisection: the training env with the exact
+runtime scenario is clean, the deterministic analysis runner is clean,
+thrust-actuation shaping ruled out by A/B — the late high-pressure policies
+had become knife-edge overfit to the training pipeline, and ANY runtime
+delta (residual suspect: the live nav-fusion path) tips them into rotation.
+One real runtime bug found on the way: `AnchorLeifMode` stored the
+POST-azimuth-rescale steering in the prev-action obs (0.67× under-report;
+Smart already stored pre-rescale "matches training") — fixed, necessary but
+not sufficient. Consequences, all shipped:
+
+- **Snapshot archiving** (`best_gNNNNN.json` on every canonical-best
+  improvement) — a sim-gauntlet-passing candidate had been overwritten by a
+  later in-env "improvement" and was unrecoverable.
+- **`--adapt-cap`** (default 16, recipe now 4): the unbounded ratchet bred
+  the knife-edge policies.
+- **Sim-in-the-loop selection** (`batch_gauntlet`): every snapshot runs the
+  LIVE sim check; ranking and pass/fail (net < 360°, ≤ 8 reversals/min)
+  happen there, not in the training env.
+
+**Promoted (2026-07-17): leif120i `best_g00240`** — f-lineage warm start,
+moderated adaptive pressure (cap 4×, targets hold 80 / hdg 35 / dq 1 /
+osc 8). Live-sim gauntlet over 4 episodes: inside 97–100%, **hold 83–88%**,
+mean dist 2.6–3.1 m, **net rotation 9–74° (no orbit)**, 3.5–7.1
+reversals/min, heading error 28–46°. Held-out eval: within 83.4% / hold
+76.7% (ties the PID's honest hold with better containment; the shipped
+orbiter held 21.6%). Predecessor archived as
+`runs/anchor_leif-superseded-20260717.json`. **Open item:** engage-heading
+error ~40° vs the 20° goal — next tool is a heading-aware scripted teacher
+(BC v2) to establish the achievable frontier before more ES pressure.
+
 ### Run ledger (the orbit saga in numbers)
 
 Held-out protocol: eval.py, k=64, 180 s, 5 m circle, 95 °/s actuator,
@@ -322,7 +355,8 @@ server (4 min, time_scale 1, settled half scored).
 | PID clone (bc_init) | supervised, no ES | 83.2%* | 80.9%* | 0.16* | 80°* | honest basin proven reachable |
 | leif120e | BC init + σ0.02 | 90.1% | 57.5% | 0.45 | 78.8° | sim: 1.2 m hold but 18 °/s pirouette — vetoed |
 | leif120f | +bonus 6, +yaw-pen 10 | 89.1% | 71.5% | 0.37 | 55.6° | sim: 2.2 m hold, 10.6 °/s spin — vetoed |
-| leif120h | +bonus 8, yaw-pen 40, **DQ 360°** | (training) | | | | dq 17%→? |
+| leif120h | +bonus 8, yaw-pen 40, **DQ 360°**, adapt | 81.3% | 77.5% | 0.27 | 51.2° | in-env best ORBITS in live sim — transfer failure, vetoed |
+| **leif120i g00240 (PROMOTED)** | f-lineage, adapt cap 4×, sim-in-loop pick | **83.4%** | **76.7%** | 0.31 | 28–46° (sim) | live sim: hold 83–88%, net rot 9–74°, no orbit/weave |
 | — Smart (shipped hybrid) | reference | 90.0% | 88.7% | 0.23 | — | honest (PID base damps velocity) |
 | — PID (±35 native) | reference | 76.8% | 76.5% | 0.13 | 78.4° | honest, gentle, weaker containment |
 
