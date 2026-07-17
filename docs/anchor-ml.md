@@ -299,6 +299,16 @@ exactly that, constrained-optimization style:
   weight changes — selecting on it would make `best_policy.json` chase
   whichever trait was most recently up-weighted.
 
+**Round 6b — oscillation (owner suggestion, pre-emptive).** Weaving/swerving
+is the next exploit class the terms above miss: a slow, wide S-curve has low
+yaw rate (weak `yaw_pen`) and modest speed, but it must **flip rotation
+direction** twice per cycle — the flip is the signature. New `--osc-pen`
+charges each yaw-rate sign reversal near the mark (2 °/s deadband so noise
+wiggle doesn't count), `osc_rpm` (reversals/min) joins the metrics in
+train/eval, and it's the fourth adapted trait (`--target-osc 8`/min).
+Measurement immediately justified it: the in-training policy was reversing
+yaw **30×/min** — invisible in every prior metric.
+
 ### Run ledger (the orbit saga in numbers)
 
 Held-out protocol: eval.py, k=64, 180 s, 5 m circle, 95 °/s actuator,

@@ -83,7 +83,8 @@ def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
         herrs.append(info["hdg_err"])
         energy += a[0] * a[0]
     dists = np.asarray(dists)
-    return ret, dists, energy / len(dists), np.asarray(sogs), np.asarray(herrs)
+    osc_rpm = info["osc_n"] * 60.0 / max(1e-6, len(dists) * env.dt)
+    return ret, dists, energy / len(dists), np.asarray(sogs), np.asarray(herrs), osc_rpm
 
 
 def _score(args):
@@ -93,7 +94,7 @@ def _score(args):
     adaptive-curriculum controller (--adapt) can change them mid-run."""
     theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip, wts = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=wts[0], heading_bonus=wts[1], hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=wts[2], dq_rotation_deg=_DQ_ROT)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=wts[0], heading_bonus=wts[1], hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=wts[2], dq_rotation_deg=_DQ_ROT, osc_pen=wts[3])
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
@@ -101,10 +102,11 @@ def _score(args):
 def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip, wts):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=wts[0], heading_bonus=wts[1], hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=wts[2], dq_rotation_deg=_DQ_ROT)
-    win, md, en, rr, hold, msog, mhdg, dq = [], [], [], [], [], [], [], []
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=wts[0], heading_bonus=wts[1], hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=wts[2], dq_rotation_deg=_DQ_ROT, osc_pen=wts[3])
+    win, md, en, rr, hold, msog, mhdg, dq, osc = [], [], [], [], [], [], [], [], []
     for sc in validation_batch(K_VALID):
-        ret, dists, energy, sogs, herrs = _rollout(pol, env, sc)
+        ret, dists, energy, sogs, herrs, osc_rpm = _rollout(pol, env, sc)
+        osc.append(osc_rpm)
         n2 = len(dists) // 2                       # second half = steady state
         settled, ssog = dists[n2:], sogs[n2:]
         mhdg.append(float(np.mean(herrs[n2:])))
@@ -125,6 +127,7 @@ def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip, wts):
         "mean_sog": float(np.mean(msog)),
         "mean_hdg_err": float(np.mean(mhdg)),
         "dq_pct": float(np.mean(dq) * 100.0),
+        "osc_rpm": float(np.mean(osc)),
         "mean_dist_m": float(np.mean(md)),
         "energy": float(np.mean(en)),
     }
@@ -171,11 +174,13 @@ def main():
     # (x0.95, never below). Met traits are protected by hysteresis: if one
     # regresses past its target its weight climbs again. Best checkpoint is
     # selected by the FIXED _canon_score, not the moving val_return.
+    ap.add_argument("--osc-pen", type=float, default=0.0)         # v9: charge per yaw-rate sign reversal near the mark (weave/swerve fix)
     ap.add_argument("--adapt", action="store_true")
     ap.add_argument("--adapt-every", type=int, default=50)
     ap.add_argument("--target-hold", type=float, default=80.0)   # hold_pct >=
     ap.add_argument("--target-hdg", type=float, default=20.0)    # mean_hdg_err <=
     ap.add_argument("--target-dq", type=float, default=0.0)      # dq_pct <=
+    ap.add_argument("--target-osc", type=float, default=8.0)     # yaw reversals/min <=
     ap.add_argument("--pure", action="store_true")         # EXPERIMENT: command = net (no PID base)
     ap.add_argument("--steer-range", type=float, default=None)  # EXPERIMENT: wide azimuth (deg)
     ap.add_argument("--ckpt-dir", default=CKPT_DIR)
@@ -227,7 +232,7 @@ def main():
     b1, b2, eps_a = 0.9, 0.999, 1e-8
 
     # live reward weights (adapted when --adapt; constant otherwise)
-    wts = [args.speed_pen, args.heading_bonus, args.yaw_pen]
+    wts = [args.speed_pen, args.heading_bonus, args.yaw_pen, args.osc_pen]
     w_base = list(wts)
     best_canon = -1e18
 
@@ -238,7 +243,8 @@ def main():
         start_gen, best_val = int(st["gen"]), float(st["best_val"])
         adam_t = int(st["adam_t"]) if "adam_t" in st.files else start_gen
         if "wts" in st.files:
-            wts = [float(x) for x in st["wts"]]
+            saved = [float(x) for x in st["wts"]]
+            wts[:len(saved)] = saved   # older 3-weight checkpoints: osc stays at CLI base
         if "best_canon" in st.files:
             best_canon = float(st["best_canon"])
         # Restore the perturbation RNG so a resume continues the EXACT stream
@@ -294,12 +300,12 @@ def main():
                 rec = {"gen": gen, "train_return": float(rewards.mean()),
                        "gens_per_s": round(rate, 2), "canon": round(canon, 2),
                        "w_speed": round(wts[0], 3), "w_head": round(wts[1], 3),
-                       "w_yaw": round(wts[2], 3), **mt}
+                       "w_yaw": round(wts[2], 3), "w_osc": round(wts[3], 3), **mt}
                 with open(log_path, "a") as f:
                     f.write(json.dumps(rec) + "\n")
                 print(f"gen {gen:5d} | val_ret {mt['val_return']:8.1f} | "
                       f"within {mt['within_pct']:5.1f}% | hold {mt['hold_pct']:5.1f}% | "
-                      f"sog {mt['mean_sog']:4.2f} | hdg {mt['mean_hdg_err']:5.1f} | dq {mt['dq_pct']:3.0f}% | mean_dist {mt['mean_dist_m']:4.2f}m | "
+                      f"sog {mt['mean_sog']:4.2f} | hdg {mt['mean_hdg_err']:5.1f} | dq {mt['dq_pct']:3.0f}% | osc {mt['osc_rpm']:4.1f} | mean_dist {mt['mean_dist_m']:4.2f}m | "
                       f"energy {mt['energy']:.3f} | {rate:.1f} gen/s", flush=True)
                 TinyPolicy(sizes=sizes, params=theta).save(
                     os.path.join(ckpt, "latest_policy.json"), meta=POLICY_META)
@@ -342,6 +348,10 @@ def main():
                         _bump(2, "yaw_pen")
                     elif mt["dq_pct"] <= args.target_dq:
                         _decay(2, "yaw_pen")
+                    if mt["osc_rpm"] > args.target_osc:
+                        _bump(3, "osc_pen")
+                    elif mt["osc_rpm"] < args.target_osc * 0.7:
+                        _decay(3, "osc_pen")
                     if changes:
                         print(f"adapt @gen {gen}: " + "; ".join(changes), flush=True)
                 np.savez(state_path, theta=theta, m=m_adam, v=v_adam,

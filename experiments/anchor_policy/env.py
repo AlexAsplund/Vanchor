@@ -57,7 +57,8 @@ class AnchorEnv:
                  heading_bonus: float = 0.0,
                  hold_heading_obs: bool = False,
                  yaw_pen: float = 0.0,
-                 dq_rotation_deg: float = 0.0):
+                 dq_rotation_deg: float = 0.0,
+                 osc_pen: float = 0.0):
         # EXPERIMENT: pure=True makes the net output the command DIRECTLY
         # (command = clip(net), no PID base) -- a from-scratch learned controller
         # rather than a PID refiner. steer_range_deg widens the boat's physical
@@ -138,6 +139,17 @@ class AnchorEnv:
         self._rot_net = 0.0
         self._prev_true_heading: float | None = None
         self._dq = False
+        # osc_pen: charge each YAW-RATE SIGN REVERSAL near the mark (same
+        # 1.6x-radius gate). Weaving/swerving is the oscillation exploit the
+        # other terms miss: a slow wide S-curve has low yaw rate (yaw_pen
+        # weak) and modest speed, but it must flip rotation direction twice
+        # per cycle -- that flip IS the signature. A 2 deg/s deadband keeps
+        # sensor-noise wiggle and genuine near-zero yaw from counting; honest
+        # station-keeping reverses yaw a few times a minute, a weave does it
+        # every few seconds. (2026-07-17, owner suggestion)
+        self.osc_pen = float(osc_pen)
+        self._yaw_sign = 0
+        self._osc_n = 0
         # hold_heading_obs: append [sin, cos] of (perceived heading - engage
         # heading) to each obs frame (frame dim 8 -> 10). Without it a policy
         # can only learn yaw STIFFNESS (resist rotation via the yaw-rate obs);
@@ -170,6 +182,8 @@ class AnchorEnv:
         self._rot_net = 0.0
         self._prev_true_heading = float(s["heading"])
         self._dq = False
+        self._yaw_sign = 0
+        self._osc_n = 0
         self.anchor = ANCHOR
         coslat = math.cos(math.radians(self.anchor.lat))
         dn = s["start_dist"] * math.cos(s["start_bearing"])
@@ -323,6 +337,13 @@ class AnchorEnv:
         yaw_r = float(self.boat._nu[2])   # body yaw rate, rad/s (ground truth)
         self._rot_net += (s.heading_deg - self._prev_true_heading + 180.0) % 360.0 - 180.0
         self._prev_true_heading = s.heading_deg
+        # Yaw-rate sign reversal detection (2 deg/s deadband).
+        _sgn = 1 if yaw_r > 0.035 else (-1 if yaw_r < -0.035 else 0)
+        _reversed = _sgn != 0 and self._yaw_sign != 0 and _sgn != self._yaw_sign
+        if _sgn != 0:
+            self._yaw_sign = _sgn
+        if _reversed:
+            self._osc_n += 1
         # Lighter shaping than the pure-ML versions: the PID base already provides
         # smoothness + anti-saturation, so the residual just needs to improve the hold.
         reward = (-dist
@@ -334,7 +355,9 @@ class AnchorEnv:
                   + (self.heading_bonus * 0.5 * (1.0 + math.cos(herr_true))
                      if dist <= self.radius_m else 0.0)
                   - (self.yaw_pen * yaw_r * yaw_r
-                     if dist <= 1.6 * self.radius_m else 0.0))
+                     if dist <= 1.6 * self.radius_m else 0.0)
+                  - (self.osc_pen
+                     if _reversed and dist <= 1.6 * self.radius_m else 0.0))
         done = self._t >= self.duration_s
         if self.dq_rotation_deg and abs(self._rot_net) > self.dq_rotation_deg:
             self._dq = True
@@ -345,4 +368,5 @@ class AnchorEnv:
         self._cur_frame = new_f
         return np.concatenate(self._hist), reward, done, {
             "dist": dist, "sog": math.sqrt(sog2),
-            "hdg_err": abs(math.degrees(herr_true)), "dq": self._dq}
+            "hdg_err": abs(math.degrees(herr_true)), "dq": self._dq,
+            "osc_n": self._osc_n}

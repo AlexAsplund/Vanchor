@@ -50,6 +50,8 @@ Per step (all optional terms 0 unless the flag is passed):
   -speed_pen·SOG²        while dist ≤ 1.6R --speed-pen  orbit exploit fix
   +bonus·(1+cos(hdg−h₀))/2 while dist ≤ R  --heading-bonus  hold engage heading
   -yaw_pen·r²            while dist ≤ 1.6R --yaw-pen    pirouette fix
+  -osc_pen per yaw-rate sign reversal (2°/s deadband, dist ≤ 1.6R)
+                                           --osc-pen    weave/swerve fix
   DQ (terminate, −2000) past ±360° net rotation  --dq-rotation
 ```
 
@@ -79,9 +81,11 @@ and the runtime `AnchorLeifMode` builds the matching frame.
 
 ## Adaptive trait pressure (--adapt)
 
-`--adapt --target-hold 80 --target-hdg 20 --target-dq 0`: every
+`--adapt --target-hold 80 --target-hdg 20 --target-dq 0 --target-osc 8`: every
 `--adapt-every` (50) gens the trainer raises the weight of each trait
-missing its target (×1.25, ≤16× base) and relaxes met-with-margin weights
+missing its target (×1.25, ≤16× base; hold→speed_pen, heading→
+heading_bonus, dq→yaw_pen, oscillation→osc_pen) and relaxes met-with-margin
+weights
 back toward base — automated curriculum instead of hand-retuned restarts.
 Under `--adapt` the best checkpoint is picked by a FIXED canonical score
 (`hold + 0.25·within − 0.5·hdg_err − 2·dq%`), never by the moving

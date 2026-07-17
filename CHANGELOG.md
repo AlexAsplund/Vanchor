@@ -30,6 +30,10 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   targets (hold%, heading err, dq%) get their reward weights raised ×1.25
   per 50 gens, met traits relax toward base, and the best checkpoint is
   selected by a fixed canonical score so a moving reward can't bias it.
+  Round 6b: `--osc-pen` charges yaw-rate sign reversals near the mark
+  (weave/swerve exploit; the flip is the signature a slow S-curve can't
+  hide) — the new reversals/min metric showed the in-training policy
+  weaving 30×/min, invisible to every prior metric.
   Full run-by-run ledger + promote gauntlet in docs/anchor-ml.md.
   Retrained policy ships separately after passing the gauntlet.
 
