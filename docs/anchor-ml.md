@@ -226,11 +226,28 @@ through 360°). Two additions:
   heading term is unactionable there and washes out of ES ranking (common
   batch).
 
-**Retrain:** two runs, recipe otherwise identical to the shipped leif120b
-(pure, ±120°, capped regime, 95 °/s actuator), both with `--speed-pen 0.5
---heading-bonus 2.0`: one warm-started from the orbiter (8-dim obs, learns
-stiffness only), one from scratch with `--hold-heading-obs`. Results below
-when complete.
+**Round 3 — the orbit is an optimization basin, not a reward problem.** With
+the reward fixed (honest holding out-scores the orbit ~30:1 per step), BOTH
+retrains — warm-started and from-scratch-with-heading-obs — still converged to
+the orbit (energy 0.999, mean |heading err| 90°, 1000+ generations flat).
+Full thrust gives a young policy robust control authority immediately; ES's
+local perturbations never cross the valley. Fixes, each verified:
+
+- **`bc_init.py` (behavior cloning):** distill a PID station-keeper into the
+  10-dim policy by supervised regression (numpy backprop, minutes). The clone
+  alone scores hold 79% / SOG 0.18 / energy 0.25 — ES now STARTS in the
+  honest basin and refines.
+- **ES exploration scale:** the default `--sigma 0.1` equals ~100% of the BC
+  weights' median magnitude — the first population wrecked the clone within 5
+  generations and slid back to orbit. BC-warm-started runs use `--sigma 0.02
+  --lr 0.01`.
+- **Pirouette (round 3b):** the bc-init run (leif120e, 4915 gens) held 1.2 m
+  mean distance in the full-stack sim — but spun in place at ~18 °/s: a
+  heading sweep still collects half the heading bonus, and evidently buys
+  control convenience worth more than the other half. New `--yaw-pen`
+  (quadratic yaw rate, same 1.6× gate) charges the spin itself — no sweep
+  symmetry to hide behind. leif120f trains from the e-best with
+  `--heading-bonus 6.0 --yaw-pen 10.0`. Results below when complete.
 
 ## Reproducing
 

@@ -62,6 +62,7 @@ _GUST_CAP = None
 _SPEED_PEN = 0.0
 _HEADING_BONUS = 0.0
 _HOLD_HEAD_OBS = False
+_YAW_PEN = 0.0
 
 
 def _rollout(pol: TinyPolicy, env: AnchorEnv, scenario: dict):
@@ -88,7 +89,7 @@ def _score(args):
     """Mean episode RETURN of `theta` over a batch (gen_seed<0 -> validation)."""
     theta, sizes, gen_seed, k, dt, dur, rad, history, arate, anticip = args
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN, heading_bonus=_HEADING_BONUS, hold_heading_obs=_HOLD_HEAD_OBS)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN, heading_bonus=_HEADING_BONUS, hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=_YAW_PEN)
     batch = validation_batch(k) if gen_seed < 0 else scenario_batch(gen_seed, k)
     return float(np.mean([_rollout(pol, env, sc)[0] for sc in batch]))
 
@@ -96,7 +97,7 @@ def _score(args):
 def _metrics(theta, sizes, dt, dur, rad, history, arate, anticip):
     """Interpretable validation metrics for the learning curve (main process)."""
     pol = TinyPolicy(sizes=sizes, params=theta)
-    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN, heading_bonus=_HEADING_BONUS, hold_heading_obs=_HOLD_HEAD_OBS)
+    env = AnchorEnv(dt=dt, duration_s=dur, radius_m=rad, history=history, arate=arate, anticip=anticip, pure=_PURE, steer_range_deg=_STEER, wind_cap=_WIND_CAP, current_cap=_CUR_CAP, gust_cap=_GUST_CAP, steer_rate_dps=_STEER_RATE, pid_cal_deg=_PID_CAL, speed_pen=_SPEED_PEN, heading_bonus=_HEADING_BONUS, hold_heading_obs=_HOLD_HEAD_OBS, yaw_pen=_YAW_PEN)
     win, md, en, rr, hold, msog, mhdg = [], [], [], [], [], [], []
     for sc in validation_batch(K_VALID):
         ret, dists, energy, sogs, herrs = _rollout(pol, env, sc)
@@ -146,6 +147,7 @@ def main():
     ap.add_argument("--speed-pen", type=float, default=0.0)  # v7: in-circle ground-speed^2 penalty (orbit-exploit fix)
     ap.add_argument("--heading-bonus", type=float, default=0.0)  # v7: hold-engage-heading bonus while inside the circle
     ap.add_argument("--hold-heading-obs", action="store_true")   # v7: append sin/cos heading error to the obs (frame 8 -> 10)
+    ap.add_argument("--yaw-pen", type=float, default=0.0)         # v7b: near-mark yaw-rate^2 penalty (pirouette fix)
     ap.add_argument("--pure", action="store_true")         # EXPERIMENT: command = net (no PID base)
     ap.add_argument("--steer-range", type=float, default=None)  # EXPERIMENT: wide azimuth (deg)
     ap.add_argument("--ckpt-dir", default=CKPT_DIR)
@@ -165,11 +167,12 @@ def main():
                          "sizes must match the --history-derived net shape)")
     args = ap.parse_args()
     global _PURE, _STEER, _WIND_CAP, _CUR_CAP, _GUST_CAP, _STEER_RATE, _PID_CAL, _SPEED_PEN
-    global _HEADING_BONUS, _HOLD_HEAD_OBS, POLICY_META
+    global _HEADING_BONUS, _HOLD_HEAD_OBS, POLICY_META, _YAW_PEN
     _PURE, _STEER = args.pure, args.steer_range
     _SPEED_PEN = args.speed_pen
     _HEADING_BONUS = args.heading_bonus
     _HOLD_HEAD_OBS = args.hold_heading_obs
+    _YAW_PEN = args.yaw_pen
     # Stamp deployment-relevant training facts into the policy JSON so the
     # runtime mode + eval can reconstruct the matching pipeline (azimuth
     # rescale, heading-aware obs) without manual editing.

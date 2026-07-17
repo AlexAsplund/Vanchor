@@ -55,7 +55,8 @@ class AnchorEnv:
                  pid_cal_deg: float | None = None,
                  speed_pen: float = 0.0,
                  heading_bonus: float = 0.0,
-                 hold_heading_obs: bool = False):
+                 hold_heading_obs: bool = False,
+                 yaw_pen: float = 0.0):
         # EXPERIMENT: pure=True makes the net output the command DIRECTLY
         # (command = clip(net), no PID base) -- a from-scratch learned controller
         # rather than a PID refiner. steer_range_deg widens the boat's physical
@@ -113,6 +114,15 @@ class AnchorEnv:
         # for. Doubles as an orbit killer: an orbit sweeps heading through 360
         # so it collects at most half the bonus. (2026-07-16)
         self.heading_bonus = float(heading_bonus)
+        # yaw_pen: quadratic yaw-rate penalty near the mark (same 1.6x-radius
+        # gate as speed_pen). The heading BONUS alone proved insufficient: the
+        # bc-init retrain held 1.2 m position by PIROUETTING at ~18 deg/s (a
+        # heading sweep collects half the bonus and evidently buys control
+        # convenience worth more than the other half). Yaw rate punishes the
+        # spin itself -- no sweep symmetry to hide behind. Sized so 18 deg/s
+        # costs ~1/step while honest heading-keeping corrections (<3 deg/s)
+        # cost ~nothing. (2026-07-17)
+        self.yaw_pen = float(yaw_pen)
         # hold_heading_obs: append [sin, cos] of (perceived heading - engage
         # heading) to each obs frame (frame dim 8 -> 10). Without it a policy
         # can only learn yaw STIFFNESS (resist rotation via the yaw-rate obs);
@@ -292,6 +302,7 @@ class AnchorEnv:
         out = max(0.0, -(s.ground_vn * dn + s.ground_ve * de) / dist) if dist > 0.1 else 0.0
         sog2 = s.ground_vn * s.ground_vn + s.ground_ve * s.ground_ve
         herr_true = math.radians((s.heading_deg - self._h0 + 180.0) % 360.0 - 180.0)
+        yaw_r = float(self.boat._nu[2])   # body yaw rate, rad/s (ground truth)
         # Lighter shaping than the pure-ML versions: the PID base already provides
         # smoothness + anti-saturation, so the residual just needs to improve the hold.
         reward = (-dist
@@ -301,7 +312,9 @@ class AnchorEnv:
                   - self.anticip * out
                   - (self.speed_pen * sog2 if dist <= 1.6 * self.radius_m else 0.0)
                   + (self.heading_bonus * 0.5 * (1.0 + math.cos(herr_true))
-                     if dist <= self.radius_m else 0.0))
+                     if dist <= self.radius_m else 0.0)
+                  - (self.yaw_pen * yaw_r * yaw_r
+                     if dist <= 1.6 * self.radius_m else 0.0))
         done = self._t >= self.duration_s
         new_f = self._frame()
         self._hist.append(new_f)

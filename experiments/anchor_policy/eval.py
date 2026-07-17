@@ -108,6 +108,9 @@ def main():
     w, h, sg, hd, d, e = _evaluate(lambda o: pol.forward(o), 0.2, args.duration, args.radius, args.k, history)
     print(f"  POLICY            : within {w:5.1f}% | hold {h:5.1f}% | sog {sg:4.2f} m/s | "
           f"hdg_err {hd:5.1f} deg | mean_dist {d:4.2f} m | energy {e:.3f}")
+    # PID baseline runs WITHOUT the heading-obs frames: _anchor_pid slices the
+    # trailing OBS_DIM of the obs, which misaligns on 10-dim v2h frames.
+    _ENV_KW.pop("hold_heading_obs", None)
     w2, h2, sg2, hd2, d2, e2 = _evaluate(_anchor_pid, 0.2, args.duration, args.radius, args.k, 1)
     print(f"  PID AnchorHoldMode: within {w2:5.1f}% | hold {h2:5.1f}% | sog {sg2:4.2f} m/s | "
           f"hdg_err {hd2:5.1f} deg | mean_dist {d2:4.2f} m | energy {e2:.3f}")
