@@ -333,10 +333,18 @@ class AnchorLeifMode(AnchorMLMode):
             self._hist.append(frame)
         out = self._mlp.forward(np.concatenate(self._hist))
         th = float(np.clip(out[0], -1.0, 1.0))
+        # Helm-frame steering FIRST -- this is what the training env feeds back
+        # as the prev-action observation, so _prev must hold it (matches
+        # AnchorMLMode above). Storing the post-azscale value here was a real
+        # transfer bug: the policy saw its own steering under-reported by
+        # train_azimuth/max_steer (0.67x on the default boat), steered harder
+        # to compensate, and late-training checkpoints spiralled into a
+        # runtime-only rotation the training env could never exhibit.
+        st_helm = float(np.clip(out[1] * self.policy_steer_sign, -1.0, 1.0))
+        self._prev = np.array([th, st_helm])
         # Rescale steering so the policy's +/-1 (== its trained TRAIN_AZIMUTH_DEG)
         # produces the same physical deflection on this boat's mechanical range.
         azscale = self.TRAIN_AZIMUTH_DEG / max(1.0, state.max_steer_angle_deg)
-        st = float(np.clip(out[1] * self.policy_steer_sign * azscale, -1.0, 1.0))
-        self._prev = np.array([th, st])
+        st = float(np.clip(st_helm * azscale, -1.0, 1.0))
         self._prev_heading = state.heading_deg
         return ManualSetpoint(thrust=th, steering=st)

@@ -191,6 +191,7 @@ def main():
     ap.add_argument("--target-dq", type=float, default=0.0)      # dq_pct <=
     ap.add_argument("--target-osc", type=float, default=8.0)     # yaw reversals/min <=
     ap.add_argument("--reset-weights", action="store_true")     # ignore checkpointed adaptive weights (restart from CLI bases)
+    ap.add_argument("--adapt-cap", type=float, default=16.0)    # max weight multiple of CLI base (16 bred knife-edge policies)
     ap.add_argument("--pure", action="store_true")         # EXPERIMENT: command = net (no PID base)
     ap.add_argument("--steer-range", type=float, default=None)  # EXPERIMENT: wide azimuth (deg)
     ap.add_argument("--ckpt-dir", default=CKPT_DIR)
@@ -327,6 +328,12 @@ def main():
                         best_canon = canon
                         TinyPolicy(sizes=sizes, params=theta).save(
                             os.path.join(ckpt, "best_policy.json"), meta=POLICY_META)
+                        # Archive EVERY canon improvement: the runtime sim
+                        # gauntlet (not the in-env score) is the final judge,
+                        # and an overwritten candidate that would have passed
+                        # it is unrecoverable (happened: leif120h gen ~3000s).
+                        TinyPolicy(sizes=sizes, params=theta).save(
+                            os.path.join(ckpt, f"best_g{gen:05d}.json"), meta=POLICY_META)
                 elif mt["val_return"] > best_val:
                     best_val = mt["val_return"]
                     TinyPolicy(sizes=sizes, params=theta).save(
@@ -334,7 +341,7 @@ def main():
                 # Adaptive trait pressure: raise lagging traits' weights, decay
                 # met-with-margin ones back toward base (never below base).
                 if args.adapt and gen > start_gen and gen % args.adapt_every == 0:
-                    CAP = 16.0
+                    CAP = args.adapt_cap
                     changes = []
                     def _bump(i, name):
                         old = wts[i]
