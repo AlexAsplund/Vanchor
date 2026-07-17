@@ -56,7 +56,8 @@ class AnchorEnv:
                  speed_pen: float = 0.0,
                  heading_bonus: float = 0.0,
                  hold_heading_obs: bool = False,
-                 yaw_pen: float = 0.0):
+                 yaw_pen: float = 0.0,
+                 dq_rotation_deg: float = 0.0):
         # EXPERIMENT: pure=True makes the net output the command DIRECTLY
         # (command = clip(net), no PID base) -- a from-scratch learned controller
         # rather than a PID refiner. steer_range_deg widens the boat's physical
@@ -123,6 +124,20 @@ class AnchorEnv:
         # costs ~1/step while honest heading-keeping corrections (<3 deg/s)
         # cost ~nothing. (2026-07-17)
         self.yaw_pen = float(yaw_pen)
+        # dq_rotation_deg: DISQUALIFY the rollout once the NET signed rotation
+        # from the engage heading exceeds this (0 = off; the recipe uses 360).
+        # Shaped penalties kept getting negotiated down (full-speed orbit ->
+        # edge orbit -> 18 deg/s pirouette -> 10 deg/s pirouette); a hard DQ
+        # bans the behavior CLASS: no amount of position rewards can buy a
+        # completed revolution. Signed accumulation means gust-driven +/-90
+        # swings never trip it. Terminates the episode with a lump penalty --
+        # slower rotators DQ later and keep more of their earned reward, so ES
+        # still gets a smooth gradient toward "never complete a revolution".
+        # (2026-07-17, owner suggestion)
+        self.dq_rotation_deg = float(dq_rotation_deg)
+        self._rot_net = 0.0
+        self._prev_true_heading: float | None = None
+        self._dq = False
         # hold_heading_obs: append [sin, cos] of (perceived heading - engage
         # heading) to each obs frame (frame dim 8 -> 10). Without it a policy
         # can only learn yaw STIFFNESS (resist rotation via the yaw-rate obs);
@@ -152,6 +167,9 @@ class AnchorEnv:
         self._head_st = 0.0
         s = scenario
         self._h0 = float(s["heading"])   # engage heading (heading-hold target)
+        self._rot_net = 0.0
+        self._prev_true_heading = float(s["heading"])
+        self._dq = False
         self.anchor = ANCHOR
         coslat = math.cos(math.radians(self.anchor.lat))
         dn = s["start_dist"] * math.cos(s["start_bearing"])
@@ -303,6 +321,8 @@ class AnchorEnv:
         sog2 = s.ground_vn * s.ground_vn + s.ground_ve * s.ground_ve
         herr_true = math.radians((s.heading_deg - self._h0 + 180.0) % 360.0 - 180.0)
         yaw_r = float(self.boat._nu[2])   # body yaw rate, rad/s (ground truth)
+        self._rot_net += (s.heading_deg - self._prev_true_heading + 180.0) % 360.0 - 180.0
+        self._prev_true_heading = s.heading_deg
         # Lighter shaping than the pure-ML versions: the PID base already provides
         # smoothness + anti-saturation, so the residual just needs to improve the hold.
         reward = (-dist
@@ -316,9 +336,13 @@ class AnchorEnv:
                   - (self.yaw_pen * yaw_r * yaw_r
                      if dist <= 1.6 * self.radius_m else 0.0))
         done = self._t >= self.duration_s
+        if self.dq_rotation_deg and abs(self._rot_net) > self.dq_rotation_deg:
+            self._dq = True
+            reward -= 2000.0
+            done = True
         new_f = self._frame()
         self._hist.append(new_f)
         self._cur_frame = new_f
         return np.concatenate(self._hist), reward, done, {
             "dist": dist, "sog": math.sqrt(sog2),
-            "hdg_err": abs(math.degrees(herr_true))}
+            "hdg_err": abs(math.degrees(herr_true)), "dq": self._dq}
