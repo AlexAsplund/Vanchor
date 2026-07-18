@@ -97,6 +97,7 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "calibration": {"type": "object", "desc": "calibration/auto-tune status"},
     "debug": {"type": "object", "desc": "debug-recorder status"},
     "replay": {"type": "object", "desc": "replay playback status"},
+    "anchor_alarm": {"type": "object", "desc": "passive anchor alarm: armed watch circle {armed, lat, lon, radius_m, distance_m, firing, stale, fix_age_s, set_at, breach_count} (motor-off; adoption #10)"},
 }
 
 # command type -> {desc}. Every ctype the controller/server accepts is declared.
@@ -129,6 +130,9 @@ COMMANDS: dict[str, dict] = {
     "set_min_depth": {"desc": "set the minimum-depth safety limit"},
     "set_auto_apb": {"desc": "enable/disable auto Follow-APB engage on a live APB feed"},
     "set_land_guard": {"desc": "land-collision guard: {enabled?, margin_m?} — auto-stop before land in manual modes"},
+    "anchor_alarm_set": {"desc": "arm the passive (motor-off) anchor alarm: {lat?, lon?, radius_m?} — defaults to the boat's position"},
+    "anchor_alarm_clear": {"desc": "disarm the passive anchor alarm"},
+    "anchor_alarm_recover": {"desc": "one-tap recover: engage the normal anchor_hold at the alarm point (standard command path)"},
     "set_fix_failsafe": {"desc": "enable/disable the GPS-fix-loss failsafe"},
     "set_nogo_zones": {"desc": "set the no-go zone geometry"},
 }

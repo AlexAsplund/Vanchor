@@ -78,6 +78,8 @@ safety:
   heading_stale_s: 3.0         # stale compass -> coast while a guided mode steers
   depth_stale_s: 10.0          # stale depth -> shallow-water stop treats depth as unknown
   drag_alarm_factor: 2.0
+  anchor_alarm_default_radius_m: 30.0  # passive anchor-alarm watch circle default (adoption #10)
+  anchor_alarm_stale_fix_s: 30.0       # armed alarm reports "watching blind" past this fix age
 
 server:
   host: 127.0.0.1

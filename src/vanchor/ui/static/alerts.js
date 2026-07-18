@@ -191,7 +191,8 @@
   // boat did/needs something drastic right now; low = attention, no urgency.
   // Depth conditions play the distinct sonar ping instead (kind:"depth").
   const prev = { rtl: false, shallow: false, nogo: false, failsafe: false,
-                 fixLost: false, drag: false, diverge: false };
+                 fixLost: false, drag: false, diverge: false,
+                 aalarm: false, aastale: false };
   VA.onTelemetry(function (t) {
     if (!t || typeof t !== "object") return;
     const safety = t.safety || {};
@@ -236,6 +237,15 @@
     const drag = !!safety.drag_alarm;
     if (drag && !prev.drag) VA.logAlert("alarm", "Anchor drag alarm", { level: "high" });
     prev.drag = drag;
+
+    const aa = t.anchor_alarm || {};
+    const aalarm = !!aa.firing;
+    if (aalarm && !prev.aalarm) VA.logAlert("alarm", "Anchor alarm — boat outside the watch circle", { level: "high" });
+    prev.aalarm = aalarm;
+
+    const aastale = !!(aa.armed && aa.stale);
+    if (aastale && !prev.aastale) VA.logAlert("warn", "Anchor alarm watching blind — GPS stale");
+    prev.aastale = aastale;
   });
 
   // ---- init ----------------------------------------------------------------

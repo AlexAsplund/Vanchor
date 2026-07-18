@@ -367,6 +367,14 @@ class SafetyConfig:
     # manually isn't instantly overridden. Default OFF; toggle in Settings →
     # Safety (persisted server-side in safety.json).
     auto_follow_apb: bool = False
+    # --- Passive anchor alarm (adoption #10) ---------------------------- #
+    # Motor-OFF GPS watch circle: default radius offered by the UI when the
+    # operator drops an alarm anchor, and the fix age (s) past which the watch
+    # reports itself "blind" (stale GPS) in telemetry. The feature itself is
+    # armed/disarmed at runtime (persisted in <data_dir>/anchor_alarm.json);
+    # these defaults change no behaviour until the operator arms it.
+    anchor_alarm_default_radius_m: float = 30.0
+    anchor_alarm_stale_fix_s: float = 30.0
     # --- Low-battery thrust-derating ladder (#49) ----------------------- #
     # As the battery state-of-charge falls through these rungs the maximum
     # applied thrust is capped in progressive steps (a SOFT derate) BEFORE the
@@ -1146,6 +1154,8 @@ safety:
   link_loss_continue_mission: true  # guided modes keep flying unsupervised (false = anchor-hold); manual ALWAYS stops
   auto_follow_apb: false     # auto-engage Follow-APB when an APB sentence appears (from idle manual only)
                                      # (pocket-the-phone); MANUAL always stops
+  anchor_alarm_default_radius_m: 30.0  # passive anchor-alarm watch circle default (adoption #10)
+  anchor_alarm_stale_fix_s: 30.0       # armed alarm reports "watching blind" past this fix age
   # Low-battery thrust-derating ladder (#49): as SoC falls through each
   # [soc_pct, thrust_cap] rung the max applied thrust is capped in steps (a soft
   # derate) BEFORE the lowest stage hands off to RTL. Only ever LOWERS thrust;

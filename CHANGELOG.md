@@ -2,6 +2,16 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## [Unreleased]
+
+- **Passive anchor alarm (adoption #10)** — motor-OFF GPS watch circle over
+  the physical anchor: arm from the Anchor panel, server-side 1 Hz watch
+  (keeps watching while the phone sleeps), breach → banner + high-severity
+  alarm sound + `anchor_alarm` telemetry (+ breach hook for Web Push, Task 3),
+  one-tap Recover engages the normal anchor_hold at the alarm point. Persisted
+  in `anchor_alarm.json` (survives restart). Zero motor commands while
+  passive.
+
 ## [1.5.0a8] — 2026-07-18
 
 - **Demo mode (`vanchor --demo`)** — one flag boots a forced-sim demo on

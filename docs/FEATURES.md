@@ -68,6 +68,11 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **Manual** (thrust/steering, full ±180° swing, snap-to-zero).
 - **Anchor hold** — heading-aware station keeping with drift
   anticipation and **anchor jog** (nudge the hold point).
+- **Anchor alarm (motor off)** — passive GPS watch circle over the physical
+  anchor: arm from the Anchor panel; server-side 1 Hz watch keeps alarming
+  even while the phone sleeps (banner + high-severity sound + telemetry);
+  one-tap Recover engages `anchor_hold` at the alarm point. Persisted across
+  restarts (`anchor_alarm.json`). Zero motor commands while passive.
 - **Manual steering wheel** — dual-ring gyro dial (live compass card over a
   boat-frame ring): drag around = direction, outward = power; hub reads
   relative° + true° + thrust; ghost tick shows the actual head angle;

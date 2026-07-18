@@ -200,6 +200,18 @@
       if (el) el.addEventListener("click", () => send({ type: "jog", direction }));
     });
 
+  // ===== passive anchor alarm (motor off, adoption #10) ====================
+  const aaRadius = $("aa-radius");
+  bindSlider("aa-radius", "aa-radius-val");
+  const aaSet = $("aa-set"), aaClear = $("aa-clear"),
+        aaRecover = $("aa-recover"), aaStatus = $("aa-status");
+  if (aaSet) aaSet.addEventListener("click", () =>
+    send({ type: "anchor_alarm_set", radius_m: parseFloat(aaRadius.value) }));
+  if (aaClear) aaClear.addEventListener("click", () =>
+    send({ type: "anchor_alarm_clear" }));
+  if (aaRecover) aaRecover.addEventListener("click", () =>
+    send({ type: "anchor_alarm_recover" }));
+
   // ===== cruise ============================================================
   const cruiseOn = $("cruise-on");
   const cruiseKn = $("cruise-kn");
@@ -255,6 +267,21 @@
     if (t.mode === "anchor_ml" || t.mode === "anchor_hold" || t.mode === "anchor_leif") {
       if (smartBox) smartBox.checked = t.mode === "anchor_ml";
       if (leifBox) leifBox.checked = t.mode === "anchor_leif";
+    }
+    // Passive anchor alarm status + button visibility.
+    const aa = t.anchor_alarm || {};
+    if (aaSet) aaSet.textContent = aa.armed ? "🔔 Move alarm here" : "🔔 Set alarm here";
+    if (aaClear) aaClear.classList.toggle("hidden", !aa.armed);
+    if (aaRecover) aaRecover.classList.toggle("hidden", !aa.armed);
+    if (aaStatus) {
+      let txt = "";
+      if (aa.armed) {
+        const d = Number.isFinite(aa.distance_m) ? aa.distance_m.toFixed(0) : "—";
+        txt = (aa.firing ? "🚨 DRAGGING — " : "watching · ")
+            + d + " / " + (aa.radius_m || 0) + " m";
+        if (aa.stale) txt += " · ⚠ GPS stale";
+      }
+      if (aaStatus.textContent !== txt) aaStatus.textContent = txt;
     }
   });
 })();

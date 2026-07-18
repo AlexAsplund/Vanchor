@@ -428,6 +428,20 @@
           <button id="jog-right" class="dpad-right" aria-label="Jog right">→</button>
           <button id="jog-back" class="dpad-down" aria-label="Jog back">↓</button>
         </div>
+        <div class="ctx-sub">Anchor alarm (motor off)</div>
+        <div class="hint">Watches a GPS circle with the motor OFF — the real
+          anchor holds the boat; Vanchor only alarms if it drags. Keeps
+          watching on the boat even when this phone sleeps.</div>
+        <div class="slider-row">
+          <label>Alarm radius <output id="aa-radius-val">30</output> m</label>
+          <input type="range" id="aa-radius" min="10" max="150" step="5" value="30" />
+        </div>
+        <div class="btn-row">
+          <button id="aa-set" class="btn-primary">🔔 Set alarm here</button>
+          <button id="aa-clear" class="btn-ghost hidden">Clear</button>
+        </div>
+        <button id="aa-recover" class="btn-primary wide hidden">⚓ Recover — hold at alarm point</button>
+        <div id="aa-status" class="hint"></div>
       </div>
 
       <!-- WAYPOINT / ROUTE -->

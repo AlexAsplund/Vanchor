@@ -761,6 +761,25 @@ class Runtime:
         # Generic UI-preferences KV store (browser-as-cache mechanism).
         self.prefs = PrefsStore(cfg.data_dir)
 
+        # --- Passive anchor alarm (adoption #10) -------------------------- #
+        # Motor-OFF watch circle. Pure observer of state.position, evaluated by
+        # the 1 Hz supervisor, persisted like safety.json so a Pi restart with no
+        # client connected keeps watching. It holds no reference to the
+        # controller/motor and can never move the boat; "recover" goes through
+        # the normal anchor_hold command path.
+        from .core.anchor_alarm import AnchorAlarmStore, AnchorAlarmWatcher
+
+        self.anchor_alarm = AnchorAlarmWatcher(
+            AnchorAlarmStore(cfg.data_dir),
+            stale_fix_s=cfg.safety.anchor_alarm_stale_fix_s,
+        )
+        self.anchor_alarm.on_breach.append(
+            lambda snap: logger.warning(
+                "ANCHOR ALARM: %.0f m from alarm anchor (radius %.0f m)",
+                snap.get("distance_m") or 0.0, snap.get("radius_m") or 0.0,
+            )
+        )
+
         # --- Lost-connection failsafe (#64) ------------------------------ #
         # Number of connected UI clients and the last time one was seen alive.
         self._ui_clients = 0
@@ -2224,6 +2243,29 @@ class Runtime:
             logger.info("land guard: enabled=%s margin=%.0fm",
                         gov.config.land_guard_enabled,
                         gov.config.land_guard_margin_m)
+        elif ctype == "anchor_alarm_set":
+            # Drop the ALARM anchor (passive watch circle; NO motor involvement).
+            # Explicit lat/lon wins (future map-tap placement); default = the
+            # boat's current position. Refused without a position.
+            lat, lon = command.get("lat"), command.get("lon")
+            if lat is not None and lon is not None:
+                point = GeoPoint(float(lat), float(lon))
+            else:
+                pos = self.state.position
+                if pos is None or pos.is_null():
+                    logger.warning("anchor_alarm_set ignored: no position fix")
+                    return
+                point = pos
+            radius = float(command.get(
+                "radius_m", self.config.safety.anchor_alarm_default_radius_m))
+            snap = self.anchor_alarm.set(point, radius, now=self._now_fn())
+            logger.info("anchor alarm ARMED: %.5f, %.5f r=%.0fm",
+                        point.lat, point.lon, snap["radius_m"])
+        elif ctype == "anchor_alarm_clear":
+            self.anchor_alarm.clear()
+            logger.info("anchor alarm cleared")
+        elif ctype == "anchor_alarm_recover":
+            self._anchor_alarm_recover()
         elif ctype == "set_auto_apb":
             enabled = bool(command.get("enabled", False))
             self.config.safety.auto_follow_apb = enabled
@@ -2348,6 +2390,36 @@ class Runtime:
             return
         self.simulator.battery.set_soc(float(soc_pct))
         logger.info("battery SOC set to %.0f%%", float(soc_pct))
+
+    # ------------------------------------------------------------------ #
+    # Passive anchor alarm recover (adoption #10)
+    # ------------------------------------------------------------------ #
+    def _anchor_alarm_recover(self) -> dict:
+        """One-tap recover (adoption #10): engage the NORMAL anchor_hold at
+        the alarm anchor point via the standard command path — device gating,
+        governor, every failsafe apply unchanged. Disarms the passive alarm
+        only if the hold actually engaged (the governor's drag alarm then
+        covers the hold); if the controller refused (e.g. motor not
+        connected), the passive watch stays armed."""
+        st = self.anchor_alarm.store
+        if not st.armed or st.lat is None or st.lon is None:
+            logger.warning("anchor_alarm_recover ignored: alarm not armed")
+            return {"ok": False, "message": "alarm not armed"}
+        self.controller.handle_command({
+            "type": "anchor_hold",
+            "anchor": {"lat": st.lat, "lon": st.lon},
+        })
+        engaged = self.state.mode in (
+            ControlModeName.ANCHOR_HOLD,
+            ControlModeName.ANCHOR_ML,
+            ControlModeName.ANCHOR_LEIF,
+        )
+        if engaged:
+            self.anchor_alarm.clear()
+            logger.info("anchor alarm recover: anchor_hold engaged at alarm point")
+            return {"ok": True}
+        logger.warning("anchor alarm recover: anchor_hold refused; alarm stays armed")
+        return {"ok": False, "message": "anchor_hold refused (device gating?)"}
 
     # ------------------------------------------------------------------ #
     # Return-to-Launch (#61)
@@ -2520,6 +2592,17 @@ class Runtime:
         self.controller.handle_command({"type": "follow_apb"})
         self._auto_apb_latched = True
         return True
+
+    def evaluate_anchor_alarm(self) -> dict:
+        """1 Hz passive anchor-alarm step (adoption #10). Reads position +
+        fix age off the shared state; NEVER issues motor commands or mode
+        changes — breach only latches telemetry + fires the breach hooks."""
+        st = self.state
+        age = (
+            (self._mono_fn() - st.fix_received_mono)
+            if st.fix_received_mono is not None else None
+        )
+        return self.anchor_alarm.evaluate(st.position, age)
 
     def refresh_land_guard_water(self) -> bool:
         """Keep the safety governor supplied with the water chart around the
@@ -2697,6 +2780,7 @@ class Runtime:
             ("evaluate_battery_ladder", self.evaluate_battery_ladder),
             ("evaluate_rtl_recommend", self.evaluate_rtl_recommend),
             ("evaluate_link_failsafe", self.evaluate_link_failsafe),
+            ("evaluate_anchor_alarm", self.evaluate_anchor_alarm),
             ("evaluate_auto_apb", self.evaluate_auto_apb),
             ("refresh_land_guard_water", self.refresh_land_guard_water),
             ("trip_update", lambda: self.trip.update(
@@ -4158,6 +4242,8 @@ class Runtime:
             "min_depth_m": _gov.min_depth_m,
             "fix_failsafe_enabled": _gov.fix_failsafe_enabled,
         }
+        # Passive anchor alarm (adoption #10): armed circle + live breach state.
+        payload["anchor_alarm"] = self.anchor_alarm.snapshot()
         payload["health"] = self._health_snapshot()
         # Device availability + per-mode gating (Not-connected devices disable the
         # modes/functions that need them; the UI shows the reason).

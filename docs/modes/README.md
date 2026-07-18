@@ -11,6 +11,8 @@ use it, and exactly which on-screen controls drive it.
 - **[Heading hold](heading-hold.md)** — hold a compass heading like a real autopilot.
 - **[Anchor hold](anchor-hold.md)** — drop a virtual anchor and hold the
   spot (with drift anticipation, a nudge jog, and an optional learned "Smart" variant).
+- **[Anchor alarm](anchor-alarm.md)** — motor-OFF GPS watch circle over the physical
+  anchor; alarms if the real anchor drags; keeps watching while the phone sleeps.
 - **[Drift](drift.md)** — hold a heading while drifting at a gentle target speed.
 
 ## Navigation & routing

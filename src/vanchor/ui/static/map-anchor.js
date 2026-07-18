@@ -31,4 +31,25 @@
   });
 
   VA.map.getLastAnchor = function () { return lastAnchor; };
+
+  let alarmMarker = null, alarmCircle = null;
+
+  VA.onTelemetry(function renderAlarmAnchor(t) {
+    const aa = t.anchor_alarm;
+    const show = aa && aa.armed && Number.isFinite(aa.lat) && Number.isFinite(aa.lon);
+    if (show) {
+      const ll = [aa.lat, aa.lon];
+      const color = aa.firing ? "#ff3b30" : "#ffb020";
+      if (!alarmMarker) {
+        alarmMarker = L.marker(ll).addTo(map).bindTooltip("🔔 alarm");
+        alarmCircle = L.circle(ll, { radius: aa.radius_m, color, weight: 2,
+                                     dashArray: "6 6", fill: false }).addTo(map);
+      }
+      alarmMarker.setLatLng(ll);
+      alarmCircle.setLatLng(ll).setRadius(aa.radius_m).setStyle({ color });
+    } else if (alarmMarker) {
+      map.removeLayer(alarmMarker); map.removeLayer(alarmCircle);
+      alarmMarker = alarmCircle = null;
+    }
+  });
 })();

@@ -76,12 +76,12 @@
     // last APB (follow-apb panel)
     if (t.last_apb) VA.setText("apb-last", t.last_apb);
 
-    updateBanner(t.safety);
+    updateBanner(t.safety, t.anchor_alarm);
     updateRemoteStatus(t);
   });
 
   // ---- safety / status banner -------------------------------------------
-  function updateBanner(safety) {
+  function updateBanner(safety, aalarm) {
     const el = document.getElementById("banner");
     if (!el) return;
     if (!safety || typeof safety !== "object") { el.className = "hidden"; return; }
@@ -89,6 +89,7 @@
     let alarm = false;
     if (safety.fix_lost)       { msgs.push("⚠ GPS FIX LOST"); alarm = true; }
     if (safety.drag_alarm)     { msgs.push("⚓ DRAG ALARM"); alarm = true; }
+    if (aalarm && aalarm.firing) { msgs.push("🚨 ANCHOR ALARM — dragging"); alarm = true; }
     if (safety.reverse_blocked) msgs.push("⛔ reverse blocked");
     if (safety.thrust_limited)  msgs.push("⚡ thrust limited");
     if (!msgs.length) { el.className = "hidden"; return; }
