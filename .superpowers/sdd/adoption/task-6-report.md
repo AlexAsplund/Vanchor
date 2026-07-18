@@ -169,3 +169,31 @@ node --check wifi.js: OK
 5. **python-zeroconf vs avahi name conflict**: non-fatal warning; documented in checklist item 15.
 6. **noatime + dphys-swapfile disable on Zero 2 W**: addendum takes precedence over the brief's note; zram is the replacement. Zero 2 W with 512 MB RAM gets 25% zram (~128 MB compressed swap). May need tuning.
 7. **App-level writer bounds**: server.log rotation is log-level configured but not explicitly bounded by file size in this task; follow-up issue warranted if confirmed unbounded.
+
+---
+
+## Fix pass
+
+Three reviewer findings applied (2026-07-18):
+
+1. **PSK argv doc note** — code comment added to `src/vanchor/wifi.py` at the
+   `cmd += ["password", psk]` call explaining that `nmcli device wifi connect`
+   does not accept the password via stdin or file descriptor (argv is the only
+   option). User-facing notes added to `docs/deploy-pi.md` (new blockquote
+   after the security-posture callout) and `docs/image-testing.md` (new bullet
+   in "Notes on known behaviour").
+
+2. **Exclusive apt allowlist test** — `test_dockerfile_final_stage_apt_only_allowed_packages`
+   in `tests/test_docker_artifacts.py` rewritten to parse all tokens from
+   `apt-get install` lines in the final Dockerfile stage, strip flags, and
+   assert the resulting package set is a subset of `ALLOWED = {"network-manager"}`.
+   Previously only checked for presence of `network-manager`; now rejects any
+   additional package not on the allowlist.
+
+3. **D-Bus socket pin test** — new `test_compose_dbus_socket_bind_mount` added
+   to `tests/test_docker_artifacts.py` asserting
+   `/run/dbus/system_bus_socket:/run/dbus/system_bus_socket` appears in the
+   `vanchor` service volumes. Docstring explains the silent-failure mode.
+
+Test run: `2010 passed, 6 skipped, 10 deselected` (full suite).
+Targeted run: `64 passed` (test_docker_artifacts + test_wifi + test_image_tooling).

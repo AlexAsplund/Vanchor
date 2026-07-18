@@ -58,6 +58,21 @@ def test_compose_cgroup_rules_exact(compose):
     assert set(rules) == expected, f"Expected cgroup rules {expected!r}, got {rules!r}"
 
 
+def test_compose_dbus_socket_bind_mount(compose):
+    """nmcli inside the container talks to the HOST NetworkManager via D-Bus.
+    Without this bind-mount nmcli silently fails to reach NM — WiFi join
+    returns an error and the hotspot never restores. Pin the mount here so
+    an accidental compose edit doesn't silently break WiFi on the boat.
+    """
+    svc = compose["services"]["vanchor"]
+    vols = svc.get("volumes", [])
+    dbus_mount = "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket"
+    assert dbus_mount in vols, (
+        "D-Bus system bus socket bind-mount required for in-container nmcli "
+        "to reach host NetworkManager"
+    )
+
+
 def test_compose_bounded_logging(compose):
     """SD-card wear: container logging must be bounded (local driver, 2 x 5 MB)."""
     svc = compose["services"]["vanchor"]
@@ -93,14 +108,37 @@ def test_dockerfile_slim_bookworm_in_both_from_lines(dockerfile_text):
 def test_dockerfile_final_stage_apt_only_allowed_packages(dockerfile_text):
     # The final stage may only install explicitly allowed OS packages.
     # Adoption task 6 adds network-manager (provides nmcli for WiFi setup).
+    # This set is the exhaustive allowlist — adding any other package requires
+    # an explicit review and an update here.
+    ALLOWED = {"network-manager"}
+
     # Split on FROM: the last FROM block is the final stage.
     blocks = dockerfile_text.split("FROM ")
     final_stage = blocks[-1]
-    if "apt-get" in final_stage:
-        assert "network-manager" in final_stage, (
-            "Final stage apt-get must only install network-manager (nmcli for WiFi); "
-            "found unexpected apt-get usage"
-        )
+    if "apt-get install" not in final_stage:
+        return  # nothing installed — trivially compliant
+
+    # Collect every package token from apt-get install line(s).
+    # Strip known flags (-y, --no-install-recommends, continuation chars \\)
+    # and the apt-get/install keywords themselves; what remains are package names.
+    installed: set[str] = set()
+    # Find all apt-get install ... && blocks; handle multi-line via backslash
+    install_text = re.sub(r"\\\n", " ", final_stage)
+    for m in re.finditer(r"apt-get install\s+(.*?)(?:\s*&&|\s*$)", install_text):
+        tokens = m.group(1).split()
+        for token in tokens:
+            if token.startswith("-"):
+                continue  # flag like -y or --no-install-recommends
+            if token in ("apt-get", "install", "update"):
+                continue
+            installed.add(token)
+
+    assert installed <= ALLOWED, (
+        f"Final stage apt-get installs packages outside the allowlist.\n"
+        f"  Installed: {sorted(installed)}\n"
+        f"  Allowed:   {sorted(ALLOWED)}\n"
+        f"Add any new package to ALLOWED only after explicit review."
+    )
 
 
 def test_dockerfile_data_dir_env(dockerfile_text):

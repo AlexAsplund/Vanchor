@@ -186,3 +186,9 @@ steady-state operation.
   operations for root (uid 0). If polkit denies operations, the workaround
   is to add a polkit rule in `/etc/polkit-1/rules.d/` on the host.
   **BENCH-VERIFY**: test this on a real Pi 5 with the latest Bookworm polkit.
+- **WiFi PSK in argv**: `nmcli device wifi connect` does not accept the
+  password via stdin or a file descriptor — the PSK is passed as a
+  command-line argument and is briefly visible in `/proc/<pid>/cmdline` and
+  `ps` output for the duration of the `nmcli` process (typically < 1 s).
+  Vanchor never logs or persists the PSK. See also `docs/deploy-pi.md`
+  (security notes) and the code comment in `src/vanchor/wifi.py`.

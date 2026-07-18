@@ -138,6 +138,17 @@ In the UI → Settings → "Data & system" → **WiFi & network** card:
 > ports beyond :8000). The default password is documented — **change it** with
 > `passwd` if the boat is ever reachable from untrusted networks.
 
+> **WiFi PSK note.** When you join a home network via the UI, Vanchor passes
+> the WiFi password to `nmcli device wifi connect` as a command-line argument.
+> `nmcli` does not provide a stdin or file-descriptor interface for the
+> password — argv is the only available option. The PSK is briefly visible in
+> `/proc/<pid>/cmdline` and `ps` output for the lifetime of the `nmcli`
+> process (typically under one second). The password is **never written to
+> disk** by Vanchor and is **never logged** (sanitised before any log
+> statement). On a LAN-only headless boat computer this is an acceptable
+> trade-off, but be aware if your threat model includes local-user access to
+> the Pi while a WiFi join is in progress.
+
 ---
 
 ## 3. Updates, backups, and disk

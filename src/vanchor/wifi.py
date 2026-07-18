@@ -259,6 +259,12 @@ async def _join_worker(ssid: str, psk: str, runner) -> None:
     cmd = ["nmcli", "--wait", str(JOIN_TIMEOUT_S), "device", "wifi",
            "connect", ssid]
     if psk:
+        # The PSK is passed via argv, not stdin. nmcli's `device wifi connect`
+        # does not accept the password on stdin or via a file descriptor — the
+        # only API is the `password <psk>` positional argument. This means the
+        # PSK is briefly visible in /proc/<pid>/cmdline and `ps` output for the
+        # lifetime of the nmcli process (typically < 1 s). This is an nmcli
+        # limitation documented in docs/deploy-pi.md (security notes).
         cmd += ["password", psk]
     rc, out, err = await runner(cmd, timeout=float(JOIN_TIMEOUT_S) + 15)
 
