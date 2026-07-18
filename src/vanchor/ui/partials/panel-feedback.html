@@ -27,4 +27,16 @@
         <div class="hint" id="haptics-hint">Short pulse on taps, heavier on STOP, a distinct buzz on safety alarms, and a confirmation pulse when a press-and-hold registers. Android phones/tablets; iOS has no vibration API.</div>
       </details>
 
+      <details class="card" id="push-card">
+        <summary>Notifications <span id="push-state" class="badge"></span></summary>
+        <div class="hint hidden" id="push-unavailable"></div>
+        <div id="push-controls" class="hidden">
+          <label class="switch" title="Send alarms (anchor drag, anchor watch, battery, depth, lost link) to this device even when the app is closed and the phone is locked."><input type="checkbox" id="push-enable" /><span class="track"></span> Alarm notifications on this device</label>
+          <div class="row"><span>Subscribed browsers</span><b id="push-count">—</b></div>
+          <button id="push-test" class="btn-ghost wide">Send test notification</button>
+          <div id="push-status" class="hint"></div>
+        </div>
+        <div class="hint">Delivered via your browser's push service — the boat needs internet at send time (phone hotspot or dock WiFi). Requires HTTPS; on iOS add the app to your Home Screen first (iOS 16.4+).</div>
+      </details>
+
       </section><!-- /feedback -->

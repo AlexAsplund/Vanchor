@@ -28,6 +28,8 @@ for LLMs and takes precedence on implementation detail.)
 - **[pid-tuning.md](pid-tuning.md)** — every control loop and gain (helm,
   anchor, cruise, drift, XTE, firmware steering head): units, shipped values,
   what raising/lowering each term does, mis-tune symptoms, interactions.
+- **[push-notifications.md](push-notifications.md)** — Web Push alarms to the
+  phone with the app closed: setup, platform constraints, config reference.
 - **[roadmap.md](roadmap.md)** — what's implemented and what's planned next.
 - **[safety-matrix.md](safety-matrix.md)** — 12 failure modes × detecting layer ×
   boat behaviour × the test that proves it; companion to `tests/test_chaos.py`.

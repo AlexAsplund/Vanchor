@@ -780,6 +780,25 @@ class Runtime:
             )
         )
 
+        # --- Web Push notifications (adoption #7) ------------------------ #
+        # Observe-only: watchers in the 1 Hz supervisor mirror alerts.js's
+        # edge-triggered conditions; delivery happens on a worker thread.
+        from .push import PushService
+        self.push = PushService(cfg.data_dir, cfg.push, now_fn=self._mono_fn)
+        self._push_prev: dict[str, bool] = {}   # edge memory for evaluate_push_alerts
+        self._push_prev_cap: float = 1.0        # battery-ladder step memory
+
+        # Also hook into anchor_alarm.on_breach for edge-triggered push on the
+        # passive watch-circle alarm (mirrors the evaluate_push_alerts watcher but
+        # fires immediately on breach rather than waiting for the next supervisor tick).
+        self.anchor_alarm.on_breach.append(
+            lambda snap: self.push.notify(
+                "anchor_alarm",
+                "Anchor watch alarm",
+                "Boat outside the watch circle",
+            )
+        )
+
         # --- Lost-connection failsafe (#64) ------------------------------ #
         # Number of connected UI clients and the last time one was seen alive.
         self._ui_clients = 0
@@ -2604,6 +2623,79 @@ class Runtime:
         )
         return self.anchor_alarm.evaluate(st.position, age)
 
+    def evaluate_push_alerts(self) -> None:
+        """Edge-triggered Web Push dispatch (adoption #7). Mirrors the client-side
+        banner conditions in static/alerts.js, but server-side so an alarm
+        reaches the phone with NO client connected. Observe-only: reads state,
+        never commands. Each send is enqueued to the push worker thread."""
+        prev = self._push_prev
+
+        # ---- anchor drag ----
+        drag = bool(self.controller.safety_status.drag_alarm)
+        if drag and not prev.get("drag"):
+            dist = self.state.distance_to_anchor_m
+            body = (f"Boat {dist:.0f} m from anchor" if self.state.anchor is not None
+                    else "Boat has dragged from anchor")
+            self.push.notify("anchor_drag", "Anchor drag alarm", body)
+        prev["drag"] = drag
+
+        # ---- passive anchor alarm breach (via on_breach hook) ----
+        # The on_breach hook (appended in __init__) fires the push immediately
+        # on False->True; also track firing here for consistent edge state.
+        aalarm = bool(self.anchor_alarm.firing)
+        prev["anchor_alarm"] = aalarm  # track but don't double-fire; hook does it
+
+        # ---- battery RTL recommend ----
+        battery_rtl = bool(self.state.rtl_recommended)
+        if battery_rtl and not prev.get("battery_rtl"):
+            self.push.notify("battery", "Battery low", "Return to launch recommended")
+        prev["battery_rtl"] = battery_rtl
+
+        # ---- link loss failsafe ----
+        link = bool(self._link_failsafe_engaged)
+        if link and not prev.get("link"):
+            action = self._link_failsafe_action
+            if action == "stop":
+                body = "Motor stopped (link-loss failsafe)"
+            elif action == "continue":
+                body = "Continuing mission unsupervised"
+            else:
+                body = "Holding position (failsafe)"
+            self.push.notify("link", "Connection lost", body)
+        prev["link"] = link
+
+        # ---- shallow stop ----
+        shallow = bool(self.controller.safety_status.shallow_stop)
+        if shallow and not prev.get("shallow"):
+            min_d = self.controller.safety.config.min_depth_m
+            self.push.notify("depth", "Shallow water",
+                             f"Auto-stopped: depth below {min_d:.1f} m")
+        prev["shallow"] = shallow
+
+        # ---- depth divergence ----
+        diverge = bool(self.state.depth_divergence_alert)
+        if diverge and not prev.get("diverge"):
+            self.push.notify("depth", "Depth warning",
+                             "Sounder disagrees with chart — possible uncharted shoal")
+        prev["diverge"] = diverge
+
+        # ---- GPS fix lost ----
+        fix_lost = bool(self.controller.safety_status.fix_lost)
+        if fix_lost and not prev.get("fix_lost"):
+            self.push.notify("link", "GPS fix lost", "Thrust cut until fix returns")
+        prev["fix_lost"] = fix_lost
+
+        # ---- battery ladder step (cap decrease) ----
+        cap = self.controller.safety.thrust_cap
+        if cap < self._push_prev_cap - 1e-9:
+            soc = self.battery_snapshot().get("soc_pct")
+            self.push.notify(
+                "battery", "Battery low",
+                f"Thrust limited to {cap:.0%}"
+                + (f" at {soc:.0f}% charge" if soc is not None else ""),
+            )
+        self._push_prev_cap = cap
+
     def refresh_land_guard_water(self) -> bool:
         """Keep the safety governor supplied with the water chart around the
         boat for the land guard. CACHE-ONLY (the offline chart the routing
@@ -2785,6 +2877,9 @@ class Runtime:
             ("refresh_land_guard_water", self.refresh_land_guard_water),
             ("trip_update", lambda: self.trip.update(
                 self.state.position, self.state.sog_knots, self._now_fn())),
+            # Web Push alert dispatcher (adoption #7): edge-triggered, after
+            # battery/link evaluators so their flags are fresh this tick.
+            ("evaluate_push_alerts", self.evaluate_push_alerts),
             # Hardware watchdog heartbeat (#44): pet the GPIO line every tick. If
             # the supervisor stalls this stops toggling -> the external relay
             # drops the motor supply. Last so a stalled step still lets it beat.
@@ -4520,6 +4615,9 @@ class Runtime:
                 )
 
     async def stop(self) -> None:
+        # Stop the Web Push worker thread before task cleanup (best-effort).
+        with contextlib.suppress(Exception):
+            self.push.stop()
         self.debug.stop()
         self.depth_map.save(self._depth_map_path)
         if self.simulator is not None:

@@ -701,6 +701,21 @@ class ObsConfig:
 
 
 @dataclass
+class PushConfig:
+    """Web Push notifications (adoption pack #7). The feature is inert until a
+    browser opts in via Settings (zero subscriptions -> nothing ever sends),
+    so these defaults preserve current behaviour."""
+
+    enabled: bool = True          # master switch for dispatch + API
+    subject: str = "mailto:vanchor@example.com"  # VAPID sub claim (never contacted)
+    ttl_s: int = 900              # push-service retention if the phone is offline
+    min_interval_s: float = 30.0  # per-kind floor between notifications
+    burst_limit: int = 10         # max notifications per burst_window_s (all kinds)
+    burst_window_s: float = 60.0
+    timeout_s: float = 10.0       # HTTP timeout per webpush POST
+
+
+@dataclass
 class DemoConfig:
     """One-flag demo mode (`vanchor --demo`, adoption pack).
 
@@ -739,6 +754,7 @@ class AppConfig:
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     obs: ObsConfig = field(default_factory=ObsConfig)
     demo: DemoConfig = field(default_factory=DemoConfig)
+    push: PushConfig = field(default_factory=PushConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AppConfig":
@@ -783,6 +799,7 @@ _SUBCONFIGS: dict[str, type] = {
     "watchdog": WatchdogConfig,
     "obs": ObsConfig,
     "demo": DemoConfig,
+    "push": PushConfig,
 }
 
 
@@ -1224,4 +1241,13 @@ demo:                        # one-flag demo mode (`vanchor --demo`); default OF
   start_lat: 59.8779         # charted demo lake
   start_lon: 12.0293
   weather_preset: lake       # sim weather applied at boot ("" = calm)
+
+push:                     # Web Push notifications (Settings -> Sound & touch -> Notifications)
+  enabled: true             # inert until a browser subscribes; false hides the API
+  subject: mailto:vanchor@example.com   # VAPID contact claim (any valid mailto)
+  ttl_s: 900                # seconds the push service holds a message for an offline phone
+  min_interval_s: 30.0      # per-alarm-kind floor between notifications
+  burst_limit: 10           # global cap: max notifications per burst window
+  burst_window_s: 60.0
+  timeout_s: 10.0
 """

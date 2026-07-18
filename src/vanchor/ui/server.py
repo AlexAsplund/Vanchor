@@ -1094,6 +1094,40 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         Returns the merged dict."""
         return runtime.prefs.merge(payload if isinstance(payload, dict) else {})
 
+    # --- Web Push (adoption #7) ------------------------------------------ #
+    @app.get("/api/push/status")
+    async def push_status() -> dict:
+        """Availability + subscription summary. Never generates keys."""
+        return runtime.push.status()
+
+    @app.get("/api/push/pubkey")
+    async def push_pubkey() -> dict:
+        """The VAPID applicationServerKey, GENERATING the keypair on first call
+        ("first enable"). 503-style dict when the push extra is missing."""
+        if not runtime.push.available:
+            return {"ok": False, "error": runtime.push.unavailable_reason}
+        key = await asyncio.to_thread(runtime.push.public_key)  # EC keygen off-loop
+        return {"ok": True, "public_key": key}
+
+    @app.post("/api/push/subscribe")
+    async def push_subscribe(payload: dict) -> dict:
+        return runtime.push.add_subscription(
+            payload.get("subscription") or {}, ua=str(payload.get("ua", ""))[:200])
+
+    @app.post("/api/push/unsubscribe")
+    async def push_unsubscribe(payload: dict) -> dict:
+        removed = runtime.push.remove_subscription(str(payload.get("endpoint", "")))
+        return {"ok": True, "removed": removed,
+                "count": runtime.push.subscription_count()}
+
+    @app.post("/api/push/test")
+    async def push_test() -> dict:
+        """Send a test notification to every subscribed browser. Blocking network
+        I/O -> executor thread (the /api/device/action pattern)."""
+        return await asyncio.to_thread(
+            runtime.push.send_now, "test", "Vanchor test notification",
+            "Push notifications are working on this boat.")
+
     # -- Versioned backup / restore -------------------------------------- #
     @app.post("/api/backup")
     async def backup_create(payload: dict | None = None):

@@ -27,7 +27,8 @@ routing = ["shapely>=2.0", "networkx>=3.0", "pyproj>=3.5", "requests>=2.28"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27",
        "hypothesis>=6",  # property/fuzz tests (tests/test_nmea_fuzz.py)
        "scipy>=1.10",     # Fossen auto-calibration (tests/test_fossen_calibrate.py)
-       "shapely>=2.0", "networkx>=3.0", "pyproj>=3.5", "requests>=2.28"]
+       "shapely>=2.0", "networkx>=3.0", "pyproj>=3.5", "requests>=2.28",
+       "pywebpush>=1.14"]  # Web Push send-path tests (tests/test_push.py)
 # Plots for the analysis framework (text/CSV reports work without it):
 analysis = ["matplotlib>=3.7"]
 # Real serial hardware support (not needed for simulation):
@@ -37,6 +38,9 @@ i2c = ["smbus2>=0.4"]
 # WitMotion HWT901B-TTL AHRS compass (compass_source="hwt901b"). Until the lib is
 # published, install the sibling checkout: pip install -e ../python-hwt901b-ttl[serial]
 hwt901b = ["hwt901b[serial]>=0.1"]
+# Web Push notifications to the operator's phone (Settings -> Sound & touch).
+# Pulls py-vapid + cryptography + requests transitively:
+push = ["pywebpush>=1.14"]
 # Auto-generated Markdown API reference from docstrings (make docs):
 docs = ["pydoc-markdown>=4"]
 

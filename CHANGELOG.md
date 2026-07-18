@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## [Unreleased]
 
+- **Web Push notifications (adoption #7)** — anchor drag / anchor watch /
+  battery ladder / depth / link-loss alarms reach the phone with the app
+  closed. Optional extra `pip install vanchor-ng[push]`; opt-in per device
+  in Settings -> Sound & touch -> Notifications; VAPID keys auto-generated
+  into the data dir; per-kind rate-limiting (30 s floor) + global burst cap
+  (10/60 s); TTL 900 s; 404/410 subscription pruning; needs HTTPS + internet
+  on the boat at send time. Observe-only: zero motor commands, never touches
+  the safety governor.
+
 - **Passive anchor alarm (adoption #10)** — motor-OFF GPS watch circle over
   the physical anchor: arm from the Anchor panel, server-side 1 Hz watch
   (keeps watching while the phone sleeps), breach → banner + high-severity

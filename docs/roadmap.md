@@ -264,7 +264,7 @@ UI & UX:
 5. Guided "first anchor" overlay (S): script the magic moment once.
 6. Simple/advanced UI split (M): map + anchor + take-me-here + STOP by
    default; expert features behind a toggle.
-7. **TOP-5** Push notifications (M): Web Push from the existing PWA SW —
+7. ✅ **TOP-5** Push notifications (M): Web Push from the existing PWA SW —
    anchor drag / battery / depth / link loss with the phone locked.
 8. Metric/imperial + i18n strings (S).
 9. Trip replay polish in-UI (S-M): tracks + depth + catch pins at home.

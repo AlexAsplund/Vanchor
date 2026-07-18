@@ -16,6 +16,7 @@
  *  - Navigation requests fall back to the cached index.html when offline, so a
  *    fresh load with zero internet still boots the app.
  *  - Old caches are deleted on activate via a versioned cache name.
+ *  - push + notificationclick handlers for Web Push alarms (#adoption-7)
  */
 "use strict";
 
@@ -118,6 +119,7 @@ const SHELL = [
   "/static/selectboat.js",
   "/static/teleport.js",
   "/static/alerts.js",
+  "/static/push.js",
   "/static/logs.js",
   "/static/audit.js",
   "/static/measure.js",
@@ -204,4 +206,34 @@ self.addEventListener("fetch", (event) => {
         )
     );
   }
+});
+
+// ---- Web Push (adoption #7) ------------------------------------------
+// Payload contract: JSON {title, body, tag, url} from src/vanchor/push.py.
+// tag replaces an older notification of the same alarm kind (no stacking);
+// renotify makes the replacement buzz again.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; }
+  catch (e) { data = { body: event.data ? event.data.text() : "" }; }
+  const title = data.title || "Vanchor";
+  event.waitUntil(self.registration.showNotification(title, {
+    body: data.body || "",
+    tag: data.tag || "vanchor",
+    renotify: true,
+    icon: "/static/icons/icon-192.png",
+    badge: "/static/icons/icon-192.png",
+    data: { url: data.url || "/" },
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      for (const w of wins) { if ("focus" in w) return w.focus(); }
+      return self.clients.openWindow(url);
+    })
+  );
 });
