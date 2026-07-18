@@ -80,8 +80,8 @@
     if (Array.isArray(ports)) {
       ports.forEach(p => {
         const opt = document.createElement("option");
-        opt.value = p.port;
-        opt.textContent = p.label ? `${p.port}  [${p.label}]` : p.port;
+        opt.value = p.path;
+        opt.textContent = p.description ? `${p.path}  [${p.description}]` : p.path;
         if (p.hint) opt.title = p.hint;
         sel.appendChild(opt);
       });
@@ -201,8 +201,8 @@
       html = '<p class="hint">No serial ports or I²C buses found. Connect your devices and rescan.</p>';
     } else {
       ports.forEach(p => {
-        html += `<div class="scan-row"><code>${p.port}</code>`;
-        if (p.label) html += ` <span class="hint">${p.label}</span>`;
+        html += `<div class="scan-row"><code>${p.path}</code>`;
+        if (p.description) html += ` <span class="hint">${p.description}</span>`;
         if (p.hint) html += ` <span class="hint">→ ${p.hint}</span>`;
         html += "</div>";
       });
@@ -224,7 +224,7 @@
       const sel = $(`hwwiz-${kind}-port`);
       if (sel) {
         const hinted = ports.find(p => p.hint && p.hint.includes(kind));
-        if (hinted) sel.value = hinted.port;
+        if (hinted) sel.value = hinted.path;
       }
     });
 
@@ -390,9 +390,12 @@
         if (result.suggest) {
           const s = result.suggest;
           const parts = [];
-          if (s.port) parts.push(`port: ${s.port}`);
+          const fields = s.fields || {};
           if (s.source) parts.push(`source: ${s.source}`);
-          if (s.baudrate) parts.push(`baud: ${s.baudrate}`);
+          const portVal = fields[`${kind}_port`];
+          const baudVal = fields[`${kind}_baud`] || fields.baudrate;
+          if (portVal) parts.push(`port: ${portVal}`);
+          if (baudVal) parts.push(`baud: ${baudVal}`);
           action = parts.length ? `Set ${parts.join(", ")}` : "Apply suggestion";
           if (forced) action += " (forced)";
         } else {
@@ -414,7 +417,8 @@
     const finBtn = $("hwwiz-finish");
     if (finBtn) finBtn.disabled = true;
 
-    // Build a PATCH body from suggestions
+    // Build a config patch from suggestions; suggest.fields already carries
+    // the correct config keys (gps_port, gps_baud, compass_source, etc.)
     const patch = {};
     DEVICE_STEPS.forEach(kind => {
       const skipEl = $(`hwwiz-${kind}-skip`);
@@ -422,10 +426,7 @@
       const result = _results[kind];
       if (!result || !result.suggest) return;
       const s = result.suggest;
-      // Map device kind to config keys
-      if (s.source) patch[`${kind}_source`] = s.source;
-      if (s.port)   patch[`${kind}_port`]   = s.port;
-      if (s.baudrate) patch[`${kind}_baud`] = s.baudrate;
+      if (s.fields) Object.assign(patch, s.fields);
     });
 
     if (Object.keys(patch).length === 0) {
@@ -436,9 +437,9 @@
 
     try {
       const resp = await fetch("/api/config/devices", {
-        method: "PATCH",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
+        body: JSON.stringify({hardware: patch}),
       });
       if (!resp.ok) {
         const d = await resp.json().catch(() => ({}));

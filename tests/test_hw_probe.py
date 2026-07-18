@@ -447,3 +447,58 @@ class TestSuggestFor:
         for kind in ("gps", "compass", "motor", "any"):
             assert kind in BAUD_LADDER
             assert len(BAUD_LADDER[kind]) > 0
+
+    def test_suggest_for_witmotion_fields_has_baudrate_not_compass_baud(self):
+        """The witmotion suggestion must use 'baudrate' in fields (hwt901b reads
+        hw.baudrate, not a per-device compass_baud key)."""
+        s = suggest_for("witmotion-imu", "/dev/ttyUSB1", 9600)
+        assert s is not None
+        fields = s.get("fields", {})
+        assert "baudrate" in fields
+        assert "compass_baud" not in fields
+
+    def test_suggest_for_ublox_has_all_gps_fields(self):
+        s = suggest_for("ublox", "/dev/ttyACM0", 38400)
+        assert s is not None
+        fields = s.get("fields", {})
+        assert fields.get("gps_source") == "ublox"
+        assert fields.get("gps_port") == "/dev/ttyACM0"
+        assert fields.get("gps_baud") == 38400
+
+
+# --------------------------------------------------------------------------- #
+# MOTOR_INFO_CMD framing: probe._crc8("INFO") == serial_link.crc8("INFO")
+# --------------------------------------------------------------------------- #
+
+class TestMotorInfoCmdFraming:
+    """The INFO command framing in probe.py must use the same CRC-8 as
+    serial_link.append_crc("INFO") — both share the same polynomial (0x07)."""
+
+    def test_probe_crc8_matches_serial_link_append_crc(self):
+        """probe._crc8("INFO") must equal the CRC embedded in serial_link.append_crc("INFO")."""
+        from vanchor.hardware import probe as probe_mod
+        from vanchor.hardware.serial_link import append_crc
+
+        # append_crc returns "INFO*HH"; extract the hex digits after "*"
+        framed = append_crc("INFO")
+        assert "*" in framed
+        sl_crc_hex = framed.split("*")[1]
+        sl_crc = int(sl_crc_hex, 16)
+
+        # probe._crc8 is a module-private function — access via the module
+        probe_crc = probe_mod._crc8("INFO")
+
+        assert probe_crc == sl_crc, (
+            f"probe._crc8('INFO')={probe_crc:#04x} != "
+            f"serial_link CRC={sl_crc:#04x} from append_crc"
+        )
+
+    def test_motor_info_cmd_ends_with_correct_crc(self):
+        """MOTOR_INFO_CMD bytes must end with the same CRC as append_crc produces."""
+        from vanchor.hardware import probe as probe_mod
+        from vanchor.hardware.serial_link import append_crc
+
+        framed = append_crc("INFO") + "\r\n"
+        assert probe_mod.MOTOR_INFO_CMD == framed.encode(), (
+            f"MOTOR_INFO_CMD={probe_mod.MOTOR_INFO_CMD!r} != {framed.encode()!r}"
+        )

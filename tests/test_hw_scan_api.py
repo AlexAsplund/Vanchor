@@ -208,3 +208,124 @@ class TestDemoModeHwEndpoints:
             # POST probe should be blocked (demo-readonly blocks non-allowlisted POSTs)
             r2 = c.post("/api/hw/probe", json={"target": "serial", "port": "/dev/ttyUSB0"})
             assert r2.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# JS <-> API contract: grep hwwizard.js for correct/incorrect keys
+# --------------------------------------------------------------------------- #
+
+class TestHwwizardJsApiContract:
+    """Source-level contract: hwwizard.js must reference the correct API keys
+    and must NOT reference the wrong ones that were present before the fix.
+
+    Keys that MUST be present:
+      .path        — scan port entries use "path" (not "port")
+      .description — scan port entries use "description" (not "label")
+      .fields      — suggest_for() nests config keys under "fields"
+      "POST"       — set_device_config endpoint is @app.post (not PATCH)
+      {"hardware": — POST body must be wrapped in the "hardware" envelope
+
+    Keys that must NOT be present (pre-fix bugs):
+      p.port       — was incorrectly reading port entry path via "port"
+      s.baudrate   — was reading non-existent top-level "baudrate" from suggest
+      "PATCH"      — wrong HTTP method for /api/config/devices
+    """
+
+    @classmethod
+    def _js_source(cls) -> str:
+        import pathlib
+        here = pathlib.Path(__file__).parent.parent
+        return (here / "src" / "vanchor" / "ui" / "static" / "hwwizard.js").read_text()
+
+    def test_uses_path_key(self):
+        assert ".path" in self._js_source(), "hwwizard.js must read p.path (not p.port)"
+
+    def test_uses_description_key(self):
+        assert ".description" in self._js_source(), \
+            "hwwizard.js must read p.description (not p.label)"
+
+    def test_uses_fields_key(self):
+        assert ".fields" in self._js_source(), \
+            "hwwizard.js must read s.fields from suggest_for() result"
+
+    def test_uses_post_method(self):
+        assert '"POST"' in self._js_source(), \
+            'hwwizard.js must use method:"POST" for /api/config/devices'
+
+    def test_uses_hardware_envelope(self):
+        assert '{"hardware":' in self._js_source() or "{hardware:" in self._js_source(), \
+            'hwwizard.js must wrap POST body in {"hardware": ...}'
+
+    def test_no_wrong_port_key(self):
+        # p.port was the pre-fix bug (port entries use "path").
+        # We allow "port" as a bare word (used in probe payload, i2c logic etc.)
+        # but the specific form "p.port" or "hinted.port" must not appear.
+        src = self._js_source()
+        assert "p.port" not in src, \
+            "hwwizard.js must not read scan entries via p.port (use p.path)"
+        assert "hinted.port" not in src, \
+            "hwwizard.js must not read hinted.port (use hinted.path)"
+
+    def test_no_s_baudrate(self):
+        import re
+        # "s.baudrate" must not appear as a standalone expression.
+        # "fields.baudrate" is fine (correct fix uses it); we check that the
+        # variable "s" specifically is not being read with .baudrate directly.
+        # Look for "s.baudrate" preceded by whitespace, "(" or "," — not by "s".
+        assert not re.search(r'(?<![a-zA-Z_$])s\.baudrate', self._js_source()), \
+            "hwwizard.js must not read s.baudrate (baud is in s.fields.xxx)"
+
+    def test_no_patch_method(self):
+        assert '"PATCH"' not in self._js_source(), \
+            'hwwizard.js must not use method:"PATCH" (endpoint is POST)'
+
+
+# --------------------------------------------------------------------------- #
+# Save path end-to-end: wizard-shaped POST body lands in config
+# --------------------------------------------------------------------------- #
+
+class TestWizardSavePath:
+    """POST /api/config/devices with the exact body shape hwwizard.js now
+    produces (after the C1/C2/C3 fix) must persist the hardware fields."""
+
+    def test_wizard_shaped_post_persists_gps_fields(self, client, tmp_path):
+        """Simulate the exact JSON the fixed wizard sends for a u-blox GPS find."""
+        # suggest_for("ublox", ...) → fields: {gps_source, gps_port, gps_baud}
+        wizard_body = {
+            "hardware": {
+                "gps_source": "ublox",
+                "gps_port": "/dev/ttyACM0",
+                "gps_baud": 38400,
+            }
+        }
+        r = client.post("/api/config/devices", json=wizard_body)
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+
+        # Verify the fields landed in the in-memory config via a GET.
+        after = client.get("/api/config/devices").json()
+        hw = after["hardware"]
+        assert hw["gps_source"] == "ublox"
+        assert hw["gps_port"] == "/dev/ttyACM0"
+        assert hw["gps_baud"] == 38400
+
+    def test_wizard_shaped_post_persists_witmotion_fields(self, client, tmp_path):
+        """WitMotion uses hardware.baudrate (not compass_baud) — verify the
+        wizard's suggest.fields shape passes through the endpoint correctly."""
+        # suggest_for("witmotion-imu", ...) → fields: {compass_source, compass_port, baudrate}
+        wizard_body = {
+            "hardware": {
+                "compass_source": "hwt901b",
+                "compass_port": "/dev/ttyUSB1",
+                "baudrate": 9600,
+            }
+        }
+        r = client.post("/api/config/devices", json=wizard_body)
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+
+        after = client.get("/api/config/devices").json()
+        hw = after["hardware"]
+        assert hw["compass_source"] == "hwt901b"
+        assert hw["compass_port"] == "/dev/ttyUSB1"
+        assert hw["baudrate"] == 9600
