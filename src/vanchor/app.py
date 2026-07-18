@@ -23,7 +23,9 @@ import json
 import logging
 import math
 import os
+import tempfile
 import time
+from pathlib import Path
 
 from .controller.calibration import CalibrationRunner
 from .controller.controller import Controller, GainSchedule, Helm
@@ -2710,6 +2712,38 @@ class Runtime:
             except Exception:  # noqa: BLE001 - one bad evaluator must not stop safety
                 logger.exception("supervisor step %s failed; continuing", name)
 
+    async def _run_demo_scenario(self) -> None:
+        """Demo mode: once the sim GPS has produced a fix, engage the seeded
+        scenario through the NORMAL command path (handle_command), so every
+        governor/failsafe applies exactly as for a human command. One-shot."""
+        cfg = self.config.demo
+        # Wait (max ~20 s) for the navigator to have a position.
+        for _ in range(100):
+            if self.state.position is not None:
+                break
+            await asyncio.sleep(0.2)
+        else:
+            logger.warning("demo scenario: no fix after 20 s; skipping seed")
+            return
+        if self.state.mode != ControlModeName.MANUAL:
+            return  # someone already engaged something (e.g. a fast client)
+        try:
+            if cfg.weather_preset:
+                self.handle_command({"type": "weather_preset", "id": cfg.weather_preset})
+            if cfg.scenario == "anchor":
+                self.handle_command({"type": "anchor_hold", "radius_m": 8})
+            else:  # "route" (default; unknown values fall back here)
+                p = self.state.position
+                self.handle_command({
+                    "type": "goto",
+                    "waypoints": demo_route_waypoints(p.lat, p.lon),
+                    "throttle": 0.6,
+                    "loop": True,
+                })
+            logger.info("demo scenario %r engaged", cfg.scenario)
+        except Exception:  # noqa: BLE001 - a demo seed must never kill the runtime
+            logger.exception("demo scenario failed to engage")
+
     async def _run_supervisor(self, period_s: float = 1.0) -> None:
         """~1 Hz task driving the periodic safety evaluations + depth persistence.
 
@@ -4277,6 +4311,8 @@ class Runtime:
         }
         payload["calibration"] = self.calibration.snapshot()
         payload["sim_enabled"] = self.simulator is not None
+        payload["demo_mode"] = self.config.demo.enabled
+        payload["demo_readonly"] = self.config.demo.enabled and self.config.demo.readonly
         if self.simulator is not None:
             truth = self.simulator.truth()
             env = self.simulator.environment
@@ -4349,6 +4385,8 @@ class Runtime:
         # failsafe, trip accumulation + depth checkpointing. Runs regardless of
         # replay mode and client count (findings M2/H4/#7).
         self._tasks.append(asyncio.ensure_future(self._run_supervisor()))
+        if self.config.demo.enabled:
+            self._tasks.append(asyncio.ensure_future(self._run_demo_scenario()))
         # Start armed connectors (after devices are up so the bus is ready).
         # A connector that fails to build or start is logged and skipped;
         # it NEVER crashes the whole app (mirror the compass-driver resilience).
@@ -4433,6 +4471,65 @@ class Runtime:
         logger.info("runtime stopped")
 
 
+def demo_route_waypoints(lat: float, lon: float) -> list[dict]:
+    """A small ~600 m looping triangle NE of the start (fits the charted lake).
+    Offsets match the README screenshot route (scripts/take_screenshots.py)."""
+    return [
+        {"name": "Demo 1", "lat": lat + 0.0022, "lon": lon + 0.0018},
+        {"name": "Demo 2", "lat": lat + 0.0034, "lon": lon + 0.0075},
+        {"name": "Demo 3", "lat": lat + 0.0012, "lon": lon + 0.0110},
+    ]
+
+
+def apply_demo_mode(config: "AppConfig", *, readonly: bool = False,
+                    data_dir: str | None = None) -> "AppConfig":
+    """Force the demo posture onto ``config`` (in place) and return it.
+
+    - hardware OFF, every device source pinned to the simulator: no real
+      serial/i2c device is ever probed, regardless of devices.json or env.
+    - ephemeral data dir (``data_dir`` arg, else a fresh mkdtemp) so a demo
+      never writes the operator's vanchor_data/. If the CWD has the repo's
+      imported depth chart, symlink it (read-only) into the demo dir so the
+      charted lake renders; a chartless install still works (sim depth builds
+      the live map).
+    - boat starts on the charted demo lake; time_scale stays 1.0.
+    """
+    config.demo.enabled = True
+    config.demo.readonly = bool(readonly)
+    # Forced sim: overwrite the whole hardware block (nothing may probe a port).
+    config.hardware = HardwareConfig()          # enabled=False, all sources None -> "sim"
+    config.hardware.battery_source = "sim"
+    config.nmea_tcp = NmeaTcpConfig()           # enabled=False
+    config.watchdog.enabled = False
+    # World: charted demo lake, real-time physics.
+    config.sim.start_lat = config.demo.start_lat
+    config.sim.start_lon = config.demo.start_lon
+    config.sim.time_scale = 1.0
+    # Ephemeral data dir + best-effort chart seeding (mirrors take_screenshots).
+    src_dir = Path(config.data_dir)             # usually ./vanchor_data
+    config.data_dir = data_dir or tempfile.mkdtemp(prefix="vanchor-demo-")
+    dst = Path(config.data_dir)
+    for name in ("depthchart.npz", "depthmap.json"):
+        s = src_dir / name
+        if s.exists() and not (dst / name).exists():
+            try:
+                (dst / name).symlink_to(s.resolve())
+            except OSError:
+                pass  # best-effort: chartless demo still works
+    wc_src = src_dir / "water_cache"
+    if wc_src.is_dir():
+        wc = dst / "water_cache"
+        wc.mkdir(exist_ok=True)
+        for f in wc_src.iterdir():
+            if not (wc / f.name).exists():
+                try:
+                    (wc / f.name).symlink_to(f.resolve())
+                except OSError:
+                    pass  # best-effort
+    logger.info("DEMO MODE: sim-only, data dir %s (ephemeral)", config.data_dir)
+    return config
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Vanchor-NG server")
     parser.add_argument("--config", default=None, help="YAML/JSON config file")
@@ -4441,14 +4538,23 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", default=None, choices=["simple", "fossen"])
     parser.add_argument("--hardware", action="store_true", help="use real serial devices")
     parser.add_argument("--nmea-tcp", action="store_true", help="accept NMEA over TCP")
+    parser.add_argument("--demo", action="store_true",
+                        help="demo mode: forced sim on the charted lake, seeded "
+                             "moving scenario, ephemeral data dir, DEMO badge")
+    parser.add_argument("--demo-readonly", action="store_true",
+                        help="demo mode + every client pinned to observer (hosted demo)")
     parser.add_argument("--log-level", default=None)
     args = parser.parse_args(argv)
 
     config = load(args.config)
-    # A saved device config (devices.json under data_dir) overrides the loaded
-    # base hardware/nmea_tcp config before the runtime builds any device, so an
-    # API-edited setup survives restarts. CLI flags below still win.
-    apply_device_overrides(config)
+    demo = args.demo or args.demo_readonly
+    if demo:
+        apply_demo_mode(config, readonly=args.demo_readonly)
+    else:
+        # A saved device config (devices.json under data_dir) overrides the loaded
+        # base hardware/nmea_tcp config before the runtime builds any device, so an
+        # API-edited setup survives restarts. CLI flags below still win.
+        apply_device_overrides(config)
     if args.host:
         config.server.host = args.host
     if args.port:
@@ -4456,9 +4562,15 @@ def main(argv: list[str] | None = None) -> None:
     if args.model:
         config.sim.model = args.model
     if args.hardware:
-        config.hardware.enabled = True
+        if demo:
+            logger.warning("--hardware ignored in demo mode (forced sim)")
+        else:
+            config.hardware.enabled = True
     if args.nmea_tcp:
-        config.nmea_tcp.enabled = True
+        if demo:
+            logger.warning("--nmea-tcp ignored in demo mode (forced sim)")
+        else:
+            config.nmea_tcp.enabled = True
     if args.log_level:
         config.log_level = args.log_level
 

@@ -253,8 +253,11 @@ serves the app directly to your phone.
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev,routing]"
 
+vanchor --demo                # instant demo: simulated boat driving a charted lake
 vanchor --host 0.0.0.0 --port 8000
 ```
+
+Demo mode never touches real devices or your data dir.
 
 Then open **http://localhost:8000**. Vanchor-NG **defaults to simulation**, so
 this just works with no hardware. You'll see a boat on the map — drop an anchor,

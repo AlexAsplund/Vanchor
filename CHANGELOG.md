@@ -4,6 +4,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## [1.5.0a8] — 2026-07-18
 
+- **Demo mode (`vanchor --demo`)** — one flag boots a forced-sim demo on
+  the charted lake with a seeded looping route (or `demo.scenario: anchor`),
+  an ephemeral data dir (never touches vanchor_data/ or real devices), a
+  DEMO badge in the UI, and `--demo-readonly` which pins every client to
+  observer for hosted demos (stop still always works). `VANCHOR_DEMO=1` /
+  `VANCHOR_DEMO_READONLY=1` env equivalents.
+
 - **Leif retrained: no more orbiting (promoted `leif120i best_g00240`)** —
   the pure learned station-keeper no longer circles the anchor: live-sim
   gauntlet over 4 episodes holds 83–88% (inside + stationary), 2.6–3.1 m

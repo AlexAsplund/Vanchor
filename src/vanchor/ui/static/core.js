@@ -241,8 +241,9 @@ VA.onRole = function (fn) { roleListeners.push(fn); };
 function dispatchRole(m) {
   VA.role = m.role === "helm" ? "helm" : "observer";
   VA.helmPresent = !!m.helm_present;
+  VA.roleReadonly = !!m.readonly;
   if (Number.isFinite(m.clients)) VA.clientCount = m.clients;
-  const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount };
+  const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount, readonly: VA.roleReadonly };
   for (const fn of roleListeners) {
     try { fn(info); } catch (err) { VA.logLine("role handler error: " + err); }
   }
@@ -267,7 +268,7 @@ function dispatch(t) {
       VA.helmPresent = !!t.helm_present; changed = true;
     }
     if (changed) {
-      const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount };
+      const info = { role: VA.role, helmPresent: VA.helmPresent, clients: VA.clientCount, readonly: VA.roleReadonly };
       for (const fn of roleListeners) {
         try { fn(info); } catch (err) { VA.logLine("role handler error: " + err); }
       }

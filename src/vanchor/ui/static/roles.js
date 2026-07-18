@@ -63,11 +63,12 @@
     if (role !== "helm") {
       // Observer: prominent banner + Take Helm button.
       if (label) {
-        label.textContent = info.helmPresent
-          ? "Observing — another helm is connected"
-          : "Observing — no helm connected";
+        label.textContent = info.readonly
+          ? "Demo — read-only view (controls disabled)"
+          : (info.helmPresent ? "Observing — another helm is connected"
+                              : "Observing — no helm connected");
       }
-      if (btn) btn.style.display = "";
+      if (btn) btn.style.display = info.readonly ? "none" : "";
       node.style.background = "rgba(180,83,9,.95)";
       node.style.display = "flex";
       return;

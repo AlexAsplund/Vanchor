@@ -288,6 +288,11 @@
     <button id="replay-ind-stop" aria-label="Stop replay">✕</button>
   </div>
 
+  <!-- Demo-mode badge — shown when the server runs `vanchor --demo`. -->
+  <div id="demo-indicator" class="demo-indicator hidden" role="status">
+    <span class="demo-dot"></span> DEMO<span id="demo-ro-suffix" class="hidden">&nbsp;&middot; read-only</span>
+  </div>
+
   <!-- ===================== PRIMARY CONTROL DOCK ===================== -->
   <!-- Mode rail (segmented) + a contextual panel that swaps with the mode. -->
   <nav id="dock" class="dock glass">
@@ -1130,6 +1135,7 @@
   <script src="/static/hudframe.js"></script>
   <script src="/static/hud.js"></script>
   <script src="/static/roles.js"></script>
+  <script src="/static/demo.js"></script>
   <script src="/static/steering.js"></script>
   <script src="/static/motorplace.js"></script>
   <script src="/static/wizard.js"></script>

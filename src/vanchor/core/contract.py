@@ -27,6 +27,8 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "sog_knots": {"type": "number", "unit": "kn", "desc": "speed over ground"},
     "depth_m": {"type": "number", "unit": "m", "desc": "measured water depth"},
     "sim_enabled": {"type": "boolean", "desc": "running the simulator (vs real hardware)"},
+    "demo_mode": {"type": "boolean", "desc": "server started with --demo (forced sim, ephemeral data dir)"},
+    "demo_readonly": {"type": "boolean", "desc": "demo read-only mode: every client pinned to observer"},
     "truth": {"type": "object|null", "desc": "simulator ground-truth boat state (sim only)"},
     "imu": {"type": "object|null", "desc": "latest AHRS accel+gyro sample"},
     "sensors": {"type": "object", "desc": "raw sensor snapshot (fix/heading/depth)"},

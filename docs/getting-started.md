@@ -104,6 +104,33 @@ comes back without a red error message, it worked.
 
 Now start the boat brain:
 
+### Try it in 30 seconds
+
+If you just want to see Vanchor-NG in action immediately — without any hardware
+or configuration — run:
+
+```bash
+vanchor --demo
+```
+
+This boots the app in forced simulation on the charted demo lake, with a seeded
+boat already driving a looping route. The UI shows a **DEMO** badge. No real
+devices are probed and your data directory is never written. Open
+`http://localhost:8000` and you'll see the map alive instantly.
+
+For a hosted demo where many viewers can watch but nobody can steer:
+
+```bash
+vanchor --demo-readonly
+```
+
+Every connected browser is pinned to the observer role (controls dimmed). STOP
+still works from any client — the safety floor is never removed.
+
+> **Hosting behind a public domain?** The DNS-rebinding host check rejects
+> public FQDNs by default. Set `VANCHOR_ALLOWED_HOSTS=demo.example.com` so
+> the app accepts requests from your domain.
+
 ```bash
 vanchor --host 0.0.0.0 --port 8000
 ```

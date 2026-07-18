@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -249,6 +249,14 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     # from a non-helm client is rejected with ``role_denied`` and NOT forwarded.
     _OBSERVER_ALLOWED: frozenset[str] = frozenset({"stop", "take_helm", "ping"})
 
+    # Demo read-only (hosted demo): nobody is ever helm; take_helm is refused.
+    # The existing observer gate then denies every boat-affecting command while
+    # still honouring stop (SAFETY FLOOR: stop always works).
+    _demo_readonly = bool(
+        getattr(runtime.config, "demo", None)
+        and runtime.config.demo.enabled and runtime.config.demo.readonly
+    )
+
     def _presence() -> tuple[int, bool]:
         """Shared scalars broadcast to every client: (client count, helm present)."""
         return len(clients), _helm["ws"] is not None
@@ -259,7 +267,7 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         role = "helm" if ws is _helm["ws"] else "observer"
         msg = json.dumps({
             "type": "role", "v": _PROTOCOL_V, "role": role,
-            "clients": n, "helm_present": present,
+            "clients": n, "helm_present": present, "readonly": _demo_readonly,
         })
         # Per-client timeout mirrors the broadcaster: one wedged socket must not
         # stall a connect/disconnect. Best-effort — a client that won't drain
@@ -414,6 +422,23 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     app.add_middleware(_HostCheckMiddleware)
 
+    if _demo_readonly:
+        class _DemoReadonlyMiddleware(BaseHTTPMiddleware):
+            """Hosted-demo hardening: block every mutating /api call except
+            POST /api/command (handler-gated to stop-only above) and the
+            browser's client-log ingestion. GETs pass untouched."""
+            _ALLOWED_POSTS = ("/api/command", "/api/client-log")
+
+            async def dispatch(self, request: _Request, call_next):
+                if (request.url.path.startswith("/api/")
+                        and request.method not in ("GET", "HEAD", "OPTIONS")
+                        and request.url.path not in self._ALLOWED_POSTS):
+                    return Response(content='{"detail":"demo is read-only"}',
+                                    status_code=403, media_type="application/json")
+                return await call_next(request)
+
+        app.add_middleware(_DemoReadonlyMiddleware)
+
     @app.get("/")
     @app.get("/index.html")
     async def index() -> Response:
@@ -563,6 +588,12 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         # (with the message) if the handler raises. The original 500 behaviour is
         # preserved by re-raising after recording.
         ctype = payload.get("type") if isinstance(payload, dict) else None
+        # Demo read-only: gate inside the handler (not via body-reading middleware
+        # — BaseHTTPMiddleware + body inspection is a known Starlette footgun).
+        # SAFETY FLOOR: stop is always accepted regardless of demo-readonly.
+        if _demo_readonly and ctype != "stop":
+            runtime.record_command(ctype, "rest", "denied")
+            raise HTTPException(status_code=403, detail="demo is read-only")
         try:
             runtime.handle_command(payload)
         except Exception as exc:
@@ -1347,7 +1378,8 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         client_order.append(websocket)
         # First client to connect becomes helm; later clients are observers (#24).
         # Connecting is PASSIVE — it never commands the boat or changes its mode.
-        if _helm["ws"] is None:
+        # In demo-readonly mode nobody is ever assigned the helm.
+        if _helm["ws"] is None and not _demo_readonly:
             _helm["ws"] = websocket
         # Mark the link alive for the lost-connection failsafe (#64).
         runtime.client_connected()
@@ -1391,6 +1423,14 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 if mtype == "take_helm":
                     # Cooperative helm transfer (#24): claim the helm, demoting the
                     # previous holder. Allowed from ANY client (single-user boat).
+                    # In demo-readonly mode, take_helm is refused.
+                    if _demo_readonly:
+                        runtime.record_command(mtype, "observer", "denied")
+                        await websocket.send_text(json.dumps({
+                            "type": "role_denied", "v": _PROTOCOL_V,
+                            "error": "demo is read-only",
+                        }))
+                        continue
                     _helm["ws"] = websocket
                     await _broadcast_roles()
                     continue

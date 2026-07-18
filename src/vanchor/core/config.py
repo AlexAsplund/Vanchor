@@ -693,6 +693,25 @@ class ObsConfig:
 
 
 @dataclass
+class DemoConfig:
+    """One-flag demo mode (`vanchor --demo`, adoption pack).
+
+    Forced simulation with a seeded, already-moving scenario and an ephemeral
+    data dir. **Default-off**: every field's default keeps current behaviour;
+    the flag (or VANCHOR_DEMO=1) is the only way in. `readonly` additionally
+    pins every UI client to the observer role (hosted-demo hardening);
+    stop still always works.
+    """
+
+    enabled: bool = False
+    readonly: bool = False
+    scenario: str = "route"     # "route" (small looping route) | "anchor" (hold on the spot)
+    start_lat: float = 59.8779  # charted demo lake (same spot the README screenshots use)
+    start_lon: float = 12.0293
+    weather_preset: str = "lake"  # sim weather preset applied at boot ("" = leave calm)
+
+
+@dataclass
 class AppConfig:
     """The root configuration tree."""
 
@@ -711,6 +730,7 @@ class AppConfig:
     nmea_tcp: NmeaTcpConfig = field(default_factory=NmeaTcpConfig)
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     obs: ObsConfig = field(default_factory=ObsConfig)
+    demo: DemoConfig = field(default_factory=DemoConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AppConfig":
@@ -754,6 +774,7 @@ _SUBCONFIGS: dict[str, type] = {
     "nmea_tcp": NmeaTcpConfig,
     "watchdog": WatchdogConfig,
     "obs": ObsConfig,
+    "demo": DemoConfig,
 }
 
 
@@ -960,6 +981,9 @@ def apply_env_overrides(config: AppConfig) -> AppConfig:
     _apply("VANCHOR_NMEA_TCP", config.nmea_tcp, "enabled", _parse_bool)
     _apply("VANCHOR_NMEA_TCP_HOST", config.nmea_tcp, "host", str)
     _apply("VANCHOR_NMEA_TCP_PORT", config.nmea_tcp, "port", int)
+    # Demo mode.
+    _apply("VANCHOR_DEMO", config.demo, "enabled", _parse_bool)
+    _apply("VANCHOR_DEMO_READONLY", config.demo, "readonly", _parse_bool)
     return config
 
 
@@ -1182,4 +1206,12 @@ watchdog:                    # external hardware watchdog heartbeat (#44)
   gpio_pin: 17               # BCM pin wired to the external retriggerable relay driver
   interval_s: 1.0            # min seconds between heartbeat edges (~supervisor rate)
   active_low: false          # invert the electrical level for the relay board's polarity
+
+demo:                        # one-flag demo mode (`vanchor --demo`); default OFF
+  enabled: false             # forced sim + seeded moving scenario + DEMO badge
+  readonly: false            # pin every client to observer (hosted demo); stop still works
+  scenario: route            # route | anchor
+  start_lat: 59.8779         # charted demo lake
+  start_lon: 12.0293
+  weather_preset: lake       # sim weather applied at boot ("" = calm)
 """

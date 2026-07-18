@@ -83,6 +83,7 @@ const SHELL = [
   "/static/hudframe.js",
   "/static/hud.js",
   "/static/roles.js",
+  "/static/demo.js",
   "/static/steering.js",
   "/static/wizard.js",
   "/static/boat.js",

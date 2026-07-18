@@ -302,6 +302,15 @@ body.light .leaflet-control-layers-toggle { filter: none; }
 .replay-indicator button { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
 .replay-indicator.hidden { display: none; }
 
+.demo-indicator {
+  position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 1499;
+  display: flex; align-items: center; gap: 9px; padding: 7px 15px; border-radius: 999px;
+  background: var(--glass-solid); border: 1px solid #b45309; color: var(--text);
+  font: 700 12px var(--font-display); letter-spacing: 0.1em; box-shadow: var(--shadow);
+}
+.demo-indicator .demo-dot { width: 9px; height: 9px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 9px #f59e0b; animation: pulse 1.2s infinite; }
+.demo-indicator.hidden { display: none; }
+
 .hidden { display: none !important; }
 .boat-icon { transition: transform 0.18s linear; }
 .boat-glow { fill: var(--accent); opacity: 0.30; filter: blur(3px); }

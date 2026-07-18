@@ -74,3 +74,25 @@ helpers, noisy-sensor layer, and web UI. Tracked as roadmap item #1.
 > Conclusion for now: the in-repo simulator stays as the zero-dependency default
 > (good enough to develop and verify the control loops, as the integration tests
 > demonstrate); the Fossen model is the recommended realism upgrade when needed.
+
+## Demo mode
+
+The `demo:` config block (or `vanchor --demo` on the CLI) boots the simulator in
+a pre-packaged, already-moving posture so a first-time visitor sees an alive map
+the moment their browser connects.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `demo.enabled` | `false` | Master switch (off = current behaviour unchanged). |
+| `demo.readonly` | `false` | Pin every client to observer; stop still works. |
+| `demo.scenario` | `route` | `route` — looping triangle route; `anchor` — anchor-hold at the start. |
+| `demo.start_lat` | `59.8779` | Start latitude (charted demo lake). |
+| `demo.start_lon` | `12.0293` | Start longitude. |
+| `demo.weather_preset` | `lake` | Sim weather preset applied at boot (`""` = calm). |
+
+Demo mode forces full simulation (no real devices probed), uses a temporary
+`mkdtemp` data dir (your `vanchor_data/` is never written), and symlinks the
+repo depth chart if present so the charted lake renders; a chartless install
+uses the procedural sim bathymetry.
+
+Equivalent env vars: `VANCHOR_DEMO=1`, `VANCHOR_DEMO_READONLY=1`.
