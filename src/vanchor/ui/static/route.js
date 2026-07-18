@@ -21,12 +21,21 @@
     const b = $("wp-arm");
     if (b) { b.classList.toggle("active", on); b.textContent = on ? "✓ Tap map to add — done" : "＋ Add waypoints"; }
     if (on) setGotoArmed(false);  // mutually exclusive with Go-to
+    const pending = VA.map ? VA.map.pending() : [];
+    if (VA.armbar) {
+      if (on) VA.armbar.show({
+        text: "Tap the map to add waypoints — " + pending.length + " added",
+        done: true,
+        onDone: () => setWpArmed(false),
+        onCancel: () => setWpArmed(false),
+      });
+      else VA.armbar.hide();
+    }
   }
   VA.map.setOnMapClick((lat, lon, armed) => {
     if (armed) { gotoTo(lat, lon); setGotoArmed(false); return; }
-    if (!wpArmed) return;          // not in add-waypoint mode -> ignore the tap
-    VA.map.addPending(lat, lon);
-    renderWpList();
+    if (wpArmed) { VA.map.addPending(lat, lon); renderWpList(); return; }
+    if (VA.pinPopup) VA.pinPopup.open(lat, lon);   // item 18: plain tap = pin popup
   });
   const wpArmBtn = $("wp-arm");
   if (wpArmBtn) wpArmBtn.addEventListener("click", () => setWpArmed(!wpArmed));
@@ -36,6 +45,9 @@
     if (!list) return;
     list.innerHTML = "";
     const pending = VA.map.pending();
+    if (VA.armbar && wpArmed) {
+      VA.armbar.update("Tap the map to add waypoints — " + pending.length + " added");
+    }
     if (!pending.length) {
       const li = document.createElement("li");
       li.className = "wp-empty"; li.textContent = "No pending waypoints.";
@@ -136,7 +148,11 @@
     setLoop: setLoopFlag,
     clearLoop: () => setLoopFlag(false),
     isLoop: () => routeIsLoop,
+    gotoTo,  // exposed for pinpopup.js "Take me here" action
   };
+
+  // Export haversine as VA.geo for cross-module use (pinpopup.js distance calc).
+  VA.geo = { haversineM };
 
   // ---- top-bar route progress: traveled ▸ remaining (#69) ----
   function fmtDist(m) {
@@ -253,6 +269,10 @@
       gotoArm.classList.toggle("active", on);
       gotoArm.textContent = on ? "Tap the map… (cancel)" : "Tap map to go";
     }
+    if (VA.armbar) {
+      if (on) VA.armbar.show({ text: "Tap the map where you want to go", done: false, onCancel: () => setGotoArmed(false) });
+      else VA.armbar.hide();
+    }
   }
   function gotoTo(lat, lon) {
     const on_arrival = gotoAction ? gotoAction.value : "anchor";
@@ -294,6 +314,7 @@
       VA.map.setPending(r.waypoints); renderWpList(); setWpArmed(false);
       setLoopFlag(!!r.loop);               // closed isobath -> loop
       if (contourStatus) contourStatus.textContent = r.message + " Review, then Start route.";
+      if (VA.sheet) VA.sheet.reveal("mid");
     }).catch(() => { if (contourStatus) contourStatus.textContent = "Contour lookup failed."; });
     return true;                            // consumed the click
   });

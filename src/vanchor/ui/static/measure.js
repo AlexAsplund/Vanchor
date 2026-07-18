@@ -182,6 +182,11 @@
       } else {
         showHint("Tap the map to add points — tap the distance label when done");
       }
+      if (VA.armbar) VA.armbar.show({
+        text: "Tap the map to measure — tap the distance label to finish",
+        done: false,
+        onCancel: () => clearAll(),
+      });
     }
     function stop() {
       mode = null;
@@ -191,6 +196,7 @@
       hideHint();
     }
     function clearAll() {
+      if (VA.armbar) VA.armbar.hide();
       stop();
       closeMenu();
       drawing = false;

@@ -424,5 +424,6 @@
     count() { return markers.length; },
     setArmed, isArmed() { return armed; },
     exportGeoJSON, importFile,
+    create: createMarker,  // for pinpopup.js "Drop marker" action
   };
 })();

@@ -249,6 +249,22 @@
   // "Drop anchor here" — the ONLY cold engage; single-tap (owner decision).
   $("anchor-go").addEventListener("click", () => applyAnchor(true));
 
+  // Expose engageAt for pinpopup.js: engage the CURRENT anchor style (task-4
+  // segmented control, via styleType()) at a specific lat/lon — the pin popup
+  // "Anchor here" near path. Single source of truth for style selection.
+  VA.anchorCtl = {
+    engageAt: function (lat, lon) {
+      const cmd = {
+        type: styleType(),
+        radius_m: arSlider ? parseFloat(arSlider.value) : 10,
+        hold_heading: holdHdgBox ? holdHdgBox.checked : false,
+        vectored: !!(vectoredBox && vectoredBox.checked),
+        anchor: { lat: lat, lon: lon },
+      };
+      send(cmd);
+    },
+  };
+
   // ---- Anchor engaged state (D10) ----
   const anchorEngaged = $("anchor-engaged");
   const aeStatus = $("ae-status");

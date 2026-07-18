@@ -43,9 +43,32 @@
     if (themeSeg) themeSeg.querySelectorAll("button").forEach((b) => {
       b.classList.toggle("on", (b.dataset.theme === "daylight") === daylight);
     });
+    window.dispatchEvent(new CustomEvent("va:theme", { detail: theme }));
   }
   function setTheme(theme) {
     const t = (theme === "daylight" || theme === "light") ? "daylight" : "dark";
+    // Owner decision: daylight switches map tiles too (restore prior layer after).
+    const BRIGHT_LAYERS = ["Light", "Topo", "Satellite"];
+    const PREV_LAYER_KEY = "vanchor-theme-prev-layer";
+    if (t === "daylight") {
+      // Stash the current layer and switch to Light — unless the user already
+      // has a bright basemap up (leave those; their explicit choice wins).
+      if (VA.map && VA.map.getBaseLayer) {
+        const cur = VA.map.getBaseLayer();
+        if (!BRIGHT_LAYERS.includes(cur)) {
+          try { localStorage.setItem(PREV_LAYER_KEY, cur); } catch (e) { /* ignore */ }
+          VA.map.setBaseLayer("Light");
+        }
+      }
+    } else {
+      // Restore the stashed layer (default Dark) and clear the stash.
+      if (VA.map && VA.map.setBaseLayer) {
+        let prev = null;
+        try { prev = localStorage.getItem(PREV_LAYER_KEY); } catch (e) { /* ignore */ }
+        VA.map.setBaseLayer(prev || "Dark");
+        try { localStorage.removeItem(PREV_LAYER_KEY); } catch (e) { /* ignore */ }
+      }
+    }
     applyTheme(t);
     try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* ignore */ }
   }
@@ -61,6 +84,19 @@
   if (themeBox) themeBox.addEventListener("change", () =>
     setTheme(themeBox.checked ? "dark" : "daylight")
   );
+
+  // Export VA.theme for themectl.js (the sun/moon map control) and others.
+  VA.theme = {
+    set: setTheme,
+    current: () => (document.documentElement.getAttribute("data-theme") === "daylight" ? "daylight" : "dark"),
+  };
+
+  // If the user manually changes basemap while in daylight, clear the stash so
+  // their explicit choice survives leaving daylight (map-core.js dispatches this
+  // only for user-initiated baselayerchange, not our programmatic setBaseLayer).
+  window.addEventListener("va:basemap-user-change", () => {
+    try { localStorage.removeItem("vanchor-theme-prev-layer"); } catch (e) { /* ignore */ }
+  });
 
   // ===== depth overlay toggle ==============================================
   const depthShowBox = $("depth-show");

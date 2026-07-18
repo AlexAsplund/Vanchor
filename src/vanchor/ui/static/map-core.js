@@ -77,6 +77,10 @@
   // the still-default basemap and CLOBBER the user's saved one before
   // restoreLayers() reads it. restoreLayers() opens saving once restore is done.
   let suppressSave = 1;
+  // Distinguishes a programmatic setBaseLayer() (theme swap) from a user-driven
+  // basemap change in the layers control, so settings.js only clears the daylight
+  // layer-stash on genuine user choices.
+  let settingBaseLayer = false;
 
   function readLayerPrefs() {
     try {
@@ -135,6 +139,9 @@
     // Dark basemap contrast: tag #map so CSS can boost brightness/saturation.
     const mapEl = document.getElementById("map");
     if (mapEl) mapEl.classList.toggle("base-dark", e.name === "Dark");
+    // Notify settings.js of a USER-initiated basemap change (not our programmatic
+    // theme swap) so it can drop the daylight layer-stash.
+    if (!settingBaseLayer) window.dispatchEvent(new CustomEvent("va:basemap-user-change", { detail: e.name }));
   });
 
   // Restore the saved basemap + overlay selection. Called once by the depth
@@ -169,6 +176,23 @@
     // state once. From here, basemap/overlay changes save normally.
     suppressSave = 0;
     saveLayers();
+    // Boot-time daylight reconciliation: theme init (settings.js) runs before
+    // restoreLayers, so a daylight boot with a saved Dark layer needs the tile
+    // swap applied here (stashing Dark so leaving daylight restores it).
+    if (document.documentElement.getAttribute("data-theme") === "daylight") {
+      let activeName = "Dark";
+      Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) activeName = n; });
+      if (activeName === "Dark") {
+        const stash = localStorage.getItem("vanchor-theme-prev-layer");
+        if (!stash) {
+          try { localStorage.setItem("vanchor-theme-prev-layer", "Dark"); } catch (e) { /* ignore */ }
+          settingBaseLayer = true;
+          Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) map.removeLayer(base[n]); });
+          if (base["Light"]) base["Light"].addTo(map);
+          settingBaseLayer = false;
+        }
+      }
+    }
     // Return true when saved prefs existed (depth module uses this to decide
     // whether to probe for a default-on depth overlay on first run).
     return !!prefs;
@@ -461,5 +485,28 @@
     setGotoMarker, clearGotoMarker,
     recenter() { follow.boat = true; },
     setFollowOffset(x, y) { follow.offsetX = x || 0; follow.offsetY = y || 0; },
+    // Switch the active basemap by name (theme swap uses this). Returns the
+    // previous base name. Guarded by settingBaseLayer so the baselayerchange
+    // handler treats it as programmatic, not a user choice.
+    setBaseLayer(name) {
+      if (!base[name]) return null;
+      let prev = "Dark";
+      suppressSave++;
+      try {
+        Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) { prev = n; map.removeLayer(base[n]); } });
+        settingBaseLayer = true;
+        base[name].addTo(map);
+        settingBaseLayer = false;
+      } finally {
+        suppressSave--;
+      }
+      saveLayers();
+      return prev;
+    },
+    getBaseLayer() {
+      let active = "Dark";
+      Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) active = n; });
+      return active;
+    },
   };
 })();

@@ -122,6 +122,15 @@
     </div>
   </header>
 
+  <!-- Armed-state banner (WP6 item 19): the "Tap the map to…" strip for go-to /
+       add-waypoints / measure. Sits below the topbar; task-1 alarm strips
+       (#safety-banners) always stack above it. -->
+  <div id="arm-banner" class="arm-banner hidden" role="status">
+    <span id="arm-banner-text"></span>
+    <button id="arm-banner-done" type="button">&#x2713; Done</button>
+    <button id="arm-banner-cancel" type="button">Cancel</button>
+  </div>
+
   <!-- Alert history (#97): a dialog listing recent safety alerts, newest first.
        Driven by VA.logAlert(); persisted to localStorage. -->
   <dialog id="alerts-dialog" class="alerts-dialog">
@@ -1333,6 +1342,10 @@
   <script src="/static/mobile.js"></script>
   <script src="/static/wakelock.js"></script>
   <script src="/static/views.js"></script>
+  <!-- WP6/WP9: pin popup, armed-state banner, sun/moon theme toggle. -->
+  <script src="/static/pinpopup.js"></script>
+  <script src="/static/armbar.js"></script>
+  <script src="/static/themectl.js"></script>
   <!-- Onboarding: sim notice, first-run choice, coach marks, Get-started tile.
        Must load LAST (after views.js, wizard.js, hwwizard.js). -->
   <script src="/static/onboard.js"></script>

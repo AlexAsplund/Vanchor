@@ -109,32 +109,10 @@ body.light.theme-daylight {
 html[data-theme="daylight"] body::before,
 body.light.theme-daylight::before { background: var(--bg); }
 
-/* Daylight: the topbar and the always-on HUD/steering readouts keep their
-   DELIBERATELY dark backing (that darkness is what keeps them readable over the
-   bright Light/Topo/Satellite basemaps) -- so the text inside them must stay
-   LIGHT. Re-scope the dark-theme text/accent palette locally instead of letting
-   the page-wide dark-on-white palette bleed in (which made these panels read as
-   dim dark-on-dark in the daylight theme). */
-html[data-theme="daylight"] .topbar,
-html[data-theme="daylight"] .hud,
-html[data-theme="daylight"] .steering-gauge,
-html[data-theme="daylight"] .catch-fab,
-body.light.theme-daylight .topbar,
-body.light.theme-daylight .hud,
-body.light.theme-daylight .steering-gauge,
-body.light.theme-daylight .catch-fab {
-  --text: #eaf2fb;
-  --muted: #a3b4cc;
-  --faint: rgba(120, 170, 255, 0.05);
-  --line: rgba(130, 180, 255, 0.13);
-  --line-bright: rgba(130, 200, 255, 0.28);
-  --accent: #2ff3ff;
-  --accent-rgb: 47, 243, 255;
-  --accent-2: #2ce8b0;
-  --active: #2ce8b0;
-  --warn: #ffc24d;
-  --stop: #ff5d7e;
-}
+/* WP9 §5.4: the deliberate dark-topbar/HUD carve-out is DELETED. It only made
+   sense while daylight could sit over dark tiles; §5.2 now guarantees light
+   tiles in daylight, so the topbar/HUD/gauge/FABs join the bright daylight
+   palette with the rest of the chrome. */
 
 /* Deep tactical backdrop: gradient + faint grid + vignette, beneath the map. */
 body::before {
@@ -193,14 +171,23 @@ body.light #map .leaflet-tile { filter: saturate(0.95); }
 }
 .leaflet-bar a {
   background: transparent; color: var(--text); border-bottom: 1px solid var(--line);
-  width: 32px; height: 32px; line-height: 32px; font-size: 17px;
+  width: 44px; height: 44px; line-height: 44px; font-size: 20px;
 }
 .leaflet-bar a:hover { background: rgba(var(--accent-rgb), 0.16); color: var(--accent); }
 .leaflet-bar a.leaflet-disabled { color: var(--muted); opacity: 0.45; }
 .leaflet-control-layers-toggle {
-  width: 34px; height: 34px; background-size: 18px; filter: invert(1) opacity(0.8);
+  width: 44px; height: 44px; background-size: 22px; filter: invert(1) opacity(0.8);
 }
 body.light .leaflet-control-layers-toggle { filter: none; }
+/* WP6 item 20: ≥44px touch targets, ≥8px gaps between stacked map controls. */
+.leaflet-top .leaflet-control { margin-bottom: 8px !important; }
+@media (min-width: 1000px) {
+  .leaflet-bar a { width: 48px; height: 48px; line-height: 48px; }
+  .leaflet-control-layers-toggle { width: 48px; height: 48px; }
+  .measure-btn { width: 48px; height: 48px; line-height: 48px; }
+  .maprot-ctl .maprot-btn { width: 48px; height: 48px; }
+  .theme-btn { width: 48px; height: 48px; line-height: 48px; }
+}
 .leaflet-control-layers-expanded {
   padding: 9px 12px; color: var(--text); min-width: 132px;
   font: 600 12px var(--font-display); letter-spacing: 0.03em;
@@ -213,8 +200,8 @@ body.light .leaflet-control-layers-toggle { filter: none; }
    plus the on-map distance readout and its action menu. */
 .measure-ctl { position: relative; }
 .measure-btn {
-  display: block; width: 34px; height: 34px; line-height: 34px; text-align: center;
-  font-size: 17px; text-decoration: none; color: var(--text);
+  display: block; width: 44px; height: 44px; line-height: 44px; text-align: center;
+  font-size: 20px; text-decoration: none; color: var(--text);
   background: var(--glass-solid); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: var(--shadow); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
 }
@@ -1391,7 +1378,7 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 #map.map-rotated .leaflet-marker-icon > .map-marker-pin { transform-origin: 50% 100%; }
 #map.map-rotated .leaflet-popup-content-wrapper { transform: rotate(var(--map-derot, 0deg)); transform-origin: 50% 100%; }
 #map.map-rotated .wp-menu { transform: translate(-50%, -100%) translateY(-14px) rotate(var(--map-derot, 0deg)); }
-.maprot-ctl .maprot-btn { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; }
+.maprot-ctl .maprot-btn { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; }
 .maprot-ctl .maprot-btn.on { background: color-mix(in srgb, var(--accent) 25%, #0b1520); }
 .maprot-ctl .maprot-needle { display: block; transition: transform 0.15s linear; }
 
@@ -2994,3 +2981,120 @@ body.mobile .dock button.info-dot { min-height: 28px; }
 /* sb-hold-act small tags are shown by default */
 .sb-hold-act small { display: block; }
 
+
+/* ================= WP6 + WP9: pin popup, armbar, theme toggle ============= */
+
+/* ---- Theme toggle control (sun/moon map button, themectl.js) ---- */
+.theme-btn {
+  display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+  text-decoration: none; color: var(--text);
+}
+.theme-btn:hover { color: var(--accent); }
+
+/* ---- Pin popup (WP6 item 18, pinpopup.js) ---- */
+.pin-popup-wrap .leaflet-popup-content-wrapper {
+  background: var(--glass-solid); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: var(--shadow); padding: 0; color: var(--text);
+  min-width: 240px;
+}
+.pin-popup-wrap .leaflet-popup-content { margin: 0; }
+.pin-popup-wrap .leaflet-popup-tip { background: var(--glass-solid); }
+.pin-popup { display: flex; flex-direction: column; }
+.pp-head {
+  padding: 12px 16px 10px; border-bottom: 1px solid var(--line);
+  font: 700 15px var(--font-display);
+}
+.pp-head b { font-size: 20px; font-family: var(--font-num); }
+.pp-head-meta { margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.pp-btn {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px;
+  padding: 10px 16px; background: transparent; color: var(--text);
+  border: none; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer;
+  font: 600 14px var(--font-display); letter-spacing: 0.02em;
+}
+.pp-btn:last-child { border-bottom: none; border-radius: 0 0 14px 14px; }
+.pp-btn:hover { background: rgba(var(--accent-rgb), 0.1); }
+/* Visible hold-progress ring reuses the shared bindHold .sb-hold animation. */
+.pp-icon { font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }
+.pp-label { flex: 1; display: flex; flex-direction: column; }
+.pp-sub { font-size: 11px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+.pp-gate {
+  flex-shrink: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--accent); background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 6px; padding: 3px 7px; white-space: nowrap;
+}
+
+/* ---- Armed-state banner (WP6 item 19, armbar.js) ---- */
+.arm-banner {
+  position: fixed; top: 58px; left: 0; right: 0; z-index: 480;
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  background: var(--glass-solid); border-bottom: 2px solid var(--accent);
+  font: 600 13px var(--font-display); color: var(--text);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.arm-banner.hidden { display: none; }
+#arm-banner-text { flex: 1; }
+#arm-banner-done, #arm-banner-cancel {
+  flex-shrink: 0; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: transparent; color: var(--text); cursor: pointer;
+  font: 600 12px var(--font-display); letter-spacing: 0.03em;
+}
+#arm-banner-done { border-color: var(--accent); color: var(--accent); }
+#arm-banner-done.hidden { display: none; }
+#arm-banner-cancel:hover { background: rgba(var(--accent-rgb), 0.1); }
+
+/* ---- Peek-echo: collapsed sheet head flips red during a drag alarm (item 21).
+   The ctx cell already reddens via #si-ctx[data-ctx="alarm"]; this reinforces
+   the whole head so the peek reads as an alarm at a glance. ---- */
+body.mobile .sheet-head.alarm { box-shadow: inset 0 3px 0 var(--stop); }
+
+/* ---- WP9 A17: solid STOP + solid alarm strips in daylight (no alpha on
+   safety chrome). STOP #D21F3C on white = contrast ratio ~5.86:1 (>= 4.5:1). ---- */
+html[data-theme="daylight"] .sheet-stop,
+html[data-theme="daylight"] .prs-stop,
+html[data-theme="daylight"] .rbtn-stop,
+html[data-theme="daylight"] .mode-stop {
+  background: #d21f3c !important;
+  color: #fff !important;
+  border-color: #d21f3c !important;
+}
+html[data-theme="daylight"] .sbanner-alarm {
+  background: #d21f3c;
+  color: #fff;
+}
+html[data-theme="daylight"] .sbanner-batt-warn {
+  background: #c47800;
+  color: #fff;
+}
+html[data-theme="daylight"] .sbanner-mob {
+  background: #e8820c;
+  color: #fff;
+}
+
+/* ---- WP9 §5.4 daylight chrome sweep ----
+   The deliberately-dark backings (topbar gradient, HUD/gauge/FAB card, on-map
+   mode pills) were raw dark literals that survived deleting the text carve-out.
+   Flip them to the bright palette so nothing reads dark-on-dark in daylight.
+   Safe because §5.2 guarantees light tiles under daylight. */
+html[data-theme="daylight"] .topbar {
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.95), rgba(232, 241, 250, 0.92));
+}
+html[data-theme="daylight"] .hud::after,
+html[data-theme="daylight"] .steering-gauge::after,
+html[data-theme="daylight"] .catch-fab::after {
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.95), rgba(232, 241, 250, 0.9));
+}
+/* On-map pills (mode sentence + boat badge): light card, dark text. */
+html[data-theme="daylight"] #mode-pill,
+html[data-theme="daylight"] .boat-mode-badge .bmb {
+  background: var(--glass-solid);
+  color: var(--text);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
+}
+/* Anchor + dragging mode-pill variants stay legible on the light pill; dragging
+   follows the STOP law (solid red + white). */
+html[data-theme="daylight"] #mode-pill[data-mode^="anchor"] { color: #9a1730; border-color: #d21f3c; }
+html[data-theme="daylight"] #mode-pill.dragging {
+  background: #d21f3c; color: #fff; border-color: #d21f3c;
+}

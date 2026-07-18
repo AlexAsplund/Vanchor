@@ -129,6 +129,9 @@ const SHELL = [
   "/static/mobile.js",
   "/static/wakelock.js",
   "/static/views.js",
+  "/static/pinpopup.js",
+  "/static/armbar.js",
+  "/static/themectl.js",
   "/static/onboard.js",
 ];
 

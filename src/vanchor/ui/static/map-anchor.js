@@ -13,8 +13,28 @@
   const map = VA.mapCtx.map;
 
   let anchorMarker = null, anchorCircle = null, lastAnchor = null;
+  let anchorHalo = null;
 
-  VA.onTelemetry(function renderAnchor(t) {
+  // Ground resolution (m per screen pixel) at a latitude + zoom — Web Mercator.
+  function metersPerPixel(lat, zoom) {
+    return (156543.03392 * Math.cos(lat * Math.PI / 180)) / Math.pow(2, zoom);
+  }
+
+  // Item 21: a fixed-pixel dashed halo when the true-scale circle would render
+  // smaller than 18px on screen (honesty: the true circle stays; the halo just
+  // makes a tight watch ring visible). Returns the (possibly updated) halo.
+  function updateHalo(halo, ll, radiusM, lat, color) {
+    const px = radiusM / metersPerPixel(lat, map.getZoom());
+    if (px < 18) {
+      if (!halo) return L.circleMarker(ll, { radius: 18, dashArray: "4 4", fill: false, color: color, weight: 2 }).addTo(map);
+      halo.setLatLng(ll);
+      return halo;
+    }
+    if (halo) { map.removeLayer(halo); }
+    return null;
+  }
+
+  function renderAnchor(t) {
     lastAnchor = t.anchor || null;
     if (t.anchor) {
       const ll = [t.anchor.lat, t.anchor.lon];
@@ -24,17 +44,20 @@
       }
       anchorMarker.setLatLng(ll);
       anchorCircle.setLatLng(ll).setRadius(t.anchor_radius_m);
+      anchorHalo = updateHalo(anchorHalo, ll, t.anchor_radius_m, t.anchor.lat, "#ff5a7a");
     } else if (anchorMarker) {
       map.removeLayer(anchorMarker); map.removeLayer(anchorCircle);
       anchorMarker = anchorCircle = null;
+      if (anchorHalo) { map.removeLayer(anchorHalo); anchorHalo = null; }
     }
-  });
+  }
+  VA.onTelemetry(renderAnchor);
 
   VA.map.getLastAnchor = function () { return lastAnchor; };
 
-  let alarmMarker = null, alarmCircle = null;
+  let alarmMarker = null, alarmCircle = null, alarmHalo = null;
 
-  VA.onTelemetry(function renderAlarmAnchor(t) {
+  function renderAlarmAnchor(t) {
     const aa = t.anchor_alarm;
     const show = aa && aa.armed && Number.isFinite(aa.lat) && Number.isFinite(aa.lon);
     if (show) {
@@ -66,9 +89,17 @@
       }
       alarmMarker.setLatLng(ll);
       alarmCircle.setLatLng(ll).setRadius(aa.radius_m).setStyle({ color });
+      alarmHalo = updateHalo(alarmHalo, ll, aa.radius_m, aa.lat, color);
     } else if (alarmMarker) {
       map.removeLayer(alarmMarker); map.removeLayer(alarmCircle);
       alarmMarker = alarmCircle = null;
+      if (alarmHalo) { map.removeLayer(alarmHalo); alarmHalo = null; }
     }
+  }
+  VA.onTelemetry(renderAlarmAnchor);
+
+  // Refresh both halos on zoom (the px threshold is zoom-dependent).
+  map.on("zoomend", function () {
+    if (VA.last) { renderAnchor(VA.last); renderAlarmAnchor(VA.last); }
   });
 })();

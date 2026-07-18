@@ -247,29 +247,32 @@
     const ctxLabel = document.getElementById("si-ctx-label");
     const ctxUnit = document.getElementById("si-ctx-unit");
     const ctxSub = document.getElementById("si-ctx-sub");
+    const sheetHead = document.getElementById("sheet-head");
     const aa = t && t.anchor_alarm;
     const sog = VA.fin(t.sog_knots);
     if (aa && aa.firing) {
-      // Drag alarm — red DRIFT cell
+      // Drag alarm — red DRAGGING cell (peek-echo of the alarm strip, item 21)
       if (ctxTile) ctxTile.dataset.ctx = "alarm";
-      if (ctxLabel) ctxLabel.textContent = "DRIFT";
-      const dist = Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—";
+      if (ctxLabel) ctxLabel.textContent = "DRAGGING";
+      const dist = Number.isFinite(t.distance_to_anchor_m) ? Math.round(t.distance_to_anchor_m).toString() : "—";
       VA.setText("m-sog", dist);
       if (ctxUnit) ctxUnit.textContent = "m";
       const rm = Number.isFinite(aa.radius_m) ? Math.round(aa.radius_m) : "?";
       if (ctxSub) { ctxSub.textContent = "RING " + rm + " m"; ctxSub.classList.remove("hidden"); }
+      if (sheetHead) sheetHead.classList.add("alarm");
     } else if (t.mode && (t.mode.startsWith("anchor") || (aa && aa.armed))) {
-      // Anchor mode — show distance
+      // Anchor mode — "Anchor — holding · d m / r m" (item 21)
       if (ctxTile) ctxTile.dataset.ctx = "anchor";
       if (ctxLabel) ctxLabel.textContent = "ANCHOR";
-      const dist = Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—";
-      VA.setText("m-sog", dist);
+      const dStr = Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—";
+      VA.setText("m-sog", dStr);
       if (ctxUnit) ctxUnit.textContent = "m";
-      const rm = aa && Number.isFinite(aa.radius_m) ? Math.round(aa.radius_m) : null;
+      const rStr = Number.isFinite(t.anchor_radius_m) ? Math.round(t.anchor_radius_m) : null;
       if (ctxSub) {
-        if (rm !== null) { ctxSub.textContent = "RING " + rm + " m"; ctxSub.classList.remove("hidden"); }
+        if (rStr !== null) { ctxSub.textContent = "holding · " + dStr + " m / " + rStr + " m"; ctxSub.classList.remove("hidden"); }
         else ctxSub.classList.add("hidden");
       }
+      if (sheetHead) sheetHead.classList.remove("alarm");
     } else {
       // Default — SOG
       if (ctxTile) ctxTile.dataset.ctx = "sog";
@@ -277,6 +280,7 @@
       VA.setText("m-sog", sog === null ? "—" : sog.toFixed(1));
       if (ctxUnit) ctxUnit.textContent = "kn";
       if (ctxSub) ctxSub.classList.add("hidden");
+      if (sheetHead) sheetHead.classList.remove("alarm");
     }
 
     // ---- HDG (modulo 0-359, never "360") ----
