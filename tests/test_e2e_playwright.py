@@ -496,8 +496,8 @@ def test_chip_stale_state(live_server: _ServerHandle, pw_browser):
 
         # Stale watchdog fires >3 s after last telemetry frame.  Allow 8 s total.
         def _stale_active() -> bool:
-            state = page.eval_on_selector("#chip-conn", "el => el.dataset.state or ''")
-            stale_body = page.evaluate("document.body.dataset.stale or ''")
+            state = page.eval_on_selector("#chip-conn", "el => el.dataset.state || ''")
+            stale_body = page.evaluate("document.body.dataset.stale || ''")
             return state == "stale" and stale_body == "1"
 
         stale_appeared = _poll(_stale_active, timeout_s=8)
