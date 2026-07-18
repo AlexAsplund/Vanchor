@@ -532,7 +532,8 @@ This guide deliberately stops short of wiring. The deeper docs take over
 from here:
 
 - **[Deploying on a Raspberry Pi](deploy-pi.md)** — the boat-ready install:
-  OS setup, autostart, serving the app to your phone on the water.
+  flash the pre-built SD image (recommended) or bare-metal venv setup; hotspot
+  first-boot, WiFi join, OTA updates via sideload bundles, no internet needed.
 - **[Custom hardware](custom-hardware.md)** — how the steering and thrust
   channels are wired up and configured, including split/independent setups.
 - **[Firmware](../firmware/README.md)** — the Arduino sketches, schematics,

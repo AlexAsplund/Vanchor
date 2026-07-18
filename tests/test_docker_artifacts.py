@@ -90,12 +90,17 @@ def test_dockerfile_slim_bookworm_in_both_from_lines(dockerfile_text):
         assert "slim-bookworm" in line, f"FROM line missing slim-bookworm: {line!r}"
 
 
-def test_dockerfile_no_apt_get_in_final_stage(dockerfile_text):
-    # The final stage must not install any OS packages.
+def test_dockerfile_final_stage_apt_only_allowed_packages(dockerfile_text):
+    # The final stage may only install explicitly allowed OS packages.
+    # Adoption task 6 adds network-manager (provides nmcli for WiFi setup).
     # Split on FROM: the last FROM block is the final stage.
     blocks = dockerfile_text.split("FROM ")
     final_stage = blocks[-1]
-    assert "apt-get" not in final_stage, "Final stage must not use apt-get"
+    if "apt-get" in final_stage:
+        assert "network-manager" in final_stage, (
+            "Final stage apt-get must only install network-manager (nmcli for WiFi); "
+            "found unexpected apt-get usage"
+        )
 
 
 def test_dockerfile_data_dir_env(dockerfile_text):

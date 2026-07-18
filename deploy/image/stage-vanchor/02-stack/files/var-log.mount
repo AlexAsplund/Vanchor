@@ -1,0 +1,13 @@
+[Unit]
+Description=Mount /var/log as tmpfs (SD-wear reduction)
+DefaultDependencies=no
+Before=local-fs.target
+
+[Mount]
+What=tmpfs
+Where=/var/log
+Type=tmpfs
+Options=mode=0755,size=64M,noatime
+
+[Install]
+WantedBy=local-fs.target

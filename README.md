@@ -249,6 +249,15 @@ serves the app directly to your phone.
 
 ## Quick start
 
+**On a boat Pi:** flash the ready-made SD image — see [docs/deploy-pi.md](docs/deploy-pi.md).
+Paste the URL below into Raspberry Pi Imager (OS → "Use custom → Provide URL"):
+
+```
+https://github.com/AlexAsplund/vanchor-ng/releases/latest/download/os_list.json
+```
+
+**On a laptop / dev machine:**
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev,routing]"

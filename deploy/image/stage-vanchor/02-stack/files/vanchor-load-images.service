@@ -1,0 +1,15 @@
+[Unit]
+Description=Vanchor: load baked docker images (first boot, offline)
+After=docker.service
+Requires=docker.service
+Before=vanchor-supervisor.service
+ConditionPathExists=!/var/lib/vanchor/.images-loaded
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vanchor-load-images
+TimeoutStartSec=600
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

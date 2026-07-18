@@ -1,0 +1,11 @@
+[Unit]
+Description=Vanchor setup-hotspot fallback
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vanchor-hotspot-check
+
+[Install]
+WantedBy=multi-user.target

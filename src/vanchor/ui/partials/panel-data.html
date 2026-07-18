@@ -148,4 +148,19 @@
         <div id="backup-rs-status" class="hint"></div>
       </details>
 
+      <!-- WiFi / network (SD-image setup). Hidden unless /api/system/wifi
+           reports available (i.e. a Pi with NetworkManager). wifi.js. -->
+      <details class="card hidden" id="wifi-card">
+        <summary>WiFi &amp; network <span id="wifi-state" class="badge"></span></summary>
+        <div class="hint">Join your home WiFi. While joining, the <b>vanchor-setup</b> hotspot drops — reconnect your phone to your home WiFi and open <b>http://vanchor.local:8000</b>.</div>
+        <div class="row"><span>Mode</span><b id="wifi-mode">—</b></div>
+        <div class="row"><span>Network</span><b id="wifi-ssid">—</b></div>
+        <div class="row"><span>IP</span><b id="wifi-ip">—</b></div>
+        <div class="btn-row">
+          <button id="wifi-scan" class="btn-primary" type="button">Scan for networks</button>
+        </div>
+        <ol id="wifi-list" class="debug-sessions"></ol>
+        <div id="wifi-status" class="hint"></div>
+      </details>
+
       </section><!-- /data -->

@@ -1184,6 +1184,29 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             runtime.push.send_now, "test", "Vanchor test notification",
             "Push notifications are working on this boat.")
 
+    # -- system / wifi (SD-image setup flow; nmcli-backed, no-ops off-Pi) -- #
+    @app.get("/api/system/wifi")
+    async def wifi_status() -> dict:
+        """Current network mode/SSID/IP + hotspot state. {available:false}
+        when nmcli/NetworkManager is absent (dev machines, sim installs)."""
+        from vanchor import wifi
+        return await wifi.status()
+
+    @app.get("/api/system/wifi/scan")
+    async def wifi_scan() -> dict:
+        """Visible WiFi networks (triggers an nmcli rescan; a few seconds)."""
+        from vanchor import wifi
+        return await wifi.scan()
+
+    @app.post("/api/system/wifi/join")
+    async def wifi_join(payload: dict) -> dict:
+        """Join a WiFi network. Body {ssid, psk}. Returns immediately; the
+        join continues in the background and the setup hotspot is restored
+        automatically if it fails. The PSK is never logged."""
+        from vanchor import wifi
+        p = payload or {}
+        return await wifi.join(str(p.get("ssid", "")), str(p.get("psk", "")))
+
     # -- Versioned backup / restore -------------------------------------- #
     @app.post("/api/backup")
     async def backup_create(payload: dict | None = None):

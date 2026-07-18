@@ -124,6 +124,7 @@ const SHELL = [
   "/static/push.js",
   "/static/logs.js",
   "/static/audit.js",
+  "/static/wifi.js",
   "/static/measure.js",
   "/static/mobile.js",
   "/static/wakelock.js",

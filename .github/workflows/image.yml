@@ -1,0 +1,208 @@
+# BENCH-VERIFY: This workflow has not been run yet. It builds the SD image on
+# a GitHub-hosted arm64 runner (ubuntu-24.04-arm) using pi-gen. The first run
+# requires the owner to push a v* tag (or trigger workflow_dispatch) and monitor
+# the Actions run for issues. See docs/image-testing.md checklist item for the
+# first-CI-run verification step.
+#
+# Two jobs:
+#   bundle  — build the docker image, create the update bundle tar
+#   image   — clone pi-gen, run build.sh, compute sizes, upload assets
+#
+# Separate from release.yml (which owns version bump + release creation).
+# Do NOT merge these files — the bump job must not be touched.
+name: SD Image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+env:
+  PIGEN_SHA: "e4f7df5d4dff5bd3f4af57f06eaccbc2de476882"
+
+jobs:
+  bundle:
+    name: Build app bundle
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      bundle_name: ${{ steps.bundle.outputs.bundle_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from pyproject.toml
+        id: ver
+        run: |
+          VERSION=$(python3 -c "
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+          ")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Build docker image (arm64)
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            -f Dockerfile \
+            -t "vanchor/vanchor:${{ steps.ver.outputs.version }}" \
+            --load .
+
+      - name: Save docker image as gzipped tar
+        run: |
+          mkdir -p images
+          docker save "vanchor/vanchor:${{ steps.ver.outputs.version }}" \
+            | gzip > "images/image.tar.gz"
+
+      - name: Create update bundle
+        id: bundle
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          BUNDLE_NAME="vanchor-update-${VERSION}.bundle.tar"
+          python3 scripts/make_bundle.py app \
+            --image "vanchor/vanchor" \
+            --tag "$VERSION" \
+            --min-supervisor "0.1.0" \
+            --arch arm64 \
+            --image-tar images/image.tar.gz \
+            --out "$BUNDLE_NAME"
+          sha256sum "$BUNDLE_NAME" > "${BUNDLE_NAME}.sha256"
+          echo "bundle_name=$BUNDLE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Bundle: $(ls -lh $BUNDLE_NAME)"
+
+      - name: Upload bundle as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-bundle
+          path: |
+            ${{ steps.bundle.outputs.bundle_name }}
+            ${{ steps.bundle.outputs.bundle_name }}.sha256
+          retention-days: 1
+
+  image:
+    name: Build SD image
+    needs: bundle
+    runs-on: ubuntu-24.04-arm
+    env:
+      VERSION: ${{ needs.bundle.outputs.version }}
+      BUNDLE_NAME: ${{ needs.bundle.outputs.bundle_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check free disk space
+        run: |
+          FREE_GB=$(df -BG / | tail -1 | awk '{print $4}' | tr -d G)
+          echo "Free disk: ${FREE_GB} GB"
+          if [ "$FREE_GB" -lt 12 ]; then
+            echo "ERROR: Less than 12 GB free -- pi-gen needs ~10-15 GB scratch" >&2
+            echo "Attempting to free space by removing preinstalled toolchains..."
+            sudo rm -rf /usr/local/lib/android 2>/dev/null || true
+            sudo rm -rf /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+            sudo rm -rf /usr/share/dotnet 2>/dev/null || true
+            FREE_GB=$(df -BG / | tail -1 | awk '{print $4}' | tr -d G)
+            echo "Free after cleanup: ${FREE_GB} GB"
+            if [ "$FREE_GB" -lt 12 ]; then
+              echo "ERROR: Still < 12 GB free. Aborting." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Download update bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: update-bundle
+
+      - name: Build SD image via deploy/image/build.sh
+        run: |
+          chmod +x deploy/image/build.sh
+          sudo deploy/image/build.sh \
+            --version "$VERSION" \
+            --bundle "$BUNDLE_NAME" \
+            --workdir /tmp/pi-gen-work
+        env:
+          REPO_DIR: ${{ github.workspace }}
+
+      - name: Locate image artifacts
+        id: find
+        run: |
+          IMG_XZ=$(ls /tmp/pi-gen-work/pi-gen/deploy/*.img.xz | head -1)
+          echo "img_xz=$IMG_XZ" >> "$GITHUB_OUTPUT"
+          echo "Found: $(ls -lh $IMG_XZ)"
+
+      - name: Compute checksums and sizes
+        id: sizes
+        run: |
+          IMG_XZ="${{ steps.find.outputs.img_xz }}"
+          # Download checksum
+          sha256sum "$IMG_XZ" > "${IMG_XZ}.sha256"
+          DOWNLOAD_SHA=$(sha256sum "$IMG_XZ" | awk '{print $1}')
+          # Extract size via xz --robot --list
+          EXTRACT_SIZE=$(xz --robot --list "$IMG_XZ" | grep totals | awk '{print $5}')
+          # Streaming uncompressed sha256 (avoids materialising the 4 GB img)
+          EXTRACT_SHA=$(xzcat "$IMG_XZ" | sha256sum | awk '{print $1}')
+          echo "download_sha=${DOWNLOAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "extract_size=${EXTRACT_SIZE}" >> "$GITHUB_OUTPUT"
+          echo "extract_sha=${EXTRACT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Extract size: $EXTRACT_SIZE bytes, sha256: ${EXTRACT_SHA:0:12}..."
+
+      - name: Generate Pi Imager os_list.json
+        run: |
+          python3 scripts/gen_imager_json.py \
+            --version "$VERSION" \
+            --img "${{ steps.find.outputs.img_xz }}" \
+            --extract-size "${{ steps.sizes.outputs.extract_size }}" \
+            --extract-sha256 "${{ steps.sizes.outputs.extract_sha }}" \
+            --out os_list.json \
+            --date "$(date -u +%Y-%m-%d)"
+
+      - name: Write size report
+        run: |
+          IMG_XZ="${{ steps.find.outputs.img_xz }}"
+          {
+            echo "Vanchor-NG SD image size report"
+            echo "Version: $VERSION"
+            echo "Date: $(date -u)"
+            echo ""
+            echo "img.xz size:     $(du -sh "$IMG_XZ" | awk '{print $1}')"
+            echo "img.xz bytes:    $(stat -c%s "$IMG_XZ")"
+            echo "img bytes (est): ${{ steps.sizes.outputs.extract_size }}"
+            echo ""
+            echo "xz --robot --list output:"
+            xz --robot --list "$IMG_XZ"
+            echo ""
+            echo "Pi rootfs df (captured during build by 03-trim):"
+            cat /tmp/pi-gen-work/pi-gen/deploy/size-report.txt 2>/dev/null || echo "(not found)"
+          } > size-report.txt
+          cat size-report.txt
+
+      - name: Upload assets to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          IMG_XZ="${{ steps.find.outputs.img_xz }}"
+          IMG_BASE=$(basename "$IMG_XZ")
+          BUNDLE_SHA="${BUNDLE_NAME}.sha256"
+          gh release upload "v${VERSION}" \
+            "$IMG_XZ" \
+            "${IMG_XZ}.sha256" \
+            "$BUNDLE_NAME" \
+            "$BUNDLE_SHA" \
+            os_list.json \
+            size-report.txt \
+            --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Upload as workflow artifacts (no release / workflow_dispatch)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-artifacts
+          path: |
+            ${{ steps.find.outputs.img_xz }}
+            ${{ steps.find.outputs.img_xz }}.sha256
+            os_list.json
+            size-report.txt
+          retention-days: 7

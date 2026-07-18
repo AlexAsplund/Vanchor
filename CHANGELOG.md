@@ -4,6 +4,25 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## [Unreleased]
 
+- **Flashable SD image (pi-gen) + WiFi setup card (adoption #6)** — a complete
+  Raspberry Pi OS Lite arm64 (Bookworm) image baked via pi-gen with Docker CE,
+  the supervisor, and the `vanchor` image pre-loaded (zero first-boot internet).
+  Boots a setup hotspot `vanchor-setup` (WPA2 `vanchor-boat`); UI reachable at
+  `http://10.42.0.1:8000` / `http://vanchor.local:8000`. New **WiFi & network**
+  card in Settings → Data & system: scan, join home WiFi, auto-restore hotspot
+  on failure; nmcli-backed (stdlib only, graceful no-op off-Pi). SD-write
+  minimisation: `daemon.json` `local` log driver (5 MB × 2), volatile journald
+  (Storage=volatile, 32 MB cap), tmpfs `/var/log` (64 MB), noatime on root
+  partition, zram swap (no SD file), ModemManager purged (protects GPS/motor
+  USB-serial). CI workflow (`.github/workflows/image.yml`) builds bundle + image
+  on `ubuntu-24.04-arm` on `v*` tags; uploads img.xz + update bundle + sha256s
+  + `os_list.json` (Pi Imager paste-URL stable link) + size report. Manual
+  first-flash checklist in `docs/image-testing.md` (21 BENCH-VERIFY items).
+  `docs/deploy-pi.md` rewritten (docker/image primary, bare-metal venv in
+  Appendix A). New `scripts/gen_imager_json.py` (stdlib; generates Pi Imager
+  custom-repo JSON). BENCH-VERIFY: hotspot autoconnect, polkit-in-container,
+  first-boot loader, fs expansion, Imager customization, CI workflow execution.
+
 - **Hardware setup wizard (adoption #4)** — guided 5-step modal (Scan → GPS →
   Compass → Motor → Finish) accessible via Settings → Devices → "Guided
   hardware setup…". Scans serial ports and I²C buses (`GET /api/hw/scan`),

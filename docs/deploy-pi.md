@@ -1,14 +1,15 @@
 # Deploying Vanchor-NG on a Raspberry Pi
 
-A concrete, boat-ready deployment guide: wire the hardware, prepare the OS,
-install from the pinned lockfile, and run Vanchor-NG as an autostarting systemd
-service that serves the PWA to your phone over the boat's WiFi.
+A concrete, boat-ready deployment guide. The recommended path is the
+**pre-built SD image** — flash it, power on, connect to the hotspot, and the
+UI is live without installing anything. The bare-metal venv path is preserved
+in [Appendix A](#appendix-a-bare-metal-venv-install) for advanced users.
 
 > **Sim-first, always.** Vanchor-NG **defaults to full simulation** — it runs
-> with no motor, GPS, or a single wire attached. Get it running headless on the
-> Pi in sim first (open the UI, drop an anchor), *then* enable hardware one
-> device at a time. Real-hardware support mirrors the simulated devices but is
-> far less exercised — treat it as experimental (see the README "Alpha status").
+> with no motor, GPS, or a single wire attached. Get it running in sim first
+> (open the UI, drop an anchor), *then* enable hardware one device at a time.
+> Real-hardware support mirrors the simulated devices but is far less exercised
+> — treat it as experimental (see the README "Alpha status").
 
 ---
 
@@ -72,7 +73,199 @@ the Arduino firmware works.
 
 ---
 
-## 2. OS preparation
+## 2. Flash the SD image (recommended)
+
+The release SD image contains the complete docker stack (app + supervisor),
+hotspot first-boot, and no moving parts. The **Pi never needs internet** —
+updates arrive as a bundle you download on your phone/laptop and upload in
+Settings.
+
+### What the image contains
+
+- Raspberry Pi OS Lite arm64 (Bookworm, 64-bit) — stages 0–2 + our custom stage
+- Docker CE + docker-compose plugin
+- The `vanchor/vanchor` docker image pre-loaded (no first-boot pull)
+- The `vanchor-supervisor` host daemon (update / backup / disk / device policy)
+- NetworkManager hotspot (`vanchor-setup`) for initial phone connection
+- SD-write minimisation: volatile journald, tmpfs `/tmp`+`/var/log`, noatime,
+  bounded docker logs (`local` driver, max 5 MB × 2), zram swap
+
+### Flash with Raspberry Pi Imager
+
+1. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (≥ v1.8).
+2. Click **OS → Use custom → Provide URL**, paste:
+   ```
+   https://github.com/AlexAsplund/vanchor-ng/releases/latest/download/os_list.json
+   ```
+   Select **Vanchor-NG** from the list.
+3. *(Optional)* Click the gear ⚙ to pre-configure hostname / user / SSH / WiFi.
+4. Select your 16 GB (or larger) SD card and flash.
+
+### First boot (no ethernet, no WiFi configured)
+
+1. Insert the card and power on. The root partition auto-expands (one automatic
+   reboot is normal and expected).
+2. `vanchor-load-images` runs in the background (~30–60 s on Pi 4, once only).
+3. The docker stack comes up. Total time to a responsive UI: ≤ ~3 min.
+4. The setup hotspot **`vanchor-setup`** appears (WPA2 password `vanchor-boat`).
+   Connect your phone to it.
+5. Open **`http://10.42.0.1:8000`** (or **`http://vanchor.local:8000`**) — the UI
+   loads.
+
+### Join your home WiFi
+
+In the UI → Settings → "Data & system" → **WiFi & network** card:
+1. Click **Scan for networks** — your home network appears.
+2. Click it, enter the password → the join runs in the background.
+3. The hotspot drops while joining (single radio). Reconnect your phone to your
+   home WiFi, then open **`http://vanchor.local:8000`** (avahi mDNS on the LAN).
+4. If the wrong password was entered, the hotspot returns automatically after
+   ~60 s.
+5. On subsequent reboots the Pi joins your home WiFi directly (autoconnect
+   priority: saved home profiles 0 > hotspot -10). The hotspot only returns when
+   no known network is reachable.
+
+### Default credentials
+
+| Item | Value |
+|---|---|
+| Hotspot SSID | `vanchor-setup` |
+| Hotspot password | `vanchor-boat` |
+| Console login | `vanchor` / `vanchor` (change with `passwd`) |
+| SSH | **Disabled by default.** Enable: touch a file named `ssh` on the boot partition and reboot. |
+
+> **Security posture.** The Pi is LAN-only (SSH off, hotspot WPA2, no open
+> ports beyond :8000). The default password is documented — **change it** with
+> `passwd` if the boat is ever reachable from untrusted networks.
+
+---
+
+## 3. Updates, backups, and disk
+
+### Sideload updates (recommended — no Pi internet required)
+
+On your phone or laptop:
+1. Go to **[GitHub Releases](https://github.com/AlexAsplund/vanchor-ng/releases/latest)**
+   and download `vanchor-update-<version>.bundle.tar`.
+2. In the Vanchor UI → Settings → **System & updates** → "Sideload update bundle"
+   → upload the bundle.
+3. The supervisor verifies the checksum, loads the new image, recreates the
+   container, health-gates (polls `/api/state`), and auto-rolls back to the
+   previous image if the health check fails within 60 s. You never brick the Pi.
+
+### Online pull (optional — Pi needs internet)
+
+If the Pi can reach the internet (marina WiFi), the supervisor can pull the
+tagged image directly from GHCR. Check the task-5 docs for the `docker pull`
+path via the supervisor API.
+
+### Backups
+
+Settings → System & updates → **Volume backups** → Snapshot now. Backups land
+in `host:/opt/vanchor/data/backups/`. Download through the UI or `scp`.
+
+### Disk stewardship
+
+The supervisor watches `df` and `docker system df`. When usage exceeds
+configurable thresholds it emits a telemetry notification and a banner in the
+UI. Settings → System → **Prune old images** removes all but the current and
+previous image (rollback). See the supervisor docs for thresholds.
+
+---
+
+## 4. Building the image yourself
+
+See **[`deploy/image/README.md`](../deploy/image/README.md)** for the full local
+build guide.
+
+**Short version:**
+```bash
+# Build the update bundle first (needs Docker)
+python3 scripts/make_bundle.py app \
+    --image ghcr.io/alexasplund/vanchor --tag <version> \
+    --min-supervisor 0.1.0 --arch arm64 \
+    --image-tar <saved-image.tar.gz> --out bundle.tar
+
+# Build the SD image (needs Docker + ~15 GB scratch; privileged)
+deploy/image/build.sh --version <version> --bundle bundle.tar
+```
+
+**Honest build times** (from `deploy/image/README.md`):
+- Native arm64 (GH `ubuntu-24.04-arm` or Pi 5): **40–75 min** total.
+- x86 laptop + qemu-user-static + binfmt: **2–4 h** worst case.
+
+CI (`.github/workflows/image.yml`) builds on `ubuntu-24.04-arm` on every `v*`
+tag push and uploads all release assets automatically.
+
+---
+
+## 5. The host guard (`VANCHOR_ALLOWED_HOSTS`)
+
+Vanchor-NG rejects requests whose `Host` header is not one it trusts
+(DNS-rebinding protection, `_HostCheckMiddleware`). **Accepted automatically:**
+
+- any **IP literal** (v4/v6) — e.g. `http://192.168.1.50:8000`,
+- **`localhost`**,
+- a **bare single-label** name with no dot — e.g. `http://vanchor:8000`,
+- names under a **private-LAN suffix** — `.local` (mDNS), `.lan`, `.home`,
+  `.internal`, `.localdomain`.
+
+So reaching the Pi by its IP, by `vanchor-pi.local`, or by a bare hostname works
+with no configuration. You only need `VANCHOR_ALLOWED_HOSTS` (comma-separated)
+if you front it with a **custom domain / reverse proxy** whose hostname has a
+dot and a public-looking suffix:
+
+```bash
+# .env or docker-compose environment:
+VANCHOR_ALLOWED_HOSTS=boat.example.com,vanchor.mydomain.net
+```
+
+An unlisted public-looking `Host` gets a `400 Host not allowed`.
+
+---
+
+## 6. Plain HTTP on the LAN vs HTTPS (Wake Lock)
+
+For a boat LAN, **plain HTTP is the normal, expected setup** — the Pi serves
+`http://<pi-ip>:8000` to your phone over WiFi and everything works: map, control,
+STOP, WebSocket telemetry, PWA install, offline.
+
+The **one** browser feature that needs a *secure context* is the **Screen Wake
+Lock** (`wakelock.js`), which keeps the phone screen awake while a motor mode is
+active. Over plain HTTP it **silently no-ops** — the app is fully functional, the
+screen just may sleep. Two ways to get a secure context if you want the wake lock:
+
+1. **`localhost` is already secure** — a phone tethered/tunnelled to reach the Pi
+   as `localhost` gets it for free (rarely practical on a boat).
+2. **Terminate HTTPS in front of Vanchor-NG.** Put a reverse proxy (Caddy /
+   nginx) on the Pi with a self-signed or internal-CA cert and proxy to
+   `127.0.0.1:8000`. Add the proxy's hostname to `VANCHOR_ALLOWED_HOSTS` (a
+   dotted public-looking name won't pass the guard otherwise), and make sure it
+   forwards the WebSocket upgrade for `/ws`.
+
+Vanchor-NG itself serves plain HTTP; TLS, if you want it, lives in the proxy.
+Not having HTTPS costs you only the screen-stay-awake convenience.
+
+---
+
+## See also
+
+- [`firmware/README.md`](../firmware/README.md) — schematics, pin maps, BOM
+- [`docs/firmware.md`](firmware.md) — the Pi ↔ Arduino software contract
+- [`docs/safety-matrix.md`](safety-matrix.md) — failure-mode × layer × test matrix
+- [`docs/image-testing.md`](image-testing.md) — first-flash BENCH-VERIFY checklist
+- [`.env.example`](../.env.example) / [`vanchor.example.yaml`](../vanchor.example.yaml) — every config key
+- [`requirements.lock`](../requirements.lock) — the pinned install set
+
+---
+
+## Appendix A: Bare-metal venv install
+
+> For advanced users who want to run directly on the OS (no Docker) or need
+> to customise below the container boundary. The SD image path (section 2) is
+> simpler and recommended for new installs.
+
+### A.1 OS preparation
 
 Use **Raspberry Pi OS (64-bit, Bookworm or newer)** — the pinned wheels in
 `requirements.lock` are aarch64 manylinux, so nothing compiles on the Pi.
@@ -111,9 +304,7 @@ Then set `motor_port: /dev/vanchor-motor` in the config.
 > fixes arrive stale within seconds (`hardware.gps_baud` default is 38400 for
 > exactly this reason). `compass_baud` / `motor_baud` stay at 4800.
 
----
-
-## 3. Install Vanchor-NG from the lockfile
+### A.2 Install Vanchor-NG from the lockfile
 
 Deploy under a service user (here `pi`) in `/opt/vanchor` (or a home dir):
 
@@ -135,8 +326,7 @@ pip install -e . --no-deps
 
 This installs the `vanchor` console script. Everything in `requirements.lock`
 ships as a prebuilt aarch64 wheel, so the install is fast and offline-friendly
-once the wheels are cached. See [`requirements.lock`](../requirements.lock) for
-what is pinned and how to regenerate it.
+once the wheels are cached.
 
 **Optional — HWT901B compass driver.** Not on PyPI yet; install the sibling
 checkout when you use `compass_source: hwt901b`:
@@ -189,58 +379,7 @@ cd /opt/vanchor
 # open http://<pi-ip>:8000 from a phone on the same WiFi
 ```
 
----
-
-## 4. The host guard (`VANCHOR_ALLOWED_HOSTS`)
-
-Vanchor-NG rejects requests whose `Host` header is not one it trusts
-(DNS-rebinding protection, `_HostCheckMiddleware`). **Accepted automatically:**
-
-- any **IP literal** (v4/v6) — e.g. `http://192.168.1.50:8000`,
-- **`localhost`**,
-- a **bare single-label** name with no dot — e.g. `http://vanchor:8000`,
-- names under a **private-LAN suffix** — `.local` (mDNS), `.lan`, `.home`,
-  `.internal`, `.localdomain`.
-
-So reaching the Pi by its IP, by `vanchor-pi.local`, or by a bare hostname works
-with no configuration. You only need `VANCHOR_ALLOWED_HOSTS` (comma-separated)
-if you front it with a **custom domain / reverse proxy** whose hostname has a
-dot and a public-looking suffix:
-
-```bash
-# .env or the systemd Environment= line:
-VANCHOR_ALLOWED_HOSTS=boat.example.com,vanchor.mydomain.net
-```
-
-An unlisted public-looking `Host` gets a `400 Host not allowed`.
-
----
-
-## 5. Plain HTTP on the LAN vs HTTPS (Wake Lock)
-
-For a boat LAN, **plain HTTP is the normal, expected setup** — the Pi serves
-`http://<pi-ip>:8000` to your phone over WiFi and everything works: map, control,
-STOP, WebSocket telemetry, PWA install, offline.
-
-The **one** browser feature that needs a *secure context* is the **Screen Wake
-Lock** (`wakelock.js`), which keeps the phone screen awake while a motor mode is
-active. Over plain HTTP it **silently no-ops** — the app is fully functional, the
-screen just may sleep. Two ways to get a secure context if you want the wake lock:
-
-1. **`localhost` is already secure** — a phone tethered/tunnelled to reach the Pi
-   as `localhost` gets it for free (rarely practical on a boat).
-2. **Terminate HTTPS in front of Vanchor-NG.** Put a reverse proxy (Caddy /
-   nginx) on the Pi with a self-signed or internal-CA cert and proxy to
-   `127.0.0.1:8000`. Add the proxy's hostname to `VANCHOR_ALLOWED_HOSTS` (a
-   dotted public-looking name won't pass the guard otherwise), and make sure it
-   forwards the WebSocket upgrade for `/ws`.
-
-Vanchor-NG itself serves plain HTTP; TLS, if you want it, lives in the proxy.
-Not having HTTPS costs you only the screen-stay-awake convenience.
-
----
-
-## 6. Run as a systemd service (autostart)
+### A.3 Run as a systemd service (autostart)
 
 Create `/etc/systemd/system/vanchor.service` (adjust `User`, paths):
 
@@ -257,7 +396,7 @@ Group=pi
 WorkingDirectory=/opt/vanchor
 Environment=VANCHOR_HOST=0.0.0.0
 Environment=VANCHOR_PORT=8000
-# Only needed for a custom reverse-proxy hostname (see section 4):
+# Only needed for a custom reverse-proxy hostname (see section 5):
 # Environment=VANCHOR_ALLOWED_HOSTS=boat.example.com
 ExecStart=/opt/vanchor/.venv/bin/vanchor --config /opt/vanchor/vanchor.yaml
 Restart=on-failure
@@ -285,9 +424,7 @@ restart (`sudo systemctl restart vanchor`).
 > rewrite `boats.json`. Prefer `systemctl restart vanchor`; if you started one by
 > hand on port 8000, `fuser -k 8000/tcp` then confirm `ss -ltnp | grep :8000`.
 
----
-
-## 7. Updating
+### A.4 Updating (bare-metal)
 
 ```bash
 cd /opt/vanchor
@@ -307,10 +444,23 @@ before a big jump.
 
 ---
 
-## See also
+## Appendix B: SD-write minimization — debugging trade-offs
 
-- [`firmware/README.md`](../firmware/README.md) — schematics, pin maps, BOM
-- [`docs/firmware.md`](firmware.md) — the Pi ↔ Arduino software contract
-- [`docs/safety-matrix.md`](safety-matrix.md) — failure-mode × layer × test matrix
-- [`.env.example`](../.env.example) / [`vanchor.example.yaml`](../vanchor.example.yaml) — every config key
-- [`requirements.lock`](../requirements.lock) — the pinned install set
+The SD image ships with volatile journald and tmpfs `/var/log` to minimise SD
+card wear. This means:
+
+- **Logs are lost on reboot** — this is expected. To debug a hard crash or
+  persistent issue, flip the journal to persistent:
+
+  ```bash
+  sudo rm /etc/systemd/journald.conf.d/50-vanchor.conf
+  sudo systemctl restart systemd-journald
+  ```
+
+- **`/var/log` is RAM-backed (64 MB limit)** — if you need logs to survive a
+  reboot, redirect to the data volume (`/opt/vanchor/data/`) which is on the
+  SD rootfs but written to intentionally.
+
+- **noatime on root partition** — breaks some old tools that rely on atime.
+  Rarely an issue on a headless server. Disable with `mount -o remount,relatime /`
+  if needed.

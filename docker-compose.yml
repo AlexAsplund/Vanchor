@@ -21,6 +21,10 @@ services:
     volumes:
       - vanchor_data:/data
       - /dev:/dev:ro              # hotplug: late-plugged GPS appears instantly
+      # D-Bus system bus: in-container nmcli reaches host NetworkManager.
+      # Container runs as root (uid 0) — default polkit permits NM operations.
+      # BENCH-VERIFY: polkit vs uid-0-in-container on real Pi hardware.
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
     device_cgroup_rules:          # what /dev nodes may actually be opened
       - "c 166:* rmw"             # ttyACM* (u-blox GPS)
       - "c 188:* rmw"             # ttyUSB* (FTDI/CH340 adapters)

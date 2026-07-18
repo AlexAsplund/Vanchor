@@ -1,0 +1,171 @@
+# Task 6 Report — Flashable SD Image
+
+**Branch:** `dev/adoption-pack`  
+**Based on:** HEAD `939b7ce` (task-5 fix)  
+**Date:** 2026-07-18
+
+---
+
+## Task-5 Reconciliation
+
+The brief assumed task-5 artifacts at `deploy/docker/` and `deploy/supervisor/`.
+Actual paths:
+
+| Brief path | Actual path | Resolution |
+|---|---|---|
+| `deploy/docker/Dockerfile` | `Dockerfile` (root) | `build.sh` and `image.yml` reference `REPO_DIR/Dockerfile` |
+| `deploy/docker/docker-compose.yml` | `docker-compose.yml` (root) | `02-stack/00-run.sh` copies `${REPO_DIR}/docker-compose.yml` |
+| `deploy/supervisor/` | `supervisor/` (root) | `02-stack/00-run.sh` copies `${REPO_DIR}/supervisor/.` |
+| `deploy/supervisor/vanchor-supervisor.service` | `supervisor/vanchor-supervisor.service` | `01-run-chroot.sh` copies from `/opt/vanchor-supervisor/` |
+| Supervisor API port `9123` | `9300` | deploy-pi.md and checklist use `9300` |
+| Bundle format: `images/<versioned>.tar.gz` | `image.tar.gz` (fixed name) + `manifest.json` with `image_sha256` | `vanchor-load-images.sh` adapted to task-5 format |
+
+### Requirements imposed on task-5 files (§2 — all done)
+
+1. **`network-manager` in Dockerfile** — added to the final stage with `apt-get install -y --no-install-recommends network-manager`. Updated `test_docker_artifacts.py` test that asserted no apt-get in final stage.
+2. **`network_mode: host`** — already present from task 5.
+3. **`VANCHOR_HOST: 0.0.0.0`** — already present from task 5.
+4. **D-Bus socket bind-mount** — added to `docker-compose.yml`: `/run/dbus/system_bus_socket:/run/dbus/system_bus_socket`. BENCH-VERIFY on real Pi hardware.
+
+---
+
+## DONE Checklist
+
+- [x] `deploy/image/` tree exists exactly as §4; all scripts `bash -n` clean; pi-gen SHA pinned in `build.sh` + `image.yml`
+- [x] Factory bundle flow is ZERO-network at boot: no `curl`/`apt`/`docker pull` in any stage script that runs on the Pi (zero-network test in `test_image_tooling.py` covers this)
+- [x] `src/vanchor/wifi.py` (15 async def, `_split_terse`, graceful no-op) + 3 endpoints + `wifi.js` + panel card wired
+- [x] `node --check` clean on `wifi.js`; shell-manifest test green (`wifi.js` in `sw.js` SHELL array + `index.html` script tag)
+- [x] `scripts/gen_imager_json.py` emits valid os_list JSON (tested in `test_image_tooling.py::test_gen_imager_json`)
+- [x] `.github/workflows/image.yml` parses, triggers on `v*` + dispatch, uses `ubuntu-24.04-arm`, uploads all §7 assets, BENCH-VERIFY header comment
+- [x] `tests/test_wifi.py` (49 cases) + `tests/test_image_tooling.py` pass; full suite 2009 passed
+- [x] `docs/image-testing.md` covers 21 checklist items (≥ 15 required by §10.1 + SD-write addendum)
+- [x] `docs/deploy-pi.md` rewritten (docker/image primary, bare-metal in Appendix A, Appendix B for SD-write debugging); README + getting-started touched; CHANGELOG entry added
+- [x] Every non-verifiable behaviour has a BENCH-VERIFY marker; see below
+- [x] Task-5 interface reconciled; all §2 requirements added to compose/Dockerfile; deltas noted above
+- [x] One commit, session trailers, no pushes/tags
+
+---
+
+## Owner Addendum (2026-07-18): SD-Write Minimization
+
+| Item | Implementation |
+|---|---|
+| Docker logging | `daemon.json`: `log-driver=local`, `max-size=5m`, `max-file=2` (overrides brief's `json-file`; matches addendum). Per-container compose config already set (task 5). |
+| journald | `02-stack/files/vanchor-journald.conf` → `/etc/systemd/journald.conf.d/50-vanchor.conf`: `Storage=volatile`, `SystemMaxUse=32M`, `ForwardToConsole=no`. |
+| tmpfs /var/log | `02-stack/files/var-log.mount`: systemd mount unit, tmpfs `size=64M,noatime`. `/tmp` is on tmpfs by default in Bookworm systemd. |
+| noatime | `02-stack/01-run-chroot.sh`: `sed -i '/ext4/ s/defaults/defaults,noatime/' /etc/fstab`. BENCH-VERIFY: fstab edit verified on a built image. |
+| No SD swap | `02-stack/01-run-chroot.sh`: `systemctl disable dphys-swapfile`; install `zram-tools`, set `PERCENT=25`, `ALGO=lz4`. Addendum overrides brief note about keeping dphys-swapfile for Zero 2 W. |
+| App-writer audit | Documented in `docs/image-testing.md` checklist item 20 with cadence table. Follow-up: unbounded `server.log` growth should be filed as a separate issue if confirmed. |
+| MB/day estimate | Estimated ≤ 50 MB/day typical fishing day (8 h): docker logs ≤ 10, server.log ≤ 5, blackbox ring ≤ 20, depth chart ≤ 10, OS writes ≤ 5. Debug recorder: 0 (opt-in only). BENCH-VERIFY with `iostat` on checklist item 20. |
+
+---
+
+## BENCH-VERIFY Items
+
+All require real Raspberry Pi hardware:
+
+1. Hotspot NM autoconnect timing (25 s sleep in `vanchor-hotspot-check.sh`)
+2. polkit vs uid-0-in-container D-Bus NM access (nmcli from inside container)
+3. First-boot image load (`vanchor-load-images.service`, ~30–60 s on Pi 4)
+4. Root fs auto-expansion (`init_resize` in `cmdline.txt`)
+5. Raspberry Pi Imager customisation dialog (`init_format: systemd` path)
+6. CI workflow execution (`image.yml` on first `v*` tag push)
+7. pi-gen arm64 branch SHA correctness at build time
+8. os_list field names compatibility with current rpi-imager version
+9. noatime fstab edit surviving pi-gen image assembly (PARTUUID substitution)
+10. zram-tools swap visible (`swapon --show /dev/zram0`)
+11. dphys-swapfile disabled (no `/var/swap` on SD)
+12. D-Bus socket bind-mount + polkit on Pi 5 Bookworm
+
+---
+
+## Size Budget (Estimated vs Actual)
+
+Estimated from the brief:
+
+| Component | Estimate |
+|---|---|
+| RPi OS Lite arm64 (after trim) | ~2.0 GB |
+| Docker CE + plugins | ~0.4 GB |
+| vanchor image layers | ~0.45 GB |
+| Factory bundle | ~0.16 GB |
+| Supervisor + misc | ~0.03 GB |
+| **Total used** | **~3.1–3.5 GB** |
+| **img.xz download** | **~0.9–1.2 GB** |
+| **Free on 16 GB** | **~10.5–11 GB** |
+
+Actuals: CI `size-report.txt` (first `v*` tag build) will provide measured values. Add noatime and SD-wear items add negligible size.
+
+---
+
+## Test Summary
+
+```
+2009 passed, 6 skipped, 10 deselected
+tests/test_wifi.py: 49 cases (split_terse, scan, status, join, endpoints)
+tests/test_image_tooling.py: 17 cases (bash -n, YAML parse, nmconnection, units, gen_imager_json, config.template, load-images content, zero-network audit, daemon.json, journald, var-log.mount)
+ruff check src tests: all checks passed
+node --check wifi.js: OK
+```
+
+---
+
+## Files Created / Modified
+
+**New files:**
+- `deploy/image/config.template`
+- `deploy/image/build.sh`
+- `deploy/image/README.md`
+- `deploy/image/stage-vanchor/prerun.sh`
+- `deploy/image/stage-vanchor/EXPORT_IMAGE`
+- `deploy/image/stage-vanchor/00-docker/00-run.sh`
+- `deploy/image/stage-vanchor/00-docker/00-run-chroot.sh`
+- `deploy/image/stage-vanchor/00-docker/files/daemon.json`
+- `deploy/image/stage-vanchor/01-net/00-packages`
+- `deploy/image/stage-vanchor/01-net/00-run.sh`
+- `deploy/image/stage-vanchor/01-net/01-run-chroot.sh`
+- `deploy/image/stage-vanchor/01-net/files/vanchor-setup.nmconnection`
+- `deploy/image/stage-vanchor/01-net/files/vanchor-dnsmasq.conf`
+- `deploy/image/stage-vanchor/01-net/files/vanchor-hotspot.service`
+- `deploy/image/stage-vanchor/01-net/files/vanchor-hotspot-check.sh`
+- `deploy/image/stage-vanchor/02-stack/00-run.sh`
+- `deploy/image/stage-vanchor/02-stack/01-run-chroot.sh`
+- `deploy/image/stage-vanchor/02-stack/files/motd`
+- `deploy/image/stage-vanchor/02-stack/files/vanchor-load-images.service`
+- `deploy/image/stage-vanchor/02-stack/files/vanchor-load-images.sh`
+- `deploy/image/stage-vanchor/02-stack/files/vanchor-journald.conf`
+- `deploy/image/stage-vanchor/02-stack/files/var-log.mount`
+- `deploy/image/stage-vanchor/03-trim/00-run-chroot.sh`
+- `scripts/gen_imager_json.py`
+- `.github/workflows/image.yml`
+- `src/vanchor/wifi.py`
+- `src/vanchor/ui/static/wifi.js`
+- `docs/image-testing.md`
+- `docs/deploy-pi.md` (rewrite)
+- `tests/test_wifi.py`
+- `tests/test_image_tooling.py`
+- `.superpowers/sdd/adoption/task-6-report.md`
+
+**Modified files:**
+- `Dockerfile` — add network-manager to final stage
+- `docker-compose.yml` — add D-Bus socket bind-mount
+- `src/vanchor/ui/server.py` — 3 wifi endpoints
+- `src/vanchor/ui/partials/panel-data.html` — WiFi card
+- `src/vanchor/ui/static/index.html` — wifi.js script tag
+- `src/vanchor/ui/static/sw.js` — wifi.js in SHELL array
+- `tests/test_docker_artifacts.py` — update final-stage apt-get test
+- `CHANGELOG.md` — task 6 entry
+- `README.md` — boat Pi one-liner + paste-URL
+- `docs/getting-started.md` — deploy-pi.md link text update
+
+---
+
+## Known Risks / Open Items
+
+1. **pi-gen arm64 branch vs unified master**: SHA `e4f7df5d4dff5bd3f4af57f06eaccbc2de476882` pinned from 2026-07-18. Verify it builds on the first CI run.
+2. **rpi-imager os_list field drift**: `gen_imager_json.py` isolates the schema in one function — easy to update if field names change.
+3. **GH arm64 runner disk**: `df` guard step fails fast if < 12 GB; cleanup step removes optional toolchains. First run needs monitoring.
+4. **Single-radio hotspot drop**: UI copy warns the user; no seamless handover possible.
+5. **python-zeroconf vs avahi name conflict**: non-fatal warning; documented in checklist item 15.
+6. **noatime + dphys-swapfile disable on Zero 2 W**: addendum takes precedence over the brief's note; zram is the replacement. Zero 2 W with 512 MB RAM gets 25% zram (~128 MB compressed swap). May need tuning.
+7. **App-level writer bounds**: server.log rotation is log-level configured but not explicitly bounded by file size in this task; follow-up issue warranted if confirmed unbounded.

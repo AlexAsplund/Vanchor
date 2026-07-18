@@ -1,0 +1,6 @@
+Vanchor-NG boat controller
+  UI:      http://vanchor.local:8000   (hotspot: http://10.42.0.1:8000)
+  Hotspot: SSID "vanchor-setup"  password "vanchor-boat"
+  SSH is DISABLED by default. To enable: create an empty file named "ssh"
+  on the boot partition (bootfs) and reboot. Console login: vanchor/vanchor
+  -- change it with `passwd`.
