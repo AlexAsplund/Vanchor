@@ -1,76 +1,17 @@
       <section class="cm-panel hidden" data-cat="data">
 
-      <button id="logs-open" class="btn-ghost wide" title="View the application log">📜 View logs</button>
-
-      <details class="card" id="livedata-card">
-        <summary>Live data</summary>
-        <div class="row"><span>Mode</span><b id="r-mode">—</b></div>
-        <div class="row"><span>Heading</span><b id="r-heading">—</b></div>
-        <div class="row"><span>SOG</span><b id="r-sog">—</b></div>
-        <div class="row"><span>Dist→Anchor</span><b id="r-anchor">—</b></div>
-        <div class="row"><span>Dist→WP</span><b id="r-wp">—</b></div>
-        <div class="row"><span>XTE</span><b id="r-xte">—</b></div>
-        <div class="row"><span>Bearing</span><b id="r-brg">—</b></div>
-        <div class="row"><span>Thrust</span><b id="r-thrust">—</b></div>
-        <div class="row"><span>Steer</span><b id="r-steer">—</b></div>
-        <div class="row"><span>Cruise</span><b id="r-cruise">off</b></div>
-        <div class="hint" id="sensors-rejected">rejected: hdg —, pos —</div>
-        <div class="ctx-sub">Sensor ages</div>
-        <div class="health-ages">
-          <span class="health-age-chip"><span class="hac-lbl">FIX</span><span class="hac-val" id="health-age-fix">—</span></span>
-          <span class="health-age-chip"><span class="hac-lbl">HDG</span><span class="hac-val" id="health-age-hdg">—</span></span>
-          <span class="health-age-chip"><span class="hac-lbl">DEPTH</span><span class="hac-val" id="health-age-depth">—</span></span>
-          <span class="health-age-chip"><span class="hac-lbl">IMU</span><span class="hac-val" id="health-age-imu">—</span></span>
+      <!-- Install card (WP13 item 46) — visible order position 1.
+           install.js drives all dynamic content. -->
+      <details class="card" id="install-card">
+        <summary>Install on your device</summary>
+        <div id="install-body">
+          <!-- install.js populates this block at runtime -->
+          <div class="hint">Checking installation status…</div>
         </div>
+        <div id="install-offline-hint" class="hint hidden" style="color:var(--warn)"></div>
       </details>
 
-      <!-- Time-series graphs (uPlot) — renamed from "Charts" to end the
-           nautical-chart name collision; moved here from Map & charts. -->
-      <details class="card" id="charts-card">
-        <summary>Time-series graphs</summary>
-        <button id="charts-clear" class="btn-ghost">Clear</button>
-        <div id="charts"></div>
-      </details>
-
-      <details class="card" id="debug-card">
-        <summary>Debug recorder <span id="debug-state" class="badge"></span></summary>
-        <div class="hint">Record everything — telemetry, NMEA, commands, logs — to a gzipped file you can download and replay. For debugging real boats.</div>
-        <div class="btn-row">
-          <button id="debug-rec" class="btn-primary">● Start recording</button>
-          <button id="debug-refresh" class="btn-ghost">Refresh list</button>
-        </div>
-        <div id="debug-rec-info" class="hint"></div>
-        <div class="ctx-sub">Sessions</div>
-        <ol id="debug-sessions" class="debug-sessions"></ol>
-        <div id="replay-bar" class="replay-bar hidden">
-          ▶ Replaying <b id="replay-name">—</b> · <span id="replay-pct">0%</span>
-          <button id="replay-stop" class="btn-ghost">Stop</button>
-        </div>
-      </details>
-
-      <details class="card" id="console-card">
-        <summary>NMEA / log console</summary>
-        <button id="log-clear" class="btn-ghost">Clear log</button>
-        <pre id="log" class="log"></pre>
-      </details>
-
-      <!-- Command audit (#26): the client-side command queue (queued/sent/
-           confirmed/failed) plus, when online, the server's audit of what was
-           commanded and whether it was accepted/denied. See audit.js. -->
-      <details class="card" id="audit-card">
-        <summary>Command audit <span id="audit-badge" class="badge"></span></summary>
-        <div class="hint">Recent commands and their state. Queued commands are buffered while offline and replayed on reconnect (STOP is never queued).</div>
-        <div class="ctx-sub">This device</div>
-        <ol id="audit-local" class="debug-sessions"></ol>
-        <div id="audit-local-empty" class="hint">No commands yet.</div>
-        <div class="ctx-sub">Server (all clients)</div>
-        <ol id="audit-server" class="debug-sessions"></ol>
-        <div id="audit-server-empty" class="hint">—</div>
-      </details>
-
-      <!-- System & updates (adoption task 5): container version, update bundles,
-           rollback, disk, backups via the host supervisor daemon. supervisor.js
-           drives all dynamic content via VA.onTelemetry(). -->
+      <!-- System & updates: visible order position 2. -->
       <details class="card" id="system-card">
         <summary>System &amp; updates</summary>
         <div class="hint">Manage app updates, volume backups, and disk usage via the <em>vanchor-supervisor</em> daemon. When running bare-metal (no supervisor), this card shows the installed version only.</div>
@@ -124,9 +65,7 @@
         </div>
       </details>
 
-      <!-- Backup & restore. Download bundles all "vanchor-" localStorage into a
-           server-built ZIP; Restore uploads one back and reloads (backup.js).
-           Needs the matching /api/backup + /api/restore backend. -->
+      <!-- Backup & restore: visible order position 3. -->
       <details class="card" id="backup-card">
         <summary>Backup &amp; restore</summary>
         <div class="hint">Save a full backup of your settings and on-device data to a ZIP file, or restore one. Restoring overwrites the current data and reloads the app.</div>
@@ -148,8 +87,7 @@
         <div id="backup-rs-status" class="hint"></div>
       </details>
 
-      <!-- WiFi / network (SD-image setup). Hidden unless /api/system/wifi
-           reports available (i.e. a Pi with NetworkManager). wifi.js. -->
+      <!-- WiFi / network: visible order position 4. -->
       <details class="card hidden" id="wifi-card">
         <summary>WiFi &amp; network <span id="wifi-state" class="badge"></span></summary>
         <div class="hint">Join your home WiFi. While joining, the <b>vanchor-setup</b> hotspot drops — reconnect your phone to your home WiFi and open <b>http://vanchor.local:8000</b>.</div>
@@ -161,6 +99,77 @@
         </div>
         <ol id="wifi-list" class="debug-sessions"></ol>
         <div id="wifi-status" class="hint"></div>
+      </details>
+
+      <!-- Live data: visible order position 5. -->
+      <details class="card" id="livedata-card">
+        <summary>Live data</summary>
+        <div class="row"><span>Mode</span><b id="r-mode">—</b></div>
+        <div class="row"><span>Heading</span><b id="r-heading">—</b></div>
+        <div class="row"><span>SOG</span><b id="r-sog">—</b></div>
+        <div class="row"><span>Dist→Anchor</span><b id="r-anchor">—</b></div>
+        <div class="row"><span>Dist→WP</span><b id="r-wp">—</b></div>
+        <div class="row"><span>XTE</span><b id="r-xte">—</b></div>
+        <div class="row"><span>Bearing</span><b id="r-brg">—</b></div>
+        <div class="row"><span>Thrust</span><b id="r-thrust">—</b></div>
+        <div class="row"><span>Steer</span><b id="r-steer">—</b></div>
+        <div class="row"><span>Cruise</span><b id="r-cruise">off</b></div>
+        <div class="hint" id="sensors-rejected">rejected: hdg —, pos —</div>
+        <div class="ctx-sub">Sensor ages</div>
+        <div class="health-ages">
+          <span class="health-age-chip"><span class="hac-lbl">FIX</span><span class="hac-val" id="health-age-fix">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">HDG</span><span class="hac-val" id="health-age-hdg">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">DEPTH</span><span class="hac-val" id="health-age-depth">—</span></span>
+          <span class="health-age-chip"><span class="hac-lbl">IMU</span><span class="hac-val" id="health-age-imu">—</span></span>
+        </div>
+      </details>
+
+      <!-- Time-series graphs: visible order position 6. -->
+      <details class="card" id="charts-card">
+        <summary>Time-series graphs</summary>
+        <button id="charts-clear" class="btn-ghost">Clear</button>
+        <div id="charts"></div>
+      </details>
+
+      <!-- Advanced / troubleshooting separator -->
+      <div class="cm-adv-head">Advanced / troubleshooting</div>
+
+      <button id="logs-open" class="btn-ghost wide" title="View the application log">📜 View logs</button>
+
+      <details class="card" id="debug-card">
+        <summary>Debug recorder <span id="debug-state" class="badge"></span></summary>
+        <div class="hint">Record everything — telemetry, NMEA, commands, logs — to a gzipped file you can download and replay. For debugging real boats.</div>
+        <div class="btn-row">
+          <button id="debug-rec" class="btn-primary">● Start recording</button>
+          <button id="debug-refresh" class="btn-ghost">Refresh list</button>
+        </div>
+        <div id="debug-rec-info" class="hint"></div>
+        <div class="ctx-sub">Sessions</div>
+        <ol id="debug-sessions" class="debug-sessions"></ol>
+        <div id="replay-bar" class="replay-bar hidden">
+          ▶ Replaying <b id="replay-name">—</b> · <span id="replay-pct">0%</span>
+          <button id="replay-stop" class="btn-ghost">Stop</button>
+        </div>
+      </details>
+
+      <details class="card" id="console-card">
+        <summary>NMEA / log console</summary>
+        <button id="log-clear" class="btn-ghost">Clear log</button>
+        <pre id="log" class="log"></pre>
+      </details>
+
+      <!-- Command audit (#26): the client-side command queue (queued/sent/
+           confirmed/failed) plus, when online, the server's audit of what was
+           commanded and whether it was accepted/denied. See audit.js. -->
+      <details class="card" id="audit-card">
+        <summary>Command audit <span id="audit-badge" class="badge"></span></summary>
+        <div class="hint">Recent commands and their state. Queued commands are buffered while offline and replayed on reconnect (STOP is never queued).</div>
+        <div class="ctx-sub">This device</div>
+        <ol id="audit-local" class="debug-sessions"></ol>
+        <div id="audit-local-empty" class="hint">No commands yet.</div>
+        <div class="ctx-sub">Server (all clients)</div>
+        <ol id="audit-server" class="debug-sessions"></ol>
+        <div id="audit-server-empty" class="hint">—</div>
       </details>
 
       </section><!-- /data -->

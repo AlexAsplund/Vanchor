@@ -564,6 +564,8 @@
         </div>
         <button id="aa-recover" class="btn-primary wide hidden">⚓ Recover — hold at alarm point</button>
         <div id="aa-status" class="hint"></div>
+        <!-- Push cross-link: shown only when push is supported-but-unsubscribed (push.js toggles hidden). -->
+        <button id="aa-push-link" class="btn-ghost wide hidden">Phone notifications are off — get alarms when the app is closed</button>
       </div>
 
       <!-- WAYPOINT / ROUTE -->
@@ -930,7 +932,7 @@
         <button class="cm-tile" type="button" data-cat="data">
           <span class="cm-tile-ic" aria-hidden="true">📊</span>
           <span class="cm-tile-lbl">Data &amp; system</span>
-          <span class="cm-tile-hint">Live data, graphs, logs, backup</span>
+          <span class="cm-tile-hint">Updates, backup, WiFi, live data</span>
         </button>
         <button class="cm-tile" type="button" data-cat="sim">
           <span class="cm-tile-ic" aria-hidden="true">🧪</span>
@@ -984,6 +986,16 @@
     </div>
     <div id="select-boat-cards" class="sb-cards"></div>
     <div id="select-boat-status" class="sb-status"></div>
+  </dialog>
+
+  <!-- Supervisor in-app confirm (WP11 item 37): replaces browser confirm(). -->
+  <dialog id="sup-confirm" class="sup-confirm">
+    <b id="sup-confirm-title">Apply update?</b>
+    <p id="sup-confirm-msg" class="hint"></p>
+    <div class="btn-row">
+      <button id="sup-confirm-cancel" class="btn-ghost wide">Cancel</button>
+      <button id="sup-confirm-ok" class="btn-primary wide">Apply</button>
+    </div>
   </dialog>
 
   <!-- ===================== REMOTE HELM (giant buttons) ===================== -->
@@ -1349,5 +1361,7 @@
   <!-- Onboarding: sim notice, first-run choice, coach marks, Get-started tile.
        Must load LAST (after views.js, wizard.js, hwwizard.js). -->
   <script src="/static/onboard.js"></script>
+  <!-- WP13: PWA install offer (must be last so VA.menu is already defined). -->
+  <script src="/static/install.js"></script>
 </body>
 </html>

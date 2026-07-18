@@ -133,6 +133,7 @@ const SHELL = [
   "/static/armbar.js",
   "/static/themectl.js",
   "/static/onboard.js",
+  "/static/install.js",
 ];
 
 // Map-tile hosts handled by offline.js's IndexedDB cache — the SW must not

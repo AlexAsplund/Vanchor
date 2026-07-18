@@ -17,7 +17,10 @@
 "use strict";
 
 (function () {
-  const mq = window.matchMedia("(max-width: 760px)");
+  const mq = window.matchMedia("(max-width: 760px), (max-height: 480px)");
+  // Landscape sub-query: phone rotated sideways (height ≤ 480 px and landscape).
+  // In landscape body.mobile.ls is toggled; all landscape CSS keys on that pair.
+  const mqLand = window.matchMedia("(max-height: 480px) and (orientation: landscape)");
   const body = document.body;
 
   // ---- map re-fit (debounced to the next frame so CSS has settled) ----------
@@ -55,8 +58,11 @@
   function applyMobile() {
     const on = mq.matches;
     const was = body.classList.contains("mobile");
+    const ls = on && mqLand.matches;  // landscape sub-mode
     if (on) ensureScrollWrap();
     body.classList.toggle("mobile", on);
+    // body.ls gates all landscape CSS; cleared when portrait or desktop.
+    body.classList.toggle("ls", ls);
     if (on) {
       if (!body.dataset.sheet) setSheet("peek");
       // Remeasure peek height (font/content may have changed) and publish as
@@ -130,12 +136,15 @@
 
     function onStart(e) {
       if (!body.classList.contains("mobile")) return;
+      // Landscape: no vertical drag — grip tap-to-cycle only (handled in onEnd).
+      if (body.classList.contains("ls")) { dragging = true; moved = false; return; }
       const y = e.touches ? e.touches[0].clientY : e.clientY;
       dragging = true; moved = false; startY = y; startH = currentHeight();
       dock.style.transition = "none";
     }
     function onMove(e) {
       if (!dragging) return;
+      if (body.classList.contains("ls")) return;  // landscape: no drag
       const y = e.touches ? e.touches[0].clientY : e.clientY;
       const dy = y - startY;               // down = positive
       if (Math.abs(dy) > 4) moved = true;
@@ -151,6 +160,8 @@
       dragging = false;
       dock.style.transition = "";
       if (!moved) { cycleSheet(); return; }   // a tap, not a drag
+      // Landscape: only tap-to-cycle (moved is always false in ls).
+      if (body.classList.contains("ls")) { cycleSheet(); return; }
       // Snap to the nearest of peek / mid / full by current height.
       const { full, mid, peek } = heights();
       const m = dock.style.transform.match(/translateY\(([-\d.]+)px\)/);
@@ -318,8 +329,15 @@
   // view, instead of forcing a manual drag (mobile only). Consumed by
   // appcore.js (mode rail) and guided.js (the "More" flyout).
   VA.sheet = {
-    reveal(min) { if (mq.matches) ensureAtLeast(min || "mid"); },
-    collapse() { if (mq.matches) setSheet("peek"); },  // drop the sheet to reveal the map
+    reveal(min) {
+      if (!mq.matches) return;
+      // In landscape the rail is a side panel; mid/full both = rail open. Use "mid".
+      ensureAtLeast(body.classList.contains("ls") ? "mid" : (min || "mid"));
+    },
+    collapse() {
+      if (!mq.matches) return;
+      setSheet("peek");  // peek = hidden in landscape (collapsed rail), standard in portrait
+    },
     active() { return mq.matches; },
   };
 
@@ -328,6 +346,9 @@
   // matchMedia change + resize + orientation all re-evaluate mobile state.
   if (mq.addEventListener) mq.addEventListener("change", applyMobile);
   else if (mq.addListener) mq.addListener(applyMobile);
+  // Landscape sub-query also re-evaluates on rotation.
+  if (mqLand.addEventListener) mqLand.addEventListener("change", applyMobile);
+  else if (mqLand.addListener) mqLand.addListener(applyMobile);
   window.addEventListener("resize", () => { invalidatePeekCache(); applyMobile(); });
   window.addEventListener("orientationchange", () => setTimeout(() => { invalidatePeekCache(); applyMobile(); refitMap(); }, 60));
 })();

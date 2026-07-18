@@ -56,6 +56,12 @@
     if (back) back.classList.remove("hidden");
     if (title) title.textContent = TITLES[cat] || "Menu";
     if (body) body.scrollTop = 0;
+    // Auto-expand sparse categories (≤2 cards): opening to a collapsed list on
+    // an empty screen is disorienting. Count at show-time so cards added after
+    // boot (e.g. #install-card) are included in the count.
+    const cards = panel.querySelectorAll(":scope > details.card");
+    if (cards.length <= 2) cards.forEach((d) => { d.open = true; });
+    panel.classList.toggle("cm-solo", cards.length === 1);
   }
 
   // Tile taps → open that category's panel.

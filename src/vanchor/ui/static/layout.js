@@ -249,12 +249,39 @@
     });
   }
 
+  // ---- steering-gauge occlusion check (item 16) --------------------------
+  // The #steering-gauge SVG floats over the map; on wide viewports the #dock
+  // panel can overlap it, bleeding ghost text through the panel glass.
+  // Detect the intersection and add .sg-occluded so CSS hides the gauge.
+  // Called after every position update + dock expand/collapse + resize.
+  function updateGaugeOcclusion() {
+    const gauge = document.getElementById("steering-gauge");
+    const dock  = document.getElementById("dock");
+    if (!gauge || !dock) return;
+    // Only applies on desktop/tablet (mobile hides the gauge via CSS already).
+    if (document.body.classList.contains("mobile")) {
+      gauge.classList.remove("sg-occluded");
+      return;
+    }
+    const gr = gauge.getBoundingClientRect();
+    const dr = dock.getBoundingClientRect();
+    const overlaps =
+      gr.left < dr.right  && gr.right  > dr.left &&
+      gr.top  < dr.bottom && gr.bottom > dr.top;
+    gauge.classList.toggle("sg-occluded", overlaps);
+  }
+
   // ---- init --------------------------------------------------------------
   loadPositions();
   PANELS.forEach(injectHandle);
   PANELS.forEach(makeDraggable);
   applyAllPositions();
-  window.addEventListener("resize", applyAllPositions);
+  updateGaugeOcclusion();
+  window.addEventListener("resize", () => { applyAllPositions(); updateGaugeOcclusion(); });
+
+  // Re-check occlusion when the dock expand/collapse handle is clicked.
+  const dockHandle = document.getElementById("dock-handle");
+  if (dockHandle) dockHandle.addEventListener("click", () => setTimeout(updateGaugeOcclusion, 320));
 
   loadProfiles();
   wireProfiles();

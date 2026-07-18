@@ -618,6 +618,7 @@ VA.postJSON = async function (url, body) {
 // Register the service worker so the app shell + vendored libs are precached
 // and the page loads fully offline on the boat. Served at root scope by the
 // server so it can control the whole origin. Guarded for support / failures.
+VA.swState = "unavailable";  // "active" | "unavailable" | "failed"
 if ("serviceWorker" in navigator) {
   // When a NEW service worker activates and takes control (after an update), the
   // page is still showing the OLD cached shell/CSS/JS. Reload once so it swaps to
@@ -630,11 +631,65 @@ if ("serviceWorker" in navigator) {
     window.location.reload();
   });
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch((err) => {
+    navigator.serviceWorker.register("/sw.js").then((reg) => {
+      // Expose SW state for install.js + wake card.
+      const sw = reg.installing || reg.waiting || reg.active;
+      VA.swState = sw ? (sw.state === "activated" ? "active" : "active") : "active";
+      if (reg.active) VA.swState = "active";
+    }).catch((err) => {
       console.warn("[vanchor] service worker registration failed:", err);
+      VA.swState = "failed";
     });
   });
 }
+
+// ---- offline / link-restored strip + toast -------------------------------
+// Show a persistent "No internet" strip when navigator.onLine is false.
+// Fire a "Link restored" toast when the WS reconnects after ≥5 s of
+// disconnection (not on every reconnect to avoid noise on a flaky LAN).
+const OFFLINE_BANNER_ID = "offline-strip-banner";
+let _disconnectedAt = null;   // timestamp of last WS disconnect (or null)
+const RESTORED_THRESHOLD_MS = 5000;  // only toast if gone for ≥5 s
+
+function _showOfflineStrip(show) {
+  _banner(OFFLINE_BANNER_ID, show ? {
+    show: true, belowTopbar: true, bg: "#374151",
+    text: "No internet connection — waiting for the boat",
+  } : { show: false });
+}
+
+// mirror navigator.onLine changes
+window.addEventListener("online",  () => _showOfflineStrip(false));
+window.addEventListener("offline", () => _showOfflineStrip(true));
+// check on page load
+if (typeof navigator !== "undefined" && navigator.onLine === false) _showOfflineStrip(true);
+
+// Hook connect/disconnect into the existing WS lifecycle.
+// We store the real VA.connect below and wrap its internal callbacks
+// by subscribing to VA.onConnState.
+VA.onConnState(function (state) {
+  if (state === "disconnected") {
+    if (!_disconnectedAt) _disconnectedAt = Date.now();
+    // If the device is offline, surface the strip immediately.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      _showOfflineStrip(true);
+    }
+  } else if (state === "connected") {
+    _showOfflineStrip(false);
+    if (_disconnectedAt && (Date.now() - _disconnectedAt >= RESTORED_THRESHOLD_MS)) {
+      // Toast after ≥5 s of being disconnected.
+      if (typeof VA.toast === "function") {
+        VA.toast("Link restored", { duration: 3000 });
+      } else {
+        // toast loaded later; defer one tick.
+        setTimeout(function () {
+          if (typeof VA.toast === "function") VA.toast("Link restored", { duration: 3000 });
+        }, 0);
+      }
+    }
+    _disconnectedAt = null;
+  }
+});
 
 // ---- client RUM -> POST /api/client-log (into logs + debug recordings) ----
 // Lightweight real-user-monitoring so field problems on a phone are

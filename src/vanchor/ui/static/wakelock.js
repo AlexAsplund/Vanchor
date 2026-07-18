@@ -116,12 +116,58 @@
   // ---- unified engage/release ---------------------------------------------
   let wantLock = false;  // desired state (tracks across visibility changes)
 
-  function engage() { if (hasApi) apiAcquire(); else videoAcquire(); }
+  // ---- user pref (localStorage, default "on") ----------------------------
+  const PREF_KEY = "vanchor-wakelock";
+  let userEnabled = localStorage.getItem(PREF_KEY) !== "off";  // default on
+
+  function engage() {
+    if (!userEnabled) return;
+    if (hasApi) apiAcquire(); else videoAcquire();
+  }
   function disengage() { apiRelease(); videoRelease(); }
 
   if (!hasApi) {
     console.debug("[wakelock] Wake Lock API unavailable (insecure context?) — using video fallback.");
   }
+
+  // ---- public API ---------------------------------------------------------
+  VA.wakelock = {
+    active: function () { return wantLock && userEnabled; },
+    available: hasApi || true,   // video fallback is always available
+    setEnabled: function (bool) {
+      userEnabled = !!bool;
+      localStorage.setItem(PREF_KEY, userEnabled ? "on" : "off");
+      if (!userEnabled) { disengage(); } else if (wantLock) { engage(); }
+      _updateWakeStatus();
+    },
+  };
+
+  // ---- wake-status text update --------------------------------------------
+  function _updateWakeStatus() {
+    const statusEl = document.getElementById("wake-status");
+    const toggle   = document.getElementById("wake-toggle");
+    if (!statusEl) return;
+    if (!userEnabled) {
+      statusEl.textContent = "Screen keep-awake is off.";
+    } else if (!hasApi) {
+      statusEl.textContent = "Using video fallback (HTTP context — no Wake Lock API).";
+    } else {
+      statusEl.textContent = "Screen will stay awake while a mode is driving.";
+    }
+    if (toggle) toggle.checked = userEnabled;
+  }
+
+  // ---- wire #wake-toggle --------------------------------------------------
+  const wakeToggle = document.getElementById("wake-toggle");
+  if (wakeToggle) {
+    wakeToggle.checked = userEnabled;
+    wakeToggle.addEventListener("change", function () {
+      VA.wakelock.setEnabled(this.checked);
+    });
+  }
+
+  // Initialize status text on load.
+  _updateWakeStatus();
 
   // ---- telemetry subscription -------------------------------------------
   VA.onTelemetry(function (t) {

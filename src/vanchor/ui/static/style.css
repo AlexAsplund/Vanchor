@@ -3098,3 +3098,247 @@ html[data-theme="daylight"] #mode-pill[data-mode^="anchor"] { color: #9a1730; bo
 html[data-theme="daylight"] #mode-pill.dragging {
   background: #d21f3c; color: #fff; border-color: #d21f3c;
 }
+
+/* ---- WP5 Task-5 carryovers ---- */
+
+/* (a) Steering gauge + HUD rose: clear hardcoded dark glows in daylight so the
+   SVG elements read properly on the bright card backdrop. */
+html[data-theme="daylight"] .hud-needle-n {
+  filter: drop-shadow(0 0 2px rgba(0, 104, 166, 0.5));  /* daylight accent */
+}
+html[data-theme="daylight"] .sg-angle {
+  filter: drop-shadow(0 0 3px rgba(0, 104, 166, 0.5));  /* daylight accent */
+}
+html[data-theme="daylight"] .hud-rose text {
+  stroke: rgba(255, 255, 255, 0.0);  /* no dark halo on light backdrop */
+}
+/* Remove text-shadow on sg-stat/sg-title in daylight (dark-on-white is already readable). */
+html[data-theme="daylight"] .hud-widget,
+html[data-theme="daylight"] .sg-stat,
+html[data-theme="daylight"] .sg-title { text-shadow: none; }
+
+/* (b) Alarm-peek mode-chip truncation at 390 px: when the alarm head is active
+   allow the chip text to wrap to two compact lines. The ctx cell already shows
+   the distance, so the chip can be short. */
+body.mobile .sheet-head.alarm .sheet-peekbar .sheet-mode {
+  white-space: normal; font-size: 11px; line-height: 1.15; overflow: visible;
+}
+
+/* ===================================================================== */
+/* WP5 · LANDSCAPE MODE (body.mobile.ls) — phone rotated sideways.       */
+/*   The three fixed chrome bands survive unchanged; only the docking     */
+/*   layout changes: the bottom sheet becomes a right-edge slide-in rail. */
+/* ===================================================================== */
+
+/* 1. Keep map full-bleed (already set by body.mobile #map: position absolute inset 0).
+   In landscape the rail sits over the map on the right; map gets all space. */
+
+/* 2. Right-edge rail: the dock slides in/out from the right instead of up from
+   the bottom. Peek = rail hidden (only 28 px grip tab shows). Mid/full = rail
+   visible. The DOM and IDs are untouched so existing STOP/modal wiring works. */
+body.mobile.ls .dock {
+  /* Override the portrait sheet transform entirely. */
+  position: fixed; top: var(--topbar-h, 52px); right: 0; bottom: 0; left: auto;
+  width: clamp(280px, 46vw, 420px);
+  height: auto; max-height: none;
+  border-radius: 0;                          /* flat right edge */
+  /* Peek (default): rail hidden off-screen to the right. */
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Override sheet snap states from portrait rules. */
+body.mobile.ls[data-sheet="peek"]  .dock { transform: translateX(100%); }  /* hidden */
+body.mobile.ls[data-sheet="mid"]   .dock { transform: translateX(0);   }   /* visible */
+body.mobile.ls[data-sheet="full"]  .dock { transform: translateX(0);   }   /* also visible */
+
+/* 3. In landscape the bottom safety band is the portrait peek row-2 (STOP/mode/MOB).
+   Pull it out of the sheet and pin it to the bottom of the viewport. Because
+   the DOM node is inside #dock we use CSS to make it escape the sheet stacking:
+   make it fixed + override the dock's overflow-hidden on just this row. */
+body.mobile.ls .dock {
+  /* allow the safety band to visually overflow beyond the dock in portrait —
+     in landscape the dock is hidden by default so safety band is always visible. */
+  overflow: visible;
+}
+/* In landscape, the safety band lives at the bottom of the viewport below the map. */
+body.mobile.ls .sheet-peekbar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  height: 70px;
+  background: linear-gradient(0deg, var(--glass-solid) 0%, color-mix(in srgb, var(--glass-solid) 92%, transparent) 100%);
+  border-top: 1px solid var(--line-bright);
+  padding: 8px 12px; gap: 10px;
+  z-index: 1200;    /* above dock + map */
+  box-shadow: 0 -4px 18px rgba(0,0,0,0.35);
+}
+/* In landscape the instruments row is NOT inside the dock peek; show it over the map. */
+body.mobile.ls .sheet-instruments {
+  position: fixed;
+  top: calc(var(--topbar-h, 52px) + 6px);
+  left: 8px; right: calc(clamp(280px, 46vw, 420px) + 36px + 8px);
+  /* shrink right edge when rail is hidden (peek): full width minus grip tab */
+  display: flex; flex-direction: row; gap: 5px; z-index: 30;
+  pointer-events: none;
+}
+/* When the rail is open (mid/full) the instruments shrink to the map portion. */
+body.mobile.ls[data-sheet="peek"] .sheet-instruments {
+  right: 36px;  /* only grip tab width to exclude */
+}
+/* 4. Grip tab: a vertical strip on the right edge of the map area.
+   Keep it visible in peek so the user knows the rail exists. */
+body.mobile.ls .sheet-grip {
+  display: none;   /* hide the portrait horizontal grip bar */
+}
+/* Render a narrow vertical grip tab via the dock head (repositioned) */
+body.mobile.ls .sheet-head {
+  position: fixed; right: 0;
+  top: calc(var(--topbar-h, 52px) + 35%);
+  width: 28px; height: 60px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--glass-solid);
+  border: 1px solid var(--line-bright); border-right: 0;
+  border-radius: 10px 0 0 10px;
+  z-index: 1180; cursor: pointer;
+  padding: 0;
+  /* Hidden when rail is open (the whole dock is visible) */
+}
+body.mobile.ls[data-sheet="mid"]  .sheet-head,
+body.mobile.ls[data-sheet="full"] .sheet-head { opacity: 0; pointer-events: none; }
+body.mobile.ls .sheet-grip-bar {
+  display: block;
+  width: 5px; height: 28px; border-radius: 3px;
+  background: var(--line-bright);
+  /* portrait: wide; landscape: tall and rotated */
+  transform: none;
+}
+/* Back-to-map collapse button in landscape: shown inside the rail head. */
+body.mobile.ls .sheet-collapse {
+  display: inline-flex;  /* always show in landscape (not just mid/full) */
+}
+
+/* 5. The dock-scroll in landscape: normal flex column, standard scrolling. */
+body.mobile.ls .dock-scroll {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+}
+
+/* 6. Sticky primary CTA inside landscape rail: pin to the rail's bottom edge
+   so short viewports never hide "DROP ANCHOR HERE" etc. */
+body.mobile.ls .dock-panels .ctx-panel .btn-primary.wide,
+body.mobile.ls .dock-panels .ctx-panel button[id$="-go"].wide {
+  position: sticky; bottom: 0;
+  background: var(--accent);  /* ensure visibility over scroll content */
+  z-index: 2;
+}
+
+/* 7. Safety band bottom offset: the Leaflet/FABs/follow-fab lift above 70 px. */
+body.mobile.ls .follow-fab.offscreen {
+  right: 36px; bottom: 78px;  /* 70 px band + 8 px gap; above band not rail */
+}
+/* In landscape, align map FABs above the safety band (not the dock sheet). */
+body.mobile.ls .leaflet-top.leaflet-left { top: 60px; right: 36px; left: auto; }
+
+/* 8. Bottom-band safe area: shift up by safe-area-inset-bottom. */
+body.mobile.ls .sheet-peekbar {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+/* 9. Helm / manual / instruments tile grid in landscape: 3 cols × 2 rows
+   at ≥64 px tile height. Zero map FABs (those are hidden by the view rule). */
+body.mobile.ls[data-view="helm"]        .view-dock,
+body.mobile.ls[data-view="instruments"] .view-dock,
+body.mobile.ls[data-view="manual"]      .view-dock {
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, minmax(64px, 1fr));
+  gap: 6px; padding: 8px;
+}
+/* Tiles in landscape: min 64 px tall for legibility at arm's length. */
+body.mobile.ls[data-view="helm"] .hud-tile,
+body.mobile.ls[data-view="instruments"] .hud-tile { min-height: 64px; }
+
+/* 10. Steer wheel in landscape: constrain to fit the viewport height. */
+body.mobile.ls .steer-wheel { max-width: min(55vh, 280px); }
+
+/* ===================================================================== */
+/* WP5 · Item 17 — FAB + chart-control hygiene                           */
+/*   Leaflet controls, map FABs, and chart overlays only belong on the   */
+/*   chart view. Other views must not have them bleeding through.         */
+/* ===================================================================== */
+body:not([data-view="chart"]) .leaflet-control-container,
+body:not([data-view="chart"]) #marker-fab,
+body:not([data-view="chart"]) #follow-fab,
+body:not([data-view="chart"]) #depth-legend,
+body:not([data-view="chart"]) #composition-legend,
+body:not([data-view="chart"]) #catch-open { display: none !important; }
+
+/* Catch FAB on MOBILE PORTRAIT: restore it above the peek bar regardless of
+   the HUD pref toggle (hud-off class), so it's reachable on water.
+   Keep it above STOP/peek band — never overlaps the band. */
+body.mobile:not(.ls) #catch-open {
+  display: flex !important;  /* beats the blanket mobile hide */
+  position: fixed;
+  bottom: calc(var(--peek-h, 152px) + 12px + env(safe-area-inset-bottom));
+  left: 12px;
+  z-index: 1140;
+}
+/* In landscape, catch FAB is not shown (screen is too narrow for it). */
+body.mobile.ls #catch-open { display: none !important; }
+
+/* ===================================================================== */
+/* WP5 · Item 16 — Steering gauge ghost text occluded by dock/panel      */
+/* ===================================================================== */
+/* When layout.js detects overlap between #steering-gauge and #dock,     */
+/* it adds .sg-occluded to the gauge. Hide the whole gauge invisibly     */
+/* (not display:none so it still takes space / can be re-shown instantly).*/
+#steering-gauge.sg-occluded { visibility: hidden; }
+
+/* ===================================================================== */
+/* WP11 · Item 33 — auto-expand sparse categories                        */
+/* Single-card category pages: hide the redundant summary echo.          */
+/* (menu.js sets .cm-solo on pages with exactly 1 card.)                 */
+/* ===================================================================== */
+.cm-panel.cm-solo > details.card > summary { display: none; }
+
+/* ===================================================================== */
+/* WP11 · Item 34 — Data & system advanced separator                     */
+/* ===================================================================== */
+.cm-adv-head {
+  margin-top: 18px; padding: 6px 0 2px;
+  font: 700 10px var(--font-display);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); opacity: 0.8;
+  border-top: 1px solid var(--line);
+}
+
+/* ===================================================================== */
+/* WP11 · Item 38 — Observer banner collapse                             */
+/* ===================================================================== */
+/* Slim strip: roles.js adds .role-collapsed after ~5 s. */
+#role-banner.role-collapsed {
+  padding: 4px 14px !important;
+  min-height: 24px !important;
+  font-size: 11px !important;
+  cursor: pointer;
+}
+#role-banner.role-collapsed #role-banner-take { display: none !important; }
+
+/* ===================================================================== */
+/* WP11 · Item 37 — supervisor in-app confirm dialog                     */
+/* ===================================================================== */
+.sup-confirm {
+  width: min(360px, 90vw); border: none; border-radius: 16px;
+  background: var(--glass-solid); color: var(--text);
+  padding: 20px 22px 18px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+}
+.sup-confirm::backdrop { background: rgba(0,0,0,0.4); }
+.sup-confirm b { display: block; font-size: 16px; margin-bottom: 8px; }
+.sup-confirm .hint { margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+.sup-confirm .btn-row { display: flex; gap: 8px; }
+.sup-confirm .btn-row button { flex: 1; }
+
+/* ===================================================================== */
+/* WP13 · Item 46/47 — install card + wake card hints                    */
+/* ===================================================================== */
+.install-steps { padding-left: 16px; line-height: 1.6; font-size: 13px; color: var(--muted); margin: 8px 0; }
+#install-card .installed-badge { color: var(--accent-2); font-weight: 700; }
+.wake-status { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.4; }

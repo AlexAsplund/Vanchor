@@ -646,3 +646,77 @@ def test_wheel_snap_to_zero_and_immediate_decrease(live_server: _ServerHandle, p
     finally:
         page.close()
         ctx.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Landscape layout smoke test at 844×390 (WP5, Task 6)
+# ---------------------------------------------------------------------------
+
+def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
+    """At 844×390 (phone landscape) body.mobile.ls must be set, STOP must be
+    visible and clickable, the map must occupy ≥40% of the viewport width, and
+    the chart-view FAB cluster must be hidden in non-chart views.
+    """
+    base = live_server.base
+    ctx = pw_browser.new_context(
+        viewport={"width": 844, "height": 390},
+        # Force landscape user-agent to help mobile.js orientationchange fire.
+        user_agent=(
+            "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+        ),
+    )
+    page = ctx.new_page()
+    page.set_default_timeout(12_000)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    try:
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
+        # Wait for mobile.js to add the mobile class; landscape (ls) follows.
+        page.wait_for_function(
+            "document.body.classList.contains('mobile')", timeout=8000
+        )
+        page.wait_for_timeout(600)   # let CSS settle
+
+        # body.mobile.ls must be set (landscape media query fired).
+        has_ls = page.evaluate("document.body.classList.contains('ls')")
+        assert has_ls, "body.ls not set at 844×390 — landscape layout did not activate"
+
+        # #sheet-stop (STOP button) must be visible at all times.
+        stop_btn = page.locator("#sheet-stop")
+        assert stop_btn.count() > 0, "#sheet-stop not found"
+        assert stop_btn.first.is_visible(), "#sheet-stop not visible in landscape"
+
+        # Map (#map) must occupy ≥40% of viewport width.
+        map_width = page.eval_on_selector(
+            "#map", "el => el.getBoundingClientRect().width"
+        )
+        assert map_width >= 844 * 0.40, (
+            f"map too narrow in landscape: {map_width:.0f}px < 40% of 844px"
+        )
+
+        # In the default chart view (body[data-view="chart"]), leaflet FABs are
+        # visible; in any other view they must be hidden.  Switch to helm view.
+        page.evaluate(
+            "() => { const b = document.querySelector('[data-view=\"helm\"]');"
+            " if (b) b.click(); }"
+        )
+        page.wait_for_timeout(400)
+
+        # After switching to helm view, the leaflet FAB cluster must not be
+        # visible (FAB hygiene: hidden in non-chart views).
+        fab_visible = page.evaluate(
+            "() => { const el = document.querySelector('.leaflet-control-container');"
+            " if (!el) return false;"
+            " const r = el.getBoundingClientRect();"
+            " return r.width > 0 && r.height > 0; }"
+        )
+        assert not fab_visible, (
+            ".leaflet-control-container is visible in helm view (should be hidden)"
+        )
+
+        assert not errors, f"Page JS errors in landscape smoke test: {errors[:3]}"
+    finally:
+        page.close()
+        ctx.close()

@@ -254,3 +254,62 @@ def test_task3_view_switcher_text_labels():
     # None of the four old emoji should appear in the switcher
     for emoji in ["🗺", "🕹", "📊", "🎚"]:
         assert emoji not in snip, f"Emoji {emoji!r} still in view-switcher"
+
+
+# ---- Task 6 settings IA + PWA shell checks ---------------------------------
+
+def test_task6_install_card_present():
+    """#install-card must be present in panel-data (WP13 install prompt)."""
+    html = _render_shell()
+    assert 'id="install-card"' in html, "#install-card missing from panel-data"
+    assert 'id="install-body"' in html, "#install-body placeholder missing"
+
+
+def test_task6_boat_advanced_present():
+    """#boat-advanced <details> must be present inside panel-boat."""
+    html = _render_shell()
+    assert 'id="boat-advanced"' in html, "#boat-advanced <details> missing from panel-boat"
+
+
+def test_task6_sup_confirm_dialog_present():
+    """#sup-confirm dialog must be in the shell (supervisor confirmation modal)."""
+    html = _render_shell()
+    assert 'id="sup-confirm"' in html, "#sup-confirm dialog missing"
+    assert 'id="sup-confirm-ok"' in html, "#sup-confirm-ok button missing"
+    assert 'id="sup-confirm-cancel"' in html, "#sup-confirm-cancel button missing"
+
+
+def test_task6_wake_toggle_present():
+    """#wake-toggle checkbox must be in the shell (wakelock UI, WP13)."""
+    html = _render_shell()
+    assert 'id="wake-toggle"' in html, "#wake-toggle missing from panel-display"
+
+
+def test_task6_aa_push_link_present():
+    """#aa-push-link button must be in the shell (push cross-link, item 35)."""
+    html = _render_shell()
+    assert 'id="aa-push-link"' in html, "#aa-push-link button missing from index.html"
+
+
+def test_task6_panel_data_order():
+    """#system-card must appear before #console-card in panel-data."""
+    html = _render_shell()
+    sys_pos = html.find('id="system-card"')
+    con_pos = html.find('id="console-card"')
+    assert sys_pos >= 0, "#system-card missing"
+    assert con_pos >= 0, "#console-card missing"
+    assert sys_pos < con_pos, "#system-card must appear before #console-card in panel-data"
+
+
+def test_task6_panel_boat_all_specs():
+    """panel-boat must contain all 13 data-field spec entries (including advanced)."""
+    html = _render_shell()
+    # The 6 everyday fields + 7 advanced fields.
+    fields = [
+        "length_m", "beam_m", "mass_kg", "max_thrust_n",
+        "hull_tracking", "thruster_mount",
+        "reverse_efficiency", "max_steer_angle_deg", "autopilot_steer_deg",
+        "shaft_dia_mm", "steer_range_deg", "steer_reduction", "sonar_cone_deg",
+    ]
+    for field in fields:
+        assert f'data-field="{field}"' in html, f"spec data-field={field!r} missing from panel-boat"

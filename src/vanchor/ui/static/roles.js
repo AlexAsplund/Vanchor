@@ -51,6 +51,19 @@
     return node;
   }
 
+  let _collapseTimer = null;  // auto-collapse timer handle
+
+  function _cancelCollapse() {
+    if (_collapseTimer) { clearTimeout(_collapseTimer); _collapseTimer = null; }
+  }
+
+  function _scheduleCollapse(node) {
+    _cancelCollapse();
+    _collapseTimer = setTimeout(function () {
+      node.classList.add("role-collapsed");
+    }, 5000);
+  }
+
   function render(info) {
     const role = info.role;
     const clients = info.clients || 1;
@@ -62,18 +75,32 @@
 
     if (role !== "helm") {
       // Observer: prominent banner + Take Helm button.
+      // Reset any previous collapse state when role info changes.
+      node.classList.remove("role-collapsed");
+      _cancelCollapse();
       if (label) {
         label.textContent = info.readonly
           ? "Demo — read-only view (controls disabled)"
-          : (info.helmPresent ? "Observing — another helm is connected"
+          : (info.helmPresent ? "Viewing only — another device has the helm"
                               : "Observing — no helm connected");
       }
       if (btn) btn.style.display = info.readonly ? "none" : "";
       node.style.background = "rgba(180,83,9,.95)";
       node.style.display = "flex";
+      // Schedule collapse to slim strip after 5 s (mis-tap safety: tap to expand).
+      _scheduleCollapse(node);
+      // Tapping the collapsed strip expands it (shows the Take-helm button again).
+      node.addEventListener("click", function expand() {
+        if (node.classList.contains("role-collapsed")) {
+          node.classList.remove("role-collapsed");
+          _scheduleCollapse(node);  // re-schedule collapse after user looks
+        }
+      }, { once: false });
       return;
     }
-    // This client is the helm.
+    // This client is the helm — cancel any pending observer collapse.
+    _cancelCollapse();
+    node.classList.remove("role-collapsed");
     if (clients > 1) {
       // Quiet informational hint; no Take Helm button (already helm).
       if (label) label.textContent = clients + " connected · you have the helm";

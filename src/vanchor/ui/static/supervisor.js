@@ -330,17 +330,56 @@
       });
   }
 
+  // ---- in-app confirm dialog (item 37) -----------------------------------
+  // Replaces the native browser confirm() with an in-app <dialog>.
+  // `hold: true` converts the OK button to a 600ms hold-to-confirm using the
+  // same VA.bindHold helper as drive-away actions (no duplicated timer logic).
+  // Returns a Promise<boolean> resolving true on confirm, false on cancel.
+  function supConfirm({ title, msg, okLabel, hold }) {
+    return new Promise(function (resolve) {
+      const dlg = $("sup-confirm");
+      if (!dlg) { resolve(false); return; }
+      setText("sup-confirm-title", title || "Confirm");
+      setText("sup-confirm-msg", msg || "");
+      const okBtn = $("sup-confirm-ok");
+      if (okBtn) {
+        okBtn.textContent = okLabel || "OK";
+        // Remove any previous hold binding so repeated calls don't stack.
+        const fresh = okBtn.cloneNode(true);
+        okBtn.parentNode.replaceChild(fresh, okBtn);
+        const freshOk = $("sup-confirm-ok");
+        if (hold && VA.bindHold) {
+          VA.bindHold(freshOk, 600, function () {
+            dlg.close(); resolve(true);
+          });
+          // Tap-without-hold: show a hint.
+          freshOk.addEventListener("click", function () {
+            if (VA.toast) VA.toast("Hold to confirm", { ttl: 2000 });
+          });
+        } else {
+          freshOk.addEventListener("click", function () { dlg.close(); resolve(true); });
+        }
+      }
+      const cancelBtn = $("sup-confirm-cancel");
+      if (cancelBtn) {
+        const freshCancel = cancelBtn.cloneNode(true);
+        cancelBtn.parentNode.replaceChild(freshCancel, cancelBtn);
+        $("sup-confirm-cancel").addEventListener("click", function () { dlg.close(); resolve(false); });
+      }
+      dlg.showModal();
+    });
+  }
+
   // Helper: handle the "underway" 409 interlock for destructive supervisor ops.
   // Offers a force-override confirm dialog; calls cb({force:true}) on acceptance.
   function _handleUnderway(data, statusId, label, cb) {
     if (data.error === "underway") {
-      if (confirm(
-        "WARNING: The autopilot is currently active. " +
-        label + " will restart the app and interrupt the current mission.\n\n" +
-        "Force anyway?"
-      )) {
-        cb({ force: true });
-      }
+      supConfirm({
+        title: "The boat is busy",
+        msg: "The autopilot is driving right now. " + label + " restarts the app and stops the current mode mid-water.",
+        okLabel: "HOLD to force " + label.toLowerCase(),
+        hold: true,
+      }).then(function (ok) { if (ok) cb({ force: true }); });
       return true; // handled
     }
     return false;
@@ -349,49 +388,61 @@
   // ---- apply update -----------------------------------------------------
   $("sys-apply-btn") && $("sys-apply-btn").addEventListener("click", function () {
     if (!_bundleName) return;
-    if (!confirm("Apply this update? The app will restart. If health checks fail, it rolls back automatically.")) return;
-    function doApply(extra) {
-      VA.postJSON("/api/supervisor/proxy/v1/update/apply", Object.assign({
-        name: "vanchor",
-        source: "bundle",
-        bundle: _bundleName,
-      }, extra))
-        .then(function (data) {
-          if (_handleUnderway(data, "sys-upload-status", "Updating", doApply)) return;
-          if (data.job_id) {
-            setText("sys-job-line", "Job started: " + data.job_id);
-            enable("sys-apply-btn", false);
-          } else if (data.error === "busy") {
-            setText("sys-upload-status", "Another job is running — try again shortly.");
-          } else {
-            setText("sys-upload-status", "Apply error: " + (data.error || JSON.stringify(data)));
-          }
-        })
-        .catch(function (err) {
-          setText("sys-upload-status", "Apply error: " + err.message);
-        });
-    }
-    doApply({});
+    supConfirm({
+      title: "Apply this update?",
+      msg: "The app will restart. If health checks fail, it rolls back automatically.",
+      okLabel: "Apply",
+    }).then(function (ok) {
+      if (!ok) return;
+      function doApply(extra) {
+        VA.postJSON("/api/supervisor/proxy/v1/update/apply", Object.assign({
+          name: "vanchor",
+          source: "bundle",
+          bundle: _bundleName,
+        }, extra))
+          .then(function (data) {
+            if (_handleUnderway(data, "sys-upload-status", "Updating", doApply)) return;
+            if (data.job_id) {
+              setText("sys-job-line", "Job started: " + data.job_id);
+              enable("sys-apply-btn", false);
+            } else if (data.error === "busy") {
+              setText("sys-upload-status", "Another job is running — try again shortly.");
+            } else {
+              setText("sys-upload-status", "Apply error: " + (data.error || JSON.stringify(data)));
+            }
+          })
+          .catch(function (err) {
+            setText("sys-upload-status", "Apply error: " + err.message);
+          });
+      }
+      doApply({});
+    });
   });
 
   // ---- rollback ---------------------------------------------------------
   $("sys-rollback-btn") && $("sys-rollback-btn").addEventListener("click", function () {
-    if (!confirm("Roll back to the previous version?")) return;
-    function doRollback(extra) {
-      VA.postJSON("/api/supervisor/proxy/v1/rollback", Object.assign({ name: "vanchor" }, extra))
-        .then(function (data) {
-          if (_handleUnderway(data, "sys-job-line", "Rolling back", doRollback)) return;
-          if (data.job_id) {
-            setText("sys-job-line", "Rollback started: " + data.job_id);
-          } else {
-            setText("sys-job-line", "Rollback error: " + (data.error || JSON.stringify(data)));
-          }
-        })
-        .catch(function (err) {
-          setText("sys-job-line", "Rollback error: " + err.message);
-        });
-    }
-    doRollback({});
+    supConfirm({
+      title: "Roll back to previous version?",
+      msg: "The app will restart on the previous version. Your settings are kept.",
+      okLabel: "Roll back",
+    }).then(function (ok) {
+      if (!ok) return;
+      function doRollback(extra) {
+        VA.postJSON("/api/supervisor/proxy/v1/rollback", Object.assign({ name: "vanchor" }, extra))
+          .then(function (data) {
+            if (_handleUnderway(data, "sys-job-line", "Rolling back", doRollback)) return;
+            if (data.job_id) {
+              setText("sys-job-line", "Rollback started: " + data.job_id);
+            } else {
+              setText("sys-job-line", "Rollback error: " + (data.error || JSON.stringify(data)));
+            }
+          })
+          .catch(function (err) {
+            setText("sys-job-line", "Rollback error: " + err.message);
+          });
+      }
+      doRollback({});
+    });
   });
 
   // ---- backup now -------------------------------------------------------

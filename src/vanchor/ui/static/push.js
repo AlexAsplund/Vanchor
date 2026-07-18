@@ -31,11 +31,38 @@
   }
 
   function showUnavailable(msg) {
-    const el = $("push-unavailable");
-    if (el) { el.textContent = msg; el.classList.remove("hidden"); }
+    const unavEl = $("push-unavailable");
+    if (unavEl) {
+      // Map pip-speak server reasons to plain fishing language.
+      let plain = msg;
+      let raw = null;
+      if (/pywebpush|py_vapid|push extra/i.test(msg)) {
+        plain = "The boat is missing its notifications add-on. " +
+                "Install `vanchor-ng[push]` on the boat, then come back here.";
+        raw = msg;
+      }
+      unavEl.innerHTML = "";
+      const p = document.createElement("p");
+      p.textContent = plain;
+      unavEl.appendChild(p);
+      if (raw) {
+        const det = document.createElement("details");
+        det.className = "mini";
+        const sum = document.createElement("summary");
+        sum.textContent = "Details";
+        const rawEl = document.createElement("span");
+        rawEl.id = "push-unavailable-raw";
+        rawEl.textContent = raw;
+        det.appendChild(sum);
+        det.appendChild(rawEl);
+        unavEl.appendChild(det);
+      }
+      unavEl.classList.remove("hidden");
+    }
     const ctrl = $("push-controls");
     if (ctrl) ctrl.classList.add("hidden");
     setBadge("unavailable");
+    _updatePushLink(false);
   }
 
   function showControls() {
@@ -43,6 +70,35 @@
     if (el) el.classList.add("hidden");
     const ctrl = $("push-controls");
     if (ctrl) ctrl.classList.remove("hidden");
+  }
+
+  // ---- anchor-panel push cross-link (item 35) -----------------------------
+  // Shown when push is supported but not yet subscribed so the user can
+  // navigate from the anchor panel to the push settings card in one tap.
+  function _updatePushLink(subscribed) {
+    const link = $("aa-push-link");
+    if (!link) return;
+    // Show only when push is supported-but-unsubscribed.
+    const show = supported && !subscribed;
+    link.classList.toggle("hidden", !show);
+  }
+  // Wire the cross-link: tap → open Menu → Phone notifications card.
+  const pushLink = $("aa-push-link");
+  if (pushLink) {
+    pushLink.addEventListener("click", function () {
+      try {
+        const settingsBtn = document.getElementById("settings-open");
+        if (settingsBtn) settingsBtn.click();
+        setTimeout(function () {
+          if (VA.menu) VA.menu.showCategory("feedback");
+          const pushCard = $("push-card");
+          if (pushCard) {
+            pushCard.open = true;
+            pushCard.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 120);
+      } catch (e) { /* ignore */ }
+    });
   }
 
   function setCount(n) {
@@ -94,8 +150,10 @@
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       const granted = Notification.permission === "granted";
-      if (cb) cb.checked = !!(sub && granted);
-      setBadge(sub && granted ? "on" : "off");
+      const isSubbed = !!(sub && granted);
+      if (cb) cb.checked = isSubbed;
+      setBadge(isSubbed ? "on" : "off");
+      _updatePushLink(isSubbed);
       // Re-sync: push our subscription to the server (idempotent upsert).
       if (sub && granted) {
         try {
@@ -135,6 +193,7 @@
           setStatus("Disabled on this device.");
           setBadge("off");
           setCount(0);
+          _updatePushLink(false);
         } catch (e) {
           setStatus("Error disabling: " + e.message);
           this.checked = true;
@@ -172,6 +231,7 @@
         setCount(r.count || "?");
         setStatus("Notifications enabled on this device.");
         setBadge("on");
+        _updatePushLink(true);
       } catch (e) {
         this.checked = false;
         setStatus("Error: " + e.message);
