@@ -978,6 +978,45 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         of the user hand-typing ``/dev/tty...`` (OpenPlotter-style auto-detect)."""
         return {"ports": runtime.list_serial_ports()}
 
+    # -- Hardware setup wizard endpoints (adoption pack #2) ---------------- #
+    @app.get("/api/hw/scan")
+    async def hw_scan() -> dict:
+        """Candidate hardware endpoints for the setup wizard (no ports opened).
+
+        Returns serial ports (with ownership annotations and metadata hints),
+        I2C buses, the known I2C device list, and capability flags. Never opens
+        any port or bus. Safe to call at any time."""
+        return runtime.hw_scan()
+
+    @app.post("/api/hw/probe")
+    async def hw_probe(payload: dict) -> Response:
+        """Open ONE candidate port/bus briefly and identify what's on it.
+
+        Never writes to unknown devices (passive; see hardware/probe.py safety
+        contract). 400 = bad request, 409 = endpoint owned by a running driver
+        or another probe already in progress."""
+        try:
+            result = await runtime.hw_probe(payload or {})
+        except ValueError as exc:
+            return Response(
+                content=json.dumps({"ok": False, "error": str(exc)}),
+                media_type="application/json",
+                status_code=400,
+            )
+        if not result.get("ok") and (
+            result.get("conflict")
+            or "already running" in result.get("error", "")
+        ):
+            return Response(
+                content=json.dumps(result),
+                media_type="application/json",
+                status_code=409,
+            )
+        return Response(
+            content=json.dumps(result),
+            media_type="application/json",
+        )
+
     @app.get("/api/devices/{kind}/debug")
     async def device_debug(kind: str) -> dict:
         """Human-readable raw-data snapshot for one device (gps/compass/depth/

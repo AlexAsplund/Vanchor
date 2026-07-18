@@ -254,8 +254,9 @@ Setup & first contact:
    client-side update discovery; online pull is the optional path.
    Distribution: GitHub Releases + a Pi Imager os_list JSON. Kills the
    apt/git/pip barrier; upgrades become load+recreate, never brick.
-2. **TOP-5** Hardware setup wizard (M): scan serial/I2C -> autodetect known
+2. ✅ **TOP-5** Hardware setup wizard (M): scan serial/I2C -> autodetect known
    devices -> live per-sensor preview -> wiring help. Pairs with helm PCB.
+   Shipped in v1.5.0a9 (adoption #4).
 3. WiFi onboarding (S-M): hotspot-first + captive "join your WiFi" page.
 4. **TOP-5** Demo mode (S): `vanchor --demo` + hosted read-only sim linked
    from the README — drive the product in 30 s before installing.

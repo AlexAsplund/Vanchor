@@ -4,6 +4,18 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## [Unreleased]
 
+- **Hardware setup wizard (adoption #4)** — guided 5-step modal (Scan → GPS →
+  Compass → Motor → Finish) accessible via Settings → Devices → "Guided
+  hardware setup…". Scans serial ports and I²C buses (`GET /api/hw/scan`),
+  probes each port by passively listening for UBX, WitMotion, NMEA, and
+  vanchor motor A/E frames (`POST /api/hw/probe`); preferred motor fingerprint
+  is the new INFO identify command (read-only; BENCH-VERIFY — added to helm
+  board firmware 2026-07-18) with A/E passive fallback. Active u-blox deep
+  identify (`ubx_mon_ver`) optional. Probing never writes motor commands; demo
+  mode returns empty posture; ports owned by running drivers return 409 conflict.
+  New module `src/vanchor/hardware/probe.py`; endpoints NOT on the demo-readonly
+  allowlist. See `docs/setup-wizard.md` for usage.
+
 - **Web Push notifications (adoption #7)** — anchor drag / anchor watch /
   battery ladder / depth / link-loss alarms reach the phone with the app
   closed. Optional extra `pip install vanchor-ng[push]`; opt-in per device

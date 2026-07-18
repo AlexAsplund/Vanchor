@@ -1,0 +1,172 @@
+  <!-- =================== HARDWARE SETUP WIZARD =================== -->
+  <div id="hwwiz-scrim" class="wiz-scrim hidden"></div>
+  <div id="hwwiz" class="wizard hidden" role="dialog" aria-modal="true" aria-label="Hardware setup wizard">
+    <div class="wiz-card glass">
+      <div class="wiz-head">
+        <div class="wiz-title">
+          <span class="wiz-mark" aria-hidden="true">🧭</span>
+          <div>
+            <div class="wiz-h1">Hardware setup</div>
+            <div class="wiz-h2" id="hwwiz-subtitle">Scan &amp; identify your devices</div>
+          </div>
+        </div>
+        <button id="hwwiz-close" class="btn-icon" aria-label="Close wizard">✕</button>
+      </div>
+
+      <ol class="wiz-stepper" id="hwwiz-stepper">
+        <li class="step active" data-step="0"><span class="dot">1</span><span class="lbl">Scan</span></li>
+        <li class="step" data-step="1"><span class="dot">2</span><span class="lbl">GPS</span></li>
+        <li class="step" data-step="2"><span class="dot">3</span><span class="lbl">Compass</span></li>
+        <li class="step" data-step="3"><span class="dot">4</span><span class="lbl">Motor</span></li>
+        <li class="step" data-step="4"><span class="dot">5</span><span class="lbl">Finish</span></li>
+      </ol>
+
+      <div class="wiz-body">
+
+        <!-- STEP 0: Scan -->
+        <section class="wiz-step" data-step="0">
+          <p class="wiz-lead">Scanning your system for serial ports and I²C buses.
+            Select a port on each step to probe what device is connected.</p>
+          <div id="hwwiz-scan-caps" class="hint hidden"></div>
+          <div id="hwwiz-scan-list">
+            <p class="hint">Click <b>Scan</b> to detect available ports.</p>
+          </div>
+          <div class="wiz-foot-spacer"></div>
+          <button id="hwwiz-rescan" class="btn-ghost" type="button">🔄 Scan</button>
+        </section>
+
+        <!-- STEP 1: GPS -->
+        <section class="wiz-step hidden" data-step="1">
+          <p class="wiz-lead">Select the serial port connected to your GPS and probe it.</p>
+          <label>Port
+            <select id="hwwiz-gps-port" class="port-sel"></select>
+          </label>
+          <label class="switch" style="margin-top:.5rem">
+            <input type="checkbox" id="hwwiz-gps-skip" />
+            <span class="track"></span>
+            Skip — keep current / simulated GPS
+          </label>
+          <label class="switch" style="margin-top:.25rem">
+            <input type="checkbox" id="hwwiz-gps-active" />
+            <span class="track"></span>
+            Deep-identify u-blox (sends a version query)
+          </label>
+          <button id="hwwiz-gps-probe" class="btn-primary" type="button" style="margin-top:.5rem">🔍 Probe</button>
+          <div id="hwwiz-gps-status" class="hint" style="margin-top:.25rem"></div>
+          <div id="hwwiz-gps-result" class="hidden" style="margin-top:.5rem">
+            <div id="hwwiz-gps-detected" class="badge"></div>
+            <table id="hwwiz-gps-sample" class="dev-table" style="margin-top:.25rem"></table>
+            <pre id="hwwiz-gps-preview" class="dev-debug-out" style="margin-top:.25rem;max-height:6rem;overflow-y:auto"></pre>
+          </div>
+          <label class="switch" style="margin-top:.5rem">
+            <input type="checkbox" id="hwwiz-gps-force" />
+            <span class="track"></span>
+            Use this port anyway (override mismatch warning)
+          </label>
+          <details style="margin-top:.75rem">
+            <summary class="hint">Wiring help — GPS</summary>
+            <ul class="hint" style="margin:.25rem 0 0 1rem">
+              <li>Plug into any Pi USB port; prefer the stable <code>/dev/serial/by-id/…</code> entry.</li>
+              <li>Stock u-blox speaks NMEA by default — select <b>Serial (wired)</b>; choose <b>u-blox M9N (UBX)</b> for richer 10 Hz UBX mode (the driver configures the receiver itself on start).</li>
+              <li>Permission error? Run: <code>sudo usermod -a -G dialout $USER</code> then re-login.</li>
+            </ul>
+          </details>
+        </section>
+
+        <!-- STEP 2: Compass -->
+        <section class="wiz-step hidden" data-step="2">
+          <p class="wiz-lead">Select the serial port connected to your compass / AHRS and probe it.</p>
+          <label>Port
+            <select id="hwwiz-compass-port" class="port-sel"></select>
+          </label>
+          <label class="switch" style="margin-top:.5rem">
+            <input type="checkbox" id="hwwiz-compass-skip" />
+            <span class="track"></span>
+            Skip — keep current / simulated compass
+          </label>
+          <button id="hwwiz-compass-probe" class="btn-primary" type="button" style="margin-top:.5rem">🔍 Probe</button>
+          <div id="hwwiz-compass-status" class="hint" style="margin-top:.25rem"></div>
+          <div id="hwwiz-compass-result" class="hidden" style="margin-top:.5rem">
+            <div id="hwwiz-compass-detected" class="badge"></div>
+            <table id="hwwiz-compass-sample" class="dev-table" style="margin-top:.25rem"></table>
+            <pre id="hwwiz-compass-preview" class="dev-debug-out" style="margin-top:.25rem;max-height:6rem;overflow-y:auto"></pre>
+          </div>
+          <label class="switch" style="margin-top:.5rem">
+            <input type="checkbox" id="hwwiz-compass-force" />
+            <span class="track"></span>
+            Use this port anyway (override mismatch warning)
+          </label>
+          <details style="margin-top:.75rem">
+            <summary class="hint">Wiring help — Compass (HWT901B-TTL)</summary>
+            <ul class="hint" style="margin:.25rem 0 0 1rem">
+              <li>TTL device — needs a USB-UART adapter: VCC→5V, GND→GND, sensor TX→adapter RX (crossed).</li>
+              <li>Factory baud: 9600.</li>
+              <li>Mount flat, X toward the bow, away from the motor's magnetic field (&gt;50 cm ideally).</li>
+              <li>Re-run Sensor calibration after mounting.</li>
+            </ul>
+          </details>
+        </section>
+
+        <!-- STEP 3: Motor -->
+        <section class="wiz-step hidden" data-step="3">
+          <p class="wiz-lead">Select the port connected to your motor controller(s) and probe it.</p>
+          <label>Port
+            <select id="hwwiz-motor-port" class="port-sel"></select>
+          </label>
+          <label class="switch" style="margin-top:.5rem">
+            <input type="checkbox" id="hwwiz-motor-skip" />
+            <span class="track"></span>
+            Skip — keep current / simulated motor
+          </label>
+          <button id="hwwiz-motor-probe" class="btn-primary" type="button" style="margin-top:.5rem">🔍 Probe</button>
+          <div id="hwwiz-motor-status" class="hint" style="margin-top:.25rem"></div>
+          <div id="hwwiz-motor-result" class="hidden" style="margin-top:.5rem">
+            <div id="hwwiz-motor-detected" class="badge"></div>
+            <table id="hwwiz-motor-sample" class="dev-table" style="margin-top:.25rem"></table>
+            <pre id="hwwiz-motor-preview" class="dev-debug-out" style="margin-top:.25rem;max-height:6rem;overflow-y:auto"></pre>
+          </div>
+          <label class="switch" style="margin-top:.5rem">
+            <input type="checkbox" id="hwwiz-motor-force" />
+            <span class="track"></span>
+            Use this port anyway (override mismatch warning)
+          </label>
+          <details style="margin-top:.75rem">
+            <summary class="hint">Wiring help — Motor (vanchor firmware)</summary>
+            <ul class="hint" style="margin:.25rem 0 0 1rem">
+              <li>One or two Arduino Nanos over USB (engine = thrust, steering = azimuth) at 115200.</li>
+              <li>Wiring, pin maps and BOM: <code>firmware/README.md</code>.</li>
+              <li>The probe only <b>listens</b> for the firmware's A/E feedback lines — it never sends a motor command; nothing can spin.</li>
+              <li>Alternative: the helm PCB tunnels the same protocol over I²C at bus 1, address 0x42 (<code>motor_port: i2c:1:0x42</code>) — select the I²C option below.</li>
+            </ul>
+          </details>
+          <details style="margin-top:.5rem">
+            <summary class="hint">Battery shunt (INA226) — I²C</summary>
+            <ul class="hint" style="margin:.25rem 0 0 1rem">
+              <li>I²C bus 1 (Pi pins 3/5), default address 0x40, shunt in the battery NEGATIVE lead.</li>
+              <li>Set <code>battery.shunt_ohms</code> in <code>vanchor.yaml</code> to your shunt's rating.</li>
+              <li>Use the Probe button above with an I²C option selected to verify.</li>
+            </ul>
+          </details>
+        </section>
+
+        <!-- STEP 4: Review & save -->
+        <section class="wiz-step hidden" data-step="4">
+          <p class="wiz-lead">Review the detected devices and save. The app will restart to apply changes.</p>
+          <table id="hwwiz-review-table" class="dev-table" style="margin-top:.5rem">
+            <thead><tr><th>Device</th><th>Detected</th><th>Action</th></tr></thead>
+            <tbody id="hwwiz-review-body"></tbody>
+          </table>
+          <div id="hwwiz-save-status" class="hint" style="margin-top:.5rem"></div>
+          <div id="hwwiz-restart-countdown" class="hidden hint" style="margin-top:.25rem"></div>
+        </section>
+
+      </div><!-- .wiz-body -->
+
+      <div class="wiz-foot">
+        <button id="hwwiz-back" class="btn-ghost" disabled>Back</button>
+        <div class="wiz-foot-spacer"></div>
+        <button id="hwwiz-next" class="btn-primary">Next</button>
+        <button id="hwwiz-finish" class="btn-primary hidden">Save &amp; restart</button>
+      </div>
+    </div>
+  </div>

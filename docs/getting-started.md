@@ -596,6 +596,9 @@ useful bug report — or browse the rest of the [documentation](README.md).
 - **Read before you buy.** The [hardware](custom-hardware.md),
   [Raspberry Pi deployment](deploy-pi.md) and [safety matrix](safety-matrix.md)
   docs are worth a read before any money changes hands.
+- **Wiring up real hardware?** Use the built-in [Hardware setup wizard](setup-wizard.md)
+  (Settings → Devices → Guided hardware setup…) to scan ports, probe devices,
+  and apply the right config automatically.
 - **Tell us what confused you.** This guide is written for non-technical
   boat owners, and the best way to keep it that way is hearing where it
   failed you. Report anything unclear on the

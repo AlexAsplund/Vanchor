@@ -111,6 +111,7 @@ const SHELL = [
   "/static/trips.js",
   "/static/gpscal.js",
   "/static/devices.js",
+  "/static/hwwizard.js",
   "/static/backup.js",
   "/static/guided.js",
   "/static/work-area.js",

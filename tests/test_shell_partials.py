@@ -13,6 +13,9 @@ def test_shell_assembles_with_no_unresolved_includes():
     for cat in ("boat", "display", "feedback", "map", "fishing", "safety",
                 "devices", "data", "sim"):
         assert f'data-cat="{cat}"' in html
+    # hardware setup wizard elements are present
+    assert 'id="hwwiz"' in html, "hw-wizard.html not inlined (hwwiz modal missing)"
+    assert 'id="hwwiz-open"' in html, "hwwiz-open button missing from panel-devices.html"
 
 
 def test_index_routes_serve_the_assembled_shell():
