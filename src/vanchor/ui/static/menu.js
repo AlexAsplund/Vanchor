@@ -75,6 +75,41 @@
     else { const c = $("settings-close"); if (c) c.click(); }
   });
 
+  // ---- #cm-stop: compact STOP pill in the command menu header ---------------
+  const cmStop = $("cm-stop");
+  if (cmStop) {
+    cmStop.addEventListener("click", () => {
+      try { VA.sendCritical({ type: "stop" }); } catch (_) {}
+      // Close the menu so the user can see the confirmation banner.
+      const closeBtn = $("settings-close");
+      if (closeBtn) closeBtn.click();
+    });
+    // Visible whenever a motor mode is active (VA.motorActive predicate in
+    // appcore.js); hidden when idle-manual. Instant, no-confirm.
+    VA.onTelemetry(function () {
+      cmStop.classList.toggle("hidden", !VA.motorActive);
+    });
+  }
+
+  // ---- Dock STOP + MOB wiring (desktop) ----
+  const dockStop = $("dock-stop");
+  if (dockStop) {
+    dockStop.addEventListener("click", () => {
+      try { VA.sendCritical({ type: "stop" }); } catch (_) {}
+    });
+  }
+  const dockMob = $("dock-mob");
+  if (dockMob) {
+    if (VA.bindHold) {
+      VA.bindHold(dockMob, 600, () => {
+        try { VA.send({ type: "mob" }); } catch (_) {}
+      });
+    }
+    dockMob.addEventListener("click", () => {
+      if (VA.toast) VA.toast("Hold MAN OVERBOARD to engage", { ttl: 2000 });
+    });
+  }
+
   window.VA = window.VA || {};
   window.VA.menu = { showHome: showHome, showCategory: showCategory };
 })();

@@ -41,8 +41,8 @@
   // ======================================================================
   function battLevel(soc) {
     if (!Number.isFinite(soc)) return "none";
-    if (soc <= 15) return "crit";
-    if (soc <= 35) return "low";
+    if (soc < 10) return "crit";
+    if (soc < 25) return "low";
     return "ok";
   }
 
@@ -96,6 +96,38 @@
     VA.setText("set-batt-tte", fmtDuration(tte));
     const badge = $("safety-card-state");
     if (badge) badge.textContent = soc === null ? "" : (level === "ok" ? "" : "⚠ " + Math.round(soc) + "%");
+
+    // ---- Battery warn/alarm strips (D5) + edge-triggered logAlert ----
+    // Fixed SOC thresholds (amber <25%, red <10%) INDEPENDENT of the RTL
+    // range estimate. Range joins the copy only when the estimate is finite.
+    const warnBanner = $("batt-warn-banner");
+    const critBanner = $("batt-crit-banner");
+    const isLow = level === "low", isCrit = level === "crit";
+    const rangeSuffix = range !== null && range > 0 ? " · ~" + fmtRange(range) + " range" : "";
+    if (warnBanner) {
+      warnBanner.classList.toggle("hidden", !isLow);
+      const msg = $("batt-warn-msg");
+      if (msg && isLow && soc !== null) msg.textContent = "Battery " + Math.round(soc) + "%" + rangeSuffix;
+    }
+    if (critBanner) {
+      critBanner.classList.toggle("hidden", !isCrit);
+      const msg = $("batt-crit-msg");
+      if (msg && isCrit && soc !== null) msg.textContent = "BATTERY CRITICAL — " + Math.round(soc) + "%" + rangeSuffix;
+    }
+    // RTL buttons only when a launch point exists (they're hold-to-engage;
+    // wired below with bindHold — RTL drives the boat away).
+    const launchSet = !!(t && t.launch && t.launch.set);
+    const warnRtl = $("batt-warn-rtl"), critRtl = $("batt-crit-rtl");
+    if (warnRtl) warnRtl.classList.toggle("hidden", !launchSet);
+    if (critRtl) critRtl.classList.toggle("hidden", !launchSet);
+    // Edge-triggered logAlert: only fire on the transition into the bad state.
+    const prevLevel = renderBattery._prevLevel;
+    if (isCrit && prevLevel !== "crit") {
+      if (VA.logAlert) VA.logAlert("alarm", "Battery critical — " + Math.round(soc) + "%", { level: "high" });
+    } else if (isLow && prevLevel !== "low" && prevLevel !== "crit") {
+      if (VA.logAlert) VA.logAlert("warn", "Battery low — " + Math.round(soc) + "%", { level: "low" });
+    }
+    renderBattery._prevLevel = level;
   }
 
   // test SOC control
@@ -139,6 +171,20 @@
   function doSetLaunch() { send({ type: "set_launch" }); }
   ["set-rtl", "nav-rtl", "rm-rtl", "rtl-banner-go"].forEach((id) => { const el = $(id); if (el) el.addEventListener("click", doRtl); });
   ["set-set-launch", "nav-set-launch", "rm-set-launch"].forEach((id) => { const el = $(id); if (el) el.addEventListener("click", doSetLaunch); });
+  // Battery-strip RTL buttons are hold-to-engage (600 ms): RTL drives the
+  // boat away, so it gets the same hold gate as MOB (owner decision).
+  ["batt-warn-rtl", "batt-crit-rtl"].forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    if (VA.bindHold) VA.bindHold(el, 600, doRtl);
+    else el.addEventListener("click", doRtl);
+  });
+
+  // ---- Wire STOP buttons in safety banners ----
+  function doStop() { if (VA.sendCritical) VA.sendCritical({ type: "stop" }); }
+  ["shallow-banner-stop", "link-banner-stop", "rtl-banner-stop", "batt-warn-stop",
+   "batt-crit-stop", "mob-banner-stop", "aa-banner-stop", "gov-banner-stop",
+  ].forEach((id) => { const el = $(id); if (el) el.addEventListener("click", doStop); });
 
   // ======================================================================
   // #62 SHALLOW / NO-GO ZONES
@@ -440,27 +486,148 @@
   // #61 / #62 / #64 BANNERS
   // ======================================================================
   function renderBanners(t) {
-    // RTL recommended (battery just enough to get home)
+    // RTL recommended (battery just enough to get home). Hidden while a
+    // battery threshold strip is up — those carry their own RTL button, and
+    // two stacked "return now" strips would just shout twice.
     const rtl = $("rtl-banner");
-    if (rtl) rtl.classList.toggle("hidden", !(t && t.rtl_recommended));
+    const socNow = t && t.battery && Number.isFinite(t.battery.soc_pct) ? t.battery.soc_pct : null;
+    const battStripUp = battLevel(socNow) !== "ok" && battLevel(socNow) !== "none";
+    if (rtl) rtl.classList.toggle("hidden", !(t && t.rtl_recommended) || battStripUp);
 
-    // shallow / no-go auto-stop
+    // shallow / no-go auto-stop — no emoji, text-only. Honest copy: the
+    // governor re-evaluates every tick, so thrust RESUMES AUTOMATICALLY when
+    // the depth clears — that's why there is no Resume button (only STOP,
+    // which disengages the mode entirely).
     const safety = (t && t.safety) || {};
     const shallow = !!safety.shallow_stop, nogo = !!safety.nogo_stop;
     const sb = $("shallow-banner");
     if (sb) {
       sb.classList.toggle("hidden", !(shallow || nogo));
       const msg = $("shallow-banner-msg");
-      if (msg) msg.textContent = nogo && !shallow ? "⛔ NO-GO zone — auto-stopped"
-        : shallow && nogo ? "⚠ SHALLOW / NO-GO — auto-stopped"
-        : "⚠ SHALLOW — auto-stopped";
+      const resumeTxt = Number.isFinite(minDepth) && minDepth > 0
+        ? " · resumes when deeper than " + minDepth.toFixed(1) + " m" : "";
+      if (msg) msg.textContent = nogo && !shallow ? "NO-GO ZONE — auto-stopped"
+        : shallow && nogo ? "SHALLOW / NO-GO — auto-stopped" + resumeTxt
+        : "SHALLOW — auto-stopped" + resumeTxt;
     }
 
     // link-loss failsafe
     const link = (t && t.link) || null;
     const lb = $("link-banner");
-    if (lb) lb.classList.toggle("hidden", !(link && link.failsafe_engaged));
+    if (lb) {
+      lb.classList.toggle("hidden", !(link && link.failsafe_engaged));
+      const msg = $("link-banner-msg");
+      if (msg && link && link.failsafe_engaged) {
+        const action = link.failsafe_action;
+        msg.textContent = action === "stop" ? "Connection lost — motor stopped"
+          : action === "continue" ? "Connection lost — continuing mission"
+          : "Connection lost — holding position";
+      }
+    }
+
+    // Safety governor advisory
+    const gov = $("gov-banner");
+    if (gov) {
+      const govActive = !!(safety.thrust_limited || safety.reverse_blocked);
+      gov.classList.toggle("hidden", !govActive);
+      const msg = $("gov-banner-msg");
+      if (msg && govActive) {
+        msg.textContent = safety.reverse_blocked ? "Reverse blocked by safety governor"
+          : "Thrust limited by safety governor";
+      }
+    }
   }
+
+  // ---- Anchor / drag alarm strip (D2) ----
+  // One strip covers BOTH alarm shapes:
+  //  - passive watch-circle alarm (t.anchor_alarm.firing): the motor is OFF —
+  //    RECOVER (600 ms hold) re-engages anchor_hold at the ALARM point via the
+  //    server's anchor_alarm_recover command.
+  //  - active-hold drag alarm (t.safety.drag_alarm): the motor is already
+  //    fighting for the point — RECOVER is hidden, actions are SILENCE + STOP.
+  // Subtitle carries cause + consequence direction + elapsed:
+  //   "38 m from anchor · drifting SW · 0:24".
+  let _aaFiringSince = 0;   // client-side firing-edge timestamp (either alarm)
+  let _aaSilencedUntil = 0; // SILENCE window — sound muted, strip STAYS visible
+
+  function _compass8(fromLat, fromLon, toLat, toLon) {
+    const k = Math.PI / 180;
+    const dLon = (toLon - fromLon) * k;
+    const y = Math.sin(dLon) * Math.cos(toLat * k);
+    const x = Math.cos(fromLat * k) * Math.sin(toLat * k)
+      - Math.sin(fromLat * k) * Math.cos(toLat * k) * Math.cos(dLon);
+    const brg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(brg / 45) % 8];
+  }
+  function _fmtElapsed(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
+
+  function renderAnchorAlarmStrip(t) {
+    const banner = $("anchor-alarm-banner");
+    if (!banner) return;
+    const aa = (t && t.anchor_alarm) || {};
+    const passive = !!aa.firing;
+    const drag = !!(t && t.safety && t.safety.drag_alarm);
+    const firing = passive || drag;
+
+    if (firing && !_aaFiringSince) _aaFiringSince = Date.now();
+    if (!firing) { _aaFiringSince = 0; _aaSilencedUntil = 0; }
+
+    // The strip stays visible while silenced — SILENCE mutes sound only.
+    banner.classList.toggle("hidden", !firing);
+
+    const title = $("aa-banner-title");
+    const msg = $("aa-banner-msg");
+    const recoverBtn = $("aa-banner-recover");
+    if (recoverBtn) recoverBtn.classList.toggle("hidden", !passive);
+    if (!firing) return;
+
+    if (title) title.textContent = passive ? "ANCHOR ALARM — DRAGGING" : "ANCHOR DRAGGING";
+
+    // Subtitle: distance + drift direction + elapsed since the firing edge.
+    const pos = t && t.position;
+    const aLat = passive ? aa.lat : (t && t.anchor && t.anchor.lat);
+    const aLon = passive ? aa.lon : (t && t.anchor && t.anchor.lon);
+    const dist = passive
+      ? (Number.isFinite(aa.distance_m) ? aa.distance_m : null)
+      : (t && Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m : null);
+    const parts = [];
+    if (dist !== null) parts.push(Math.round(dist) + (passive ? " m from anchor" : " m from hold point"));
+    if (pos && Number.isFinite(aLat) && Number.isFinite(aLon)
+        && Number.isFinite(pos.lat) && Number.isFinite(pos.lon)) {
+      parts.push("drifting " + _compass8(aLat, aLon, pos.lat, pos.lon));
+    }
+    parts.push(_fmtElapsed(Date.now() - _aaFiringSince));
+    if (msg) msg.textContent = parts.join(" · ");
+
+    // SILENCE countdown on the button ("1:43"), reverting when it expires.
+    const silenceBtn = $("aa-banner-silence");
+    if (silenceBtn) {
+      const left = _aaSilencedUntil - Date.now();
+      silenceBtn.innerHTML = left > 0
+        ? "SILENCED<small>" + _fmtElapsed(left) + "</small>"
+        : "SILENCE<small>2 MIN</small>";
+    }
+  }
+
+  // Wire anchor-alarm RECOVER (600 ms hold), SILENCE (sound-only, 2 min).
+  // RECOVER uses the server's anchor_alarm_recover: it engages anchor_hold at
+  // the ALARM point (not wherever the boat has drifted to).
+  (function () {
+    const recoverBtn = $("aa-banner-recover");
+    const doRecover = () => send({ type: "anchor_alarm_recover" });
+    if (recoverBtn && VA.bindHold) VA.bindHold(recoverBtn, 600, doRecover);
+    else if (recoverBtn) recoverBtn.addEventListener("click", doRecover);
+    const silenceBtn = $("aa-banner-silence");
+    if (silenceBtn) {
+      silenceBtn.addEventListener("click", () => {
+        _aaSilencedUntil = Date.now() + 120000; // 2 minutes, sound only
+        if (VA.sound && VA.sound.silence) VA.sound.silence(120000);
+      });
+    }
+  })();
 
   // ======================================================================
   // #64 LINK-LOSS INDICATOR (status chip)
@@ -487,6 +654,7 @@
     renderMob(t);
     renderLink(t);
     renderBanners(t);
+    renderAnchorAlarmStrip(t);
     // #23: adopt the SERVER's safety geometry (browser is a cache). The
     // immediate snapshot on WS connect carries this, so a freshly-opened client
     // paints the server's zones without waiting.

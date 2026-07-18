@@ -818,6 +818,28 @@ class Runtime:
                 "Boat outside the watch circle",
             )
         )
+        # Mirror the breach into the server-side alert log (Task 1 D8) with the
+        # ALARM POINT's coordinates so the history entry can "Show on map".
+        self.anchor_alarm.on_breach.append(
+            lambda snap: self.alert_log.record(
+                "alarm",
+                "Anchor watch alarm — boat outside the watch circle"
+                + (f" ({snap.get('distance_m'):.0f} m out)"
+                   if snap.get("distance_m") is not None else ""),
+                kind="anchor_alarm",
+                lat=snap.get("lat"), lon=snap.get("lon"),
+            )
+        )
+
+        # --- Server-side alert log (Task 1 D8) ------------------------------ #
+        # Persists the alert history so a new browser session can hydrate from
+        # /api/alerts and merge with its localStorage copy.
+        from pathlib import Path as _Path
+        from .core.alertlog import AlertLog
+        self.alert_log: AlertLog = AlertLog(
+            _Path(cfg.data_dir),
+            max_entries=100,
+        )
 
         # --- Supervisor link (host-side update/backup/disk daemon) --------- #
         if cfg.supervisor.enabled:
@@ -3010,8 +3032,16 @@ class Runtime:
         """Edge-triggered Web Push dispatch (adoption #7). Mirrors the client-side
         banner conditions in static/alerts.js, but server-side so an alarm
         reaches the phone with NO client connected. Observe-only: reads state,
-        never commands. Each send is enqueued to the push worker thread."""
+        never commands. Each send is enqueued to the push worker thread.
+
+        Every edge is also recorded into the server-side alert log (Task 1
+        D8/A14) so the alert-history panel survives a page reload."""
         prev = self._push_prev
+
+        # Boat position for alert-log entries ("Show on map"); None when no fix.
+        _pos = self.state.position
+        _lat = _pos.lat if (_pos is not None and not _pos.is_null()) else None
+        _lon = _pos.lon if (_pos is not None and not _pos.is_null()) else None
 
         # ---- anchor drag ----
         drag = bool(self.controller.safety_status.drag_alarm)
@@ -3020,6 +3050,8 @@ class Runtime:
             body = (f"Boat {dist:.0f} m from anchor" if self.state.anchor is not None
                     else "Boat has dragged from anchor")
             self.push.notify("anchor_drag", "Anchor drag alarm", body)
+            self.alert_log.record("alarm", f"Anchor drag alarm — {body}",
+                                  kind="drag", lat=_lat, lon=_lon)
         prev["drag"] = drag
 
         # ---- passive anchor alarm breach (via on_breach hook) ----
@@ -3032,7 +3064,30 @@ class Runtime:
         battery_rtl = bool(self.state.rtl_recommended)
         if battery_rtl and not prev.get("battery_rtl"):
             self.push.notify("battery", "Battery low", "Return to launch recommended")
+            self.alert_log.record("warn", "Battery low — return to launch recommended",
+                                  kind="battery", lat=_lat, lon=_lon)
         prev["battery_rtl"] = battery_rtl
+
+        # ---- battery SoC ladder (UI convention: warn <25%, crit <10%) ----
+        # Independent of the RTL estimate (Task 1 A5); edge-triggered so each
+        # threshold crossing records/pushes exactly once, not once per tick.
+        soc_val = self.battery_snapshot().get("soc_pct")
+        if soc_val is not None:
+            soc_f = float(soc_val)
+            batt_crit = soc_f < 10.0
+            batt_low = soc_f < 25.0
+            if batt_crit and not prev.get("batt_crit"):
+                self.push.notify("battery", "Battery critical",
+                                 f"Battery at {soc_f:.0f}%")
+                self.alert_log.record("alarm", f"Battery critical — {soc_f:.0f}%",
+                                      kind="battery", lat=_lat, lon=_lon)
+            elif batt_low and not batt_crit and not prev.get("batt_low"):
+                self.push.notify("battery", "Battery low",
+                                 f"Battery at {soc_f:.0f}%")
+                self.alert_log.record("warn", f"Battery low — {soc_f:.0f}%",
+                                      kind="battery", lat=_lat, lon=_lon)
+            prev["batt_crit"] = batt_crit
+            prev["batt_low"] = batt_low
 
         # ---- link loss failsafe ----
         link = bool(self._link_failsafe_engaged)
@@ -3045,6 +3100,8 @@ class Runtime:
             else:
                 body = "Holding position (failsafe)"
             self.push.notify("link", "Connection lost", body)
+            self.alert_log.record("alarm", f"Connection lost — {body}",
+                                  kind="link", lat=_lat, lon=_lon)
         prev["link"] = link
 
         # ---- shallow stop ----
@@ -3053,6 +3110,9 @@ class Runtime:
             min_d = self.controller.safety.config.min_depth_m
             self.push.notify("depth", "Shallow water",
                              f"Auto-stopped: depth below {min_d:.1f} m")
+            self.alert_log.record("alarm",
+                                  f"Shallow — auto-stopped (depth below {min_d:.1f} m)",
+                                  kind="shallow", lat=_lat, lon=_lon)
         prev["shallow"] = shallow
 
         # ---- depth divergence ----
@@ -3060,12 +3120,17 @@ class Runtime:
         if diverge and not prev.get("diverge"):
             self.push.notify("depth", "Depth warning",
                              "Sounder disagrees with chart — possible uncharted shoal")
+            self.alert_log.record("warn",
+                                  "Depth warning — sounder disagrees with chart",
+                                  kind="depth", lat=_lat, lon=_lon)
         prev["diverge"] = diverge
 
         # ---- GPS fix lost ----
         fix_lost = bool(self.controller.safety_status.fix_lost)
         if fix_lost and not prev.get("fix_lost"):
             self.push.notify("link", "GPS fix lost", "Thrust cut until fix returns")
+            self.alert_log.record("alarm", "GPS fix lost — thrust cut until fix returns",
+                                  kind="gps", lat=_lat, lon=_lon)
         prev["fix_lost"] = fix_lost
 
         # ---- battery ladder step (cap decrease) ----
@@ -3128,7 +3193,14 @@ class Runtime:
             return False
         range_m = self.battery_snapshot().get("range_m", 0.0)
         if range_m <= 0.0:
-            # No usable range estimate yet (boat not making way) -> don't prompt.
+            # No usable range estimate (boat not making way). A zero estimate
+            # with a critically low pack must still recommend -- "unknown" is
+            # not "infinite". (Task 1 A5: rtl_recommended stayed False at
+            # range_m: 0 even with the pack nearly flat.)
+            soc = self.battery_snapshot().get("soc_pct")
+            if soc is not None and float(soc) <= 10.0:
+                self.state.rtl_recommended = True
+                return True
             self.state.rtl_recommended = False
             return False
         from .core.geo import haversine_m

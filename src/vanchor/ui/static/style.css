@@ -59,6 +59,8 @@ input, textarea, [contenteditable="true"], .selectable {
 
   --r: 16px;     /* panel radius */
   --r-sm: 11px;  /* control radius */
+  --peek-h: 152px; /* two-row peek sheet height (grip 24 + instruments 46 + action row 56 + gaps/padding); keep in sync with PEEK_PX in mobile.js */
+  --topbar-h: 52px; /* slim mobile topbar height */
 }
 body.light {
   --bg: #e9eef5;
@@ -549,14 +551,7 @@ body.hud-fade-text .catch-fab::after {
 }
 
 /* ============================ SAFETY BANNER ============================ */
-#banner {
-  position: absolute; top: 66px; left: 50%; transform: translateX(-50%); z-index: 1300;
-  padding: 9px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
-  box-shadow: var(--shadow); color: #2a1c00;
-  background: var(--warn); max-width: 90%; text-align: center;
-}
-#banner.alarm { background: var(--stop); color: #fff; animation: pulse 1s infinite; }
-#banner.hidden { display: none; }
+/* #banner retired — #safety-banners is the ONLY alarm surface. */
 
 /* ============================ CONTROL DOCK ============================ */
 .dock {
@@ -871,7 +866,7 @@ button#track-rec.recording { background: color-mix(in srgb, var(--stop) 35%, var
 }
 .rbtn:active { transform: scale(0.97); }
 .rbtn-anchor { background: linear-gradient(180deg, color-mix(in srgb, var(--accent-2) 35%, transparent), transparent); border-color: var(--accent-2); }
-.rbtn-stop { background: color-mix(in srgb, var(--stop) 30%, transparent); border-color: var(--stop); color: #fff; min-height: 86px; font-size: 24px; }
+.rbtn-stop { background: var(--stop); border-color: var(--stop); color: #fff; min-height: 86px; font-size: 24px; }
 .rbtn-hdg { grid-column: 1 / -1; }
 .rbtn-exit { background: var(--faint); color: var(--muted); }
 .remote-dpad { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 10px; max-width: 300px; margin: 0 auto; }
@@ -1184,8 +1179,7 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
   .steering-gauge .sg-stat b { font-size: 13px; }
   .steering-gauge .sg-title { font-size: 10px; }
   .depth-legend { right: 8px; bottom: calc(54vh + 8px); }
-  .comp-legend { right: 8px; bottom: calc(54vh + 76px); }
-  #banner { top: 132px; }
+  .comp-legend { right: 8px; bottom: calc(54vh + 76px); }  /* stacks above .depth-legend (not a peek coupling) */
   .topbar { gap: 7px; padding: 6px 9px; }
   .brand-name { display: none; }
   #chip-conn .chip-text { display: none; }   /* the colored dot is enough */
@@ -1242,7 +1236,7 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
   text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer;
 }
 .prs-btn:active { transform: scale(0.96); }
-.prs-stop { border-color: var(--stop); color: #fff; background: color-mix(in srgb, var(--stop) 26%, transparent); }
+.prs-stop { border-color: var(--stop); color: #fff; background: var(--stop); }
 .prs-pause.hot { border-color: var(--warn); color: var(--warn); }
 .prs-resume.hot {
   border-color: var(--accent-2); color: var(--accent-2);
@@ -1661,34 +1655,88 @@ body.mobile[data-sheet="full"] .wa-next { display: none; }
 .chip-link[data-state="bad"]  .chip-val { color: var(--stop); }
 
 /* ---- stacked safety banners (#61-#64) ---- */
+/* ============================ Z-ORDER LAW =============================
+   map 0 < dock 1150 < mobile menu 1300 < scrim 1900 < command menu 2000
+   < #stale-data-banner 2900 < #safety-banners 3000 < toast 4000
+   < wizard 5000/6100 < #critical-stop-banner 100000.
+   Alarm strips paint ABOVE every modal/menu ("modals open between the
+   bands"); the strips are pointer-transparent outside their buttons so
+   the modal beneath stays usable. Known exception: native <dialog>
+   top layer (alerts/logs/catch/boat-select) cannot be underlaid — accepted,
+   the alerts dialog IS the alarm surface and closes on backdrop tap.
+   ===================================================================== */
 .safety-banners {
-  position: absolute; top: 108px; left: 50%; transform: translateX(-50%);
-  z-index: 1290; display: flex; flex-direction: column; gap: 7px;
-  align-items: center; max-width: 92%; pointer-events: none;
+  position: fixed; top: var(--topbar-h, 52px); left: 0; right: 0;
+  z-index: 3000; display: flex; flex-direction: column; gap: 0;
+  align-items: stretch; pointer-events: none;
 }
 .sbanner {
-  display: flex; align-items: center; gap: 12px; pointer-events: auto;
-  padding: 9px 14px; border-radius: 12px; font-size: 13px; font-weight: 700;
-  box-shadow: var(--shadow); max-width: 100%; text-align: center;
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 14px; border-radius: 0; font-size: 13px; font-weight: 700;
+  width: 100%; box-sizing: border-box; text-align: left;
+  /* Chrome-band law: the strip body is transparent to the map/controls
+     beneath it; ONLY the buttons inside catch pointer events. */
+  pointer-events: none;
 }
 .sbanner.hidden { display: none; }
-.sbanner .sb-msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sbanner .sb-act {
+/* Message text WRAPS rather than truncates — an alarm cause must be readable
+   in full ("38 m from hold point · drifting SW · 0:24"). */
+.sbanner .sb-msg { flex: 1 1 auto; min-width: 0; }
+.sbanner .sb-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sbanner .sb-title { font-size: 13px; font-weight: 800; letter-spacing: 0.04em; }
+.sbanner .sb-sub { font-size: 11.5px; font-weight: 600; opacity: 0.9; }
+.sbanner .sb-act, .sbanner button {
   flex: 0 0 auto; border: 0; cursor: pointer; font-weight: 800; font-size: 12px;
   padding: 6px 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.28); color: inherit;
+  pointer-events: auto; min-height: 44px;
 }
+.sbanner .sb-act small { display: block; font-size: 8px; font-weight: 700; letter-spacing: 0.06em; opacity: 0.8; }
 .sbanner .sb-act:active { transform: scale(0.96); }
+/* STOP repeated on strips — same solid style as every STOP (one-style law). */
+.sbanner .sb-act-stop {
+  background: var(--stop); color: #fff;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.5);
+}
+/* Alarm strips pulse BRIGHTNESS, never opacity — the old opacity pulse made
+   the strip text unreadable half of every second over the map. */
+@keyframes sbanner-pulse { 50% { filter: brightness(1.3) saturate(1.15); } }
 .sbanner-warn  { background: var(--warn); color: #2a1c00; }
-.sbanner-alarm { background: var(--stop); color: #fff; animation: pulse 1s infinite; }
-.sbanner-mob   { background: var(--stop); color: #fff; box-shadow: var(--shadow), 0 0 22px rgba(255, 93, 126, 0.6); animation: pulse 0.9s infinite; }
+.sbanner-alarm { background: var(--stop); color: #fff; animation: sbanner-pulse 1s infinite; }
+.sbanner-mob   { background: var(--stop); color: #fff; box-shadow: var(--shadow), 0 0 22px rgba(255, 93, 126, 0.6); animation: sbanner-pulse 0.9s infinite; }
+.sbanner-batt-warn { background: var(--warn); color: #2a1c00; }
+.sbanner-batt-crit { background: var(--stop); color: #fff; animation: sbanner-pulse 1.2s infinite; }
+/* Priority order (lower = higher = nearer the topbar). Includes the four
+   dynamic health strips prepended by health.js — CSS order beats DOM order,
+   so no JS reordering is needed. MOB > drag/anchor > shallow > battery > link
+   with health strips slotted by severity. */
+#health-fault-banner       { order: 0; }
+#mob-banner                { order: 1; }
+#anchor-alarm-banner       { order: 2; }
+#health-fix-lost-banner    { order: 3; }
+#shallow-banner            { order: 4; }
+#health-hdg-stale-banner   { order: 5; }
+#batt-crit-banner          { order: 6; }
+#batt-warn-banner          { order: 7; }
+#link-banner               { order: 8; }
+#health-depth-stale-banner { order: 9; }
+#rtl-banner                { order: 10; }
+#auto-apb-banner           { order: 11; }
+#gov-banner                { order: 12; }
 /* Make a freshly-shown banner pop in so it's harder to miss (#97). */
 .sbanner:not(.hidden) { animation: sbanner-in 0.28s ease-out; }
-.sbanner-alarm:not(.hidden) { animation: sbanner-in 0.28s ease-out, pulse 1s infinite 0.28s; }
-.sbanner-mob:not(.hidden)   { animation: sbanner-in 0.28s ease-out, pulse 0.9s infinite 0.28s; }
+.sbanner-alarm:not(.hidden) { animation: sbanner-in 0.28s ease-out, sbanner-pulse 1s infinite 0.28s; }
+.sbanner-mob:not(.hidden)   { animation: sbanner-in 0.28s ease-out, sbanner-pulse 0.9s infinite 0.28s; }
 @keyframes sbanner-in {
-  from { opacity: 0; transform: translateY(-8px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
+
+/* Hold-to-engage ring animation for drive-away buttons. */
+@keyframes hold-ring {
+  from { box-shadow: 0 0 0 0 rgba(255,255,255,0.7); }
+  to   { box-shadow: 0 0 0 8px rgba(255,255,255,0); }
+}
+.sb-hold { animation: hold-ring var(--hold-ms, 600ms) linear forwards !important; }
 
 /* ---- Health sensor-age chips (Settings > Data & diagnostics > Live data) ---- */
 .health-ages {
@@ -1762,6 +1810,12 @@ body.mobile[data-sheet="full"] .wa-next { display: none; }
 .alerts-empty {
   margin: 0; padding: 26px 14px; text-align: center; color: var(--muted); font-size: 13px;
 }
+.alert-actions { margin-top: 5px; display: flex; gap: 6px; flex-wrap: wrap; }
+.alerts-action-btn {
+  font-size: 11px; font-weight: 700; border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 10px; background: var(--faint); color: var(--accent); cursor: pointer;
+}
+.alerts-action-btn:active { transform: scale(0.96); }
 
 /* ---- Select Boat dialog (#96) ---- */
 .selectboat-dialog {
@@ -1863,10 +1917,7 @@ body.mobile[data-sheet="full"] .wa-next { display: none; }
   padding: 2px 10px; border-radius: 999px; background: rgba(0,0,0,0.3); color: inherit;
 }
 
-/* keep FABs/banners off the map controls on small screens */
-@media (max-width: 640px) {
-  .safety-banners { top: 150px; }
-}
+/* keep FABs off the map controls on small screens (banners are now fixed top) */
 
 /* no-go draw button active state */
 #nogo-draw.hot { border-color: var(--accent); color: var(--accent); box-shadow: var(--glow); }
@@ -1924,7 +1975,7 @@ body.mobile #catch-open { display: none !important; }
 /* ===================================================================== */
 /* 4. BOTTOM SHEET — the existing #dock becomes a snap-able sheet.        */
 /*    Snap states are set on body[data-sheet] by mobile.js:               */
-/*      peek  ~76px   (grip + instruments + mode + STOP; map maximized)   */
+/*      peek  var(--peek-h) 152px (grip + instruments + STOP/mode/MOB row) */
 /*      mid   ~46vh   (mode grid + active contextual panel)               */
 /*      full  ~88vh   (everything, scrollable)                            */
 /*    The sheet is sized to the FULL height and slid down with translateY */
@@ -1940,12 +1991,12 @@ body.mobile .dock {
   border-radius: 18px 18px 0 0;
   overflow: hidden;                 /* the inner scroll lives below the head */
   display: flex; flex-direction: column;
-  transform: translateY(calc(88vh - 76px));   /* default = peek */
+  transform: translateY(calc(88vh - var(--peek-h, 152px)));   /* default = peek */
   transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
   z-index: 1150;
   box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.45);
 }
-body.mobile[data-sheet="peek"] .dock { transform: translateY(calc(88vh - 76px)); }
+body.mobile[data-sheet="peek"] .dock { transform: translateY(calc(88vh - var(--peek-h, 152px))); }
 body.mobile[data-sheet="mid"]  .dock { transform: translateY(calc(88vh - 46vh)); }
 body.mobile[data-sheet="full"] .dock { transform: translateY(0); }
 
@@ -1959,9 +2010,11 @@ body.mobile .sheet-head {
   padding: 4px 12px 8px;
   touch-action: none;               /* the head owns the drag gesture */
 }
-body.mobile .sheet-grip {
+/* Extra .sheet-head/.sheet-peekbar qualifier: beats the blanket
+   `body.mobile .dock button { min-height: 44px }` touch-target rule. */
+body.mobile .sheet-head .sheet-grip {
   display: flex; align-items: center; justify-content: center;
-  width: 100%; height: 24px; margin: 0; padding: 0;
+  width: 100%; height: 24px; min-height: 24px; margin: 0; padding: 0;
   border: 0; background: transparent; cursor: grab;
   touch-action: none;
 }
@@ -1987,32 +2040,55 @@ body.mobile .si-label {
 body.mobile .si-val b { font: 800 18px var(--font-num); font-variant-numeric: tabular-nums; color: var(--text); }
 body.mobile .si-val small { color: var(--muted); font-size: 10px; margin-left: 1px; }
 
-/* peek action bar: current mode label + prominent STOP */
+/* peek action bar — fixed law: STOP left / mode chip center / MOB right */
 body.mobile .sheet-peekbar {
   display: flex; align-items: center; gap: 10px;
 }
-body.mobile .sheet-mode {
-  flex: 1 1 auto; min-width: 0;
+body.mobile .sheet-peekbar .sheet-stop {
+  flex: 0 0 auto; min-height: 56px; min-width: 104px; padding: 0 20px;
+  border: 1px solid var(--stop); border-radius: 14px;
+  background: var(--stop);                    /* SOLID — no color-mix on safety chrome */
+  color: #fff; font: 800 16px var(--font-display); letter-spacing: 0.06em;
+  cursor: pointer; order: 1;
+}
+body.mobile .sheet-peekbar .sheet-stop:active { transform: scale(0.96); }
+
+/* MAN OVERBOARD — filled orange, bottom-right, 600ms hold-to-engage. */
+body.mobile .sheet-peekbar .sheet-mob {
+  flex: 0 0 auto; min-height: 56px; padding: 0 12px;
+  border: 1px solid #e8820c; border-radius: 14px;
+  background: #e8820c;
+  color: #1a1102; font: 800 12px var(--font-display); letter-spacing: 0.03em;
+  cursor: pointer; order: 3;
+}
+body.mobile .sheet-peekbar .sheet-mob:active { transform: scale(0.96); }
+
+/* Mode chip in peekbar — centered, order 2. */
+body.mobile .sheet-peekbar .sheet-mode {
+  flex: 1 1 auto; min-width: 0; min-height: 56px; order: 2;
+  text-align: center;
   font: 700 14px var(--font-display); letter-spacing: 0.04em;
   color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 0; background: transparent; cursor: pointer; padding: 4px 8px;
+  border-radius: var(--r-sm);
 }
-body.mobile .sheet-stop {
-  flex: 0 0 auto; min-height: 44px; padding: 0 22px;
-  border: 1px solid var(--stop); border-radius: 999px;
-  background: color-mix(in srgb, var(--stop) 30%, transparent);
-  color: #fff; font: 800 14px var(--font-display); letter-spacing: 0.06em;
-  cursor: pointer;
+body.mobile .sheet-peekbar .sheet-mode:hover { background: var(--faint); }
+/* Degraded-state suffix must be readable, not ellipsised: wrap to two lines. */
+body.mobile .sheet-peekbar .sheet-mode.stopped {
+  color: var(--stop); white-space: normal; font-size: 12px; line-height: 1.2;
 }
-body.mobile .sheet-stop:active { transform: scale(0.96); }
 
-/* "Back to map" — only shown once the sheet is expanded (mid/full). */
+/* "Back to map" — beside the grip, only shown once the sheet is expanded
+   (mid/full). Kept OUT of the peekbar so STOP stays the leftmost action. */
+body.mobile .sheet-head { position: relative; }
 body.mobile .sheet-collapse { display: none; }
 body.mobile[data-sheet="mid"] .sheet-collapse,
 body.mobile[data-sheet="full"] .sheet-collapse {
   display: inline-flex; align-items: center; flex: 0 0 auto;
-  min-height: 40px; padding: 0 14px;
+  position: absolute; top: 4px; right: 12px; z-index: 2;
+  min-height: 34px; padding: 0 14px;
   border: 1px solid var(--line); border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg));
   color: var(--accent); font: 700 13px var(--font-display); letter-spacing: 0.04em;
   cursor: pointer;
 }
@@ -2080,7 +2156,7 @@ body.mobile #marker-fab { display: none; }
 /* Mobile: a bigger touch target, and lift above the bottom sheet. */
 body.mobile .follow-fab.offscreen {
   right: 12px; width: 48px; height: 48px;
-  bottom: calc(76px + 16px + env(safe-area-inset-bottom));
+  bottom: calc(var(--peek-h, 152px) + 16px + env(safe-area-inset-bottom));
 }
 body.mobile[data-sheet="mid"] .follow-fab.offscreen { bottom: calc(46vh + 16px + env(safe-area-inset-bottom)); }
 body.mobile[data-sheet="full"] .follow-fab.offscreen { display: none; }   /* sheet covers the map */
@@ -2089,9 +2165,8 @@ body.mobile[data-sheet="full"] .follow-fab.offscreen { display: none; }   /* she
   50% { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), 0 0 0 6px rgba(27, 228, 255, 0.14); }
 }
 
-/* Safety banners + replay sit just under the slim top bar. */
-body.mobile .safety-banners,
-body.mobile #banner { top: 52px; left: 8px; right: 8px; }
+/* Safety banners sit just under the slim top bar — handled by fixed positioning. */
+/* (No override needed: .safety-banners is position:fixed top:var(--topbar-h) = 52px.) */
 
 /* Leaflet zoom/attribution: tuck into top-right under the bar. */
 body.mobile .leaflet-top.leaflet-left { top: 56px; left: auto; right: 8px; }
@@ -2273,7 +2348,7 @@ body[data-view="helm"] .vd-quick { display: grid; grid-template-columns: repeat(
 /* STOP is sacred: big, unmissable, never dimmed by the observer rule. */
 .vd-stop {
   min-height: 60px; border: 2px solid var(--stop); border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--stop) 30%, rgba(10, 12, 20, 0.85)); color: #fff;
+  background: var(--stop); color: #fff;   /* SOLID — one STOP style everywhere */
   font: 900 24px var(--font-display); letter-spacing: 0.14em; cursor: pointer;
   box-shadow: 0 0 0 1px var(--stop), 0 0 22px rgba(255, 90, 122, 0.45);
 }
@@ -2436,7 +2511,7 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
 }
 /* Transient toast (e.g. the reason a mode is unavailable). */
 .va-toast {
-  position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%) translateY(12px);
+  position: fixed; left: 50%; bottom: var(--peek-h, 152px); transform: translateX(-50%) translateY(12px);
   z-index: 4000; max-width: min(88vw, 420px); padding: 10px 16px; border-radius: 10px;
   background: rgba(20, 22, 28, 0.96); color: #fff; font-size: 14px; line-height: 1.35;
   border: 1px solid var(--line-bright); box-shadow: 0 6px 24px rgba(0,0,0,0.4);
@@ -2456,3 +2531,79 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   padding: 4px 8px 6px; font-size: 13px; font-weight: 600; color: var(--accent);
   border-bottom: 1px solid var(--line); margin-bottom: 4px; text-align: center;
 }
+
+/* ========================= SAFETY CORE (Task 1) ========================= */
+
+/* ---- Dock stop bar: STOP (left) + MOB (right), STICKY inside the dock's own
+   scroll so it stays on screen however far the dock is scrolled (tablet/desktop).
+   Hidden on phones — the peek action row owns STOP/MOB there (and mobile.js
+   would otherwise wrap this bar into .dock-scroll = a duplicate STOP). ---- */
+.dock-stop-bar {
+  position: sticky; bottom: -10px;   /* cancel the dock's 10px padding */
+  z-index: 5;
+  display: flex; gap: 8px; padding: 10px 0 8px;
+  background: linear-gradient(transparent, var(--bg) 35%);
+  flex: 0 0 auto;
+}
+body.mobile .dock-stop-bar { display: none; }
+#dock-stop {
+  flex: 1; min-height: 56px; border: 1px solid var(--stop); border-radius: 14px;
+  background: var(--stop); color: #fff;
+  font: 800 15px var(--font-display); letter-spacing: 0.06em; cursor: pointer;
+}
+#dock-stop:active { transform: scale(0.97); }
+#dock-mob {
+  flex: 0 0 auto; min-height: 56px; padding: 0 14px;
+  border: 1px solid #e8820c; border-radius: 14px;
+  background: #e8820c; color: #1a1102;
+  font: 800 12px var(--font-display); letter-spacing: 0.03em; cursor: pointer;
+}
+#dock-mob:active { transform: scale(0.97); }
+
+/* ---- Command menu compact STOP pill ---- */
+#cm-stop {
+  min-height: 36px; padding: 0 18px;
+  border: 1px solid var(--stop); border-radius: 999px;
+  background: var(--stop); color: #fff;
+  font: 800 12px var(--font-display); letter-spacing: 0.06em; cursor: pointer;
+  flex: 0 0 auto;
+}
+#cm-stop:active { transform: scale(0.97); }
+#cm-stop:disabled { opacity: 0.35; cursor: default; }
+
+/* ---- Anchor engaged block ---- */
+.anchor-engaged {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent-2) 12%, var(--faint));
+  border: 1px solid var(--accent-2);
+}
+.anchor-engaged.hidden { display: none; }
+.ae-status { font-size: 13px; font-weight: 700; color: var(--accent-2); }
+.ae-btns { display: flex; gap: 8px; }
+.ae-release {
+  flex: 1; min-height: 40px; border: 1px solid var(--line);
+  border-radius: var(--r-sm); background: var(--faint); color: var(--text);
+  font: 700 12px var(--font-display); cursor: pointer;
+}
+.ae-release:active { transform: scale(0.97); }
+.ae-redrop {
+  flex: 1; min-height: 40px; border: 1px solid var(--accent-2);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent-2) 20%, transparent); color: var(--accent-2);
+  font: 700 12px var(--font-display); cursor: pointer;
+}
+.ae-redrop:active { transform: scale(0.97); }
+
+/* ---- GPS fix-stale: grey out the boat marker (class set on the marker
+   element itself so waypoints/pins keep their colors) ---- */
+.leaflet-marker-icon.fix-stale { filter: grayscale(1) opacity(0.65); }
+
+/* ---- Boat mode badge: stopped / stale-fix states ---- */
+.boat-mode-badge .bmb[data-stopped="true"] {
+  border-color: var(--stop); color: #ffd8de;
+}
+.boat-mode-badge .bmb .bmb-sub {
+  display: block; font-size: 9px; font-weight: 700; opacity: 0.85;
+}
+

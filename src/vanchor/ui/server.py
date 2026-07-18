@@ -627,6 +627,28 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         helm|observer|rest. Pings are not recorded."""
         return runtime.command_audit(n)
 
+    # -- Alert log (Task 1 D8) ------------------------------------------- #
+    @app.get("/api/alerts")
+    async def alerts_get() -> dict:
+        """Server-persisted alert history. Oldest first.
+
+        Returns ``{alerts: [{ts, severity, message, kind?, lat?, lon?}]}``.
+        The client merges this with its localStorage copy on boot so alerts
+        survive a page reload / new device.  Read-only; cleared via POST
+        /api/alerts/clear."""
+        if hasattr(runtime, "alert_log") and runtime.alert_log is not None:
+            return {"alerts": runtime.alert_log.snapshot()}
+        return {"alerts": []}
+
+    @app.post("/api/alerts/clear")
+    async def alerts_clear() -> dict:
+        """Clear the server-persisted alert log (permanent; does not undo
+        in-browser history). Typically called when the user taps "Clear all"
+        and confirms."""
+        if hasattr(runtime, "alert_log") and runtime.alert_log is not None:
+            runtime.alert_log.clear()
+        return {"ok": True}
+
     @app.post("/api/restart")
     async def restart() -> dict:
         """Restart the server process in place (applies device/config changes).

@@ -345,6 +345,41 @@ def shot_mobile(pw, browser, base):
     ctx.close()
 
 
+def shot_alarm_mobile(pw, browser, base):
+    """Phone-width anchor-alarm regression (UX Task 1, item 1 / A2+A7).
+
+    Arms the passive anchor alarm, teleports the boat outside the watch
+    circle, and asserts the alarm strip renders as a FULL-WIDTH row at
+    390 px — x == 0 and width == viewport (the old #banner pill rendered at
+    x ≈ -167 and clipped to "G ALARM")."""
+    ctx = browser.new_context(viewport={"width": 390, "height": 844},
+                              device_scale_factor=2, is_mobile=True, has_touch=True)
+    cmd(base, {"type": "stop"})
+    page = ctx.new_page()
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    wait_app(page)
+    la, lo = boat_pos(base)
+    cmd(base, {"type": "anchor_alarm_set", "lat": la, "lon": lo, "radius_m": 10})
+    cmd(base, {"type": "teleport", "lat": la + 0.0006, "lon": lo})  # ~65 m out
+    page.wait_for_function(
+        "() => { const el = document.getElementById('anchor-alarm-banner');"
+        " return el && !el.classList.contains('hidden'); }", timeout=20_000)
+    la2, lo2 = boat_pos(base)
+    page.evaluate("([lat, lon]) => VA.mapCtx.map.setView([lat, lon], 17, {animate:false})",
+                  [la2, lo2])
+    shoot(page, "mobile-anchor-alarm")
+    box = page.evaluate(
+        "() => { const r = document.getElementById('anchor-alarm-banner')"
+        ".getBoundingClientRect(); return {x: r.x, w: r.width}; }")
+    vw = page.evaluate("() => window.innerWidth")
+    assert box["x"] >= 0, f"alarm strip clipped left: x={box['x']}"
+    assert abs(box["w"] - vw) < 1, f"alarm strip not full-width: {box['w']} vs {vw}"
+    print(f"  alarm strip bbox OK: x={box['x']}, w={box['w']} (viewport {vw})")
+    cmd(base, {"type": "anchor_alarm_clear"})
+    cmd(base, {"type": "stop"})
+    ctx.close()
+
+
 SHOTS = {
     "overview": shot_overview,
     "anchor": shot_anchor,
@@ -384,6 +419,9 @@ def main() -> None:
                 if not only or "mobile" in only:
                     print("[shot] mobile")
                     shot_mobile(pw, browser, base)
+                if not only or "alarm" in only:
+                    print("[shot] alarm")
+                    shot_alarm_mobile(pw, browser, base)
                 browser.close()
         finally:
             proc.terminate()

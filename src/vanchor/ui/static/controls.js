@@ -194,6 +194,42 @@
   // selecting Anchor no longer drops the anchor and engages station-keeping on
   // a single tap; the user presses "Drop anchor" (#anchor-go) to engage.
   $("anchor-go").addEventListener("click", () => applyAnchor(true));
+
+  // ---- Anchor engaged state (D10) ----
+  const anchorEngaged = $("anchor-engaged");
+  const aeStatus = $("ae-status");
+  const aeRelease = $("ae-release");
+  const aeRedrop = $("ae-redrop");
+  let _curAnchor = null;  // current server anchor point (from telemetry)
+  let _curBoat = null;    // current boat position (from telemetry)
+
+  function _havM(aLat, aLon, bLat, bLon) {
+    const R = 6371000, k = Math.PI / 180;
+    const dLat = (bLat - aLat) * k, dLon = (bLon - aLon) * k;
+    const s = Math.sin(dLat / 2) ** 2
+      + Math.cos(aLat * k) * Math.cos(bLat * k) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  // RELEASE = the same instant STOP as everywhere (mode → manual, thrust 0).
+  if (aeRelease) aeRelease.addEventListener("click", () => {
+    VA.sendCritical({ type: "stop" });
+  });
+  // Re-drop moves the hold point to the boat. Undo restores the PREVIOUS
+  // point via anchor_hold's anchor:{lat,lon} (the server adopts the point).
+  if (aeRedrop) aeRedrop.addEventListener("click", () => {
+    const prev = _curAnchor ? { lat: _curAnchor.lat, lon: _curAnchor.lon } : null;
+    applyAnchor(true);
+    const moved = prev && _curBoat
+      ? _havM(prev.lat, prev.lon, _curBoat.lat, _curBoat.lon) : null;
+    if (VA.toast && prev) {
+      VA.toast("Anchor moved" + (moved !== null ? " " + Math.round(moved) + " m" : ""), {
+        actionLabel: "UNDO",
+        onAction: () => send({ type: "anchor_hold", anchor: { lat: prev.lat, lon: prev.lon } }),
+        ttl: 10000,
+      });
+    }
+  });
   [["jog-fwd", "forward"], ["jog-back", "back"], ["jog-left", "left"], ["jog-right", "right"]]
     .forEach(([id, direction]) => {
       const el = $(id);
@@ -268,18 +304,37 @@
       if (smartBox) smartBox.checked = t.mode === "anchor_ml";
       if (leifBox) leifBox.checked = t.mode === "anchor_leif";
     }
+
+    // ---- Anchor engaged state block ----
+    const isAnchored = (t.mode === "anchor_hold" || t.mode === "anchor_ml" || t.mode === "anchor_leif");
+    if (anchorEngaged) anchorEngaged.classList.toggle("hidden", !isAnchored);
+    const anchorGo = $("anchor-go");
+    if (anchorGo) anchorGo.classList.toggle("hidden", isAnchored);
+    if (isAnchored && aeStatus) {
+      const dist = Number.isFinite(t.distance_to_anchor_m)
+        ? " — " + t.distance_to_anchor_m.toFixed(1) + " m from point" : "";
+      const circle = Number.isFinite(t.anchor_radius_m)
+        ? " · " + Math.round(t.anchor_radius_m) + " m circle" : "";
+      const mode = t.mode === "anchor_ml" ? "SMART HOLDING" : t.mode === "anchor_leif" ? "LEIF HOLDING" : "HOLDING";
+      aeStatus.textContent = mode + dist + circle;
+    }
+    // Track anchor + boat position for the re-drop UNDO toast.
+    if (t.anchor && Number.isFinite(t.anchor.lat)) _curAnchor = { lat: t.anchor.lat, lon: t.anchor.lon };
+    else if (!isAnchored) _curAnchor = null;
+    if (t.position && Number.isFinite(t.position.lat)) _curBoat = { lat: t.position.lat, lon: t.position.lon };
+
     // Passive anchor alarm status + button visibility.
     const aa = t.anchor_alarm || {};
-    if (aaSet) aaSet.textContent = aa.armed ? "🔔 Move alarm here" : "🔔 Set alarm here";
+    if (aaSet) aaSet.textContent = aa.armed ? "Move alarm here" : "Set alarm here";
     if (aaClear) aaClear.classList.toggle("hidden", !aa.armed);
     if (aaRecover) aaRecover.classList.toggle("hidden", !aa.armed);
     if (aaStatus) {
       let txt = "";
       if (aa.armed) {
         const d = Number.isFinite(aa.distance_m) ? aa.distance_m.toFixed(0) : "—";
-        txt = (aa.firing ? "🚨 DRAGGING — " : "watching · ")
+        txt = (aa.firing ? "DRAGGING — " : "watching · ")
             + d + " / " + (aa.radius_m || 0) + " m";
-        if (aa.stale) txt += " · ⚠ GPS stale";
+        if (aa.stale) txt += " · GPS stale";
       }
       if (aaStatus.textContent !== txt) aaStatus.textContent = txt;
     }

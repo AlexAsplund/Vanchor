@@ -76,15 +76,28 @@
     icon: L.divIcon({ className: "", html: "", iconSize: [0, 0] }),
     interactive: false, keyboard: false, zIndexOffset: 1100,
   }).addTo(map);
-  let _badgeMode;
+  let _badgeKey;
   function updateModeBadge(t, lat, lon) {
     setLatLngIfMoved(modeBadge, lat, lon);
-    if (t.mode === _badgeMode) return;          // rebuild the icon only on change
-    _badgeMode = t.mode;
+    // Degraded-state suffix comes ONLY from the shared VA.modeSuffix helper
+    // (safety auto-stop flags) so the map badge never disagrees with the sheet.
+    const suffix = (VA.modeSuffix ? VA.modeSuffix(t) : "");
+    const stopped = suffix !== "";
+    // GPS-lost: show fix age, quantized to 5 s buckets so the divIcon isn't
+    // rebuilt every frame while the age counts up.
+    const fixLost = !!((t.health && t.health.fix_lost) || (t.safety && t.safety.fix_lost));
+    const ageS = t.health && Number.isFinite(t.health.fix_age_s) ? t.health.fix_age_s : null;
+    const ageBucket = fixLost && ageS !== null ? Math.round(ageS / 5) * 5 : null;
+    const key = (t.mode || "") + suffix + (ageBucket === null ? "" : "|fix" + ageBucket);
+    if (key === _badgeKey) return;              // rebuild the icon only on change
+    _badgeKey = key;
     const [g, label] = modeMeta(t.mode);
+    const fixLine = ageBucket === null ? ""
+      : `<span class="bmb-sub">last fix ${ageBucket}s ago</span>`;
     modeBadge.setIcon(L.divIcon({
       className: "boat-mode-badge",
-      html: `<span class="bmb" data-mode="${t.mode || ""}"><span class="bmb-i">${g}</span>${label}</span>`,
+      html: `<span class="bmb" data-mode="${t.mode || ""}" data-stopped="${stopped}">`
+          + `<span class="bmb-i">${g}</span>${label}${suffix}${fixLine}</span>`,
       iconSize: [0, 0], iconAnchor: [-18, 28],  // sit up-and-right of the boat
     }));
   }
@@ -396,6 +409,12 @@
         if (Math.abs(dx) >= 2 || Math.abs(dy) >= 2) followPan(dx, dy);
       }
     }
+    // GPS fix stale: grey the BOAT marker (only) when the fix is lost (either
+    // the governor's failsafe flag or the health monitor's staleness flag).
+    const fixLost = !!((t.safety && t.safety.fix_lost) || (t.health && t.health.fix_lost));
+    const boatEl = boatMarker.getElement();
+    if (boatEl) boatEl.classList.toggle("fix-stale", fixLost);
+
     // Smooth the displayed GPS dot. Raw 1 Hz fixes carry a few metres of noise
     // that makes the dot jump around; a real plotter low-passes it so it sits
     // steady. (The control loop still steers on the raw fix, not this.)

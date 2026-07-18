@@ -131,8 +131,10 @@ function logTelemetry(t) {
 
 // ---- full-width safety banners (critical-send + staleness) ---------------
 // Minimal, self-contained banners styled inline so they render even if the
-// cached CSS is stale. STOP-not-confirmed pins to the top (red); DATA STALE
-// pins to the bottom (amber) so the two never overlap.
+// cached CSS is stale. Rule: status elements never overlay controls — both are
+// pointer-events:none, top strip zone only. STOP-not-confirmed pins to top:0 at
+// z 100000 (it must beat everything); DATA STALE sits below the topbar at
+// z 2900 so real alarm strips (#safety-banners, z 3000) stack above it.
 const STOP_BANNER_ID = "critical-stop-banner";
 const STALE_BANNER_ID = "stale-data-banner";
 function _banner(id, opts) {
@@ -146,11 +148,13 @@ function _banner(id, opts) {
     el.style.cssText =
       "position:fixed;left:0;right:0;z-index:100000;padding:12px 16px;" +
       "font:700 15px/1.3 system-ui,-apple-system,sans-serif;text-align:center;" +
-      "color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.45);letter-spacing:.02em;";
+      "color:#fff;box-shadow:0 2px 10px rgba(0,0,0,.45);letter-spacing:.02em;" +
+      "pointer-events:none;";
     (document.body || document.documentElement).appendChild(el);
   }
-  if (opts.bottom) { el.style.bottom = "0"; el.style.top = ""; }
-  else { el.style.top = "0"; el.style.bottom = ""; }
+  if (opts.belowTopbar) { el.style.top = "52px"; el.style.zIndex = "2900"; }
+  else { el.style.top = "0"; }
+  el.style.bottom = "";
   el.style.background = opts.bg;
   el.style.display = "block";
   el.textContent = opts.text;
@@ -168,7 +172,7 @@ setInterval(() => {
   const age = Date.now() - _lastFrameMs;
   if (age > STALE_MS) {
     _banner(STALE_BANNER_ID, {
-      show: true, bottom: true, bg: "#b45309",
+      show: true, belowTopbar: true, bg: "#b45309",
       text: "DATA STALE (" + Math.round(age / 1000) + "s old) — link may be down",
     });
   }

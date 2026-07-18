@@ -28,6 +28,7 @@
 
   let alerts = [];          // [{ ts, severity, message }]  newest LAST in storage
   let unread = 0;
+  let _aaFiringNow = false;  // live anchor-alarm state (per-entry Recover gate)
   const lastSeen = Object.create(null);  // key -> last logged epoch ms
 
   function load() {
@@ -146,6 +147,39 @@
 
       body.appendChild(msg);
       body.appendChild(meta);
+
+      // Per-entry actions: "Show on map" if location is available; hold-to-
+      // Recover on an anchor-alarm entry while that alarm is STILL firing.
+      const wantRecover = a.kind === "anchor_alarm" && _aaFiringNow;
+      if ((Number.isFinite(a.lat) && Number.isFinite(a.lon)) || wantRecover) {
+        const actions = document.createElement("div");
+        actions.className = "alert-actions";
+        if (Number.isFinite(a.lat) && Number.isFinite(a.lon)) {
+          const showBtn = document.createElement("button");
+          showBtn.className = "alerts-action-btn";
+          showBtn.textContent = "Show on map";
+          showBtn.addEventListener("click", () => {
+            close();
+            try {
+              if (VA.map && VA.map.leaflet) {
+                VA.map.leaflet.setView([a.lat, a.lon], 16);
+              }
+            } catch (_) {}
+          });
+          actions.appendChild(showBtn);
+        }
+        if (wantRecover) {
+          const recBtn = document.createElement("button");
+          recBtn.className = "alerts-action-btn";
+          recBtn.textContent = "Recover (hold)";
+          const fire = () => { close(); VA.send({ type: "anchor_alarm_recover" }); };
+          if (VA.bindHold) VA.bindHold(recBtn, 600, fire);
+          else recBtn.addEventListener("click", fire);
+          actions.appendChild(recBtn);
+        }
+        body.appendChild(actions);
+      }
+
       li.appendChild(dot);
       li.appendChild(body);
       list.appendChild(li);
@@ -172,12 +206,34 @@
   if (openBtn) openBtn.addEventListener("click", open);
   const closeBtn = $("alerts-close");
   if (closeBtn) closeBtn.addEventListener("click", close);
+
+  // Inline confirm for clear: first tap swaps to "Confirm clear?" UI.
   const clearBtn = $("alerts-clear");
-  if (clearBtn) clearBtn.addEventListener("click", () => {
-    alerts = []; unread = 0;
-    for (const k in lastSeen) delete lastSeen[k];
-    save(); renderBadge(); renderList();
-  });
+  let _clearPending = false;
+  let _clearResetT = null;
+  function resetClearBtn() {
+    _clearPending = false;
+    clearTimeout(_clearResetT);
+    if (clearBtn) clearBtn.textContent = "Clear all";
+  }
+  if (clearBtn) {
+    clearBtn.textContent = "Clear all";
+    clearBtn.addEventListener("click", () => {
+      if (!_clearPending) {
+        _clearPending = true;
+        clearBtn.textContent = "Confirm clear?";
+        _clearResetT = setTimeout(resetClearBtn, 3000);
+      } else {
+        resetClearBtn();
+        // Clear locally.
+        alerts = []; unread = 0;
+        for (const k in lastSeen) delete lastSeen[k];
+        save(); renderBadge(); renderList();
+        // Sync to server (best-effort).
+        fetch("/api/alerts/clear", { method: "POST" }).catch(() => {});
+      }
+    });
+  }
   const dlg = $("alerts-dialog");
   if (dlg) {
     // Backdrop click closes (native <dialog> click target is the dialog itself).
@@ -240,6 +296,7 @@
 
     const aa = t.anchor_alarm || {};
     const aalarm = !!aa.firing;
+    _aaFiringNow = !!(aa.armed && aalarm);  // gates the per-entry Recover action
     if (aalarm && !prev.aalarm) VA.logAlert("alarm", "Anchor alarm — boat outside the watch circle", { level: "high" });
     prev.aalarm = aalarm;
 
@@ -248,10 +305,35 @@
     prev.aastale = aastale;
   });
 
+  // ---- API hydration on boot -----------------------------------------------
+  // Merge server-persisted alerts with the localStorage copy so alerts survive
+  // a page reload even if localStorage was cleared (e.g. PWA reinstall).
+  function hydrateFromAPI() {
+    fetch("/api/alerts")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data || !Array.isArray(data.alerts)) return;
+        let changed = false;
+        for (const a of data.alerts) {
+          if (!a || typeof a.message !== "string") continue;
+          // Only add entries not already present (by ts+message).
+          const dup = alerts.some((x) => x.ts === a.ts && x.message === a.message);
+          if (!dup) { alerts.push(a); changed = true; }
+        }
+        if (changed) {
+          alerts.sort((a, b) => a.ts - b.ts);
+          if (alerts.length > MAX) alerts = alerts.slice(-MAX);
+          save(); renderBadge(); renderList();
+        }
+      })
+      .catch(() => {}); // not available in offline/demo — silent
+  }
+
   // ---- init ----------------------------------------------------------------
   load();
   renderBadge();
   renderList();
+  hydrateFromAPI();
 
   VA.alerts = {
     open, close,

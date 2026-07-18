@@ -68,7 +68,7 @@
   // The CSS positions the sheet at full height and slides it down by
   // (fullPx - statePx); during a live drag we override translateY inline.
   // ===========================================================================
-  const PEEK_PX = 76;
+  const PEEK_PX = 152;   // keep in sync with --peek-h in style.css
   function vh(frac) { return window.innerHeight * frac; }
   function heights() {
     const full = vh(0.88), mid = vh(0.46), peek = PEEK_PX;
@@ -168,9 +168,31 @@
     });
   });
 
-  // ---- peek STOP + recenter FAB --------------------------------------------
+  // ---- peek STOP + MOB + recenter FAB -------------------------------------
   const sheetStop = document.getElementById("sheet-stop");
   if (sheetStop) sheetStop.addEventListener("click", () => { try { VA.sendCritical({ type: "stop" }); } catch (_) {} });
+
+  // MAN OVERBOARD — 600ms hold-to-engage; single tap shows a hint.
+  const sheetMob = document.getElementById("sheet-mob");
+  if (sheetMob) {
+    if (VA.bindHold) {
+      VA.bindHold(sheetMob, 600, () => {
+        try { VA.send({ type: "mob" }); } catch (_) {}
+      });
+    }
+    // Tap-without-hold hint.
+    sheetMob.addEventListener("click", () => {
+      if (VA.toast) VA.toast("Hold MAN OVERBOARD to engage", { ttl: 2000 });
+    });
+  }
+
+  // Mode chip tap: open the sheet to mid.
+  const sheetMode = document.getElementById("sheet-mode");
+  if (sheetMode) {
+    sheetMode.addEventListener("click", () => {
+      ensureAtLeast("mid");
+    });
+  }
 
   const followFab = document.getElementById("follow-fab");
   if (followFab) followFab.addEventListener("click", () => {
@@ -208,7 +230,12 @@
     const b = (t && t.battery) || null;
     const soc = b && Number.isFinite(b.soc_pct) ? b.soc_pct : null;
     VA.setText("m-batt", soc === null ? "—" : Math.round(soc).toString());
-    if (t.mode) VA.setText("sheet-mode", prettyMode(t.mode));
+    if (t.mode) {
+      const suffix = (VA.modeSuffix ? VA.modeSuffix(t) : "");
+      VA.setText("sheet-mode", prettyMode(t.mode) + suffix);
+      const modeEl = document.getElementById("sheet-mode");
+      if (modeEl) modeEl.classList.toggle("stopped", suffix !== "");
+    }
   });
 
   function prettyMode(m) {

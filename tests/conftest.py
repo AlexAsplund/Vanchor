@@ -19,7 +19,7 @@ os.environ.setdefault("VANCHOR_ALLOWED_HOSTS", "testserver")
 # persists config would clobber it — this has happened twice. Belt-and-braces:
 # snapshot the persisted config files before the session and restore them after,
 # so no test run can permanently alter the developer's live setup.
-_GUARDED = ("devices.json", "connectors.json", "fusion_cal.json")
+_GUARDED = ("devices.json", "connectors.json", "fusion_cal.json", "alerts.json")
 
 
 @pytest.fixture(autouse=True, scope="session")

@@ -181,7 +181,22 @@
     else if (cat === "ui") playSeq(SOUNDS["ui.tap"].notes);
   }
 
-  VA.sound = { play, playMode, preview, isSupported: () => supported };
+  // ---- silence: suppress alarm sounds for `ms` milliseconds ---------------
+  // Client-only: sets a timestamp until which alarm plays are skipped.
+  // Used by the anchor-alarm SILENCE button (2-minute snooze).
+  let _silencedUntil = 0;
+  function silence(ms) {
+    _silencedUntil = Date.now() + ms;
+  }
+  // Wrap play so every alarm path respects the silence window (preview and
+  // UI ticks call playSeq directly and are unaffected).
+  const _origPlay = play;
+  play = function (name) {
+    if (Date.now() < _silencedUntil) return;
+    _origPlay(name);
+  };
+
+  VA.sound = { play, playMode, preview, silence, isSupported: () => supported };
 
   // ---- UI click ticks ---------------------------------------------------------
   // Mirrors haptics.js: one capture-phase pointerdown listener over button-like

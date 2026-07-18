@@ -84,6 +84,7 @@
     $,
     send,
     bindSlider,
+    bindHold,
     applyModePanels,
     highlightRail,
     panelFor,
@@ -91,6 +92,9 @@
     revealModeOptions,
     get currentMode() { return currentMode; },
   };
+  // Expose helpers globally for cross-module use.
+  VA.bindHold = bindHold;
+  VA.toast = toast;
 
   // ---- device-availability gating -----------------------------------------
   // A "Not connected" device disables the modes that need it (backend
@@ -114,7 +118,69 @@
       }
     });
   }
-  function toast(msg) {
+  // ---- bindHold: hold-to-engage ring for drive-away actions ---------------
+  // Attaches a progress ring (CSS animation on .sb-hold) and fires `fire` after
+  // `ms` ms of continuous hold. Releases on pointerup/cancel.
+  function bindHold(el, ms, fire) {
+    if (!el) return;
+    let t = null;
+    let justFired = false;
+    function start(e) {
+      e.preventDefault();
+      el.classList.add("sb-hold");
+      el.style.setProperty("--hold-ms", ms + "ms");
+      clearTimeout(t);
+      t = setTimeout(() => {
+        el.classList.remove("sb-hold");
+        justFired = true;
+        try { if (navigator.vibrate) navigator.vibrate(30); } catch (_) {}
+        fire();
+      }, ms);
+    }
+    function cancel() {
+      clearTimeout(t); t = null;
+      el.classList.remove("sb-hold");
+    }
+    el.addEventListener("pointerdown", start);
+    el.addEventListener("pointerup", cancel);
+    el.addEventListener("pointercancel", cancel);
+    el.addEventListener("pointerleave", cancel);
+    // A completed hold still emits a click on release — swallow it (capture
+    // phase) so tap-hint handlers don't fire right after the real action.
+    el.addEventListener("click", (e) => {
+      if (justFired) {
+        justFired = false;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    }, true);
+    // Prevent context-menu on long-press (mobile).
+    el.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  // ---- VA.motorActive: true when the motor can be moving -------------------
+  // Any non-manual mode counts (an autopilot may command thrust at any moment);
+  // manual counts only with real commanded thrust. Drives #cm-stop visibility.
+  let _motorActive = false;
+  VA.onTelemetry(function (t) {
+    _motorActive = !!t && (t.mode !== "manual"
+      || Math.abs((t.motor && t.motor.thrust) || 0) > 0.05);
+  });
+  Object.defineProperty(VA, "motorActive", { get: () => _motorActive });
+
+  // ---- VA.modeSuffix: honest degraded-state suffix for mode labels ---------
+  // Driven ONLY by the safety governor's auto-stop flags — never inferred from
+  // zero thrust (a station-keeper at rest idles at zero thrust and is NOT
+  // stopped). Single source for sheet-mode + map badge so the copy never forks.
+  VA.modeSuffix = function (t) {
+    const s = t && t.safety;
+    if (!s) return "";
+    if (s.shallow_stop) return " — STOPPED (shallow)";
+    if (s.nogo_stop) return " — STOPPED (no-go zone)";
+    return "";
+  };
+
+  function toast(msg, opts) {
     let el = $("va-toast");
     if (!el) {
       el = document.createElement("div");
@@ -122,10 +188,28 @@
       el.className = "va-toast";
       document.body.appendChild(el);
     }
-    el.textContent = msg;
+    // Clear old children.
+    el.textContent = "";
+    const o = (typeof opts === "object" && opts) || {};
+    const ttl = Number.isFinite(o.ttl) ? o.ttl : 2600;
+    const msgNode = document.createElement("span");
+    msgNode.textContent = msg;
+    el.appendChild(msgNode);
+    if (o.actionLabel && o.onAction) {
+      const btn = document.createElement("button");
+      btn.textContent = o.actionLabel;
+      btn.style.cssText =
+        "margin-left:12px;border:0;background:rgba(255,255,255,0.18);color:#fff;" +
+        "border-radius:999px;padding:3px 11px;font:700 13px inherit;cursor:pointer;";
+      btn.addEventListener("click", () => {
+        el.classList.remove("show");
+        o.onAction();
+      });
+      el.appendChild(btn);
+    }
     el.classList.add("show");
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => el.classList.remove("show"), 2600);
+    toast._t = setTimeout(() => el.classList.remove("show"), ttl);
   }
   // Capture-phase block: an unavailable mode click never reaches a mode handler.
   document.addEventListener("click", (e) => {

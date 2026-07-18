@@ -244,29 +244,67 @@
     <span class="fab-ic" aria-hidden="true">📍</span>
   </button>
 
-  <!-- Safety / status banner — hidden unless telemetry.safety reports trouble. -->
-  <div id="banner" class="hidden" role="alert"></div>
-
-  <!-- Stacked safety banners for battery RTL / shallow / no-go / MOB / link-loss
-       (tasks #61-#64). Sits below the #banner pill, above the map controls. -->
+  <!-- Stacked safety banners — ONLY alarm surface (Task 1 D1).
+       Full-width fixed strips; container pointer-transparent, buttons inside are not.
+       Priority is the CSS `order` property (lower = top) — see style.css:
+       health-fault 0 > MOB 1 > anchor 2 > fix-lost 3 > shallow 4 > hdg-stale 5 >
+       batt-crit 6 > batt-warn 7 > link 8 > depth-stale 9 > rtl 10 > apb 11 > gov 12. -->
   <div id="safety-banners" class="safety-banners" role="alert" aria-live="assertive">
-    <div id="rtl-banner" class="sbanner sbanner-warn hidden">
-      <span class="sb-msg">⚠ Low battery — return now?</span>
-      <button id="rtl-banner-go" class="sb-act" type="button">Return to Launch</button>
-    </div>
-    <div id="auto-apb-banner" class="sbanner sbanner-warn hidden">
-      <span>🧭 EXTERNAL AUTOPILOT — Follow-APB engaged automatically</span>
-      <button id="auto-apb-banner-stop" class="sb-act" type="button">Disengage (STOP)</button>
-    </div>
-    <div id="shallow-banner" class="sbanner sbanner-alarm hidden">
-      <span class="sb-msg" id="shallow-banner-msg">⚠ SHALLOW — auto-stopped</span>
-    </div>
+    <!-- MOB strip — MAN OVERBOARD -->
     <div id="mob-banner" class="sbanner sbanner-mob hidden">
-      <span class="sb-msg">🛟 MAN OVERBOARD — returning</span>
+      <span class="sb-msg">MAN OVERBOARD — returning</span>
       <button id="mob-banner-clear" class="sb-act" type="button">Clear</button>
+      <button id="mob-banner-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
     </div>
+    <!-- Anchor / drag alarm strip (D2): cause + elapsed, RECOVER (hold) /
+         SILENCE (2 min) / STOP on the strip. Driven by safety.js. -->
+    <div id="anchor-alarm-banner" class="sbanner sbanner-alarm hidden">
+      <div class="sb-body">
+        <span class="sb-title" id="aa-banner-title">ANCHOR DRAGGING</span>
+        <span class="sb-sub" id="aa-banner-msg"></span>
+      </div>
+      <button id="aa-banner-recover" class="sb-act sb-hold-act" type="button">RECOVER<small>HOLD 0.6&nbsp;s</small></button>
+      <button id="aa-banner-silence" class="sb-act" type="button">SILENCE<small>2 MIN</small></button>
+      <button id="aa-banner-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
+    </div>
+    <!-- Battery critical strip -->
+    <div id="batt-crit-banner" class="sbanner sbanner-batt-crit hidden">
+      <span class="sb-msg" id="batt-crit-msg">BATTERY CRITICAL</span>
+      <button id="batt-crit-rtl" class="sb-act sb-hold-act hidden" type="button">Return to Launch<small>HOLD 0.6&nbsp;s</small></button>
+      <button id="batt-crit-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
+    </div>
+    <!-- Shallow alarm. No Resume button: the governor re-evaluates every tick
+         and thrust resumes automatically when the depth clears. -->
+    <div id="shallow-banner" class="sbanner sbanner-alarm hidden">
+      <span class="sb-msg" id="shallow-banner-msg">SHALLOW — auto-stopped</span>
+      <button id="shallow-banner-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
+    </div>
+    <!-- Link loss -->
     <div id="link-banner" class="sbanner sbanner-alarm hidden">
-      <span class="sb-msg">📡 Connection lost — holding position</span>
+      <span class="sb-msg" id="link-banner-msg">Connection lost — holding position</span>
+      <button id="link-banner-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
+    </div>
+    <!-- Battery RTL recommend -->
+    <div id="rtl-banner" class="sbanner sbanner-warn hidden">
+      <span class="sb-msg">Low battery — return now?</span>
+      <button id="rtl-banner-go" class="sb-act" type="button">Return to Launch</button>
+      <button id="rtl-banner-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
+    </div>
+    <!-- Safety governor advisory -->
+    <div id="gov-banner" class="sbanner sbanner-warn hidden">
+      <span class="sb-msg" id="gov-banner-msg">Safety governor active</span>
+      <button id="gov-banner-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
+    </div>
+    <!-- Battery low warning -->
+    <div id="batt-warn-banner" class="sbanner sbanner-batt-warn hidden">
+      <span class="sb-msg" id="batt-warn-msg">Low battery — consider returning</span>
+      <button id="batt-warn-rtl" class="sb-act sb-hold-act hidden" type="button">Return to Launch<small>HOLD 0.6&nbsp;s</small></button>
+      <button id="batt-warn-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
+    </div>
+    <!-- External autopilot (order 10) -->
+    <div id="auto-apb-banner" class="sbanner sbanner-warn hidden">
+      <span class="sb-msg">EXTERNAL AUTOPILOT — Follow-APB engaged automatically</span>
+      <button id="auto-apb-banner-stop" class="sb-act" type="button">Disengage (STOP)</button>
     </div>
   </div>
 
@@ -308,6 +346,9 @@
               aria-label="Drag to resize controls; tap to cycle">
         <span class="sheet-grip-bar"></span>
       </button>
+      <!-- "Back to map" sits beside the grip (mid/full only) so the peekbar
+           keeps the fixed STOP-left / mode / MOB-right law. -->
+      <button id="sheet-collapse" class="sheet-collapse" type="button" aria-label="Back to map">⌄&nbsp;Map</button>
       <div class="sheet-instruments" id="sheet-instruments">
         <div class="si-tile"><span class="si-label">SOG</span><span class="si-val"><b id="m-sog">—</b><small>kn</small></span></div>
         <div class="si-tile"><span class="si-label">HDG</span><span class="si-val"><b id="m-hdg">—</b><small>°</small></span></div>
@@ -315,9 +356,9 @@
         <div class="si-tile"><span class="si-label">BATT</span><span class="si-val"><b id="m-batt">—</b><small>%</small></span></div>
       </div>
       <div class="sheet-peekbar">
-        <button id="sheet-collapse" class="sheet-collapse" type="button" aria-label="Back to map">⌄&nbsp;Map</button>
-        <span class="sheet-mode" id="sheet-mode">Manual</span>
-        <button id="sheet-stop" class="sheet-stop" type="button">■ STOP</button>
+        <button id="sheet-stop" class="sheet-stop" type="button" aria-label="Emergency stop">■ STOP</button>
+        <button id="sheet-mode" class="sheet-mode" type="button" aria-label="Current mode, tap to expand">Manual</button>
+        <button id="sheet-mob" class="sheet-mob" type="button" aria-label="Man overboard, hold to engage">MAN OVERBOARD</button>
       </div>
     </div>
     <div class="mode-rail" id="mode-rail" role="tablist" aria-label="Autopilot mode">
@@ -420,7 +461,15 @@
         <label class="switch" title="Use the learned neural-net station-keeper instead of the PID one (falls back automatically if unavailable)"><input type="checkbox" id="anchor-smart" /><span class="track"></span> Smart station-keeping (learned)</label>
         <label class="switch"><input type="checkbox" id="anchor-leif" /><span class="track"></span> Leif <span class="info-dot" tabindex="0" role="img" aria-label="About Leif" title="Leif — an experimental pure neural-net station-keeper (no PID base) that steers the motor through its FULL rotation to vector thrust. Trained for a 5 m watch circle: it holds ~2.5–3 m of active wander and NEVER idles, so for tighter radii use Anchor or Smart (they sit still inside a small ring; Leif will look busy). No PID fallback: a fun, opt-in research mode.">ⓘ</span></label>
         <label class="switch" title="Vector the motor through its full rotation to push directly against wind/current, instead of the ±35° band — holds a tighter spot in a beam set (PID station-keeper)"><input type="checkbox" id="anchor-vectored" /><span class="track"></span> Vectored thrust (full rotation)</label>
-        <button id="anchor-go" class="btn-primary wide">⚓ Drop anchor here</button>
+        <button id="anchor-go" class="btn-primary wide">Drop anchor here</button>
+        <!-- Anchor engaged state — shown when anchor_hold or anchor_ml is active -->
+        <div id="anchor-engaged" class="anchor-engaged hidden">
+          <div class="ae-status" id="ae-status">Anchored — holding position</div>
+          <div class="ae-btns">
+            <button id="ae-release" class="ae-release" type="button">■ RELEASE — stop holding</button>
+            <button id="ae-redrop" class="ae-redrop" type="button">Re-drop here — moves the point</button>
+          </div>
+        </div>
         <div class="ctx-sub">Jog anchor</div>
         <div class="dpad">
           <button id="jog-fwd" class="dpad-up" aria-label="Jog forward">↑</button>
@@ -720,6 +769,11 @@
         </details>
       </div>
     </div>
+    <!-- Dock stop bar: always-visible STOP + MOB row, last child of dock. -->
+    <div id="dock-stop-bar" class="dock-stop-bar">
+      <button id="dock-stop" type="button" aria-label="Emergency stop">■ STOP</button>
+      <button id="dock-mob" type="button" aria-label="Man overboard hold to engage">MAN OVERBOARD</button>
+    </div>
   </nav>
 
   <!-- ============== VIEW OVERLAY DOCK ============== -->
@@ -751,6 +805,7 @@
       <header class="cm-appbar">
         <button id="cm-back" class="cm-back hidden" type="button" aria-label="Back">‹</button>
         <div class="cm-title" id="cm-title">Menu</div>
+        <button id="cm-stop" class="cm-stop hidden" type="button" aria-label="Emergency stop">■ STOP</button>
         <button id="settings-close" class="cm-close" type="button" aria-label="Close">✕</button>
       </header>
       <div class="cm-body">
