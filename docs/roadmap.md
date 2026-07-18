@@ -233,3 +233,47 @@ on real boards; per-channel driver-pack example; tee-per-channel if ever needed.
 - Learned compass offset not persisted across restarts (→ item 41).
 - COG/declination stubbed (magnetic == true) for non-HWT901B sources
   (→ item 47).
+
+## Adoption pack (2026-07-18) — making vanchor attractive & easy for new users
+
+Full feature review targeting: attractive to potential users, easy to use,
+easy to set up. Effort: S=days, M=1-2 weeks, L=bigger. The five bolded
+**TOP-5** items are in active development (branch `dev/adoption-pack`).
+
+Setup & first contact:
+1. **TOP-5** Flashable SD-card image (L): Raspberry Pi Imager preset ->
+   hotspot -> vanchor.local -> wizard; in-UI auto-updater. Kills the
+   apt/git/pip barrier.
+2. **TOP-5** Hardware setup wizard (M): scan serial/I2C -> autodetect known
+   devices -> live per-sensor preview -> wiring help. Pairs with helm PCB.
+3. WiFi onboarding (S-M): hotspot-first + captive "join your WiFi" page.
+4. **TOP-5** Demo mode (S): `vanchor --demo` + hosted read-only sim linked
+   from the README — drive the product in 30 s before installing.
+
+UI & UX:
+5. Guided "first anchor" overlay (S): script the magic moment once.
+6. Simple/advanced UI split (M): map + anchor + take-me-here + STOP by
+   default; expert features behind a toggle.
+7. **TOP-5** Push notifications (M): Web Push from the existing PWA SW —
+   anchor drag / battery / depth / link loss with the phone locked.
+8. Metric/imperial + i18n strings (S).
+9. Trip replay polish in-UI (S-M): tracks + depth + catch pins at home.
+
+Modes & functions:
+10. **TOP-5** Passive anchor-alarm mode (S): motor OFF, GPS watch circle +
+    push alarm + one-tap "recover to anchor point". Zero-risk trust builder.
+11. Spot memory (S): named spots w/ depth/notes; anchor-at/route-to spot.
+12. Weather overlay + "conditions holdable?" check (M): forecast vs the
+    wind-cap knowledge from training.
+13. One-tap trolling presets (S): speed + contour/track bundles.
+14. NMEA-0183 output over WiFi (M): feed fish finders / OpenCPN / Navionics.
+
+Trust & safety:
+15. Pre-departure check screen (S): GPS/compass/motor/battery/STOP checklist.
+16. Battery endurance estimate (M): hours-left from INA226 + thrust history.
+
+Community & growth:
+17. Depth-chart sharing (M): lake export/import now (cmapper format exists);
+    opt-in community lake library later.
+18. Device driver-pack install UI (M): ship the parked HACS-style plan on the
+    existing entry-point hook (#43); safety floor stays core-only.
