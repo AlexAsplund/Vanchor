@@ -248,8 +248,12 @@ Setup & first contact:
    -> notifications), and a declared-device passthrough policy
    (/dev/serial|ttyACM|ttyUSB|i2c|gpio incl. hotplug) verified visible
    in-container. Pi Imager preset -> hotspot -> vanchor.local -> wizard;
-   Settings cards for update/backup/storage. Kills the apt/git/pip
-   barrier; upgrades become pull+recreate, never brick.
+   Settings cards for update/backup/storage. OFFLINE-FIRST (boat Pi may
+   never see the internet): image fully self-contained, updates sideloaded
+   as signed bundles through the browser (which has internet at home) with
+   client-side update discovery; online pull is the optional path.
+   Distribution: GitHub Releases + a Pi Imager os_list JSON. Kills the
+   apt/git/pip barrier; upgrades become load+recreate, never brick.
 2. **TOP-5** Hardware setup wizard (M): scan serial/I2C -> autodetect known
    devices -> live per-sensor preview -> wiring help. Pairs with helm PCB.
 3. WiFi onboarding (S-M): hotspot-first + captive "join your WiFi" page.
