@@ -2,7 +2,7 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## Unreleased
+## [1.5.0a8] — 2026-07-18
 
 - **Leif retrained: no more orbiting (promoted `leif120i best_g00240`)** —
   the pure learned station-keeper no longer circles the anchor: live-sim
