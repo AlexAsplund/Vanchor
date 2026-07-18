@@ -297,6 +297,12 @@ _Leif_PATH = os.path.join(os.path.dirname(__file__), "anchor_leif.json")
 class AnchorLeifMode(AnchorMLMode):
     """"Leif" -- a PURE learned station-keeper (EXPERIMENTAL).
 
+    RADIUS-BLIND (parked limitation, 2026-07-18): the policy trained only at
+    a 5 m watch circle and does not observe ``anchor_radius_m``; its style is
+    ~2.5-3 m of perpetual active wander and it never idles. Honest at radius
+    >= 5 m; for tight rings prefer Anchor/Smart (idle deadband). The
+    radius-aware obs v3 retrain is specced in docs/anchor-ml.md.
+
     Unlike :class:`AnchorMLMode` (a bounded residual over the PID base), Leif's
     command IS the net output directly -- no PID scaffold. It was trained from
     scratch by Evolution Strategies with a WIDE steering swing, so it learns to

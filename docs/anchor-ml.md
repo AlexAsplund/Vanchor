@@ -338,9 +338,26 @@ mean dist 2.6–3.1 m, **net rotation 9–74° (no orbit)**, 3.5–7.1
 reversals/min, heading error 28–46°. Held-out eval: within 83.4% / hold
 76.7% (ties the PID's honest hold with better containment; the shipped
 orbiter held 21.6%). Predecessor archived as
-`runs/anchor_leif-superseded-20260717.json`. **Open item:** engage-heading
-error ~40° vs the 20° goal — next tool is a heading-aware scripted teacher
-(BC v2) to establish the achievable frontier before more ES pressure.
+`runs/anchor_leif-superseded-20260717.json`. **Open items (parked
+2026-07-18, owner decision):**
+
+1. **Engage-heading lock**: ~40° mean error vs the 20° goal. Next tool: a
+   heading-aware scripted teacher (BC v2) to establish the achievable
+   frontier before more ES pressure.
+2. **Radius-awareness**: the policy trained ONLY at a 5 m watch circle and
+   does not observe the radius; its natural style is ~2.5–3 m of perpetual
+   active wander (it never idles — measured live: mean dist 2.53 m, 31%
+   inside a 2 m ring, gross heading churn ~19°/s at near-zero net). On a
+   tight ring this reads as "swerving". Operator guidance (also in the UI
+   tooltip): **Leif is honest at radius ≥ 5 m; use Anchor/Smart for tight
+   rings** — their idle deadband sits still below the GPS-noise +
+   boat-length floor that a 2 m ring is already under. Parked fix: obs v3
+   (append normalized radius, 10→11 dims — `state.anchor_radius_m` is
+   already in the runtime state), sample radius 2–8 m per training
+   scenario so the reward gates scale, re-clone + standard pipeline
+   (BC → capped-adapt ES → snapshot archive → sim-in-the-loop gauntlet
+   incl. a tight-radius episode). Idling inside small rings should emerge
+   from the existing speed penalty once containment is satisfiable.
 
 ### Run ledger (the orbit saga in numbers)
 

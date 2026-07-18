@@ -15,8 +15,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   stack), so every archived snapshot runs the full-stack sim gauntlet and
   the ranking happens there. Also fixes a real runtime obs bug
   (`AnchorLeifMode` under-reported its own steering by the azimuth rescale
-  in the prev-action channel). Open item: engage-heading lock is ~40° mean
-  error vs the 20° goal (scripted-teacher experiment next).
+  in the prev-action channel). Open items (parked): engage-heading
+  lock is ~40° mean error vs the 20° goal (scripted-teacher experiment),
+  and the policy is radius-blind — trained at a 5 m circle, ~2.5–3 m
+  perpetual wander, never idles, so it looks busy on tight rings (UI
+  tooltip + docs now say: Leif ≥ 5 m radius; Anchor/Smart for tight rings;
+  radius-aware obs v3 retrain specced in docs/anchor-ml.md).
 
 - **Leif orbit-exploit fix (training harness)** — the pure learned
   station-keeper had discovered it could "hold anchor" by driving full speed
