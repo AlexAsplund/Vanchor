@@ -1959,11 +1959,14 @@ body.mobile .brand { display: none; }
 body.mobile .chips {
   flex-wrap: nowrap; overflow: hidden; gap: 6px; min-width: 0;
 }
-/* Health-only topbar on mobile: data values live in the 26px peek row */
+/* Health-only topbar on mobile: data values live in the 26px peek row.
+   Visible: chip-conn (dot), chip-fix (GPS status), chip-batt.
+   Hidden: speed/heading/depth/route data chips + remote-link chip. */
 body.mobile #chip-speed,
 body.mobile #chip-hdg,
 body.mobile #chip-depth,
-body.mobile #chip-route { display: none !important; }
+body.mobile #chip-route,
+body.mobile #chip-link { display: none !important; }
 body.mobile .chip { padding: 5px 9px; font-size: 11px; }
 body.mobile .topbar-actions { flex: 0 0 auto; }
 body.mobile #settings-open { width: 40px; height: 40px; }
@@ -2792,4 +2795,44 @@ body[data-view="manual"] #map-pills { display: none; }
   color: var(--accent);
 }
 .maprot-seg button:first-child { border-right: 1px solid var(--line); }
+
+/* ---- ≤390px narrow mobile: tight chip budget (M1) + peek-mode shrink (M3) ---
+ * At 360px the #chips container is only ~120px wide (topbar-actions claim the
+ * rest).  Three health chips (conn + fix + batt) overflow at current padding;
+ * fix: reduce padding/font and drop chip-fix to a colored dot.
+ *
+ * chip-fix .chip-dot is invisible by default; it is only revealed at ≤390px
+ * so chip-fix keeps its text on tablet/desktop.
+ * ---- */
+#chip-fix .chip-dot { display: none; }
+
+@media (max-width: 390px) {
+  /* Tighten chip footprint so 3 health chips fit in ~120px (360px) clientWidth. */
+  body.mobile .chip  { padding: 3px 5px; font-size: 10px; gap: 4px; }
+  body.mobile .chips { gap: 3px; }
+  /* chip-fix: drop val text → dot-only; dot color mirrors data-fix state. */
+  body.mobile #chip-fix .chip-val { display: none; }
+  body.mobile #chip-fix .chip-dot { display: block; }
+  body.mobile #chip-fix[data-fix="ok"]   .chip-dot { background: var(--accent-2); box-shadow: 0 0 5px var(--accent-2); }
+  body.mobile #chip-fix[data-fix="bad"]  .chip-dot { background: var(--stop); animation: pulse 0.8s infinite; }
+  body.mobile #chip-fix[data-fix="none"] .chip-dot { background: var(--muted); }
+  /* M3: prevent "Manu..." truncation — 14px doesn't fit in the ~90px flex
+     gap between STOP (min-width 104px) and MOB ("MAN OVERBOARD" ~120px). */
+  body.mobile .sheet-peekbar .sheet-mode { font-size: 11px; }
+}
+
+@media (max-width: 360px) {
+  /* Headroom for real-phone font drift (Android renders wider than desktop
+     Chromium): drop the battery outline icon — the "%" value plus the
+     data-level color already carry the state.  Saves icon 26px + gap 4px,
+     leaving ~34px slack in the 120px budget instead of ~4px. */
+  body.mobile .chip-batt-icon { display: none; }
+  /* M3 at 360px: STOP (111px) + MOB (136px) leave only ~67px for the center
+     mode text — "Manual — idle" needs ~97px even at 11px.  Ellipsis-safe
+     layout (brief option B): wrap to two lines inside the 56px row instead
+     of truncating; the #mode-pill stays the authoritative single-line copy. */
+  body.mobile .sheet-peekbar .sheet-mode {
+    white-space: normal; line-height: 1.2; letter-spacing: 0.02em;
+  }
+}
 

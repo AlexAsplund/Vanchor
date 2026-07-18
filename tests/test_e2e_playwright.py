@@ -420,3 +420,98 @@ def test_routechoice_append_and_replace(live_server: _ServerHandle, pw_browser):
     finally:
         page.close()
         ctx.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 4: Chips no-overflow at 360px (M1 fix verification)
+# ---------------------------------------------------------------------------
+
+def test_chips_no_overflow_360px(live_server: _ServerHandle, pw_browser):
+    """#chips scrollWidth must not exceed clientWidth at 360×780 mobile viewport.
+
+    At 360px the topbar-actions (4 view-chips + alerts + settings) claim ~220px
+    leaving ~120px for the health chips.  The M1 fix reduces chip padding/font
+    and drops chip-fix to dot-only so all three chips fit within that budget.
+    """
+    base = live_server.base
+    ctx = pw_browser.new_context(viewport={"width": 360, "height": 780})
+    page = ctx.new_page()
+    page.set_default_timeout(10_000)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    try:
+        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
+        # Wait for telemetry to flow so chip-batt is visible (worst-case width).
+        page.wait_for_function(
+            "!document.getElementById('chip-batt').classList.contains('hidden')",
+            timeout=5000,
+        )
+        page.wait_for_timeout(300)  # let layout settle
+
+        dims = page.eval_on_selector(
+            "#chips",
+            "el => ({ sw: el.scrollWidth, cw: el.clientWidth })",
+        )
+        assert dims["sw"] <= dims["cw"], (
+            f"chips overflow at 360px: scrollWidth={dims['sw']} > clientWidth={dims['cw']}"
+        )
+        assert not errors, f"Page JS errors: {errors[:3]}"
+    finally:
+        page.close()
+        ctx.close()
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Stale state — chip-conn[data-state="stale"] + body[data-stale="1"]
+# ---------------------------------------------------------------------------
+
+def test_chip_stale_state(live_server: _ServerHandle, pw_browser):
+    """After telemetry stops the stale watchdog must fire within ~4 s.
+
+    Stopping the server causes the WS to drop (disconnected), then the 3 s
+    stale watchdog overwrites chip-conn data-state with "stale" and sets
+    body.dataset.stale="1" so CSS greys the peek numbers.
+    """
+    base = live_server.base
+    ctx = pw_browser.new_context(viewport={"width": 390, "height": 844})
+    page = ctx.new_page()
+    page.set_default_timeout(15_000)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    try:
+        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
+        page.wait_for_timeout(2000)  # let WS connect + telemetry frames arrive
+
+        # Confirm we start connected so the test doesn't pass trivially.
+        connected = _poll(
+            lambda: page.eval_on_selector("#chip-conn", "el => el.dataset.state") == "connected",
+            timeout_s=8,
+        )
+        assert connected, "Expected chip-conn=connected before stale test"
+
+        # Kill the server — WS drops (disconnected), then stale watchdog fires.
+        live_server.kill()
+
+        # Stale watchdog fires >3 s after last telemetry frame.  Allow 8 s total.
+        def _stale_active() -> bool:
+            state = page.eval_on_selector("#chip-conn", "el => el.dataset.state or ''")
+            stale_body = page.evaluate("document.body.dataset.stale or ''")
+            return state == "stale" and stale_body == "1"
+
+        stale_appeared = _poll(_stale_active, timeout_s=8)
+        assert stale_appeared, (
+            "chip-conn[data-state=stale] / body[data-stale=1] did not appear "
+            f"after server kill; chip state={page.eval_on_selector('#chip-conn', 'el => el.dataset.state')!r}"
+        )
+
+        assert not errors, f"Page JS errors: {errors[:3]}"
+    finally:
+        page.close()
+        ctx.close()
+        # Ensure server is back up for any subsequent tests.
+        try:
+            live_server.restart()
+        except Exception:
+            pass
