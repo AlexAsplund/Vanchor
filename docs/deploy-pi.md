@@ -164,6 +164,18 @@ On your phone or laptop:
    container, health-gates (polls `/api/state`), and auto-rolls back to the
    previous image if the health check fails within 60 s. You never brick the Pi.
 
+> **What the sha256 protects — and what it does not.**
+> The bundle manifest carries a SHA-256 hash of the embedded `image.tar.gz`.
+> The supervisor verifies this hash before loading the image, which catches
+> accidental corruption in transit (a bad download, a flipped SD-card bit, a
+> truncated upload).  It does **not** protect against a compromised release or
+> a tampered CI pipeline — the hash and the payload come from the same CI job
+> and are not independently signed.  No code-signing exists yet; you are
+> trusting GitHub Actions and the GitHub release page.  If you build the image
+> yourself the hash is computed over your own build output, which is equally
+> trustworthy.  A future release will add a detached GPG signature over the
+> manifest to close this gap.
+
 ### Online pull (optional — Pi needs internet)
 
 If the Pi can reach the internet (marina WiFi), the supervisor can pull the

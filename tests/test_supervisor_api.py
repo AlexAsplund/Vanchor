@@ -339,3 +339,88 @@ def test_body_size_cap(api_server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(req, timeout=5)
     assert exc.value.code == 413
+
+
+# ------------------------------------------------------------------ #
+# A2: _self_update path traversal containment
+# ------------------------------------------------------------------ #
+
+def test_self_update_traversal_rejected(api_server):
+    """A2: /v1/self-update must reject bundle paths that escape the volume."""
+    base, token = api_server
+    code, data = _post(
+        f"{base}/v1/self-update",
+        {"bundle": "../../etc/passwd"},
+        token,
+    )
+    assert code == 400
+    assert "invalid" in data.get("error", "")
+
+
+# ------------------------------------------------------------------ #
+# A3: backup download backup_id sanitization
+# ------------------------------------------------------------------ #
+
+def test_download_backup_rejects_wildcard(api_server):
+    """A3: backup_id with glob metachar must return 400 not a directory listing."""
+    base, token = api_server
+    code, data = _get(f"{base}/v1/backups/*/download", token)
+    assert code == 400
+    assert "invalid" in data.get("error", "")
+
+
+def test_download_backup_rejects_dotdot(api_server):
+    """A3: backup_id with path traversal must return 400."""
+    base, token = api_server
+    code, data = _get(f"{base}/v1/backups/../token/download", token)
+    # FastAPI may return 404 for the parameterised route or 400 from our guard.
+    assert code in (400, 404)
+
+
+# ------------------------------------------------------------------ #
+# I1: provision_token
+# ------------------------------------------------------------------ #
+
+from vanchor_supervisor.api import provision_token
+import os
+import stat as _stat
+
+
+def test_provision_token_creates_file(tmp_path):
+    """I1: provision_token creates a non-empty token file."""
+    state_dir = str(tmp_path / "state")
+    token = provision_token(state_dir, volume_mp="/unused")
+    tok_file = Path(state_dir) / "token"
+    assert tok_file.exists()
+    assert len(token) == 64  # secrets.token_hex(32) → 64 hex chars
+    assert tok_file.read_text().strip() == token
+
+
+def test_provision_token_idempotent(tmp_path):
+    """I1: second call returns the same token (no overwrite)."""
+    state_dir = str(tmp_path / "state")
+    t1 = provision_token(state_dir, volume_mp="/unused")
+    t2 = provision_token(state_dir, volume_mp="/unused")
+    assert t1 == t2
+
+
+def test_provision_token_perms_600(tmp_path):
+    """I1: token file permissions are 0o600 (owner r/w only)."""
+    state_dir = str(tmp_path / "state")
+    provision_token(state_dir, volume_mp="/unused")
+    tok_file = Path(state_dir) / "token"
+    mode = tok_file.stat().st_mode & 0o777
+    assert mode == 0o600, f"Expected 0o600, got 0o{mode:o}"
+
+
+# ------------------------------------------------------------------ #
+# I1: __main__ import must not crash (provision_token exists in api)
+# ------------------------------------------------------------------ #
+
+def test_main_module_imports_cleanly():
+    """I1: importing __main__ must not raise (provision_token must exist in api)."""
+    import importlib
+    # The module does a from .api import provision_token at the top of main().
+    # We verify the import completes without ImportError.
+    mod = importlib.import_module("vanchor_supervisor.__main__")
+    assert callable(getattr(mod, "main", None))

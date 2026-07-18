@@ -32,10 +32,19 @@ _MAX_JOBS = 20
 # Default containers.json entry #0
 # ---------------------------------------------------------------------------
 
+# Image repository used by the factory bundle CI (image.yml --image flag) and
+# this default entry.  Must stay in sync with .github/workflows/image.yml.
+_APP_IMAGE_REPO = "vanchor/vanchor"
+
 _DEFAULT_CONTAINERS = [
     {
         "name": "vanchor",
-        "image": "ghcr.io/alexasplund/vanchor",
+        # Local image name as built by the factory bundle CI (image.yml builds
+        # with --tag "vanchor/vanchor:<version>").  The I3 seeding step in
+        # vanchor-load-images.sh overwrites this tag with the manifest value on
+        # first boot, so the tag here is only a fallback for hand-provisioned
+        # systems that never ran the load-images service.
+        "image": _APP_IMAGE_REPO,
         "tag": "1.5.0a8",
         "previous_tag": None,
         "network": "host",
@@ -43,6 +52,13 @@ _DEFAULT_CONTAINERS = [
         "volumes": [
             {"volume": "vanchor_data", "target": "/data"},
             {"host": "/dev", "target": "/dev", "ro": True},
+            # D-Bus system bus: in-container nmcli reaches host NetworkManager.
+            # Without this bind-mount nmcli silently fails and WiFi join/hotspot
+            # restore break on the Pi.  Must match docker-compose.yml.
+            {
+                "host": "/run/dbus/system_bus_socket",
+                "target": "/run/dbus/system_bus_socket",
+            },
         ],
         "device_cgroup_rules": [
             "c 166:* rmw",
@@ -705,6 +721,57 @@ class SupervisorCore:
             if p.stem == backup_id or p.name == backup_id:
                 return p
         return None
+
+    def ensure_running(self) -> None:
+        """Reconcile: start containers that have a restart policy but are not running.
+
+        Called once at daemon startup after containers.json is loaded.  For each
+        entry with a non-empty ``restart`` policy:
+
+        * If the image tag is not available locally — log a warning and skip
+          (no crash; the load-images service may not have run yet).
+        * If the container is already running — no-op.
+        * If the container is absent or exited — call ``backend.run(entry)``
+          to start it.
+
+        Errors starting an individual container are logged but do not abort the
+        loop; the daemon continues and the container will be retried on the
+        next update cycle.
+        """
+        for entry in self._containers:
+            if not entry.get("restart"):
+                continue
+            name = entry["name"]
+            image = entry["image"]
+            tag = entry["tag"]
+            # Check local image availability.
+            try:
+                available_tags = self.backend.list_repo_tags(image)
+                if tag not in available_tags:
+                    log.warning(
+                        "ensure_running: image %s:%s not found locally — skipping %s",
+                        image, tag, name,
+                    )
+                    continue
+            except Exception as exc:
+                log.warning(
+                    "ensure_running: could not check image %s — skipping %s: %s",
+                    image, name, exc,
+                )
+                continue
+            # Check container state.
+            try:
+                status = self.backend.ps(name)
+                if status.get("running"):
+                    log.debug("ensure_running: %s is running — no action", name)
+                    continue
+                log.info(
+                    "ensure_running: %s is %r — starting",
+                    name, status.get("status", "unknown"),
+                )
+                self.backend.run(entry)
+            except Exception as exc:
+                log.error("ensure_running: failed to start %s: %s", name, exc)
 
     def list_backups(self) -> list[dict]:
         """Return a list of available backups as dicts."""

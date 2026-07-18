@@ -330,44 +330,68 @@
       });
   }
 
+  // Helper: handle the "underway" 409 interlock for destructive supervisor ops.
+  // Offers a force-override confirm dialog; calls cb({force:true}) on acceptance.
+  function _handleUnderway(data, statusId, label, cb) {
+    if (data.error === "underway") {
+      if (confirm(
+        "WARNING: The autopilot is currently active. " +
+        label + " will restart the app and interrupt the current mission.\n\n" +
+        "Force anyway?"
+      )) {
+        cb({ force: true });
+      }
+      return true; // handled
+    }
+    return false;
+  }
+
   // ---- apply update -----------------------------------------------------
   $("sys-apply-btn") && $("sys-apply-btn").addEventListener("click", function () {
     if (!_bundleName) return;
     if (!confirm("Apply this update? The app will restart. If health checks fail, it rolls back automatically.")) return;
-    VA.postJSON("/api/supervisor/proxy/v1/update/apply", {
-      name: "vanchor",
-      source: "bundle",
-      bundle: _bundleName,
-    })
-      .then(function (data) {
-        if (data.job_id) {
-          setText("sys-job-line", "Job started: " + data.job_id);
-          enable("sys-apply-btn", false);
-        } else if (data.error === "busy") {
-          setText("sys-upload-status", "Another job is running — try again shortly.");
-        } else {
-          setText("sys-upload-status", "Apply error: " + (data.error || JSON.stringify(data)));
-        }
-      })
-      .catch(function (err) {
-        setText("sys-upload-status", "Apply error: " + err.message);
-      });
+    function doApply(extra) {
+      VA.postJSON("/api/supervisor/proxy/v1/update/apply", Object.assign({
+        name: "vanchor",
+        source: "bundle",
+        bundle: _bundleName,
+      }, extra))
+        .then(function (data) {
+          if (_handleUnderway(data, "sys-upload-status", "Updating", doApply)) return;
+          if (data.job_id) {
+            setText("sys-job-line", "Job started: " + data.job_id);
+            enable("sys-apply-btn", false);
+          } else if (data.error === "busy") {
+            setText("sys-upload-status", "Another job is running — try again shortly.");
+          } else {
+            setText("sys-upload-status", "Apply error: " + (data.error || JSON.stringify(data)));
+          }
+        })
+        .catch(function (err) {
+          setText("sys-upload-status", "Apply error: " + err.message);
+        });
+    }
+    doApply({});
   });
 
   // ---- rollback ---------------------------------------------------------
   $("sys-rollback-btn") && $("sys-rollback-btn").addEventListener("click", function () {
     if (!confirm("Roll back to the previous version?")) return;
-    VA.postJSON("/api/supervisor/proxy/v1/rollback", { name: "vanchor" })
-      .then(function (data) {
-        if (data.job_id) {
-          setText("sys-job-line", "Rollback started: " + data.job_id);
-        } else {
-          setText("sys-job-line", "Rollback error: " + (data.error || JSON.stringify(data)));
-        }
-      })
-      .catch(function (err) {
-        setText("sys-job-line", "Rollback error: " + err.message);
-      });
+    function doRollback(extra) {
+      VA.postJSON("/api/supervisor/proxy/v1/rollback", Object.assign({ name: "vanchor" }, extra))
+        .then(function (data) {
+          if (_handleUnderway(data, "sys-job-line", "Rolling back", doRollback)) return;
+          if (data.job_id) {
+            setText("sys-job-line", "Rollback started: " + data.job_id);
+          } else {
+            setText("sys-job-line", "Rollback error: " + (data.error || JSON.stringify(data)));
+          }
+        })
+        .catch(function (err) {
+          setText("sys-job-line", "Rollback error: " + err.message);
+        });
+    }
+    doRollback({});
   });
 
   // ---- backup now -------------------------------------------------------

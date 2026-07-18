@@ -283,3 +283,98 @@ def test_var_log_mount():
     text = path.read_text()
     assert "tmpfs" in text
     assert "Where=/var/log" in text
+
+
+# ---------------------------------------------------------------------------
+# 11. I4: install.sh uses SCRIPT_DIR (not REPO_ROOT) → works in chroot
+# ---------------------------------------------------------------------------
+
+def test_install_sh_uses_script_dir():
+    """I4: install.sh must derive paths from SCRIPT_DIR (dirname $0), not REPO_ROOT."""
+    path = REPO / "supervisor" / "install.sh"
+    assert path.exists()
+    text = path.read_text()
+    assert "SCRIPT_DIR" in text, "install.sh must use SCRIPT_DIR for chroot compatibility"
+    assert "REPO_ROOT" not in text, (
+        "install.sh must not use REPO_ROOT; it resolves wrong in the pi-gen chroot"
+    )
+
+
+def test_install_sh_nested_layout():
+    """I4: install.sh copies vanchor_supervisor/ INTO versions/$VER/ so
+    selfupdate.py's sanity-check (sys.path.insert(0, target_dir); import
+    vanchor_supervisor) finds versions/$VER/vanchor_supervisor/__init__.py."""
+    path = REPO / "supervisor" / "install.sh"
+    text = path.read_text()
+    # The cp command must copy the package dir *into* the version dir.
+    # Pattern: cp -r ".../vanchor_supervisor" "$INSTALL_ROOT/versions/$VER/"
+    # (not "cp -r .../supervisor" — that would put the dir one level too high)
+    assert 'cp -r "$SCRIPT_DIR/vanchor_supervisor"' in text or \
+           "cp -r \"$SCRIPT_DIR/vanchor_supervisor\"" in text, (
+        "install.sh must copy the 'vanchor_supervisor' package into versions/$VER/; "
+        "selfupdate.py expects target_dir/vanchor_supervisor/__init__.py"
+    )
+
+
+def test_chroot_enable_after_install():
+    """I4: 01-run-chroot.sh must enable the supervisor service AFTER running
+    install.sh (so the unit file is present when systemctl enable runs)."""
+    script = STAGE_ROOT / "02-stack" / "01-run-chroot.sh"
+    assert script.exists()
+    text = script.read_text()
+    # Check that install.sh invocation precedes the systemctl enable line.
+    install_pos = text.find("install.sh")
+    enable_pos = text.find("systemctl enable vanchor-supervisor")
+    assert install_pos != -1, "01-run-chroot.sh must invoke install.sh"
+    assert enable_pos != -1, "01-run-chroot.sh must systemctl enable vanchor-supervisor"
+    assert install_pos < enable_pos, (
+        "01-run-chroot.sh must run install.sh BEFORE 'systemctl enable vanchor-supervisor'; "
+        "enabling a unit before it is installed silently fails"
+    )
+    # Must not hide the enable failure with || true.
+    enable_line = [ln for ln in text.splitlines()
+                   if "systemctl enable vanchor-supervisor" in ln][0]
+    assert "|| true" not in enable_line, (
+        "|| true on 'systemctl enable vanchor-supervisor' hides install failures"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 12. A1: _DEFAULT_CONTAINERS drift — must have dbus socket + matching rules
+# ---------------------------------------------------------------------------
+
+def test_default_containers_has_dbus_mount():
+    """A1: _DEFAULT_CONTAINERS must include the dbus socket bind-mount so
+    in-container nmcli can reach host NetworkManager (mirrors docker-compose.yml)."""
+    import sys
+    sys.path.insert(0, str(REPO / "supervisor"))
+    from vanchor_supervisor.core import _DEFAULT_CONTAINERS
+
+    entry = _DEFAULT_CONTAINERS[0]
+    dbus_host = "/run/dbus/system_bus_socket"
+    found = any(
+        v.get("host") == dbus_host and v.get("target") == dbus_host
+        for v in entry.get("volumes", [])
+    )
+    assert found, (
+        "_DEFAULT_CONTAINERS must bind-mount /run/dbus/system_bus_socket "
+        "— required for nmcli WiFi join inside the container"
+    )
+
+
+def test_default_containers_device_cgroup_rules_match_compose():
+    """A1: _DEFAULT_CONTAINERS device_cgroup_rules must match docker-compose.yml."""
+    import sys
+    sys.path.insert(0, str(REPO / "supervisor"))
+    from vanchor_supervisor.core import _DEFAULT_CONTAINERS
+    import yaml
+
+    compose = yaml.safe_load((REPO / "docker-compose.yml").read_text())
+    svc = compose["services"]["vanchor"]
+    compose_rules = set(svc.get("device_cgroup_rules", []))
+
+    sup_rules = set(_DEFAULT_CONTAINERS[0].get("device_cgroup_rules", []))
+    assert sup_rules == compose_rules, (
+        f"_DEFAULT_CONTAINERS device_cgroup_rules {sup_rules} "
+        f"do not match docker-compose.yml {compose_rules}"
+    )

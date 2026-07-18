@@ -2,11 +2,8 @@
 # Enable the vanchor services, add group memberships, and configure
 # SD-write-minimisation (noatime, no SD swap, zram).
 
-# Enable docker image loader (runs once on first boot, then stamps itself done)
-# and the supervisor daemon.
-# Supervisor unit name reconciled from task-5: vanchor-supervisor.service
+# Enable docker image loader (runs once on first boot, then stamps itself done).
 systemctl enable vanchor-load-images.service
-systemctl enable vanchor-supervisor.service || true   # unit lives under /opt/vanchor-supervisor
 
 # Enable the tmpfs /var/log mount
 systemctl enable var-log.mount
@@ -38,15 +35,13 @@ if [ -f /etc/default/zramswap ]; then
     sed -i 's/^#\?ALGO=.*/ALGO=lz4/' /etc/default/zramswap
 fi
 
-# Install the supervisor python package in-place
+# Install the supervisor package: creates the versioned dir, current symlink,
+# and copies the unit file into /etc/systemd/system.  Must run BEFORE enable.
 if [ -f /opt/vanchor-supervisor/install.sh ]; then
-    bash /opt/vanchor-supervisor/install.sh || true
+    bash /opt/vanchor-supervisor/install.sh
 fi
-# Alternatively, ensure the service unit knows its PYTHONPATH
-install -d /etc/systemd/system
-if [ -f /opt/vanchor-supervisor/vanchor-supervisor.service ]; then
-    install -m 644 /opt/vanchor-supervisor/vanchor-supervisor.service \
-        /etc/systemd/system/vanchor-supervisor.service
-fi
+
+# Enable the supervisor daemon AFTER the unit file is installed by install.sh.
+systemctl enable vanchor-supervisor.service
 
 systemctl enable docker

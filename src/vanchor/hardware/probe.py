@@ -3,12 +3,12 @@
 SAFETY CONTRACT (do not weaken):
 * Serial probing is PASSIVE by default: open, listen, close. Zero bytes
   are written to the candidate device.
-* The ONLY active serial write ever permitted is the 8-byte UBX-MON-VER
-  poll (a read-only version query), and only when the caller opts in AND
-  the passive stage already classified the port as a GNSS candidate.
-* Motor candidates are identified purely by their unsolicited A/E feedback
-  broadcast (firmware emits them at 10/5 Hz with no command traffic); the
-  probe NEVER sends CMD/STEERD/THRUST, so nothing can spin.
+* The sanctioned active serial writes are: (1) MOTOR_INFO_CMD (INFO+CRC,
+  read-only identify, sent once per motor probe attempt); and (2) the
+  8-byte UBX-MON-VER poll (read-only version query, sent only when the
+  caller opts in AND the passive stage already classified the port as a
+  GNSS candidate).  No CMD/STEERD/THRUST is ever written, so nothing can
+  spin.
 * I2C probing performs only register READS at explicitly named addresses
   (helm-Pico WHOAMI@0x42, INA226 MFR/DIE id) — never a bus-wide sweep,
   never a register write beyond the 1-byte read-pointer.

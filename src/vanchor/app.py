@@ -419,6 +419,26 @@ class Runtime:
         mono_fn=time.monotonic,
     ) -> None:
         self.config = config or AppConfig()
+
+        # --- Demo mode: force sim posture whenever demo.enabled is True ---- #
+        # apply_demo_mode() is called by main() only for the --demo CLI flag.
+        # When demo.enabled arrives via yaml (demo: enabled: true) or env
+        # (VANCHOR_DEMO=1), the flag is set but the hardware/nmea_tcp/data_dir
+        # posture is NOT forced.  Guard: if apply_demo_mode() was already called
+        # upstream, the data_dir is an ephemeral tempdir (starts with the OS
+        # temp dir prefix); skip a second call to avoid creating another tmpdir.
+        if self.config.demo.enabled:
+            import tempfile as _tf
+            _already_applied = (
+                not self.config.hardware.enabled
+                and not self.config.nmea_tcp.enabled
+                and self.config.data_dir.startswith(_tf.gettempdir())
+            )
+            if not _already_applied:
+                # Preserve the existing readonly flag (may have been set via
+                # yaml/env independently of the --demo-readonly CLI arg).
+                apply_demo_mode(self.config, readonly=self.config.demo.readonly)
+
         cfg = self.config
 
         # --- Non-negotiable safety-floor lockout (#50) ------------------- #
@@ -1620,8 +1640,10 @@ class Runtime:
 
         SAFETY: Serial probing is passive (zero writes) unless active_ubx_ident
         is requested AND the passive stage classified the port as a GNSS
-        candidate. The motor probe writes nothing — it only listens for the
-        firmware's unsolicited A/E broadcast. See hardware/probe.py docstring.
+        candidate. The motor probe writes MOTOR_INFO_CMD (INFO+CRC, read-only
+        identify) as the sole sanctioned motor write, then listens for the
+        firmware's INFO response and unsolicited A/E broadcast. See
+        hardware/probe.py docstring.
         """
         from .hardware import probe as probe_mod
 
@@ -3267,6 +3289,8 @@ class Runtime:
             return
         if self.state.mode != ControlModeName.MANUAL:
             return  # someone already engaged something (e.g. a fast client)
+        if abs(self.state.motor_command.thrust) > 0.05:
+            return  # operator is actively driving; skip demo seeding
         try:
             if cfg.weather_preset:
                 self.handle_command({"type": "weather_preset", "id": cfg.weather_preset})

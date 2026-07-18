@@ -29,11 +29,43 @@ import json
 import logging
 import os
 import re
+import secrets
+import stat
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 _MAX_BODY = 1 * 1024 * 1024  # 1 MB
+
+
+# ---------------------------------------------------------------------------
+# Token provisioning
+# ---------------------------------------------------------------------------
+
+
+def provision_token(state_dir: str, volume_mp: str) -> str:
+    """Provision the supervisor API auth token (idempotent).
+
+    Creates ``<state_dir>/token`` with a 64-hex-char random string if it does
+    not exist, then sets permissions to 0o600 (owner-read/write only).
+    Returns the token value whether newly created or already present.
+
+    ``volume_mp`` is accepted for interface symmetry with the caller (may be
+    used in future for token sharing across the volume) but is not used here.
+    """
+    state_path = Path(state_dir)
+    state_path.mkdir(parents=True, exist_ok=True)
+    token_path = state_path / "token"
+    if token_path.exists():
+        token = token_path.read_text().strip()
+        if token:
+            log.debug("Token already provisioned at %s", token_path)
+            return token
+    token = secrets.token_hex(32)
+    token_path.write_text(token + "\n")
+    os.chmod(str(token_path), stat.S_IRUSR | stat.S_IWUSR)  # 0o600
+    log.info("Token provisioned at %s", token_path)
+    return token
 
 
 # ---------------------------------------------------------------------------
@@ -353,14 +385,24 @@ def serve(core, settings) -> http.server.ThreadingHTTPServer:
             _json(self, 200, {"backups": backups})
 
         def _download_backup(self, backup_id: str) -> None:
+            # Strict allowlist: backup IDs are alphanumeric+hyphen+dot only.
+            # Reject anything with wildcards, slashes, or other shell-special
+            # chars before they reach the glob call.
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._\-]{0,127}", backup_id):
+                _json(self, 400, {"error": "invalid backup_id"})
+                return
             state_dir = Path(settings.state_dir)
             backups_dir = state_dir / "backups"
-            # Find by name (with or without .tar.gz extension)
-            candidates = list(backups_dir.glob(f"{backup_id}*"))
-            if not candidates:
-                _json(self, 404, {"error": "not_found"})
-                return
-            tar_path = candidates[0]
+            # Find by exact name first, then by stem match.
+            exact = backups_dir / backup_id
+            if exact.exists():
+                tar_path = exact
+            else:
+                candidates = list(backups_dir.glob(f"{backup_id}*"))
+                if not candidates:
+                    _json(self, 404, {"error": "not_found"})
+                    return
+                tar_path = candidates[0]
             try:
                 data = tar_path.read_bytes()
                 _bytes(self, 200, data, media_type="application/gzip",
@@ -427,6 +469,12 @@ def serve(core, settings) -> http.server.ThreadingHTTPServer:
             try:
                 volume_mp = core.backend.volume_mountpoint(settings.data_volume)
                 bundle_path = (Path(volume_mp) / bundle_rel).resolve()
+                mp_resolved = Path(volume_mp).resolve()
+                try:
+                    bundle_path.relative_to(mp_resolved)
+                except ValueError:
+                    _json(self, 400, {"error": "invalid bundle path"})
+                    return
                 job = core.do_self_update(bundle_path)
                 _json(self, 200, {"job_id": job["id"]})
             except Exception as exc:

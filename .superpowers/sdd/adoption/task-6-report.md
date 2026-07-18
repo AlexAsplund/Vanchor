@@ -197,3 +197,39 @@ Three reviewer findings applied (2026-07-18):
 
 Test run: `2010 passed, 6 skipped, 10 deselected` (full suite).
 Targeted run: `64 passed` (test_docker_artifacts + test_wifi + test_image_tooling).
+
+---
+
+## Final-review fix pass
+
+Consolidated fixes applied 2026-07-18 (+ A-series addendum from parallel security review):
+
+**S1 — demo inertness (CRITICAL):** `Runtime.__init__` now auto-applies `apply_demo_mode()` whenever `config.demo.enabled is True` and the posture hasn't already been forced (guard: `not hardware.enabled and not nmea_tcp.enabled and data_dir starts with tmpdir`). Preserves existing `readonly` flag. Tests: `test_runtime_auto_applies_demo_mode_from_yaml`, `test_runtime_demo_already_applied_not_reapplied`. FIXED.
+
+**S1b — demo thrust guard (CRITICAL):** `_run_demo_scenario` now returns early if `abs(state.motor_command.thrust) > 0.05` (hand on throttle). Test: `test_demo_scenario_skips_if_driving`. FIXED.
+
+**S2 — supervisor update interlock (IMPORTANT):** `supervisor_proxy` in `server.py` returns 409 with `error="underway"` for `v1/update/apply`, `v1/rollback`, `v1/restore` when `runtime.state.mode != "manual"`, unless body contains `force=true`. `supervisor.js` `_handleUnderway()` helper offers force-override confirm dialog for apply and rollback. Tests: `test_supervisor_interlock_409_when_anchored`, `test_supervisor_interlock_allowed_in_manual`, `test_supervisor_interlock_force_overrides`, `test_supervisor_interlock_does_not_block_backup`. FIXED.
+
+**I1 — provision_token missing (CRITICAL):** Implemented `provision_token(state_dir, volume_mp)` in `api.py` using `secrets.token_hex(32)`, chmod 0o600, idempotent. Tests: `test_provision_token_creates_file`, `test_provision_token_idempotent`, `test_provision_token_perms_600`, `test_main_module_imports_cleanly`. FIXED.
+
+**I2 — container not started on first boot (CRITICAL):** Added `ensure_running()` to `SupervisorCore`; called in `__main__.py` after core creation. Checks `list_repo_tags()` for local image; starts absent/exited containers; warns and skips if image missing. Tests: `test_ensure_running_starts_absent_container`, `test_ensure_running_no_op_for_running_container`, `test_ensure_running_skips_missing_image`. FIXED.
+
+**I3 — containers.json tag hardcoded (DOWNGRADED):** `vanchor-load-images.sh` now seeds `/var/lib/vanchor-supervisor/containers.json` from manifest `image`+`app_version` if absent. Entry includes dbus socket mount. Tests: bash -n syntax test passes. FIXED.
+
+**I4 — enable before install (IMPORTANT):** `01-run-chroot.sh` reordered: `install.sh` now runs before `systemctl enable`. Dropped `|| true` on enable. `install.sh` fixed to use `SCRIPT_DIR` (not `REPO_ROOT`) for chroot compat; removed `systemctl daemon-reload/enable` from install.sh (caller's responsibility). Tests: `test_install_sh_uses_script_dir`, `test_install_sh_nested_layout`, `test_chroot_enable_after_install`. FIXED.
+
+**I5 — CHANGELOG demo entry under wrong tag (MINOR):** Demo mode entry moved from `[1.5.0a8]` to `[Unreleased]`. FIXED.
+
+**I6 — stale "writes nothing" comments (MINOR):** `app.py` ~1623 and `probe.py:6` updated to mention `MOTOR_INFO_CMD` as the second sanctioned write. FIXED.
+
+**A1 — _DEFAULT_CONTAINERS image/dbus mismatch (HIGH):** Changed image repo to `"vanchor/vanchor"` (matches factory bundle CI). Added `/run/dbus/system_bus_socket` bind-mount. `_APP_IMAGE_REPO` constant defined. `test_supervisor_core.py` fixtures updated. Tests: `test_default_containers_has_dbus_mount`, `test_default_containers_device_cgroup_rules_match_compose`. FIXED.
+
+**A2 — _self_update path traversal (MEDIUM):** Added same `relative_to(mp_resolved)` containment check as `_update_inspect`/`_update_apply`. Test: `test_self_update_traversal_rejected`. FIXED.
+
+**A3 — backup_id unsanitized glob (LOW):** Added `re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._\-]{0,127}", backup_id)` guard before glob in `_download_backup`. Tests: `test_download_backup_rejects_wildcard`, `test_download_backup_rejects_dotdot`. FIXED.
+
+**A4 — sha256 trust model not documented (DOC):** Added honest blockquote to `docs/deploy-pi.md` under Sideload section explaining what sha256 protects (transport corruption, not compromised CI) and that no signature exists yet. FIXED.
+
+**A5:** Subsumed by A1. N/A.
+
+Test run: **2032 passed, 6 skipped, 10 deselected** (full suite). ruff: clean. node --check: clean.

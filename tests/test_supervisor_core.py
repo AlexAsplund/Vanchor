@@ -40,7 +40,8 @@ def backend(tmp_path) -> FakeDockerBackend:
     vol_root = tmp_path / "data"
     vol_root.mkdir()
     b = FakeDockerBackend(volume_root=vol_root)
-    b.images.add(("ghcr.io/alexasplund/vanchor", "1.5.0a8"))
+    # _DEFAULT_CONTAINERS uses "vanchor/vanchor" (matches factory bundle CI).
+    b.images.add(("vanchor/vanchor", "1.5.0a8"))
     b.containers["vanchor"] = {
         "name": "vanchor",
         "state": "running",
@@ -62,7 +63,7 @@ def _make_app_bundle(tmp_path: Path, *, tag: str = "1.5.0a9",
     out = tmp_path / f"app-{tag}.bundle.tar"
     make_bundle.make_app_bundle(
         image_tar_gz=img,
-        image="ghcr.io/alexasplund/vanchor",
+        image="vanchor/vanchor",  # matches _DEFAULT_CONTAINERS / factory bundle CI
         tag=tag,
         min_supervisor=min_supervisor,
         arch="arm64",
@@ -220,7 +221,7 @@ def test_registry_source_uses_pull(tmp_path, settings, backend, healthy):
 
     pull_calls = [c for c in backend.calls if c[0] == "pull"]
     assert len(pull_calls) >= 1
-    assert pull_calls[-1][1] == "ghcr.io/alexasplund/vanchor"
+    assert pull_calls[-1][1] == "vanchor/vanchor"
     assert pull_calls[-1][2] == "1.5.0a9"
 
     job = core.get_job(job_id)
@@ -341,3 +342,47 @@ def test_last_job_readable(tmp_path, settings, backend, healthy):
     last = core.get_last_job()
     assert last is not None
     assert last["id"] == job_id
+
+
+# ------------------------------------------------------------------ #
+# I2: ensure_running reconcile
+# ------------------------------------------------------------------ #
+
+def test_ensure_running_starts_absent_container(tmp_path, settings, backend, healthy):
+    """I2: absent container with a restart policy is started."""
+    # Remove the container from the fake backend so it's absent.
+    backend.containers.pop("vanchor", None)
+    # Image is still present (added in backend fixture).
+    core = SupervisorCore(settings, backend, health_fetch=healthy)
+
+    core.ensure_running()
+
+    run_calls = [c for c in backend.calls if c[0] == "run"]
+    assert run_calls, "ensure_running must call backend.run for absent container"
+    started_name = run_calls[0][1]["name"]
+    assert started_name == "vanchor"
+
+
+def test_ensure_running_no_op_for_running_container(tmp_path, settings, backend, healthy):
+    """I2: container already running is not restarted."""
+    # Container is running (set in backend fixture).
+    core = SupervisorCore(settings, backend, health_fetch=healthy)
+    backend.calls.clear()  # clear calls from init
+
+    core.ensure_running()
+
+    run_calls = [c for c in backend.calls if c[0] == "run"]
+    assert not run_calls, "ensure_running must not restart a running container"
+
+
+def test_ensure_running_skips_missing_image(tmp_path, settings, backend, healthy):
+    """I2: if image is missing locally, log a warning and do not crash."""
+    backend.containers.pop("vanchor", None)
+    backend.images.clear()  # no images locally
+    core = SupervisorCore(settings, backend, health_fetch=healthy)
+
+    # Must not raise.
+    core.ensure_running()
+
+    run_calls = [c for c in backend.calls if c[0] == "run"]
+    assert not run_calls, "ensure_running must not run container if image is absent"

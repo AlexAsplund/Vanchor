@@ -86,6 +86,12 @@ def main() -> None:
     core = SupervisorCore(settings=settings, backend=backend)
     log.info("SupervisorCore ready — %d container(s) configured", len(core.containers()))
 
+    # Ensure containers with restart policies are running (first-boot reconcile).
+    try:
+        core.ensure_running()
+    except Exception as exc:
+        log.error("ensure_running failed: %s", exc)
+
     # Start API server
     server = serve(core, settings)
     server_thread = threading.Thread(

@@ -4,6 +4,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## [Unreleased]
 
+- **Demo mode (`vanchor --demo`)** — one flag boots a forced-sim demo on
+  the charted lake with a seeded looping route (or `demo.scenario: anchor`),
+  an ephemeral data dir (never touches vanchor_data/ or real devices), a
+  DEMO badge in the UI, and `--demo-readonly` which pins every client to
+  observer for hosted demos (stop still always works). `VANCHOR_DEMO=1` /
+  `VANCHOR_DEMO_READONLY=1` env equivalents.
+
 - **Flashable SD image (pi-gen) + WiFi setup card (adoption #6)** — a complete
   Raspberry Pi OS Lite arm64 (Bookworm) image baked via pi-gen with Docker CE,
   the supervisor, and the `vanchor` image pre-loaded (zero first-boot internet).
@@ -53,13 +60,6 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   passive.
 
 ## [1.5.0a8] — 2026-07-18
-
-- **Demo mode (`vanchor --demo`)** — one flag boots a forced-sim demo on
-  the charted lake with a seeded looping route (or `demo.scenario: anchor`),
-  an ephemeral data dir (never touches vanchor_data/ or real devices), a
-  DEMO badge in the UI, and `--demo-readonly` which pins every client to
-  observer for hosted demos (stop still always works). `VANCHOR_DEMO=1` /
-  `VANCHOR_DEMO_READONLY=1` env equivalents.
 
 - **Leif retrained: no more orbiting (promoted `leif120i best_g00240`)** —
   the pure learned station-keeper no longer circles the anchor: live-sim

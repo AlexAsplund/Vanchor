@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 # Idempotent installer for vanchor-supervisor.
-# BENCH-VERIFY only — not run in CI (requires a Pi with docker + systemd).
+# Works in two contexts:
+#   1. Developer bench: run from the repo root as supervisor/install.sh
+#   2. Pi image chroot: run from /opt/vanchor-supervisor/install.sh
+#      (00-run.sh copies supervisor/. there; SCRIPT_DIR resolves correctly)
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_ROOT="/opt/vanchor-supervisor"
 UNIT_DIR="/etc/systemd/system"
-VER="$(python3 -c 'import sys; sys.path.insert(0,"'"$REPO_ROOT/supervisor"'"); from vanchor_supervisor import SUPERVISOR_VERSION; print(SUPERVISOR_VERSION)')"
+VER="$(python3 -c 'import sys; sys.path.insert(0,"'"$SCRIPT_DIR"'"); from vanchor_supervisor import SUPERVISOR_VERSION; print(SUPERVISOR_VERSION)')"
 echo "Installing vanchor-supervisor $VER"
 mkdir -p "$INSTALL_ROOT/versions"
-cp -r "$REPO_ROOT/supervisor/vanchor_supervisor" "$INSTALL_ROOT/versions/$VER/"
-cp "$REPO_ROOT/supervisor/guard.py" "$INSTALL_ROOT/guard.py"
-# current symlink
+# Copy the package into versions/$VER/ so selfupdate.py's sanity-check
+# (sys.path.insert(0, target_dir); import vanchor_supervisor) works:
+#   target_dir/vanchor_supervisor/__init__.py  ← required layout
+cp -r "$SCRIPT_DIR/vanchor_supervisor" "$INSTALL_ROOT/versions/$VER/"
+cp "$SCRIPT_DIR/guard.py" "$INSTALL_ROOT/guard.py"
+# current symlink (atomic update)
 CURRENT="$INSTALL_ROOT/current"
 if [ ! -L "$CURRENT" ]; then
   ln -s "$INSTALL_ROOT/versions/$VER" "$CURRENT"
@@ -19,8 +25,8 @@ else
   ln -sf "$INSTALL_ROOT/versions/$VER" "$TMP"
   mv -T "$TMP" "$CURRENT"
 fi
-cp "$REPO_ROOT/supervisor/vanchor-supervisor.service" "$UNIT_DIR/vanchor-supervisor.service"
-systemctl daemon-reload
-systemctl enable --now vanchor-supervisor
-echo "Done. Status:"
-systemctl status vanchor-supervisor --no-pager || true
+# Install the systemd unit.
+cp "$SCRIPT_DIR/vanchor-supervisor.service" "$UNIT_DIR/vanchor-supervisor.service"
+# daemon-reload and enable are run by the caller (01-run-chroot.sh or the user)
+# so that this script works in chroot environments where systemd is absent.
+echo "Done — call 'systemctl daemon-reload && systemctl enable --now vanchor-supervisor' to activate."

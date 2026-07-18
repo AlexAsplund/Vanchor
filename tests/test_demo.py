@@ -270,3 +270,66 @@ def test_demo_badge_in_shell(demo_ro_client):
     r = demo_ro_client.get("/")
     assert r.status_code == 200
     assert 'id="demo-indicator"' in r.text
+
+
+# ---- S1: demo inertness — Runtime must force sim regardless of config source #
+
+
+def test_runtime_auto_applies_demo_mode_from_yaml(tmp_path):
+    """S1: Runtime construction forces sim posture when demo.enabled=True even
+    without --demo CLI flag (yaml/env source), so a real motor is never reached.
+    """
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    cfg.demo.enabled = True
+    # Simulate yaml/env source: hardware enabled + serial motor source set.
+    cfg.hardware.enabled = True
+    cfg.hardware.motor_source = "serial"
+    cfg.nmea_tcp.enabled = True
+
+    rt = Runtime(cfg)
+
+    # apply_demo_mode must have been called: hardware off, all sources sim.
+    assert rt.config.hardware.enabled is False
+    assert rt.config.nmea_tcp.enabled is False
+    for device in ("gps", "compass", "depth", "motor"):
+        assert rt.config.hardware.source(device) == "sim", (
+            f"{device} source should be sim after auto-apply of demo mode"
+        )
+
+
+def test_runtime_demo_already_applied_not_reapplied(tmp_path):
+    """S1: Runtime must not create a second tmpdir when apply_demo_mode was
+    already called upstream (main() CLI --demo path)."""
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    # Simulate main() having already called apply_demo_mode.
+    apply_demo_mode(cfg, data_dir=str(tmp_path))
+    first_dir = cfg.data_dir
+
+    rt = Runtime(cfg)
+
+    # data_dir must not have changed (no second mkdtemp).
+    assert rt.config.data_dir == first_dir
+
+
+# ---- S1b: hand-on-throttle guard in _run_demo_scenario ------------------- #
+
+
+def test_demo_scenario_skips_if_driving(tmp_path):
+    """S1b: _run_demo_scenario must not seed the scenario if the operator has
+    thrust > 0.05 (hand on throttle while in MANUAL mode)."""
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    cfg.demo.enabled = True
+    rt = Runtime(cfg)
+    _give_fix(rt)
+
+    # Simulate operator with throttle on.
+    from vanchor.core.models import MotorCommand
+    rt.state.motor_command = MotorCommand(thrust=0.3, steering=0.0)
+
+    asyncio.run(rt._run_demo_scenario())
+
+    # Scenario should NOT have engaged (mode stays MANUAL).
+    assert rt.state.mode == ControlModeName.MANUAL

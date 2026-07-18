@@ -265,3 +265,72 @@ def test_upload_keeps_recent_part_files(client_with_supervisor):
     assert r.status_code == 200
     # The recent .part file must still exist
     assert recent.exists(), "Recent .part file must not be cleaned up"
+
+
+# ------------------------------------------------------------------ #
+# S2: Supervisor interlock — 409 in guided mode
+# ------------------------------------------------------------------ #
+
+@pytest.fixture()
+def client_guided(tmp_path, monkeypatch):
+    """Client with supervisor available and autopilot in ANCHOR_HOLD mode."""
+    monkeypatch.setenv("VANCHOR_ALLOWED_HOSTS", "testserver")
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    cfg.supervisor.enabled = True
+
+    runtime = Runtime(cfg)
+
+    stub = MagicMock()
+    stub.status.return_value = {"supervisor_version": "0.1.0", "api_version": 1,
+                                "containers": [], "disk": {}, "backups": {},
+                                "job": None, "last_job": None, "warnings": []}
+    stub.request.return_value = (200, {"job_id": "j-1"})
+    runtime.supervisor_link = stub
+    runtime._supervisor_status = stub.status.return_value
+
+    # Put runtime into a guided mode (anchor_hold).
+    from vanchor.core.models import ControlModeName
+    runtime.state.mode = ControlModeName.ANCHOR_HOLD
+
+    app = create_app(runtime)
+    with TestClient(app) as c:
+        yield c, stub
+
+
+def test_supervisor_interlock_409_when_anchored(client_guided):
+    """S2: update/rollback/restore must return 409 when in a guided mode."""
+    c, stub = client_guided
+    for path in ("v1/update/apply", "v1/rollback", "v1/restore"):
+        r = c.post(f"/api/supervisor/proxy/{path}", json={"name": "vanchor"})
+        assert r.status_code == 409, f"{path}: expected 409, got {r.status_code}"
+        assert r.json()["error"] == "underway"
+
+
+def test_supervisor_interlock_allowed_in_manual(client_with_supervisor):
+    """S2: update/rollback allowed in MANUAL idle (no active mode)."""
+    c, stub, _ = client_with_supervisor
+    # Runtime is in MANUAL by default; stub returns 200.
+    stub.request.return_value = (200, {"job_id": "j-1"})
+    r = c.post("/api/supervisor/proxy/v1/rollback", json={"name": "vanchor"})
+    assert r.status_code == 200
+    assert r.json().get("job_id") == "j-1"
+
+
+def test_supervisor_interlock_force_overrides(client_guided):
+    """S2: force=true in body bypasses the 409 interlock."""
+    c, stub = client_guided
+    stub.request.return_value = (200, {"job_id": "j-force"})
+    r = c.post("/api/supervisor/proxy/v1/rollback",
+               json={"name": "vanchor", "force": True})
+    assert r.status_code == 200
+    assert r.json().get("job_id") == "j-force"
+
+
+def test_supervisor_interlock_does_not_block_backup(client_guided):
+    """S2: backup (non-destructive) is not blocked by the mode interlock."""
+    c, stub = client_guided
+    stub.request.return_value = (200, {"job_id": "j-bkp"})
+    r = c.post("/api/supervisor/proxy/v1/backup", json={})
+    # backup is not in the destructive paths list → should forward normally.
+    assert r.status_code == 200

@@ -1252,6 +1252,14 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     _SUPERVISOR_PATH_RE = re.compile(r"^v1/[A-Za-z0-9/_.\-]*$")
 
+    # Paths that recreate the app container — unsafe while a guided mode drives.
+    # POST {"force": true} bypasses the interlock for informed operators.
+    _SUPERVISOR_DESTRUCTIVE_PATHS = frozenset({
+        "v1/update/apply",
+        "v1/rollback",
+        "v1/restore",
+    })
+
     @app.api_route("/api/supervisor/proxy/{path:path}", methods=["GET", "POST"])
     async def supervisor_proxy(path: str, request: _Request):
         """Constrained proxy to the host-side supervisor's /v1 API.
@@ -1259,7 +1267,11 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         The app forwards requests to the supervisor (injecting the auth token)
         so the browser never needs to speak directly to localhost:9300.
         Only /v1/... paths are accepted; unknown patterns return 404.
-        Blocked in demo-readonly mode (no POSTs via the middleware above)."""
+        Blocked in demo-readonly mode (no POSTs via the middleware above).
+
+        Safety interlock: update/rollback/restore return 409 when the runtime
+        is in any active guided mode (not MANUAL), unless the request body
+        contains ``"force": true``."""
         if runtime.supervisor_link is None or runtime._supervisor_status is None:
             return Response(
                 content=json.dumps({"error": "supervisor_unavailable"}),
@@ -1281,6 +1293,29 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                     content=json.dumps({"error": "body_too_large"}),
                     media_type="application/json",
                     status_code=413,
+                )
+        # Safety interlock: destructive supervisor operations (update/rollback/
+        # restore) are refused while any guided autopilot mode is active.
+        # The caller may pass {"force": true} to override after acknowledging.
+        if request.method == "POST" and path.rstrip("/") in _SUPERVISOR_DESTRUCTIVE_PATHS:
+            body_dict: dict = {}
+            if body:
+                try:
+                    body_dict = json.loads(body)
+                except Exception:
+                    pass
+            if not body_dict.get("force") and runtime.state.mode != "manual":
+                return Response(
+                    content=json.dumps({
+                        "error": "underway",
+                        "detail": (
+                            "Boat is in an active guided mode "
+                            f"({runtime.state.mode}); "
+                            "send force=true to override"
+                        ),
+                    }),
+                    media_type="application/json",
+                    status_code=409,
                 )
         try:
             code, data = await asyncio.to_thread(
