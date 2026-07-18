@@ -183,3 +183,74 @@ def test_task2_steer_hint_collapse():
     html = _render_shell()
     assert 'id="steer-hint-expand"' in html, "steer-hint-expand button missing"
     assert 'id="steer-hint-extra"' in html, "steer-hint-extra span missing"
+
+
+# ---- Task 3 sim honesty + onboarding checks --------------------------------
+
+def test_task3_sim_indicator_id():
+    """id=sim-indicator replaces the old id=demo-indicator (renamed in task 3)."""
+    html = _render_shell()
+    assert 'id="sim-indicator"' in html, "sim-indicator missing"
+    assert 'id="demo-indicator"' not in html, "old demo-indicator still present"
+
+
+def test_task3_firstrun_dialog():
+    """First-run dialog and its key elements are present in the shell."""
+    html = _render_shell()
+    assert 'id="firstrun"' in html, "#firstrun dialog missing"
+    assert 'id="firstrun-real"' in html, "#firstrun-real button missing"
+    assert 'id="firstrun-sim"' in html, "#firstrun-sim button missing"
+    assert "SIMULATION" in html, "SIMULATION text missing from firstrun dialog"
+    assert "not your motor" in html, "SIMULATION warning text missing"
+
+
+def test_task3_get_started_tile():
+    """Get-started tile is present as the first tile in the home grid."""
+    html = _render_shell()
+    assert 'id="cm-get-started"' in html, "#cm-get-started tile missing"
+    assert "Get started" in html, "Get started text missing"
+
+
+def test_task3_onboard_script_last():
+    """onboard.js script tag is present and loads after views.js."""
+    html = _render_shell()
+    assert '/static/onboard.js' in html, "onboard.js script tag missing"
+    views_pos = html.find('/static/views.js')
+    onboard_pos = html.find('/static/onboard.js')
+    assert views_pos < onboard_pos, "onboard.js must load after views.js"
+
+
+def test_task3_calib_error_card():
+    """Calibration error card is present in the wizard step 3."""
+    html = _render_shell()
+    assert 'id="calib-error"' in html, "#calib-error div missing"
+    assert 'id="calib-error-msg"' in html, "#calib-error-msg missing"
+    assert 'id="calib-error-raw"' in html, "#calib-error-raw missing"
+
+
+def test_task3_hwwiz_save_gate():
+    """Save-gate hint is present in the hardware wizard finish step."""
+    html = _render_shell()
+    assert 'id="hwwiz-save-gate"' in html, "#hwwiz-save-gate hint missing"
+
+
+def test_task3_boat_setup_rename():
+    """Wizard header reads 'Boat setup', not 'Init Boat'."""
+    html = _render_shell()
+    assert "Boat setup" in html, "'Boat setup' wizard title missing"
+    assert "Init Boat" not in html, "'Init Boat' text must not appear in UI"
+
+
+def test_task3_view_switcher_text_labels():
+    """#view-switcher must contain text labels and no emoji."""
+    html = _render_shell()
+    # Slice between view-switcher open and its closing </div>
+    start = html.find('id="view-switcher"')
+    assert start >= 0, "#view-switcher not found"
+    end = html.find("</div>", start)
+    snip = html[start:end]
+    assert "CHART" in snip, "CHART label missing from view-switcher"
+    assert "HELM" in snip, "HELM label missing from view-switcher"
+    # None of the four old emoji should appear in the switcher
+    for emoji in ["🗺", "🕹", "📊", "🎚"]:
+        assert emoji not in snip, f"Emoji {emoji!r} still in view-switcher"

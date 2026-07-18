@@ -129,6 +129,7 @@ const SHELL = [
   "/static/mobile.js",
   "/static/wakelock.js",
   "/static/views.js",
+  "/static/onboard.js",
 ];
 
 // Map-tile hosts handled by offline.js's IndexedDB cache — the SW must not

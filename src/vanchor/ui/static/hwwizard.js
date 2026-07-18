@@ -73,16 +73,36 @@
     }
   }
 
+  // Build a friendly display name for a port; raw path goes to opt.title.
+  function _friendlyPort(p) {
+    const base = p.description || "Serial device";
+    return p.hint ? base + " — likely " + p.hint : base;
+  }
+
+  // De-dupe identical friendly names by appending "(port N)" counters.
+  function _dedupeLabels(labels) {
+    const counts = {};
+    labels.forEach(l => { counts[l] = (counts[l] || 0) + 1; });
+    const seen = {};
+    return labels.map(l => {
+      if (counts[l] <= 1) return l;
+      seen[l] = (seen[l] || 0) + 1;
+      return l + " (port " + seen[l] + ")";
+    });
+  }
+
   function populatePorts(selectId, ports, i2cBuses) {
     const sel = $(selectId);
     if (!sel) return;
     sel.innerHTML = '<option value="">— select port —</option>';
     if (Array.isArray(ports)) {
-      ports.forEach(p => {
+      const labels = ports.map(_friendlyPort);
+      const deduped = _dedupeLabels(labels);
+      ports.forEach((p, i) => {
         const opt = document.createElement("option");
         opt.value = p.path;
-        opt.textContent = p.description ? `${p.path}  [${p.description}]` : p.path;
-        if (p.hint) opt.title = p.hint;
+        opt.textContent = deduped[i];
+        opt.title = p.path;  // raw path in tooltip
         sel.appendChild(opt);
       });
     }
@@ -201,9 +221,10 @@
       html = '<p class="hint">No serial ports or I²C buses found. Connect your devices and rescan.</p>';
     } else {
       ports.forEach(p => {
-        html += `<div class="scan-row"><code>${p.path}</code>`;
-        if (p.description) html += ` <span class="hint">${p.description}</span>`;
-        if (p.hint) html += ` <span class="hint">→ ${p.hint}</span>`;
+        const desc = p.description || "Unknown device";
+        html += `<div class="scan-row"><b>${desc}</b>`;
+        if (p.hint) html += ` <span class="hint">— likely ${p.hint}</span>`;
+        html += ` <code class="hint">${p.path}</code>`;
         html += "</div>";
       });
       buses.forEach(b => {
@@ -409,6 +430,24 @@
     });
 
     tbody.innerHTML = rows.join("");
+
+    // Save gating: require ≥1 probed device with a suggestion, OR all steps skipped.
+    function skipped(k) {
+      const el = $(`hwwiz-${k}-skip`);
+      return !!(el && el.checked);
+    }
+    const probed = DEVICE_STEPS.some(k => _results[k] && _results[k].suggest && !skipped(k));
+    const allSkipped = DEVICE_STEPS.every(k => skipped(k));
+    const finBtn = $("hwwiz-finish");
+    const gateHint = $("hwwiz-save-gate");
+    const allowed = probed || allSkipped;
+    if (finBtn) finBtn.disabled = !allowed;
+    if (gateHint) gateHint.classList.toggle("hidden", allowed);
+  }
+
+  // Re-check gating when a skip checkbox changes.
+  function _recheckSaveGate() {
+    if (_step === STEPS.length - 1) _buildReview();
   }
 
   async function _doSave() {
@@ -526,12 +565,13 @@
     DEVICE_STEPS.forEach(kind => {
       const probeBtn = $(`hwwiz-${kind}-probe`);
       if (probeBtn) probeBtn.addEventListener("click", () => _doProbe(kind));
-      // Skip checkbox toggles probe button state
+      // Skip checkbox toggles probe button state + re-checks save gate.
       const skipEl = $(`hwwiz-${kind}-skip`);
-      if (skipEl && probeBtn) {
+      if (skipEl) {
         skipEl.addEventListener("change", () => {
-          probeBtn.disabled = skipEl.checked;
+          if (probeBtn) probeBtn.disabled = skipEl.checked;
           if (skipEl.checked) clearResult(kind);
+          _recheckSaveGate();
         });
       }
     });

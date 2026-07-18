@@ -81,14 +81,22 @@
     const sentence = VA.modeSentence ? VA.modeSentence(t) : (t.mode || "—");
     const aa = t && t.anchor_alarm;
     const dragging = !!(aa && aa.firing);
-    const key = sentence + (dragging ? "d" : "");
+    // Extend cache key with calibrating flag so the badge updates when
+    // calibration starts/stops without the mode itself changing (WP10 item 30).
+    const calibrating = !!(t.calibration && t.calibration.running);
+    const key = sentence + (dragging ? "d" : "") + (calibrating ? "c" : "");
     if (key === _pillKey) return;
     _pillKey = key;
     const pill = document.getElementById("mode-pill");
     if (!pill) return;
-    pill.textContent = sentence;
-    pill.dataset.mode = t.mode || "manual";
-    pill.classList.toggle("dragging", dragging);
+    if (calibrating) {
+      pill.textContent = "Calibrating…";
+      pill.dataset.mode = "calibrating";
+    } else {
+      pill.textContent = sentence;
+      pill.dataset.mode = t.mode || "manual";
+    }
+    pill.classList.toggle("dragging", dragging && !calibrating);
   }
 
   function _distM(aLat, aLon, bLat, bLon) {

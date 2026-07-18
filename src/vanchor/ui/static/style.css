@@ -304,14 +304,18 @@ body.light .leaflet-control-layers-toggle { filter: none; }
 .replay-indicator button { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
 .replay-indicator.hidden { display: none; }
 
-.demo-indicator {
-  position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 1499;
-  display: flex; align-items: center; gap: 9px; padding: 7px 15px; border-radius: 999px;
+/* SIM pill — amber, in-flow inside #map-pills (task 3).
+   #map-pills is pointer-events:none; the button sets its own pointer-events. */
+.sim-indicator {
+  display: inline-flex; align-items: center; gap: 9px; padding: 5px 13px;
+  border-radius: 999px; min-height: 32px;
   background: var(--glass-solid); border: 1px solid #b45309; color: var(--text);
-  font: 700 12px var(--font-display); letter-spacing: 0.1em; box-shadow: var(--shadow);
+  font: 700 11px var(--font-display); letter-spacing: 0.08em; box-shadow: var(--shadow);
+  cursor: pointer; pointer-events: auto;
+  /* z-index inherited from #map-pills (1100) — well below alarm strips (3000). */
 }
-.demo-indicator .demo-dot { width: 9px; height: 9px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 9px #f59e0b; animation: pulse 1.2s infinite; }
-.demo-indicator.hidden { display: none; }
+.sim-indicator:hover { border-color: #f59e0b; }
+.sim-indicator.hidden { display: none; }
 
 .hidden { display: none !important; }
 .boat-icon { transition: transform 0.18s linear; }
@@ -873,6 +877,91 @@ button#track-rec.recording { background: color-mix(in srgb, var(--stop) 35%, var
 .remote-dpad .rbtn { font-size: 28px; min-height: 74px; }
 .remote-nudge { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+/* ============================ FIRST-RUN DIALOG (onboard.js WP3) ======= */
+/* Uses the same wiz-scrim class for the backdrop (pointer-events:none on it,
+   active click handled in onboard.js by #firstrun-scrim). */
+#firstrun-scrim { position: fixed; inset: 0; z-index: 5800; background: rgba(0,0,0,0.55); }
+#firstrun-scrim.hidden { display: none; }
+.firstrun-card {
+  position: fixed; inset: 0; z-index: 5900;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.firstrun-card.hidden { display: none; }
+.firstrun-card > h2,
+.firstrun-card > p,
+.firstrun-card > button {
+  pointer-events: auto;
+}
+.firstrun-card {
+  /* Glass card centred on screen */
+  background: transparent;
+}
+/* Inner layout as a card */
+#firstrun {
+  display: flex; flex-direction: column; gap: 16px;
+  max-width: min(400px, calc(100vw - 32px)); width: 100%;
+  margin: auto; padding: 28px 24px;
+  border-radius: var(--r); background: var(--glass-solid);
+  border: 1px solid var(--line-bright);
+  box-shadow: var(--shadow-lg, 0 8px 40px rgba(0,0,0,0.55));
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 5900; pointer-events: auto;
+}
+#firstrun h2 { font-size: 20px; font-weight: 800; margin: 0; }
+#firstrun p  { font-size: 14px; line-height: 1.55; color: var(--muted); margin: 0; }
+#firstrun.hidden { display: none; }
+
+/* ============================ COACH BUBBLES (onboard.js WP10) ========= */
+.coach-bubble {
+  position: fixed; z-index: 4800; transform: translate(-50%, -100%);
+  padding: 10px 14px; border-radius: var(--r-sm);
+  background: var(--glass-solid); border: 1px solid var(--accent);
+  font: 600 12px/1.4 "Inter", system-ui, sans-serif; color: var(--text);
+  box-shadow: var(--shadow); pointer-events: auto; cursor: pointer;
+  max-width: 80vw; white-space: nowrap;
+}
+.coach-bubble .coach-chev { margin-right: 4px; }
+.coach-bubble-helm { transform: translate(-50%, 0); }
+
+/* Boat-marker coach pulse (3 cyan halo pulses) */
+@keyframes coach-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(27, 228, 255, 0.6); }
+  50%  { box-shadow: 0 0 0 14px rgba(27, 228, 255, 0); }
+  100% { box-shadow: 0 0 0 0   rgba(27, 228, 255, 0); }
+}
+.coach-pulse {
+  animation: coach-pulse 2s ease-out 3;
+  border-radius: 50%;
+}
+
+/* Calibrating… mode-pill amber styling (WP10 item 30) */
+#mode-pill[data-mode="calibrating"] {
+  border-color: #b45309; color: #f59e0b;
+}
+
+/* Get-started tile (WP10 item 29) */
+.cm-tile-getstarted { border-color: var(--accent); }
+
+/* Thrust-preset chips (WP10 item 30) */
+.thrust-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.thrust-preset {
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer;
+  background: var(--faint); border: 1px solid var(--line); color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+}
+.thrust-preset:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* Calibration error card (WP10 item 30) */
+.calib-error {
+  padding: 12px 14px; border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--stop) 12%, transparent);
+  border: 1px solid var(--stop); margin-bottom: 10px;
+}
+.calib-error p { margin: 0 0 6px; font-size: 13px; line-height: 1.5; }
+.calib-error details summary { font-size: 11px; color: var(--muted); cursor: pointer; }
+.calib-error pre { font-size: 10px; color: var(--muted); white-space: pre-wrap; word-break: break-all; margin: 4px 0 0; }
+
 /* ============================ SETUP WIZARD ============================ */
 /* The wizard is a side panel, NOT a full-screen modal — the map + boat stay
    visible and interactive while you set up / calibrate. No blur, no dim. */
@@ -979,9 +1068,9 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
 .wiz-done-ic { width: 56px; height: 56px; border-radius: 50%; margin: 0 auto; display: grid; place-items: center; font-size: 28px; font-weight: 900;
   background: linear-gradient(160deg, var(--accent), var(--accent-2)); color: #02161b; box-shadow: 0 0 22px rgba(34,211,166,0.5); }
 .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.result-card { padding: 12px 14px; border-radius: var(--r-sm); background: var(--faint); border: 1px solid var(--line); }
+.result-card { padding: 12px 14px; border-radius: var(--r-sm); background: var(--faint); border: 1px solid var(--line); min-width: 0; overflow-wrap: break-word; }
 .result-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-.result-val { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.result-val { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 2px; min-width: 0; overflow-wrap: break-word; }
 .result-val small { font-size: 12px; color: var(--muted); font-weight: 600; }
 
 .wiz-foot { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line); }
@@ -1187,7 +1276,9 @@ body.mobile .wiz-card { width: 100%; max-height: 72%; }
   .btn-pill { padding: 8px 11px; }
   .btn-icon { width: 36px; height: 36px; }
   .spec-grid { grid-template-columns: 1fr; }
+  /* Show ONLY the active step's label in portrait — keeps the user oriented. */
   .wiz-stepper .lbl { display: none; }
+  .wiz-stepper .step.active .lbl { display: block; font-size: 10px; }
 }
 @media (max-width: 420px) {
   .chip-label { display: none; }
@@ -2336,13 +2427,16 @@ body.mobile.dock-collapsed .dock { padding-bottom: 0; }
 }
 .view-chip {
   border: 0; background: transparent; cursor: pointer; color: var(--muted);
-  font-size: 15px; line-height: 1; padding: 8px 9px; min-width: 34px; min-height: 34px;
-  filter: grayscale(0.4) opacity(0.8); transition: background 0.15s, filter 0.15s;
+  /* Text labels: uppercase condensed 10px; min 44x44 hit target (WCAG). */
+  font: 700 10px/1 var(--font-display); letter-spacing: 0.07em;
+  padding: 8px 10px; min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
 }
-.view-chip:hover { color: var(--text); filter: none; }
+.view-chip:hover { color: var(--text); }
 .view-chip.active {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
-  filter: none; box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.6);
+  color: var(--accent); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.6);
 }
 .view-chip:active { transform: scale(0.94); }
 
@@ -2520,7 +2614,12 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   body[data-view="instruments"] #hud { top: 56px !important; }
 }
 @media (max-width: 420px) {
-  .view-chip { padding: 7px 6px; min-width: 30px; font-size: 14px; }
+  /* Abbreviate view-chip labels at narrow widths: show data-short content.
+     font-size:0 hides the text node; ::before renders the abbrev. */
+  .view-chip { padding: 6px 7px; min-width: 36px; font-size: 0; }
+  .view-chip::before {
+    content: attr(data-short); font: 700 9px/1 var(--font-display); letter-spacing: 0.06em;
+  }
   body[data-view="helm"] #mode-rail { grid-template-columns: repeat(2, 1fr); }
 }
 

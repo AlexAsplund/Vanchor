@@ -28,9 +28,17 @@
   <!-- The map is the living backdrop for the whole app. -->
   <div id="map"></div>
   <!-- Fixed mode pill: top-left of chart view, does not rotate with heading-up.
-       Task 3 will append the SIMULATION pill as a sibling inside #map-pills.
-       pointer-events: none until task 5 adds tap behaviour. -->
-  <div id="map-pills"><span id="mode-pill" data-mode="manual">Manual — idle</span></div>
+       The SIM pill is a sibling of mode-pill inside #map-pills (task 3).
+       #map-pills has pointer-events:none; .sim-indicator sets pointer-events:auto. -->
+  <div id="map-pills">
+    <span id="mode-pill" data-mode="manual">Manual — idle</span>
+    <button id="sim-indicator" class="sim-indicator hidden" type="button"
+            aria-label="Simulation notice">
+      <span class="demo-dot"></span>
+      <span id="sim-indicator-text">SIMULATION — not your motor</span>
+      <span id="demo-ro-suffix" class="hidden">&nbsp;&middot; read-only</span>
+    </button>
+  </div>
 
   <!-- Tactical HUD overlay: corner reticles, range rings, radar sweep, heading
        tape. Purely decorative / non-interactive (pointer-events: none). -->
@@ -95,10 +103,10 @@
       <!-- Always-reachable view switcher (segmented control). Deep-links each
            preset view; the active chip is set by views.js from body[data-view]. -->
       <div id="view-switcher" class="view-switcher" role="group" aria-label="View">
-        <button class="view-chip" type="button" data-view="chart" title="Chart view" aria-label="Chart view">🗺</button>
-        <button class="view-chip" type="button" data-view="helm" title="Helm view" aria-label="Helm view">🕹</button>
-        <button class="view-chip" type="button" data-view="instruments" title="Instruments view" aria-label="Instruments view">📊</button>
-        <button class="view-chip" type="button" data-view="manual" title="Manual view" aria-label="Manual view">🎚</button>
+        <button class="view-chip" type="button" data-view="chart" title="Chart view" aria-label="Chart view" data-short="CHART">CHART</button>
+        <button class="view-chip" type="button" data-view="helm" title="Helm view" aria-label="Helm view" data-short="HELM">HELM</button>
+        <button class="view-chip" type="button" data-view="instruments" title="Gauges / instruments view" aria-label="Gauges view" data-short="GAUGE">GAUGES</button>
+        <button class="view-chip" type="button" data-view="manual" title="Manual view" aria-label="Manual view" data-short="MAN">MANUAL</button>
       </div>
       <button id="alerts-open" class="btn-icon alerts-bell" title="Alert history" aria-label="Alert history">
         <!-- Inline stroke bell so it can take state color (no emoji) -->
@@ -338,9 +346,15 @@
     <button id="replay-ind-stop" aria-label="Stop replay">✕</button>
   </div>
 
-  <!-- Demo-mode badge — shown when the server runs `vanchor --demo`. -->
-  <div id="demo-indicator" class="demo-indicator hidden" role="status">
-    <span class="demo-dot"></span> DEMO<span id="demo-ro-suffix" class="hidden">&nbsp;&middot; read-only</span>
+  <!-- First-run simulation notice dialog (onboard.js, WP3). -->
+  <div id="firstrun-scrim" class="wiz-scrim hidden"></div>
+  <div id="firstrun" class="firstrun-card glass hidden" role="dialog" aria-modal="true"
+       aria-label="Simulation notice">
+    <h2>This is a simulated boat</h2>
+    <p>The moving boat and every number on screen come from the built-in simulator —
+       <b>no motor is connected</b>. Play safely, or hook up your real hardware.</p>
+    <button id="firstrun-real" class="btn-primary wide" type="button">Set up my real boat</button>
+    <button id="firstrun-sim" class="btn-ghost wide" type="button">Play with the simulator</button>
   </div>
 
   <!-- ===================== PRIMARY CONTROL DOCK ===================== -->
@@ -842,6 +856,13 @@
 
       <!-- HOME: category tiles -->
       <div class="cm-home" id="cm-home">
+        <!-- Get-started tile (WP10 item 29). Managed by onboard.js: hidden once
+             the boat-setup wizard has been completed (prefs onboarding.wizard_done). -->
+        <button class="cm-tile cm-tile-getstarted" type="button" id="cm-get-started">
+          <span class="cm-tile-ic" aria-hidden="true">🧭</span>
+          <span class="cm-tile-lbl">Get started</span>
+          <span class="cm-tile-hint">New boat? Run setup (10 min on open water)</span>
+        </button>
         <button class="cm-tile" type="button" data-cat="boat">
           <span class="cm-tile-ic" aria-hidden="true">⚓</span>
           <span class="cm-tile-lbl">Boat &amp; tuning</span>
@@ -1077,7 +1098,7 @@
         <div class="wiz-title">
           <span class="wiz-mark" aria-hidden="true">⚓</span>
           <div>
-            <div class="wiz-h1">Init Boat</div>
+            <div class="wiz-h1">Boat setup</div>
             <div class="wiz-h2" id="wiz-subtitle">Set up &amp; auto-calibrate your vessel</div>
           </div>
         </div>
@@ -1133,9 +1154,15 @@
               <div class="spec-help">Loaded displacement.</div>
             </div>
             <div class="spec" data-field="max_thrust_n">
-              <label>Max thrust <span class="unit">N</span><output class="spec-out">—</output></label>
+              <label>Max thrust <span class="unit">lb / N</span><output class="spec-out">—</output></label>
+              <div class="thrust-presets" aria-label="Common thrust presets">
+                <button class="thrust-preset" type="button" data-n="133">30 lb</button>
+                <button class="thrust-preset" type="button" data-n="178">40 lb</button>
+                <button class="thrust-preset" type="button" data-n="245">55 lb</button>
+                <button class="thrust-preset" type="button" data-n="356">80 lb</button>
+              </div>
               <input type="range" min="50" max="2000" step="10" />
-              <div class="spec-help">Peak motor thrust.</div>
+              <div class="spec-help">Peak motor thrust (lbf × 4.448 = N).</div>
             </div>
             <div class="spec" data-field="shaft_dia_mm">
               <label>Shaft dia <span class="unit">mm</span><output class="spec-out">—</output></label>
@@ -1185,6 +1212,10 @@
               <span data-phase="tuning">Tuning</span>
               <span data-phase="done">Done</span>
             </div>
+          </div>
+          <div id="calib-error" class="calib-error hidden">
+            <p id="calib-error-msg"></p>
+            <details><summary>Details</summary><pre id="calib-error-raw"></pre></details>
           </div>
           <div class="btn-row">
             <button id="calib-start" class="btn-primary wide">▶ Start calibration</button>
@@ -1282,5 +1313,8 @@
   <script src="/static/mobile.js"></script>
   <script src="/static/wakelock.js"></script>
   <script src="/static/views.js"></script>
+  <!-- Onboarding: sim notice, first-run choice, coach marks, Get-started tile.
+       Must load LAST (after views.js, wizard.js, hwwizard.js). -->
+  <script src="/static/onboard.js"></script>
 </body>
 </html>

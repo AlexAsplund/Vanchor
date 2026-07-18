@@ -1,4 +1,4 @@
-/* Vanchor-NG — Init Boat setup wizard.
+/* Vanchor-NG — Boat setup wizard.
  *
  * A polished 4-step modal flow:
  *   0 Welcome + safety disclaimer (must consent to proceed)
@@ -145,6 +145,7 @@
     goStep(step + 1);
     if (step === 3 && lastResults) renderResults(lastResults);
   });
+  // wiz-finish: onboard.js also listens on this button to mark wizard complete.
   document.getElementById("wiz-finish").addEventListener("click", close);
   document.getElementById("wiz-consent").addEventListener("change", refreshNextEnabled);
 
@@ -168,7 +169,12 @@
         if (v > Number(input.max)) input.max = v;
         input.value = v;
       }
-      out.textContent = input.value;
+      if (f === "max_thrust_n") {
+        const lbs = (Number(input.value) / 4.448).toFixed(0);
+        out.textContent = input.value + " N (~" + lbs + " lb)";
+      } else {
+        out.textContent = input.value;
+      }
       if (f === "hull_tracking") updateHullCaption(input.value);
     });
     mountVal = boat.thruster_mount === "stern" ? "stern" : "bow";
@@ -196,7 +202,12 @@
     const input = el.querySelector("input[type=range]");
     const out = el.querySelector(".spec-out");
     input.addEventListener("input", () => {
-      out.textContent = input.value;
+      if (f === "max_thrust_n") {
+        const lbs = (Number(input.value) / 4.448).toFixed(0);
+        out.textContent = input.value + " N (~" + lbs + " lb)";
+      } else {
+        out.textContent = input.value;
+      }
       if (f === "hull_tracking") updateHullCaption(input.value);
       // Rescale the motor-placement picture when length/beam change.
       if ((f === "length_m" || f === "beam_m") && mp) {
@@ -206,6 +217,24 @@
           beam_m: bEl ? parseFloat(bEl.querySelector("input[type=range]").value) : undefined,
         });
       }
+    });
+  });
+
+  // Thrust preset chips (lb → N). Sets the range slider + output.
+  document.querySelectorAll(".thrust-preset").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      const newtons = Number(btn.dataset.n);
+      if (!Number.isFinite(newtons)) return;
+      const el = specEl("max_thrust_n");
+      if (!el) return;
+      const input = el.querySelector("input[type=range]");
+      const out   = el.querySelector(".spec-out");
+      if (!input) return;
+      if (newtons < Number(input.min)) input.min = newtons;
+      if (newtons > Number(input.max)) input.max = newtons;
+      input.value = newtons;
+      const lbs = (newtons / 4.448).toFixed(0);
+      if (out) out.textContent = newtons + " N (~" + lbs + " lb)";
     });
   });
 
@@ -240,6 +269,11 @@
   const PHASE_ORDER = ["straight", "turn", "coast", "tuning", "done"];
 
   document.getElementById("calib-start").addEventListener("click", async () => {
+    // Hide error card + reset button label when retrying.
+    const errCard = document.getElementById("calib-error");
+    if (errCard) errCard.classList.add("hidden");
+    const startBtn = document.getElementById("calib-start");
+    if (startBtn) startBtn.textContent = "▶ Start calibration";
     try {
       await VA.postJSON("/api/calibrate", { mode: "quick" });
       calibRunning = true; calibDone = false;
@@ -278,7 +312,12 @@
 
     const phase = c.phase || "idle";
     VA.setText("calib-phase", PHASE_LABELS[phase] || phase);
-    if (c.message) VA.setText("calib-message", c.message);
+    // Show the plain message only when it's not an error-ish string
+    // (raw errno/traceback → handled by the #calib-error block instead).
+    const errPat = /Errno|Exception|Traceback|No such file/;
+    if (c.message && phase !== "error" && !errPat.test(c.message)) {
+      VA.setText("calib-message", c.message);
+    }
 
     const prog = Number.isFinite(c.progress) ? Math.max(0, Math.min(1, c.progress)) : 0;
     const fill = document.getElementById("calib-fill");
@@ -304,18 +343,31 @@
       endCalib(false);
       const stage = document.getElementById("calib-stage");
       if (stage) stage.classList.add("error");
+      // Show plain-language error card + hide raw message from #calib-message.
+      const errCard = document.getElementById("calib-error");
+      const errMsg  = document.getElementById("calib-error-msg");
+      const errRaw  = document.getElementById("calib-error-raw");
+      if (errCard) errCard.classList.remove("hidden");
+      if (errMsg) errMsg.textContent =
+        "Calibration hit a problem and stopped — the boat’s motor is stopped." +
+        " Check the GPS fix and clear water, then retry.";
+      if (errRaw && c.message) errRaw.textContent = c.message;
+      // Relabel the start button to ↻ Retry.
+      const startBtn = document.getElementById("calib-start");
+      if (startBtn) startBtn.textContent = "↻ Retry calibration";
     } else if (c.running) {
       calibRunning = true;
     }
   });
 
   // ---- step 4: results ---------------------------------------------------
+  // max_speed_mps rendered in knots (1.9438 kn/m/s); friendly labels throughout.
   const RESULT_ROWS = [
-    ["max_speed_mps", "Measured max speed", "m/s", 2],
-    ["accel_tau_s", "Acceleration time const", "s", 2],
-    ["drag_tau_s", "Drag / coast time const", "s", 2],
-    ["max_turn_rate_dps", "Max turn rate", "°/s", 1],
-    ["steering_sign", "Steering sign", "", 0],
+    ["max_speed_mps", "Measured top speed", "kn", 1],
+    ["accel_tau_s", "Time to pick up speed", "s", 2],
+    ["drag_tau_s", "Time to coast down", "s", 2],
+    ["max_turn_rate_dps", "Turning speed", "°/s", 1],
+    ["steering_sign", "Steering direction", "", 0],
   ];
   function renderResults(r) {
     const grid = document.getElementById("results-grid");
@@ -331,9 +383,13 @@
         val.className = "result-val";
         let txt = "—";
         if (Number.isFinite(Number(v))) {
-          txt = key === "steering_sign"
-            ? (Number(v) >= 0 ? "+1 (normal)" : "−1 (reversed)")
-            : Number(v).toFixed(dec);
+          if (key === "steering_sign") {
+            txt = Number(v) >= 0 ? "Normal" : "Reversed";
+          } else if (key === "max_speed_mps") {
+            txt = (Number(v) * 1.9438).toFixed(dec);
+          } else {
+            txt = Number(v).toFixed(dec);
+          }
         }
         val.innerHTML = `${txt}${unit ? ` <small>${unit}</small>` : ""}`;
         card.append(lab, val);

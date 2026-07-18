@@ -25,8 +25,9 @@
 
         <!-- STEP 0: Scan -->
         <section class="wiz-step" data-step="0">
-          <p class="wiz-lead">Scanning your system for serial ports and I²C buses.
-            Select a port on each step to probe what device is connected.</p>
+          <p class="wiz-lead">Looking for devices plugged into the Pi (GPS, compass,
+            motor). Nothing is written until the last step, and probing never spins
+            the motor.</p>
           <div id="hwwiz-scan-caps" class="hint hidden"></div>
           <div id="hwwiz-scan-list">
             <p class="hint">Click <b>Scan</b> to detect available ports.</p>
@@ -157,6 +158,9 @@
             <tbody id="hwwiz-review-body"></tbody>
           </table>
           <div id="hwwiz-save-status" class="hint" style="margin-top:.5rem"></div>
+          <div id="hwwiz-save-gate" class="hint err hidden" style="margin-top:.25rem">
+            Probe at least one device, or tick Skip on every step to keep the simulator.
+          </div>
           <div id="hwwiz-restart-countdown" class="hidden hint" style="margin-top:.25rem"></div>
         </section>
 

@@ -26,13 +26,14 @@
   // widgets this view can toggle + their defaults. Add a view here + a matching
   // `body[data-view=...]` CSS block and it "just works".
   const HUD_WIDGETS = ["speed", "heading", "depth", "anchor", "battery"];
+  // icon fields removed: view-chips now display text labels, not emoji (WP10 item 32).
   const VIEWS = {
-    chart: { label: "Chart", icon: "🗺" },
-    helm: { label: "Helm", icon: "🕹",
-            widgets: { speed: true, heading: true, depth: true, anchor: false, battery: false } },
-    instruments: { label: "Instruments", icon: "📊",
+    chart:       { label: "Chart" },
+    helm:        { label: "Helm",
+                   widgets: { speed: true, heading: true, depth: true, anchor: false, battery: false } },
+    instruments: { label: "Gauges",
                    widgets: { speed: true, heading: true, depth: true, anchor: true, battery: true } },
-    manual: { label: "Manual", icon: "🎚" },
+    manual:      { label: "Manual" },
   };
   const DEFAULT_VIEW = "chart";
   const isView = (n) => Object.prototype.hasOwnProperty.call(VIEWS, n);

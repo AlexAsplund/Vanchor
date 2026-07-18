@@ -266,10 +266,10 @@ def test_readonly_rest_command_403(demo_ro_client):
 
 
 def test_demo_badge_in_shell(demo_ro_client):
-    """The DEMO badge markup is present in the served shell regardless of mode."""
+    """The SIM-pill markup is present in the served shell (id renamed in task 3)."""
     r = demo_ro_client.get("/")
     assert r.status_code == 200
-    assert 'id="demo-indicator"' in r.text
+    assert 'id="sim-indicator"' in r.text
 
 
 # ---- S1: demo inertness — Runtime must force sim regardless of config source #
