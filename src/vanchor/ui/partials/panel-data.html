@@ -68,6 +68,62 @@
         <div id="audit-server-empty" class="hint">—</div>
       </details>
 
+      <!-- System & updates (adoption task 5): container version, update bundles,
+           rollback, disk, backups via the host supervisor daemon. supervisor.js
+           drives all dynamic content via VA.onTelemetry(). -->
+      <details class="card" id="system-card">
+        <summary>System &amp; updates</summary>
+        <div class="hint">Manage app updates, volume backups, and disk usage via the <em>vanchor-supervisor</em> daemon. When running bare-metal (no supervisor), this card shows the installed version only.</div>
+
+        <div class="ctx-sub">Version</div>
+        <div class="row"><span>App</span><b id="sys-version-line">—</b></div>
+        <div class="row"><span>Supervisor</span><b id="sys-sup-line">—</b></div>
+
+        <div id="sys-supervisor-sections">
+          <div class="ctx-sub">Update</div>
+          <div class="btn-row">
+            <button id="sys-check-btn" class="btn-ghost" type="button">Check for updates</button>
+          </div>
+          <div id="sys-check-status" class="hint"></div>
+          <div class="row" id="sys-latest-row" style="display:none">
+            <span>Latest</span>
+            <b id="sys-latest-line">—</b>
+            <a id="sys-download-link" class="btn-ghost" href="#" download hidden>Download</a>
+          </div>
+
+          <div class="ctx-sub">Sideload update bundle</div>
+          <div class="hint">Download a <code>.bundle.tar</code> on your phone/laptop, then upload it here.</div>
+          <label class="backup-file-row">
+            <span>Bundle file</span>
+            <input type="file" id="sys-upload-file" accept=".tar" />
+          </label>
+          <progress id="sys-upload-progress" value="0" max="1" style="width:100%;display:none"></progress>
+          <div id="sys-upload-status" class="hint"></div>
+          <div class="btn-row">
+            <button id="sys-upload-btn" class="btn-ghost" type="button" disabled>Upload</button>
+            <button id="sys-apply-btn" class="btn-primary" type="button" disabled>Apply update</button>
+            <button id="sys-rollback-btn" class="btn-ghost" type="button">Rollback</button>
+          </div>
+          <div id="sys-compat-warning" class="hint" style="color:var(--col-alarm);display:none"></div>
+
+          <div class="ctx-sub">Status</div>
+          <div id="sys-job-line" class="hint">No active job.</div>
+          <div id="sys-lastjob-line" class="hint"></div>
+
+          <div class="ctx-sub">Volume backups</div>
+          <div class="btn-row">
+            <button id="sys-backup-now-btn" class="btn-ghost" type="button">Snapshot now</button>
+          </div>
+          <ul id="sys-backup-list" class="debug-sessions"></ul>
+
+          <div class="ctx-sub">Disk</div>
+          <div class="row"><span>Usage</span><b id="sys-disk-line">—</b></div>
+          <div class="btn-row">
+            <button id="sys-prune-btn" class="btn-ghost" type="button">Prune old images</button>
+          </div>
+        </div>
+      </details>
+
       <!-- Backup & restore. Download bundles all "vanchor-" localStorage into a
            server-built ZIP; Restore uploads one back and reloads (backup.js).
            Needs the matching /api/backup + /api/restore backend. -->

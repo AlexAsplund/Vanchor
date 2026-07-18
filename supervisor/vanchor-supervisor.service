@@ -1,0 +1,17 @@
+[Unit]
+Description=Vanchor supervisor (container lifecycle, updates, backups)
+After=docker.service network.target
+Requires=docker.service
+
+[Service]
+Type=notify
+ExecStartPre=/usr/bin/python3 /opt/vanchor-supervisor/guard.py
+ExecStart=/usr/bin/python3 -m vanchor_supervisor
+Environment=PYTHONPATH=/opt/vanchor-supervisor/current
+WatchdogSec=30
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target

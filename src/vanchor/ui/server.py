@@ -1208,6 +1208,131 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 status_code=400,
             )
 
+    # -- Supervisor proxy + chunked bundle upload (adoption task 5) ----------- #
+
+    _SUPERVISOR_PATH_RE = re.compile(r"^v1/[A-Za-z0-9/_.\-]*$")
+
+    @app.api_route("/api/supervisor/proxy/{path:path}", methods=["GET", "POST"])
+    async def supervisor_proxy(path: str, request: _Request):
+        """Constrained proxy to the host-side supervisor's /v1 API.
+
+        The app forwards requests to the supervisor (injecting the auth token)
+        so the browser never needs to speak directly to localhost:9300.
+        Only /v1/... paths are accepted; unknown patterns return 404.
+        Blocked in demo-readonly mode (no POSTs via the middleware above)."""
+        if runtime.supervisor_link is None or runtime._supervisor_status is None:
+            return Response(
+                content=json.dumps({"error": "supervisor_unavailable"}),
+                media_type="application/json",
+                status_code=503,
+            )
+        if not _SUPERVISOR_PATH_RE.match(path):
+            return Response(
+                content=json.dumps({"error": "not_found"}),
+                media_type="application/json",
+                status_code=404,
+            )
+        # Cap POST body at 64 KB.
+        body: bytes | None = None
+        if request.method == "POST":
+            body = await request.body()
+            if len(body) > 64 * 1024:
+                return Response(
+                    content=json.dumps({"error": "body_too_large"}),
+                    media_type="application/json",
+                    status_code=413,
+                )
+        try:
+            code, data = await asyncio.to_thread(
+                runtime.supervisor_link.request,
+                request.method,
+                "/" + path,
+                body,
+            )
+        except Exception as exc:
+            logger.warning("supervisor proxy error: %s", exc)
+            return Response(
+                content=json.dumps({"error": "supervisor_unavailable"}),
+                media_type="application/json",
+                status_code=503,
+            )
+        # Backup download: stream bytes
+        if isinstance(data, bytes):
+            # Extract a filename from the path for Content-Disposition
+            fname = path.split("/")[-1] + ".tar.gz"
+            return Response(
+                content=data,
+                media_type="application/gzip",
+                headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+            )
+        return Response(
+            content=json.dumps(data),
+            media_type="application/json",
+            status_code=code,
+        )
+
+    @app.post("/api/supervisor/upload")
+    async def supervisor_upload(request: _Request, name: str, offset: int, done: int = 0):
+        """Chunked bundle upload. Browser slices the file into 8 MB chunks,
+        each POSTed with its byte offset. On done=1 the .part file is renamed
+        to its final name and the supervisor can be asked to apply it.
+
+        name must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ and end .bundle.tar
+        offset == 0 truncates/creates; else must equal current .part size (409 if not).
+        Single chunk cap: 32 MB (413 beyond).
+        """
+        # Validate name
+        if (not re.match(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$", name)
+                or not name.endswith(".bundle.tar")):
+            return Response(
+                content=json.dumps({"error": "invalid_name"}),
+                media_type="application/json",
+                status_code=400,
+            )
+        import os as _os
+        updates_dir = Path(runtime.config.data_dir) / "updates"
+        updates_dir.mkdir(parents=True, exist_ok=True)
+        part_path = updates_dir / (name + ".part")
+        final_path = updates_dir / name
+
+        if offset == 0:
+            # Truncate/create
+            part_path.write_bytes(b"")
+        else:
+            current_size = part_path.stat().st_size if part_path.exists() else 0
+            if current_size != offset:
+                return Response(
+                    content=json.dumps({"error": "bad_offset", "size": current_size}),
+                    media_type="application/json",
+                    status_code=409,
+                )
+
+        # Stream body to file, cap at 32 MB
+        MAX_CHUNK = 32 * 1024 * 1024
+        written = 0
+        with part_path.open("ab") as f:
+            async for chunk in request.stream():
+                written += len(chunk)
+                if written > MAX_CHUNK:
+                    return Response(
+                        content=json.dumps({"error": "chunk_too_large"}),
+                        media_type="application/json",
+                        status_code=413,
+                    )
+                f.write(chunk)
+
+        total = part_path.stat().st_size
+        if done:
+            _os.replace(str(part_path), str(final_path))
+            return Response(
+                content=json.dumps({"ok": True, "size": total, "bundle": f"updates/{name}"}),
+                media_type="application/json",
+            )
+        return Response(
+            content=json.dumps({"ok": True, "size": total}),
+            media_type="application/json",
+        )
+
     @app.post("/api/calibrate")
     async def calibrate(payload: dict) -> dict:
         mode = str(payload.get("mode", "quick"))

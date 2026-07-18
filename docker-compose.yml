@@ -1,0 +1,29 @@
+# Vanchor container runtime contract. With vanchor-supervisor installed the
+# supervisor owns the container (supervisor/containers.json is the source of
+# truth); this file is the manual / development bring-up and documents the
+# same contract: host network (mDNS), /data volume, serial hotplug via
+# device-cgroup rules + read-only /dev bind.
+services:
+  vanchor:
+    image: ghcr.io/alexasplund/vanchor:latest
+    container_name: vanchor
+    network_mode: host            # mDNS/zeroconf + phone hits :8000 directly
+    restart: unless-stopped
+    environment:
+      VANCHOR_HOST: 0.0.0.0
+      VANCHOR_DATA_DIR: /data
+      # VANCHOR_HARDWARE: "1"     # enable real serial devices
+    volumes:
+      - vanchor_data:/data
+      - /dev:/dev:ro              # hotplug: late-plugged GPS appears instantly
+    device_cgroup_rules:          # what /dev nodes may actually be opened
+      - "c 166:* rmw"             # ttyACM* (u-blox GPS)
+      - "c 188:* rmw"             # ttyUSB* (FTDI/CH340 adapters)
+      - "c 204:* rmw"             # ttyAMA* / serial0 (Pi UART)
+      - "c 89:* rmw"              # i2c-*
+    devices:
+      # SoC-fixed GPIO chip — comment out on non-Pi hosts (compose fails on
+      # missing device paths; Pi has /dev/gpiochip0 always).
+      - /dev/gpiochip0
+volumes:
+  vanchor_data:

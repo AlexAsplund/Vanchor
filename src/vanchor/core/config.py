@@ -701,6 +701,25 @@ class ObsConfig:
 
 
 @dataclass
+class SupervisorLinkConfig:
+    """Link to the host-side vanchor-supervisor daemon (container lifecycle).
+
+    The supervisor runs on the Pi host (outside Docker) and provides update,
+    rollback, backup, and disk-monitoring APIs via a localhost-only HTTP API.
+
+    Defaults keep the app working when supervisor is absent: polling a dead
+    localhost port is a cheap connection-refused; telemetry carries
+    {"available": false} in that case.
+    """
+
+    enabled: bool = True
+    url: str = "http://127.0.0.1:9300"
+    poll_interval_s: float = 5.0         # status poll cadence (1 Hz while a job runs)
+    unavailable_backoff_s: float = 60.0  # poll cadence once marked unavailable
+    token_file: str = ""                 # blank → <data_dir>/supervisor/token
+
+
+@dataclass
 class PushConfig:
     """Web Push notifications (adoption pack #7). The feature is inert until a
     browser opts in via Settings (zero subscriptions -> nothing ever sends),
@@ -755,6 +774,7 @@ class AppConfig:
     obs: ObsConfig = field(default_factory=ObsConfig)
     demo: DemoConfig = field(default_factory=DemoConfig)
     push: PushConfig = field(default_factory=PushConfig)
+    supervisor: SupervisorLinkConfig = field(default_factory=SupervisorLinkConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "AppConfig":
@@ -800,6 +820,7 @@ _SUBCONFIGS: dict[str, type] = {
     "obs": ObsConfig,
     "demo": DemoConfig,
     "push": PushConfig,
+    "supervisor": SupervisorLinkConfig,
 }
 
 

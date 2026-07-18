@@ -113,6 +113,7 @@ const SHELL = [
   "/static/devices.js",
   "/static/hwwizard.js",
   "/static/backup.js",
+  "/static/supervisor.js",
   "/static/guided.js",
   "/static/work-area.js",
   "/static/safety.js",

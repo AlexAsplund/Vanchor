@@ -799,6 +799,19 @@ class Runtime:
             )
         )
 
+        # --- Supervisor link (host-side update/backup/disk daemon) --------- #
+        if cfg.supervisor.enabled:
+            from .supervisor_client import SupervisorClient
+            _token_file = (cfg.supervisor.token_file
+                           or str(Path(cfg.data_dir) / "supervisor" / "token"))
+            self.supervisor_link: "SupervisorClient | None" = SupervisorClient(
+                cfg.supervisor.url, _token_file
+            )
+        else:
+            self.supervisor_link = None
+        self._supervisor_status: dict | None = None
+        self._supervisor_status_at: float = 0.0
+
         # --- Lost-connection failsafe (#64) ------------------------------ #
         # Number of connected UI clients and the last time one was seen alive.
         self._ui_clients = 0
@@ -3271,6 +3284,61 @@ class Runtime:
         except Exception:  # noqa: BLE001 - a demo seed must never kill the runtime
             logger.exception("demo scenario failed to engage")
 
+    async def _run_supervisor_client(self) -> None:
+        """Poll the host-side supervisor's /v1/status and cache it in _supervisor_status.
+
+        Exception-proof: logged errors back off and retry; task only exits on
+        CancelledError at shutdown. Never mutates any safety-critical state."""
+        if self.supervisor_link is None:
+            return
+        cfg = self.config.supervisor
+        while True:
+            try:
+                status = await asyncio.to_thread(self.supervisor_link.status)
+                self._supervisor_status = status
+                self._supervisor_status_at = self._mono_fn()
+                if status is None:
+                    await asyncio.sleep(cfg.unavailable_backoff_s)
+                elif status.get("job") is not None:
+                    # A job is running — poll fast so the UI stays responsive.
+                    await asyncio.sleep(1.0)
+                else:
+                    await asyncio.sleep(cfg.poll_interval_s)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("supervisor client poll error -- will retry")
+                await asyncio.sleep(cfg.poll_interval_s)
+
+    def _supervisor_snapshot(self) -> dict:
+        """Supervisor link state for the UI (update/backup/disk cards + banners).
+
+        Always returns a dict (never None) so the UI can safely read keys.
+        The first container's tag/previous_tag are promoted to the top level
+        so the UI can render the installed version without iterating."""
+        from . import __version__
+        if self.supervisor_link is None:
+            return {"available": False, "app_version": __version__}
+        st = self._supervisor_status
+        if not st:
+            return {"available": False, "app_version": __version__}
+        containers = st.get("containers", [])
+        first = containers[0] if containers else {}
+        return {
+            "available": True,
+            "app_version": __version__,
+            "supervisor_version": st.get("supervisor_version"),
+            "api_version": st.get("api_version"),
+            "tag": first.get("tag"),
+            "previous_tag": first.get("previous_tag"),
+            "containers": containers,
+            "disk": st.get("disk"),
+            "job": st.get("job"),
+            "last_job": st.get("last_job"),
+            "warnings": st.get("warnings", []),
+            "backups": st.get("backups", {}),
+        }
+
     async def _run_supervisor(self, period_s: float = 1.0) -> None:
         """~1 Hz task driving the periodic safety evaluations + depth persistence.
 
@@ -4865,6 +4933,7 @@ class Runtime:
             }
         payload["debug"] = self.debug.status()
         payload["replay"] = {"active": self.replay.active, "name": self.replay.name} if self.replay.active else {"active": False}
+        payload["supervisor"] = self._supervisor_snapshot()
         # NB: recording this frame into the debug session is done by the
         # broadcaster (off the event loop), not here -- telemetry() is pure so
         # that GET /api/state polling can't inject phantom frames into a session.
@@ -4914,6 +4983,7 @@ class Runtime:
         # failsafe, trip accumulation + depth checkpointing. Runs regardless of
         # replay mode and client count (findings M2/H4/#7).
         self._tasks.append(asyncio.ensure_future(self._run_supervisor()))
+        self._tasks.append(asyncio.ensure_future(self._run_supervisor_client()))
         if self.config.demo.enabled:
             self._tasks.append(asyncio.ensure_future(self._run_demo_scenario()))
         # Start armed connectors (after devices are up so the bus is ready).

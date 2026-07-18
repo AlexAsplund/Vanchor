@@ -71,14 +71,15 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "supervisor", "tests"]
 timeout = 120
 # Browser end-to-end tests (Playwright) are opt-in: they launch a server + a
 # real Chromium and are slow, so the default suite excludes them. Run them with
 # `pytest -m e2e` (the browser-e2e CI job does this).
-addopts = "-m 'not e2e'"
+addopts = "-m 'not e2e and not docker'"
 markers = [
     "e2e: browser end-to-end tests (Playwright); opt-in, run with -m e2e",
+    "docker: real docker-daemon integration tests; opt-in, run with -m docker",
 ]
 
 [tool.mypy]

@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+vanchor_data
+analysis_output
+experiments
+build
+tests
+docs
+.superpowers
+*.log

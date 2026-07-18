@@ -98,6 +98,7 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "debug": {"type": "object", "desc": "debug-recorder status"},
     "replay": {"type": "object", "desc": "replay playback status"},
     "anchor_alarm": {"type": "object", "desc": "passive anchor alarm: armed watch circle {armed, lat, lon, radius_m, distance_m, firing, stale, fix_age_s, set_at, breach_count} (motor-off; adoption #10)"},
+    "supervisor": {"type": "object", "desc": "supervisor link state: available, app/supervisor versions, disk, job, backups"},
 }
 
 # command type -> {desc}. Every ctype the controller/server accepts is declared.

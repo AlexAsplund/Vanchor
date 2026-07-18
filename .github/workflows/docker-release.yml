@@ -1,0 +1,164 @@
+name: Docker Release
+
+# Triggers:
+#   * release published  — tag comes from github.ref_name
+#   * workflow_dispatch  — tag supplied as input
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag (e.g. 1.5.0a9)"
+        required: true
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/alexasplund/vanchor
+  # Unified tag: dispatch input OR ref_name (strip leading 'v' from release tags)
+  APP_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Job 1: Build and push multi-arch Docker image
+  # -----------------------------------------------------------------------
+  image:
+    name: Build + push image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (linux/arm64 + linux/amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.APP_TAG }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # -----------------------------------------------------------------------
+  # Job 2: Build and upload app bundle (arm64)
+  # -----------------------------------------------------------------------
+  app-bundle:
+    name: App bundle (arm64)
+    runs-on: ubuntu-latest
+    needs: image
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 pull)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull arm64 image and save as tar.gz
+        run: |
+          docker pull --platform linux/arm64 ${{ env.IMAGE_NAME }}:${{ env.APP_TAG }}
+          docker save ${{ env.IMAGE_NAME }}:${{ env.APP_TAG }} | gzip > image.tar.gz
+
+      - name: Read min_supervisor version from pyproject.toml
+        id: minver
+        run: |
+          MIN=$(python3 -c "
+          import re, sys
+          txt = open('pyproject.toml').read()
+          m = re.search(r'min.supervisor\s*=\s*[\"\']([\d.a-z]+)[\"\']\s*', txt)
+          print(m.group(1) if m else '0.1.0')
+          " 2>/dev/null || echo "0.1.0")
+          echo "min_supervisor=$MIN" >> "$GITHUB_OUTPUT"
+
+      - name: Build app bundle
+        run: |
+          BUNDLE_NAME="vanchor-app-${{ env.APP_TAG }}-arm64.bundle.tar"
+          python3 scripts/make_bundle.py app \
+            --image "${{ env.IMAGE_NAME }}" \
+            --tag "${{ env.APP_TAG }}" \
+            --min-supervisor "${{ steps.minver.outputs.min_supervisor }}" \
+            --arch arm64 \
+            --image-tar image.tar.gz \
+            --out "$BUNDLE_NAME"
+          echo "BUNDLE_NAME=$BUNDLE_NAME" >> "$GITHUB_ENV"
+          sha256sum "$BUNDLE_NAME" > "${BUNDLE_NAME}.sha256"
+
+      - name: Upload app bundle to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TAG="${{ github.event.release.tag_name || format('v{0}', env.APP_TAG) }}"
+          gh release upload "$RELEASE_TAG" \
+            "${{ env.BUNDLE_NAME }}" \
+            "${{ env.BUNDLE_NAME }}.sha256" \
+            --clobber
+
+  # -----------------------------------------------------------------------
+  # Job 3: Build and upload supervisor bundle
+  # -----------------------------------------------------------------------
+  supervisor-bundle:
+    name: Supervisor bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read supervisor version
+        id: supver
+        run: |
+          VER=$(python3 -c "
+          import sys; sys.path.insert(0,'supervisor')
+          from vanchor_supervisor import SUPERVISOR_VERSION
+          print(SUPERVISOR_VERSION)
+          ")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Build supervisor bundle
+        run: |
+          BUNDLE_NAME="vanchor-supervisor-${{ steps.supver.outputs.version }}.bundle.tar"
+          python3 scripts/make_bundle.py supervisor \
+            --supervisor-dir supervisor/vanchor_supervisor \
+            --guard supervisor/guard.py \
+            --version "${{ steps.supver.outputs.version }}" \
+            --out "$BUNDLE_NAME"
+          echo "SUP_BUNDLE_NAME=$BUNDLE_NAME" >> "$GITHUB_ENV"
+          sha256sum "$BUNDLE_NAME" > "${BUNDLE_NAME}.sha256"
+
+      - name: Upload supervisor bundle to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TAG="${{ github.event.release.tag_name || format('v{0}', env.APP_TAG) }}"
+          gh release upload "$RELEASE_TAG" \
+            "${{ env.SUP_BUNDLE_NAME }}" \
+            "${{ env.SUP_BUNDLE_NAME }}.sha256" \
+            --clobber
