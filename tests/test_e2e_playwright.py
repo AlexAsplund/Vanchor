@@ -195,7 +195,7 @@ def test_stop_integrity(live_server: _ServerHandle, pw_browser):
 
     try:
         # Load the page and wait for telemetry to flow.
-        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
         page.wait_for_timeout(1500)
 
         # Reset to a known clean state via the API.
@@ -283,7 +283,7 @@ def test_reconnect_and_staleness(live_server: _ServerHandle, pw_browser):
     page.on("pageerror", lambda e: errors.append(str(e)))
 
     try:
-        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
         page.wait_for_timeout(2000)  # let WS connect + first telemetry frames arrive
 
         # --- Step 1: verify we start connected ---
@@ -360,7 +360,7 @@ def test_routechoice_append_and_replace(live_server: _ServerHandle, pw_browser):
     page.on("pageerror", lambda e: errors.append(str(e)))
 
     try:
-        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
         page.wait_for_timeout(1500)
 
         pos = _api_state(base).get("position") or {"lat": 59.0, "lon": 18.0}
@@ -441,11 +441,16 @@ def test_chips_no_overflow_360px(live_server: _ServerHandle, pw_browser):
     page.on("pageerror", lambda e: errors.append(str(e)))
 
     try:
-        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
-        # Wait for telemetry to flow so chip-batt is visible (worst-case width).
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
+        # Wait for telemetry AND mobile layout to settle.  chip-batt can unhide
+        # (via WS telemetry) before mobile.js has finished loading — mobile.js is
+        # the 57th script in the bundle and the WS can deliver state between
+        # earlier scripts.  Without body.mobile the mobile-only CSS (chip hiding,
+        # gap reduction) is absent and the topbar-actions spill into #chips.
         page.wait_for_function(
-            "!document.getElementById('chip-batt').classList.contains('hidden')",
-            timeout=5000,
+            "!document.getElementById('chip-batt').classList.contains('hidden')"
+            " && document.body.classList.contains('mobile')",
+            timeout=8000,
         )
         page.wait_for_timeout(300)  # let layout settle
 
@@ -481,7 +486,7 @@ def test_chip_stale_state(live_server: _ServerHandle, pw_browser):
     page.on("pageerror", lambda e: errors.append(str(e)))
 
     try:
-        page.goto(base + "/", wait_until="networkidle", timeout=20_000)
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
         page.wait_for_timeout(2000)  # let WS connect + telemetry frames arrive
 
         # Confirm we start connected so the test doesn't pass trivially.

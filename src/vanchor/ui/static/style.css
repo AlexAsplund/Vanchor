@@ -2933,6 +2933,19 @@ body[data-view="manual"] #map-pills { display: none; }
   body.mobile .sheet-peekbar .sheet-mode {
     white-space: normal; line-height: 1.2; letter-spacing: 0.02em;
   }
+  /* Compact view-switcher at 360px so #chips keeps ≥90px.
+     The ≤420px breakpoint gives each view-chip padding:6px 7px + min-width:36px
+     → 4 chips total ~167-180px; with alerts(38)+settings(40)+gaps(16) the
+     topbar-actions claims ~261-274px, leaving #chips only ~62px while content
+     is 86px (24px overflow).  Shrinking padding to 4px 3px + min-width:26px
+     cuts the 4 chips to ~112-120px → topbar-actions ~206-214px → #chips ≥118px
+     (86px content + ≥32px slack).
+     Note: no body.mobile qualifier — the ≤420px parent rule is also unconditional,
+     and body.mobile may not yet be set when Playwright evaluates layout on first
+     load (mobile.js runs after many other scripts).  Applying unconditionally at
+     this narrow width is safe: a real desktop at 360px is an edge case. */
+  .view-chip { padding: 4px 3px; min-width: 26px; }
+  .view-chip::before { font-size: 8px; letter-spacing: 0.02em; }
 }
 
 /* ---- Task 4 (WP7/WP8) additions ---------------------------------------- */

@@ -321,8 +321,11 @@
     const recording = $("track-rec").classList.contains("recording");
     send({ type: "record", action: recording ? "stop" : "start" });
   });
-  $("track-replay").addEventListener("click", () => send({ type: "replay" }));
-  $("track-back").addEventListener("click", () => send({ type: "backtrack" }));
+  // Replay / backtrack drive the boat away autonomously, so they take the same
+  // 600ms hold-to-engage as RTL/goto (owner rule: drive-away actions need a
+  // deliberate press, never a single mis-tap).
+  VA.bindHold($("track-replay"), 600, () => send({ type: "replay" }));
+  VA.bindHold($("track-back"), 600, () => send({ type: "backtrack" }));
   $("track-clear").addEventListener("click", () => send({ type: "record", action: "clear" }));
   function updateTrack(track) {
     const rec = !!(track && track.recording);
