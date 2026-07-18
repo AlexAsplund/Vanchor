@@ -9,6 +9,11 @@ services:
     container_name: vanchor
     network_mode: host            # mDNS/zeroconf + phone hits :8000 directly
     restart: unless-stopped
+    logging:                      # bound log growth — unbounded json-file
+      driver: local               # logs wear out the Pi's SD card
+      options:
+        max-size: "5m"
+        max-file: "2"
     environment:
       VANCHOR_HOST: 0.0.0.0
       VANCHOR_DATA_DIR: /data

@@ -213,3 +213,55 @@ def test_upload_done_renames_to_final(client_with_supervisor):
     part = tmp_path / "updates" / "done.bundle.tar.part"
     assert final.exists()
     assert not part.exists()
+
+
+# ------------------------------------------------------------------ #
+# Aborted-upload hygiene: stale .part files are cleaned on offset=0
+# ------------------------------------------------------------------ #
+
+def test_upload_cleans_stale_part_on_new_upload(client_with_supervisor, monkeypatch):
+    """A stale .part file older than 24 h is removed when a new upload starts."""
+    c, stub, tmp_path = client_with_supervisor
+
+    # Create a stale .part file (pretend it was written 25 hours ago)
+    updates_dir = tmp_path / "updates"
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    stale = updates_dir / "stale.bundle.tar.part"
+    stale.write_bytes(b"leftover")
+
+    import time
+    # Backdate the file modification time by 25 hours
+    stale_mtime = time.time() - 25 * 3600
+    import os
+    os.utime(str(stale), (stale_mtime, stale_mtime))
+
+    # Starting a new upload (offset=0) must trigger cleanup of stale .part files
+    r = c.post(
+        "/api/supervisor/upload?name=new.bundle.tar&offset=0&done=0",
+        content=b"first-chunk",
+    )
+    assert r.status_code == 200
+    # The stale .part file must be gone
+    assert not stale.exists(), "Stale .part file should have been cleaned up"
+    # The new upload's .part file should still be there
+    assert (updates_dir / "new.bundle.tar.part").exists()
+
+
+def test_upload_keeps_recent_part_files(client_with_supervisor):
+    """A .part file that is less than 24 h old must NOT be removed."""
+    c, stub, tmp_path = client_with_supervisor
+
+    updates_dir = tmp_path / "updates"
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    recent = updates_dir / "recent.bundle.tar.part"
+    recent.write_bytes(b"in-progress")
+    # File is fresh (default mtime is now), so no backdate needed
+
+    # Trigger a new upload
+    r = c.post(
+        "/api/supervisor/upload?name=other.bundle.tar&offset=0&done=0",
+        content=b"chunk",
+    )
+    assert r.status_code == 200
+    # The recent .part file must still exist
+    assert recent.exists(), "Recent .part file must not be cleaned up"

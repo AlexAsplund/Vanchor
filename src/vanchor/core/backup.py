@@ -72,6 +72,11 @@ _DATA_FILES = ("boats.json", "depthmap.json", "devices.json")
 # The sub-directory of per-outing trip logs (every *.json inside is included).
 _TRIPS_DIR = "trips"
 # Caches that are large + regenerable -> never included.
+# NOTE: push/ is intentionally NOT listed here (no _DATA_FILES entry, no
+# _EXCLUDED_DIRS entry either). The VAPID private key must not appear in
+# support ZIPs; subscriptions are per-browser capability URLs that would
+# silently misdirect someone's phone if restored onto another install.
+# The re-sync in push.js makes re-subscribing automatic on next card open.
 _EXCLUDED_DIRS = ("water_cache", "debug", "updates")
 
 

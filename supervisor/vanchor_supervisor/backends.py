@@ -162,6 +162,19 @@ class CliDockerBackend:
             "--restart", restart,
         ]
 
+        # Log bounds: unbounded json-file logs wear out SD cards.  Default to
+        # the local driver capped at 2 x 5 MB; overridable per entry via a
+        # "logging" field: {"driver": ..., "options": {...}} (add-on tunable).
+        logging_cfg = entry.get("logging") or {
+            "driver": "local",
+            "options": {"max-size": "5m", "max-file": "2"},
+        }
+        driver = logging_cfg.get("driver")
+        if driver:
+            args += ["--log-driver", driver]
+        for opt_k, opt_v in (logging_cfg.get("options") or {}).items():
+            args += ["--log-opt", f"{opt_k}={opt_v}"]
+
         # Environment variables
         for k, v in (entry.get("env") or {}).items():
             args += ["-e", f"{k}={v}"]

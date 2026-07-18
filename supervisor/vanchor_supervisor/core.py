@@ -52,6 +52,10 @@ _DEFAULT_CONTAINERS = [
         ],
         "devices": ["/dev/gpiochip0"],
         "restart": "unless-stopped",
+        # Bounded container logs (SD-card wear): local driver, 2 x 5 MB.
+        # Per-entry tunable; backends.run() applies the same bounds when the
+        # field is absent so add-on entries get safe defaults too.
+        "logging": {"driver": "local", "options": {"max-size": "5m", "max-file": "2"}},
         "health_url": "http://127.0.0.1:8000/api/state",
         "update_policy": {"channel": "release"},
         "required_devices_from": "devices.json",
@@ -326,11 +330,60 @@ class SupervisorCore:
         return result
 
     def do_self_update(self, bundle_path: Path) -> dict:
-        """Install a new supervisor version from a bundle.  Non-async (returns result)."""
+        """Install a new supervisor version from a bundle.
+
+        Installs synchronously, persists the job as ``done`` with
+        ``detail="restarting supervisor"``, then schedules ``os._exit(0)``
+        in a 1-second daemon thread so the HTTP response is delivered to
+        the client before systemd ``Restart=always`` brings up the new code.
+
+        Returns the job dict; the API handler extracts ``job["id"]``.
+        """
         install_root = Path(self.settings.install_root)
-        new_version = _selfupdate.install(bundle_path, install_root)
-        log.info("Self-update complete: supervisor %s installed", new_version)
-        return {"new_version": new_version}
+
+        job = _new_job("self_update", "supervisor")
+        self._jobs[job["id"]] = job
+        self._persist_job(job)
+
+        try:
+            self._set_phase(job, "verify")
+            new_version = _selfupdate.install(bundle_path, install_root)
+            log.info("Self-update complete: supervisor %s installed", new_version)
+
+            job["detail"] = "restarting supervisor"
+            job["ok"] = True
+            job["phase"] = "done"
+            job["finished_at"] = _now_iso()
+            # Persist BEFORE exiting so /v1/jobs/last is visible after restart.
+            self._persist_job(job)
+            log.info("[job %s] Self-update persisted; scheduling os._exit(0) in 1 s",
+                     job["id"][:8])
+
+            # Spawn a 1-second delay daemon thread so the current HTTP
+            # response is delivered to the client first.  systemd
+            # Restart=always will boot the newly installed version.
+            def _delayed_exit() -> None:
+                self.sleep(1)
+                log.info("Supervisor self-update: calling os._exit(0)")
+                os._exit(0)  # noqa: SLF001
+
+            t = threading.Thread(
+                target=_delayed_exit,
+                daemon=True,
+                name="self-update-exit",
+            )
+            t.start()
+
+        except Exception as exc:
+            job["ok"] = False
+            job["error"] = str(exc)
+            job["phase"] = "failed"
+            job["finished_at"] = _now_iso()
+            self._persist_job(job)
+            log.error("[job %s] self-update FAILED: %s", job["id"][:8], exc)
+            raise
+
+        return job
 
     def do_restore(self, name: str, backup_id: str) -> dict:
         """Schedule a volume restore job."""
@@ -402,7 +455,7 @@ class SupervisorCore:
                     bundle_path.relative_to(mp_resolved)
                 except ValueError:
                     raise ValueError(
-                        f"invalid bundle path: traversal outside volume mountpoint"
+                        "invalid bundle path: traversal outside volume mountpoint"
                     )
                 if not bundle_path.exists():
                     raise FileNotFoundError(f"Bundle not found: {bundle_path}")

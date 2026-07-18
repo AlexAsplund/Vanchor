@@ -104,6 +104,35 @@ def test_run_includes_image_tag():
     assert "ghcr.io/alexasplund/vanchor:1.5.0a8" in args
 
 
+def test_run_includes_default_log_bounds():
+    """SD-card wear: run() must bound container logs by default
+    (--log-driver local, max-size=5m, max-file=2) when the entry has no
+    'logging' field."""
+    recorder = RecordingRunner()
+    backend = CliDockerBackend(runner=recorder)
+    backend.run(VANCHOR_ENTRY)  # entry has no "logging" key → defaults apply
+    args = recorder.calls[-1]
+    assert "--log-driver" in args
+    assert args[args.index("--log-driver") + 1] == "local"
+    assert "max-size=5m" in args
+    assert "max-file=2" in args
+
+
+def test_run_entry_logging_overrides_defaults():
+    """A per-entry 'logging' field overrides the default log bounds."""
+    recorder = RecordingRunner()
+    backend = CliDockerBackend(runner=recorder)
+    entry = dict(VANCHOR_ENTRY)
+    entry["logging"] = {"driver": "json-file",
+                        "options": {"max-size": "10m", "max-file": "3"}}
+    backend.run(entry)
+    args = recorder.calls[-1]
+    assert args[args.index("--log-driver") + 1] == "json-file"
+    assert "max-size=10m" in args
+    assert "max-file=3" in args
+    assert "max-size=5m" not in args
+
+
 def test_run_skips_missing_device(tmp_path):
     """Devices that don't exist on the host must be skipped (not fatal)."""
     recorder = RecordingRunner()

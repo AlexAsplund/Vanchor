@@ -279,6 +279,15 @@ def test_apply_env_overrides_full_surface(clean_env) -> None:
     assert cfg.nmea_tcp.port == 10120
 
 
+def test_apply_env_overrides_supervisor_link(clean_env) -> None:
+    """VANCHOR_SUPERVISOR_ENABLED and VANCHOR_SUPERVISOR_URL are wired (M1)."""
+    clean_env.setenv("VANCHOR_SUPERVISOR_ENABLED", "false")
+    clean_env.setenv("VANCHOR_SUPERVISOR_URL", "http://127.0.0.1:19300")
+    cfg = apply_env_overrides(AppConfig())
+    assert cfg.supervisor.enabled is False
+    assert cfg.supervisor.url == "http://127.0.0.1:19300"
+
+
 def test_env_overrides_win_over_yaml(clean_env, tmp_path) -> None:
     p = tmp_path / "config.yaml"
     p.write_text("server:\n  port: 7000\n", encoding="utf-8")

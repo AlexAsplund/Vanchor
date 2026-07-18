@@ -58,6 +58,17 @@ def test_compose_cgroup_rules_exact(compose):
     assert set(rules) == expected, f"Expected cgroup rules {expected!r}, got {rules!r}"
 
 
+def test_compose_bounded_logging(compose):
+    """SD-card wear: container logging must be bounded (local driver, 2 x 5 MB)."""
+    svc = compose["services"]["vanchor"]
+    logging_cfg = svc.get("logging")
+    assert logging_cfg, "logging section required to bound log growth"
+    assert logging_cfg["driver"] == "local"
+    opts = logging_cfg.get("options", {})
+    assert opts.get("max-size") == "5m"
+    assert str(opts.get("max-file")) == "2"
+
+
 # ------------------------------------------------------------------ #
 # Dockerfile
 # ------------------------------------------------------------------ #

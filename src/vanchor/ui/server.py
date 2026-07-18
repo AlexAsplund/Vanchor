@@ -227,6 +227,23 @@ def _is_allowed_host(hostname: str, extra: frozenset[str]) -> bool:
     return hostname in extra
 
 
+def _cleanup_stale_parts(updates_dir: Path, now: float, max_age_s: float = 86400.0) -> None:
+    """Remove ``*.part`` files in *updates_dir* that are older than *max_age_s* seconds.
+
+    Called at the start of each new upload sequence (offset=0) to prevent
+    aborted uploads from accumulating on disk indefinitely.
+    """
+    try:
+        for f in updates_dir.glob("*.part"):
+            try:
+                if now - f.stat().st_mtime > max_age_s:
+                    f.unlink(missing_ok=True)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
     from ..obs.session_upload import SessionUploader
 
@@ -1290,12 +1307,16 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 status_code=400,
             )
         import os as _os
+        import time as _time
         updates_dir = Path(runtime.config.data_dir) / "updates"
         updates_dir.mkdir(parents=True, exist_ok=True)
         part_path = updates_dir / (name + ".part")
         final_path = updates_dir / name
 
         if offset == 0:
+            # Clean up stale .part files from previously aborted uploads
+            # (older than 24 h) before starting a new upload sequence.
+            _cleanup_stale_parts(updates_dir, _time.time())
             # Truncate/create
             part_path.write_bytes(b"")
         else:

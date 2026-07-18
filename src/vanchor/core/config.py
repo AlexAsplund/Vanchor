@@ -1030,6 +1030,9 @@ def apply_env_overrides(config: AppConfig) -> AppConfig:
     # Demo mode.
     _apply("VANCHOR_DEMO", config.demo, "enabled", _parse_bool)
     _apply("VANCHOR_DEMO_READONLY", config.demo, "readonly", _parse_bool)
+    # Supervisor link.
+    _apply("VANCHOR_SUPERVISOR_ENABLED", config.supervisor, "enabled", _parse_bool)
+    _apply("VANCHOR_SUPERVISOR_URL", config.supervisor, "url", str)
     return config
 
 

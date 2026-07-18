@@ -427,8 +427,8 @@ def serve(core, settings) -> http.server.ThreadingHTTPServer:
             try:
                 volume_mp = core.backend.volume_mountpoint(settings.data_volume)
                 bundle_path = (Path(volume_mp) / bundle_rel).resolve()
-                result = core.do_self_update(bundle_path)
-                _json(self, 200, result)
+                job = core.do_self_update(bundle_path)
+                _json(self, 200, {"job_id": job["id"]})
             except Exception as exc:
                 _json(self, 500, {"error": str(exc)})
 

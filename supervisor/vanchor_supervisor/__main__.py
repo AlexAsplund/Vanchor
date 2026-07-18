@@ -53,7 +53,7 @@ def main() -> None:
     install_root = Path(settings.install_root)
     pending = read_pending(install_root)
     if pending is not None:
-        pending_version = pending.get("new_version")
+        pending_version = pending.get("target")
         if pending_version == SUPERVISOR_VERSION:
             log.info(
                 "Startup OK: running as expected version %s — clearing pending.json",
