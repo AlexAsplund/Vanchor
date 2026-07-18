@@ -45,6 +45,8 @@
     if (soc < 25) return "low";
     return "ok";
   }
+  // Shared helper — mobile.js uses it too (loads after safety.js).
+  VA.battLevel = battLevel;
 
   function fmtDuration(s) {
     if (!Number.isFinite(s) || s < 0) return "—";

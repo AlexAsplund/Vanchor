@@ -154,7 +154,7 @@
   const advance = segValue("wa-advance", "manual");
   function syncAdvance() {
     const row = $("wa-dwell-row");
-    if (row) row.classList.toggle("dim", advance() !== "timed");
+    if (row) row.classList.toggle("hidden", advance() !== "timed");
   }
 
   function bindSlider(id, outId, fn) {

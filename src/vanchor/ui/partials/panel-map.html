@@ -2,7 +2,8 @@
 
       <details class="card" id="map-orient-card">
         <summary>Map orientation</summary>
-        <div class="hint">The compass button on the map toggles north-up / heading-up. In heading-up the chart can also TILT away, navigator-style, so you see further ahead of the boat.</div>
+        <!-- Segmented N-UP / HDG control is injected here by maprotate.js -->
+        <div class="hint">North-up keeps the chart fixed. Heading-up rotates the chart so the bow always points up — like a car navigator. In heading-up the chart can also TILT away so you see further ahead.</div>
         <div class="slider-row">
           <label>Heading-up tilt <output id="map-tilt-val">0</output>°</label>
           <input type="range" id="map-tilt" min="0" max="60" step="5" value="0" />

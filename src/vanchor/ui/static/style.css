@@ -1957,9 +1957,13 @@ body.mobile .topbar {
 }
 body.mobile .brand { display: none; }
 body.mobile .chips {
-  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
-  -webkit-overflow-scrolling: touch; gap: 6px; min-width: 0;
+  flex-wrap: nowrap; overflow: hidden; gap: 6px; min-width: 0;
 }
+/* Health-only topbar on mobile: data values live in the 26px peek row */
+body.mobile #chip-speed,
+body.mobile #chip-hdg,
+body.mobile #chip-depth,
+body.mobile #chip-route { display: none !important; }
 body.mobile .chip { padding: 5px 9px; font-size: 11px; }
 body.mobile .topbar-actions { flex: 0 0 auto; }
 body.mobile #settings-open { width: 40px; height: 40px; }
@@ -2037,8 +2041,33 @@ body.mobile .si-label {
   color: var(--muted); font: 700 9px var(--font-display);
   text-transform: uppercase; letter-spacing: 0.08em;
 }
-body.mobile .si-val b { font: 800 18px var(--font-num); font-variant-numeric: tabular-nums; color: var(--text); }
-body.mobile .si-val small { color: var(--muted); font-size: 10px; margin-left: 1px; }
+/* >=26px condensed tabular numerals (Instrument graft law) */
+body.mobile .si-val b {
+  font: 800 26px/1 var(--font-num);
+  font-stretch: condensed;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+body.mobile .si-val small { color: var(--muted); font-size: 11px; margin-left: 1px; }
+/* Sub-label: voltage line under BATT value, ring label under ctx cell */
+body.mobile .si-sub {
+  color: var(--muted); font: 500 10px var(--font-display);
+  text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
+body.mobile .si-sub.hidden { display: none; }
+
+/* Battery level colors (data-level on #si-batt) */
+body.mobile .si-batt[data-level="low"] .si-val b  { color: var(--warn); }
+body.mobile .si-batt[data-level="crit"] .si-val b { color: var(--stop); }
+/* ctx cell — drag alarm: value + border go red */
+body.mobile #si-ctx[data-ctx="alarm"] .si-val b { color: var(--stop); }
+body.mobile #si-ctx[data-ctx="alarm"] { border-color: var(--stop); }
+/* anchor mode: accent color */
+body.mobile #si-ctx[data-ctx="anchor"] .si-val b { color: #ff5a7a; }
+/* Stale numbers: dim all peek values when link is lost */
+body[data-stale="1"] .si-val b,
+body[data-stale="1"] :is(.chip-val b, .hud-big span) { color: var(--muted); }
 
 /* peek action bar — fixed law: STOP left / mode chip center / MOB right */
 body.mobile .sheet-peekbar {
@@ -2480,6 +2509,8 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   body[data-view="instruments"] #hud { left: 8px !important; right: 8px !important; }
   body[data-view="helm"] .mode-btn .mi { font-size: 28px; }
   body[data-view="instruments"] #hud { grid-template-columns: repeat(2, 1fr); }
+  /* Battery (always last widget) spans full width so no blank cell appears at 5 widgets. */
+  body[data-view="instruments"] #hud .hud-widget[data-hud="battery"] { grid-column: 1 / -1 !important; }
   /* The instrument strip on phones sits just under the slimmer topbar. */
   body[data-view="helm"] #hud, body[data-view="manual"] #hud { top: 56px !important; }
   body[data-view="helm"] #mode-rail, body[data-view="manual"] #dock-panels { top: 128px; }
@@ -2606,4 +2637,159 @@ body.mobile .dock-stop-bar { display: none; }
 .boat-mode-badge .bmb .bmb-sub {
   display: block; font-size: 9px; font-weight: 700; opacity: 0.85;
 }
+
+/* ===================================================================== */
+/* UX TASK 2 — Glanceable truth + Status polish                          */
+/* ===================================================================== */
+
+/* ---- chip-conn: stale state + worst-of health dot ---- */
+#chip-conn[data-state="stale"] .chip-dot {
+  background: var(--warn, #f0b429);
+  animation: pulse 1s infinite;
+}
+#chip-conn[data-health="warn"] .chip-dot  { background: var(--warn, #f0b429); }
+#chip-conn[data-health="alarm"] .chip-dot { background: var(--stop, #ff3b30); }
+/* data-state disconnected/stale wins over generic health */
+#chip-conn[data-state="disconnected"] .chip-dot,
+#chip-conn[data-state="connecting"] .chip-dot {
+  background: var(--muted);
+  animation: none;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ---- Alerts bell: grey outline empty, coloured with badge ---- */
+.alerts-bell { color: var(--muted); }
+.alerts-bell[data-sev="warn"]  { color: var(--warn, #f0b429); }
+.alerts-bell[data-sev="alarm"] { color: var(--stop, #ff3b30); }
+.bell-svg { display: block; }
+
+/* ---- Map mode pill: fixed top-left, doesn't rotate with heading-up ---- */
+#map-pills {
+  position: fixed;
+  top: calc(var(--topbar-h, 52px) + 8px);
+  left: 8px;
+  z-index: 1100;
+  display: flex; flex-direction: row; gap: 6px;
+  pointer-events: none;
+}
+/* Hide on non-chart views */
+body[data-view="helm"] #map-pills,
+body[data-view="instruments"] #map-pills,
+body[data-view="manual"] #map-pills { display: none; }
+
+#mode-pill {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  font: 600 11px/1.4 "Inter", system-ui, sans-serif;
+  color: var(--text);
+  background: rgba(10, 20, 28, 0.78);
+  border: 1px solid var(--line-bright, rgba(255, 255, 255, 0.18));
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  white-space: nowrap; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+/* Anchor modes — accent */
+#mode-pill[data-mode^="anchor"] { border-color: #ff5a7a; color: #ffd0d9; }
+/* Route */
+#mode-pill[data-mode="waypoint"] { border-color: var(--accent, #1be4ff); }
+/* Dragging / alarm — red */
+#mode-pill.dragging { border-color: var(--stop, #ff3b30); color: #ffd8de; }
+
+/* ---- Dark basemap contrast filter ---- */
+#map.base-dark .leaflet-tile {
+  filter: brightness(1.12) saturate(1.15);
+}
+
+/* ---- Stale waypoint route pins ---- */
+.wp-pin-inactive { opacity: 0.4; filter: grayscale(0.7); }
+
+/* ---- Heading-up map control label ---- */
+.maprot-label {
+  display: block; text-align: center;
+  font: 700 9px "Inter", system-ui, sans-serif;
+  letter-spacing: 0.06em; color: var(--muted);
+  margin-top: 1px;
+}
+
+/* ---- Anchor alarm popup ---- */
+.aa-popup-wrap .leaflet-popup-content-wrapper {
+  background: rgba(12, 22, 30, 0.92); color: var(--text);
+  border: 1px solid var(--stop, #ff3b30);
+  border-radius: 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+.aa-popup-wrap .leaflet-popup-content { margin: 10px 12px; min-width: 180px; }
+.aa-popup-wrap .leaflet-popup-tip { background: rgba(12, 22, 30, 0.92); }
+.aa-popup { display: flex; flex-direction: column; gap: 8px; }
+.aa-popup .aa-title { font: 700 13px "Inter", system-ui, sans-serif; color: var(--stop, #ff3b30); }
+.aa-popup .aa-detail { font: 500 11px "Inter", system-ui, sans-serif; color: var(--muted); }
+.aa-popup .aa-clear {
+  width: 100%; padding: 8px; border-radius: 8px; cursor: pointer;
+  font: 700 13px "Inter", system-ui, sans-serif;
+  background: var(--stop, #ff3b30); color: #fff; border: none;
+}
+.aa-popup .aa-clear:active { transform: scale(0.97); }
+
+/* ---- Attribution z-order: below sheet but above tiles ---- */
+.leaflet-control-attribution { z-index: 400 !important; }
+.leaflet-bottom { z-index: 400 !important; }
+
+/* ---- RTL visual separation ---- */
+.rtl-group {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+}
+.prs-btn.rtl-danger {
+  border-color: var(--warn, #f0b429);
+  color: var(--warn, #f0b429);
+}
+.rtl-sub {
+  font: 500 10px "Inter", system-ui, sans-serif;
+  color: var(--muted); padding-left: 2px;
+}
+
+/* ---- Jog pad bow-relative labels ---- */
+.dpad-lbl {
+  display: block; font: 500 9px "Inter", system-ui, sans-serif;
+  letter-spacing: 0.04em; color: var(--muted); margin-top: 1px;
+}
+.dpad-caption {
+  text-align: center; font: 500 10px "Inter", system-ui, sans-serif;
+  color: var(--muted); margin-top: 4px;
+}
+
+/* ---- Steer hint collapse ---- */
+.hint-expand-btn {
+  border: none; background: none; cursor: pointer;
+  color: var(--accent, #1be4ff); font: 700 13px "Inter", system-ui, sans-serif;
+  padding: 0 2px; vertical-align: middle;
+}
+.hint-extra { display: none; }
+.hint-extra:not(.hidden) { display: inline; }
+
+/* ---- Volume row: grid layout so it never wraps mid-label ---- */
+.slider-row:has(#snd-volume) {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center; gap: 6px;
+}
+.slider-row:has(#snd-volume) input[type="range"] { grid-column: 1 / -1; }
+
+/* ---- Heading-up segmented control in settings ---- */
+.maprot-seg {
+  display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  margin-bottom: 8px;
+}
+.maprot-seg button {
+  flex: 1; padding: 8px 12px; border: none; background: transparent;
+  color: var(--muted); font: 600 12px "Inter", system-ui, sans-serif;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.maprot-seg button.on {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.maprot-seg button:first-child { border-right: 1px solid var(--line); }
 

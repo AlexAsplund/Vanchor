@@ -121,9 +121,9 @@
 
     // paused banner + resume highlight (both main + remote)
     [banner, rmBanner].forEach((b) => { if (b) b.classList.toggle("hidden", !paused); });
-    if (resumeBtn) resumeBtn.classList.toggle("hot", paused);
+    if (resumeBtn) { resumeBtn.classList.toggle("hot", paused); resumeBtn.disabled = !paused; }
     if (pauseBtn) pauseBtn.classList.toggle("hot", !paused && guided);
-    if (rmResume) rmResume.classList.toggle("hot", paused);
+    if (rmResume) { rmResume.classList.toggle("hot", paused); rmResume.disabled = !paused; }
     if (rmPause) rmPause.classList.toggle("hot", !paused);
 
     // reflect throttle override % when not dragging

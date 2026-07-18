@@ -34,14 +34,15 @@
     const sog = VA.fin(t.sog_knots);
     VA.setText("chip-sog", sog === null ? "—" : sog.toFixed(1));
     const hdg = VA.fin(t.heading_deg);
-    VA.setText("chip-hdg-val", hdg === null ? "—" : Math.round(hdg).toString());
+    // Modulo 0-359: never display "360"
+    VA.setText("chip-hdg-val", hdg === null ? "—" : String(((Math.round(hdg) % 360) + 360) % 360));
     const depth = VA.fin(t.depth_m);
     VA.setText("chip-depth-val", depth === null ? "—" : depth.toFixed(1));
 
     // ---- floating HUD ----
     VA.setText("hud-sog", sog === null ? "—" : sog.toFixed(2));
     VA.setText("hud-ms", sog === null ? "—" : (sog * 0.514444).toFixed(2));
-    VA.setText("hud-hdg", hdg === null ? "—" : Math.round(hdg).toString());
+    VA.setText("hud-hdg", hdg === null ? "—" : String(((Math.round(hdg) % 360) + 360) % 360));
     // North-up compass: the needle rotates to point at the heading (N stays up).
     // Quantized to 0.5° so heading jitter doesn't repaint the rose every frame. (perf)
     const rose = document.getElementById("hud-rose");
@@ -53,13 +54,19 @@
       }
     }
     VA.setText("hud-depth", depth === null ? "—" : depth.toFixed(1));
-    VA.setText("hud-anchor", Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—");
+    // Dist-to-anchor: only meaningful when actively anchored
+    const anchored = !!t.anchor && typeof t.mode === "string" && t.mode.startsWith("anchor");
+    VA.setText("hud-anchor", anchored && Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—");
+    const hudAnchorWidget = document.querySelector('#hud .hud-widget[data-hud="anchor"]');
+    if (hudAnchorWidget) hudAnchorWidget.classList.toggle("hidden", !anchored);
+    // Live-data settings row: just show "—" when not anchored
+    VA.setText("r-anchor", anchored && Number.isFinite(t.distance_to_anchor_m) ? VA.fmt(t.distance_to_anchor_m) + " m" : "—");
 
     // ---- live-data readout rows (settings drawer) ----
     VA.setText("r-mode", t.mode ?? "—");
     VA.setText("r-heading", VA.fmt(t.heading_deg) + "°");
     VA.setText("r-sog", VA.fmt(t.sog_knots, 2) + " kn");
-    VA.setText("r-anchor", VA.fmt(t.distance_to_anchor_m) + " m");
+    // r-anchor is set below, after the anchored check
     VA.setText("r-wp", VA.fmt(t.distance_to_waypoint_m) + " m");
     VA.setText("r-xte", VA.fmt(t.cross_track_m) + " m");
     VA.setText("r-brg", VA.fmt(t.bearing_to_dest) + "°");
@@ -84,8 +91,9 @@
     const overlay = document.getElementById("remote");
     if (!overlay || overlay.classList.contains("hidden")) return;
     VA.setText("rm-mode", t.mode ?? "—");
-    VA.setText("rm-hdg", Number.isFinite(t.heading_deg) ? Math.round(t.heading_deg).toString() : "—");
-    VA.setText("rm-anchor", Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—");
+    VA.setText("rm-hdg", Number.isFinite(t.heading_deg) ? String(((Math.round(t.heading_deg) % 360) + 360) % 360) : "—");
+    const anchoredRm = !!t.anchor && typeof t.mode === "string" && t.mode.startsWith("anchor");
+    VA.setText("rm-anchor", anchoredRm && Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—");
     VA.setText("rm-depth", Number.isFinite(t.depth_m) ? t.depth_m.toFixed(1) : "—");
   }
 })();

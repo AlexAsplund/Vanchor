@@ -175,6 +175,9 @@ setInterval(() => {
       show: true, belowTopbar: true, bg: "#b45309",
       text: "DATA STALE (" + Math.round(age / 1000) + "s old) — link may be down",
     });
+    // Drive chip-conn + body stale state so CSS greys the numbers.
+    setConn("stale", "STALE " + Math.round(age / 1000) + "s");
+    document.body.dataset.stale = "1";
   }
 }, 1000);
 
@@ -278,9 +281,14 @@ function dispatch(t) {
       }
     }
   }
-  // Fresh frame: clear any staleness banner and confirm pending critical cmds.
+  // Fresh frame: clear any staleness banner/state and confirm pending critical cmds.
   _lastFrameMs = Date.now();
   _banner(STALE_BANNER_ID, { show: false });
+  // Restore connected state if we were showing stale.
+  if (document.body.dataset.stale) {
+    delete document.body.dataset.stale;
+    setConn("connected", "connected");
+  }
   if (_critical && _critical.confirm(t)) {
     // Telemetry-frame confirmation arrived first; drop the pending ack watcher
     // so it doesn't later log a spurious "not acked" for a command that worked.

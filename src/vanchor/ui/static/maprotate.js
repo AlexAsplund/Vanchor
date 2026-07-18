@@ -229,10 +229,19 @@
       btn.title = mode === "head" ? "Heading-up (tap for north-up)" : "North-up (tap for heading-up)";
       btn.setAttribute("aria-pressed", mode === "head" ? "true" : "false");
     }
+    // Update the N-UP/HDG label on the map control button.
+    if (btnLabel) btnLabel.textContent = mode === "head" ? "HDG" : "N-UP";
+    // Toast on user-initiated mode changes.
+    if (persist && VA.toast) {
+      VA.toast(mode === "head" ? "Heading-up — chart turns with the bow" : "North-up", { ttl: 2400 });
+    }
+    // Keep the settings segmented control in sync.
+    if (segNorth) segNorth.classList.toggle("on", mode === "north");
+    if (segHead)  segHead.classList.toggle("on",  mode === "head");
     if (persist) { try { localStorage.setItem(KEY, mode); } catch (e) { /* ignore */ } }
   }
 
-  let btn = null;
+  let btn = null, btnLabel = null, segNorth = null, segHead = null;
   const Ctl = L.Control.extend({
     options: { position: "topleft" },
     onAdd() {
@@ -245,8 +254,10 @@
         `<svg viewBox="0 0 24 24" width="18" height="18" class="maprot-needle" aria-hidden="true">` +
         `<path d="M12 2 L15.2 12 L12 10.4 L8.8 12 Z" fill="#ff5d6e"/>` +
         `<path d="M12 22 L8.8 12 L12 13.6 L15.2 12 Z" fill="#dfeaf2"/>` +
-        `<circle cx="12" cy="12" r="1.6" fill="#1be4ff"/></svg>`;
+        `<circle cx="12" cy="12" r="1.6" fill="#1be4ff"/></svg>` +
+        `<span class="maprot-label">N-UP</span>`;
       btnNeedle = btn.querySelector(".maprot-needle");
+      btnLabel = btn.querySelector(".maprot-label");
       L.DomEvent.disableClickPropagation(wrap);
       L.DomEvent.on(btn, "click", (e) => {
         L.DomEvent.stop(e);
@@ -257,7 +268,29 @@
   });
   map.addControl(new Ctl());
 
-  // Settings: heading-up tilt slider (Map & charts card).
+  // Settings: heading-up segmented control (North-up | Heading-up) + tilt slider.
+  const orientCard = document.getElementById("map-orient-card");
+  if (orientCard) {
+    const seg = document.createElement("div");
+    seg.className = "seg maprot-seg";
+    seg.setAttribute("role", "group");
+    seg.setAttribute("aria-label", "Map orientation");
+    segNorth = document.createElement("button");
+    segNorth.type = "button";
+    segNorth.textContent = "North-up";
+    segHead = document.createElement("button");
+    segHead.type = "button";
+    segHead.textContent = "Heading-up";
+    seg.appendChild(segNorth);
+    seg.appendChild(segHead);
+    // Insert before the hint text (first child)
+    const hint = orientCard.querySelector(".hint");
+    orientCard.insertBefore(seg, hint || orientCard.querySelector("summary").nextSibling);
+    segNorth.addEventListener("click", () => setMode("north", true));
+    segHead.addEventListener("click", () => setMode("head", true));
+  }
+
+  // Settings: tilt slider (Map & charts card).
   const tiltSlider = document.getElementById("map-tilt");
   const tiltOut = document.getElementById("map-tilt-val");
   if (tiltSlider) {

@@ -72,34 +72,23 @@
     marker.setLatLng([lat, lon]);
   }
 
-  const modeBadge = L.marker(START, {
-    icon: L.divIcon({ className: "", html: "", iconSize: [0, 0] }),
-    interactive: false, keyboard: false, zIndexOffset: 1100,
-  }).addTo(map);
-  let _badgeKey;
-  function updateModeBadge(t, lat, lon) {
-    setLatLngIfMoved(modeBadge, lat, lon);
-    // Degraded-state suffix comes ONLY from the shared VA.modeSuffix helper
-    // (safety auto-stop flags) so the map badge never disagrees with the sheet.
-    const suffix = (VA.modeSuffix ? VA.modeSuffix(t) : "");
-    const stopped = suffix !== "";
-    // GPS-lost: show fix age, quantized to 5 s buckets so the divIcon isn't
-    // rebuilt every frame while the age counts up.
-    const fixLost = !!((t.health && t.health.fix_lost) || (t.safety && t.safety.fix_lost));
-    const ageS = t.health && Number.isFinite(t.health.fix_age_s) ? t.health.fix_age_s : null;
-    const ageBucket = fixLost && ageS !== null ? Math.round(ageS / 5) * 5 : null;
-    const key = (t.mode || "") + suffix + (ageBucket === null ? "" : "|fix" + ageBucket);
-    if (key === _badgeKey) return;              // rebuild the icon only on change
-    _badgeKey = key;
-    const [g, label] = modeMeta(t.mode);
-    const fixLine = ageBucket === null ? ""
-      : `<span class="bmb-sub">last fix ${ageBucket}s ago</span>`;
-    modeBadge.setIcon(L.divIcon({
-      className: "boat-mode-badge",
-      html: `<span class="bmb" data-mode="${t.mode || ""}" data-stopped="${stopped}">`
-          + `<span class="bmb-i">${g}</span>${label}${suffix}${fixLine}</span>`,
-      iconSize: [0, 0], iconAnchor: [-18, 28],  // sit up-and-right of the boat
-    }));
+  // ---- mode pill (fixed screen corner, not map-riding) --------------------
+  // Replaces the old marker-riding badge. Updated from VA.modeSentence so the
+  // pill always matches the sheet-mode sentence. Right-edge clip is prevented
+  // by CSS max-width + overflow:hidden on #mode-pill.
+  let _pillKey;
+  function updateModePill(t) {
+    const sentence = VA.modeSentence ? VA.modeSentence(t) : (t.mode || "—");
+    const aa = t && t.anchor_alarm;
+    const dragging = !!(aa && aa.firing);
+    const key = sentence + (dragging ? "d" : "");
+    if (key === _pillKey) return;
+    _pillKey = key;
+    const pill = document.getElementById("mode-pill");
+    if (!pill) return;
+    pill.textContent = sentence;
+    pill.dataset.mode = t.mode || "manual";
+    pill.classList.toggle("dragging", dragging);
   }
 
   function _distM(aLat, aLon, bLat, bLon) {
@@ -116,8 +105,10 @@
     const sog = Number.isFinite(t.sog_knots) ? t.sog_knots.toFixed(1) + " kn" : "—";
     const hdg = Number.isFinite(t.heading_deg) ? Math.round(t.heading_deg) + "°" : "—";
     const depth = Number.isFinite(t.depth_m) ? t.depth_m.toFixed(1) + " m" : "—";
+    // Gate anchor rows/actions on "actively anchored" (anchor data + anchor mode)
+    const anchored = !!t.anchor && typeof t.mode === "string" && t.mode.startsWith("anchor");
     let anchorRow = "";
-    if (t.anchor && pos) {
+    if (anchored && pos) {
       const d = _distM(pos.lat, pos.lon, t.anchor.lat, t.anchor.lon);
       const r = Number.isFinite(t.anchor_radius_m) ? Math.round(t.anchor_radius_m) : "?";
       anchorRow = row("From anchor", `${d.toFixed(1)} m / ${r} m`);
@@ -130,7 +121,7 @@
         </div>
         <div class="bp-actions">
           <button class="bp-btn bp-anchor" data-act="anchor">⚓ Anchor here</button>
-          ${t.anchor ? `<button class="bp-btn bp-weigh" data-act="weigh">■ Weigh anchor</button>` : ""}
+          ${anchored ? `<button class="bp-btn bp-weigh" data-act="weigh">■ Weigh anchor</button>` : ""}
         </div></div>`;
   }
   boatMarker.bindPopup(buildBoatPopup, { className: "boat-popup-wrap", autoPanPadding: [24, 24] });
@@ -369,7 +360,7 @@
       // Show the recenter FAB when the boat is off-screen (auto-hidden while
       // following, since the boat is then kept in view).
       if (followFab) followFab.classList.toggle("offscreen", !map.getBounds().contains([lat, lon]));
-      updateModeBadge(t, lat, lon);
+      updateModePill(t);
       const el = boatMarker.getElement()?.querySelector(".boat-icon");
       if (el) {
         _boatEl = el; _boatLat = lat; _boatHdg = Number.isFinite(hdg) ? hdg : _boatHdg;

@@ -3,9 +3,10 @@
       <details class="card" id="sound-card" open>
         <summary>Sound</summary>
         <label class="switch"><input type="checkbox" id="snd-master" checked /><span class="track"></span> Enable sounds</label>
-        <label class="slider-row">Volume <output id="snd-volume-val">60</output>%
+        <div class="slider-row">
+          <label for="snd-volume">Volume <output id="snd-volume-val">60</output>%</label>
           <input type="range" id="snd-volume" min="0" max="100" step="5" value="60" />
-        </label>
+        </div>
         <div class="ctx-sub">Categories</div>
         <div class="snd-row"><label class="switch"><input type="checkbox" class="snd-cat" data-cat="alarm" checked /><span class="track"></span> Safety alarms</label></div>
         <div class="snd-sub">Distinct sound per severity, sonar ping for depth:

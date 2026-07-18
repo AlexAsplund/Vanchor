@@ -27,6 +27,10 @@
 <body>
   <!-- The map is the living backdrop for the whole app. -->
   <div id="map"></div>
+  <!-- Fixed mode pill: top-left of chart view, does not rotate with heading-up.
+       Task 3 will append the SIMULATION pill as a sibling inside #map-pills.
+       pointer-events: none until task 5 adds tap behaviour. -->
+  <div id="map-pills"><span id="mode-pill" data-mode="manual">Manual — idle</span></div>
 
   <!-- Tactical HUD overlay: corner reticles, range rings, radar sweep, heading
        tape. Purely decorative / non-interactive (pointer-events: none). -->
@@ -96,7 +100,14 @@
         <button class="view-chip" type="button" data-view="manual" title="Manual view" aria-label="Manual view">🎚</button>
       </div>
       <button id="alerts-open" class="btn-icon alerts-bell" title="Alert history" aria-label="Alert history">
-        🔔<span id="alerts-badge" class="alerts-badge hidden">0</span>
+        <!-- Inline stroke bell so it can take state color (no emoji) -->
+        <svg class="bell-svg" viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <span id="alerts-badge" class="alerts-badge hidden">0</span>
       </button>
       <button id="settings-open" class="btn-icon" title="Settings &amp; advanced" aria-label="Settings">☰</button>
     </div>
@@ -186,7 +197,7 @@
         <div class="hud-big hud-batt-soc"><span id="hud-batt-soc">—</span><small>%</small></div>
       </div>
       <div class="hud-sub"><span id="hud-batt-volts">—</span> V</div>
-      <div class="hud-sub hud-batt-range"><span id="hud-batt-range">—</span></div>
+      <div class="hud-sub hud-batt-range"><span class="hud-sub-label">~range</span> <span id="hud-batt-range">—</span></div>
     </div>
   </section>
 
@@ -350,10 +361,20 @@
            keeps the fixed STOP-left / mode / MOB-right law. -->
       <button id="sheet-collapse" class="sheet-collapse" type="button" aria-label="Back to map">⌄&nbsp;Map</button>
       <div class="sheet-instruments" id="sheet-instruments">
-        <div class="si-tile"><span class="si-label">SOG</span><span class="si-val"><b id="m-sog">—</b><small>kn</small></span></div>
+        <!-- ctx cell: SOG by default; flips to DRIFT (red) on drag alarm, ANCHOR in anchor modes -->
+        <div class="si-tile" id="si-ctx" data-ctx="sog">
+          <span class="si-label" id="si-ctx-label">SOG</span>
+          <span class="si-val"><b id="m-sog">—</b><small id="si-ctx-unit">kn</small></span>
+          <span class="si-sub hidden" id="si-ctx-sub"></span>
+        </div>
         <div class="si-tile"><span class="si-label">HDG</span><span class="si-val"><b id="m-hdg">—</b><small>°</small></span></div>
         <div class="si-tile"><span class="si-label">DEPTH</span><span class="si-val"><b id="m-depth">—</b><small>m</small></span></div>
-        <div class="si-tile"><span class="si-label">BATT</span><span class="si-val"><b id="m-batt">—</b><small>%</small></span></div>
+        <!-- Battery: % + voltage + level color per the "% AND volts AND color" hard rule -->
+        <div class="si-tile si-batt" id="si-batt" data-level="ok">
+          <span class="si-label">BATT</span>
+          <span class="si-val"><b id="m-batt">—</b><small>%</small></span>
+          <span class="si-sub" id="m-batt-volts">— V</span>
+        </div>
       </div>
       <div class="sheet-peekbar">
         <button id="sheet-stop" class="sheet-stop" type="button" aria-label="Emergency stop">■ STOP</button>
@@ -427,7 +448,11 @@
         <button id="nav-stop" class="prs-btn prs-stop" type="button">■ Stop</button>
       </div>
       <div class="navbar-rtl" id="navbar-rtl">
-        <button id="nav-rtl" class="prs-btn prs-rtl" type="button" title="Return to launch point">🏠 Return to Launch</button>
+        <!-- RTL is visually separated from Set Launch — different intent (drives home vs marks a point) -->
+        <div class="rtl-group">
+          <button id="nav-rtl" class="prs-btn prs-rtl rtl-danger" type="button" title="Return to launch point">🏠 Return to Launch</button>
+          <span class="rtl-sub">drives the boat home</span>
+        </div>
         <button id="nav-set-launch" class="prs-btn prs-setlaunch" type="button" title="Mark the current position as launch">⚑ Set launch here</button>
       </div>
       <div id="nav-paused-banner" class="nav-paused-banner hidden">PAUSED — route held</div>
@@ -448,7 +473,10 @@
           <button type="button" data-steermode="course">Course</button>
         </div>
         <div id="steer-wheel" class="steer-wheel"></div>
-        <div class="hint" id="steer-mode-hint">Drag the handle: around = direction, outward = power. Relative: an angle off the bow. Absolute: the motor holds a compass bearing while the boat swings. Course: the boat follows the straight track line drawn from where you engaged it (shown on the chart).</div>
+        <div class="hint" id="steer-mode-hint">Drag the handle: around = direction, outward = power.
+          <button class="hint-expand-btn" id="steer-hint-expand" aria-label="More about steering modes" type="button">ⓘ</button>
+          <span class="hint-extra hidden" id="steer-hint-extra">Relative: an angle off the bow. Absolute: the motor holds a compass bearing while the boat swings. Course: the boat follows the straight track line drawn from where you engaged it (shown on the chart).</span>
+        </div>
       </div>
 
       <!-- ANCHOR -->
@@ -472,11 +500,12 @@
         </div>
         <div class="ctx-sub">Jog anchor</div>
         <div class="dpad">
-          <button id="jog-fwd" class="dpad-up" aria-label="Jog forward">↑</button>
-          <button id="jog-left" class="dpad-left" aria-label="Jog left">←</button>
-          <button id="jog-right" class="dpad-right" aria-label="Jog right">→</button>
-          <button id="jog-back" class="dpad-down" aria-label="Jog back">↓</button>
+          <button id="jog-fwd" class="dpad-up" aria-label="Jog forward">↑<span class="dpad-lbl">Fwd</span></button>
+          <button id="jog-left" class="dpad-left" aria-label="Jog port">←<span class="dpad-lbl">Port</span></button>
+          <button id="jog-right" class="dpad-right" aria-label="Jog starboard">→<span class="dpad-lbl">Stbd</span></button>
+          <button id="jog-back" class="dpad-down" aria-label="Jog back">↓<span class="dpad-lbl">Back</span></button>
         </div>
+        <div class="dpad-caption">1 m per tap</div>
         <div class="ctx-sub">Anchor alarm (motor off)</div>
         <div class="hint">Watches a GPS circle with the motor OFF — the real
           anchor holds the boat; Vanchor only alarms if it drags. Keeps
@@ -937,11 +966,12 @@
     <div class="remote-section">
       <div class="remote-cap">Jog anchor</div>
       <div class="remote-dpad">
-        <button id="rm-jog-fwd" class="rbtn dpad-up" aria-label="Jog forward">↑</button>
-        <button id="rm-jog-left" class="rbtn dpad-left" aria-label="Jog left">←</button>
-        <button id="rm-jog-right" class="rbtn dpad-right" aria-label="Jog right">→</button>
-        <button id="rm-jog-back" class="rbtn dpad-down" aria-label="Jog back">↓</button>
+        <button id="rm-jog-fwd" class="rbtn dpad-up" aria-label="Jog forward">↑<span class="dpad-lbl">Fwd</span></button>
+        <button id="rm-jog-left" class="rbtn dpad-left" aria-label="Jog port">←<span class="dpad-lbl">Port</span></button>
+        <button id="rm-jog-right" class="rbtn dpad-right" aria-label="Jog starboard">→<span class="dpad-lbl">Stbd</span></button>
+        <button id="rm-jog-back" class="rbtn dpad-down" aria-label="Jog back">↓<span class="dpad-lbl">Back</span></button>
       </div>
+      <div class="dpad-caption">1 m per tap</div>
     </div>
     <div class="remote-section">
       <div class="remote-cap">Manual nudge <span id="rm-manual-state" class="rm-manual-state">thr 0.0 · str 0.0</span></div>

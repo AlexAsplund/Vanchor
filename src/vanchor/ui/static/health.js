@@ -118,6 +118,31 @@
 
     // ---- sensor age chips ------------------------------------------------
     renderAges(h);
+
+    // ---- master status dot: worst-of health (A19) -------------------------
+    // alarm if any critical flag; warn if any degraded flag; never green if any alarm.
+    const t_full = t || {};
+    const s = t_full.safety || {};
+    const link = t_full.link || {};
+    const bLvl = VA.battLevel ? VA.battLevel((t_full.battery || {}).soc_pct) : "ok";
+    const isAlarm =
+      !!(s.drag_alarm) ||
+      !!(t_full.anchor_alarm && t_full.anchor_alarm.firing) ||
+      !!h.fix_lost ||
+      !!(h.controller_fault) ||
+      !!(link.failsafe_engaged) ||
+      !!(s.shallow_stop) ||
+      !!(s.nogo_stop) ||
+      bLvl === "crit";
+    const isWarn =
+      !!h.heading_stale ||
+      !!h.depth_stale ||
+      bLvl === "low" ||
+      !link.client_connected ||
+      !!document.body.dataset.stale;
+    const overall = isAlarm ? "alarm" : isWarn ? "warn" : "ok";
+    const connChip = $("chip-conn");
+    if (connChip) connChip.dataset.health = overall;
   });
 
   // ---- sensor age display --------------------------------------------------

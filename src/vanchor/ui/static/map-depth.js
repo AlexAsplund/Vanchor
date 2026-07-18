@@ -1697,7 +1697,24 @@
   // Catch heatmap, No-go zones) restore through their own per-overlay
   // persistence + addOverlay, and saveLayers keeps the combined record current
   // as the user toggles anything.
-  ctx.restoreLayers();
+  const hadSavedPrefs = ctx.restoreLayers();
+
+  // Default-on depth overlay on fresh profiles: if no saved layer selection
+  // exists, probe the depth-grid endpoint. If it returns any cells, turn the
+  // depth overlay on so "where's the shallow?" is answered out-of-the-box.
+  if (!hadSavedPrefs) {
+    fetch("/api/depth/grid?fmt=count")
+      .then((r) => r.ok ? r.json() : null)
+      .catch(() => null)
+      .then((data) => {
+        // Any truthy cells count means we have charted data for this view.
+        const hasCells = data && (
+          (typeof data.count === "number" && data.count > 0) ||
+          (Array.isArray(data.cells) && data.cells.length > 0)
+        );
+        if (hasCells) setDepthShow(true);
+      });
+  }
 
   // ---- public API (extends VA.map) ---------------------------------------
   Object.assign(VA.map, {

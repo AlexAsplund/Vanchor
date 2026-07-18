@@ -57,7 +57,13 @@
     const was = body.classList.contains("mobile");
     if (on) ensureScrollWrap();
     body.classList.toggle("mobile", on);
-    if (on && !body.dataset.sheet) setSheet("peek");
+    if (on) {
+      if (!body.dataset.sheet) setSheet("peek");
+      // Remeasure peek height (font/content may have changed) and publish as
+      // CSS custom property so the sheet transform + FAB bottom calc are exact.
+      invalidatePeekCache();
+      document.body.style.setProperty("--peek-h", peekPx() + "px");
+    }
     if (on !== was) refitMap();
   }
 
@@ -68,15 +74,30 @@
   // The CSS positions the sheet at full height and slides it down by
   // (fullPx - statePx); during a live drag we override translateY inline.
   // ===========================================================================
-  const PEEK_PX = 152;   // keep in sync with --peek-h in style.css
+  const PEEK_FALLBACK = 152;   // fallback if measurement unavailable
+  // Measure the actual sheet-head height (grip + instruments + peekbar) and
+  // memoize until the next resize so layout-thrash is bounded to one rAF.
+  let _peekPxCache = null;
+  function peekPx() {
+    if (_peekPxCache !== null) return _peekPxCache;
+    const el = document.getElementById("sheet-head");
+    if (el) {
+      const h = Math.ceil(el.getBoundingClientRect().height) + 4;
+      _peekPxCache = h > 60 ? h : PEEK_FALLBACK;
+    } else {
+      _peekPxCache = PEEK_FALLBACK;
+    }
+    return _peekPxCache;
+  }
+  function invalidatePeekCache() { _peekPxCache = null; }
   function vh(frac) { return window.innerHeight * frac; }
   function heights() {
-    const full = vh(0.88), mid = vh(0.46), peek = PEEK_PX;
+    const full = vh(0.88), mid = vh(0.46), peek = peekPx();
     return { full, mid, peek };
   }
   // translateY (px, downward) for a given visible height.
   function offsetFor(h) { return heights().full - h; }
-  const STATE_HEIGHT = { peek: () => PEEK_PX, mid: () => vh(0.46), full: () => vh(0.88) };
+  const STATE_HEIGHT = { peek: peekPx, mid: () => vh(0.46), full: () => vh(0.88) };
 
   const dock = document.getElementById("dock");
 
@@ -221,32 +242,72 @@
   // Reuses the same telemetry the HUD consumes; small mirror elements so we
   // never fight hud.js for the canonical #hud-* nodes.
   VA.onTelemetry(function mirrorInstruments(t) {
+    // ---- ctx cell (SOG by default; DRIFT/ANCHOR when alarming/anchored) ----
+    const ctxTile = document.getElementById("si-ctx");
+    const ctxLabel = document.getElementById("si-ctx-label");
+    const ctxUnit = document.getElementById("si-ctx-unit");
+    const ctxSub = document.getElementById("si-ctx-sub");
+    const aa = t && t.anchor_alarm;
     const sog = VA.fin(t.sog_knots);
-    VA.setText("m-sog", sog === null ? "—" : sog.toFixed(1));
+    if (aa && aa.firing) {
+      // Drag alarm — red DRIFT cell
+      if (ctxTile) ctxTile.dataset.ctx = "alarm";
+      if (ctxLabel) ctxLabel.textContent = "DRIFT";
+      const dist = Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—";
+      VA.setText("m-sog", dist);
+      if (ctxUnit) ctxUnit.textContent = "m";
+      const rm = Number.isFinite(aa.radius_m) ? Math.round(aa.radius_m) : "?";
+      if (ctxSub) { ctxSub.textContent = "RING " + rm + " m"; ctxSub.classList.remove("hidden"); }
+    } else if (t.mode && (t.mode.startsWith("anchor") || (aa && aa.armed))) {
+      // Anchor mode — show distance
+      if (ctxTile) ctxTile.dataset.ctx = "anchor";
+      if (ctxLabel) ctxLabel.textContent = "ANCHOR";
+      const dist = Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—";
+      VA.setText("m-sog", dist);
+      if (ctxUnit) ctxUnit.textContent = "m";
+      const rm = aa && Number.isFinite(aa.radius_m) ? Math.round(aa.radius_m) : null;
+      if (ctxSub) {
+        if (rm !== null) { ctxSub.textContent = "RING " + rm + " m"; ctxSub.classList.remove("hidden"); }
+        else ctxSub.classList.add("hidden");
+      }
+    } else {
+      // Default — SOG
+      if (ctxTile) ctxTile.dataset.ctx = "sog";
+      if (ctxLabel) ctxLabel.textContent = "SOG";
+      VA.setText("m-sog", sog === null ? "—" : sog.toFixed(1));
+      if (ctxUnit) ctxUnit.textContent = "kn";
+      if (ctxSub) ctxSub.classList.add("hidden");
+    }
+
+    // ---- HDG (modulo 0-359, never "360") ----
     const hdg = VA.fin(t.heading_deg);
-    VA.setText("m-hdg", hdg === null ? "—" : Math.round(hdg).toString());
+    VA.setText("m-hdg", hdg === null ? "—" : String(((Math.round(hdg) % 360) + 360) % 360));
+
+    // ---- DEPTH ----
     const depth = VA.fin(t.depth_m);
     VA.setText("m-depth", depth === null ? "—" : depth.toFixed(1));
+
+    // ---- BATT: % + voltage + level color ----
     const b = (t && t.battery) || null;
     const soc = b && Number.isFinite(b.soc_pct) ? b.soc_pct : null;
     VA.setText("m-batt", soc === null ? "—" : Math.round(soc).toString());
-    if (t.mode) {
-      const suffix = (VA.modeSuffix ? VA.modeSuffix(t) : "");
-      VA.setText("sheet-mode", prettyMode(t.mode) + suffix);
+    const voltV = b && Number.isFinite(b.voltage_v) ? b.voltage_v : null;
+    VA.setText("m-batt-volts", voltV === null ? "— V" : voltV.toFixed(1) + " V");
+    const siBatt = document.getElementById("si-batt");
+    if (siBatt) {
+      const lvl = VA.battLevel ? VA.battLevel(soc) : "ok";
+      siBatt.dataset.level = lvl;
+    }
+
+    // ---- Mode sentence (VA.modeSentence defined in appcore.js) ----
+    if (t.mode !== undefined) {
+      const sentence = VA.modeSentence ? VA.modeSentence(t) : (t.mode || "—");
+      VA.setText("sheet-mode", sentence);
       const modeEl = document.getElementById("sheet-mode");
+      const suffix = VA.modeSuffix ? VA.modeSuffix(t) : "";
       if (modeEl) modeEl.classList.toggle("stopped", suffix !== "");
     }
   });
-
-  function prettyMode(m) {
-    const names = {
-      manual: "Manual", anchor_hold: "Anchor", anchor_ml: "Anchor (Smart)", heading_hold: "Heading",
-      waypoint: "Route", follow_apb: "Follow APB", drift: "Drift",
-      stop: "Stopped", remote: "Remote", contour_follow: "Contour",
-      orbit: "Orbit", trolling: "Trolling",
-    };
-    return names[m] || (m ? m.replace(/_/g, " ") : "—");
-  }
 
   // ---- public: let other modules reveal the sheet ---------------------------
   // Selecting a mode should slide the sheet up so that mode's options come into
@@ -263,6 +324,6 @@
   // matchMedia change + resize + orientation all re-evaluate mobile state.
   if (mq.addEventListener) mq.addEventListener("change", applyMobile);
   else if (mq.addListener) mq.addListener(applyMobile);
-  window.addEventListener("resize", applyMobile);
-  window.addEventListener("orientationchange", () => setTimeout(() => { applyMobile(); refitMap(); }, 60));
+  window.addEventListener("resize", () => { invalidatePeekCache(); applyMobile(); });
+  window.addEventListener("orientationchange", () => setTimeout(() => { invalidatePeekCache(); applyMobile(); refitMap(); }, 60));
 })();

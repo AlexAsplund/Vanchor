@@ -120,3 +120,66 @@ def test_api_alerts_clear_endpoint():
     r = c.post("/api/alerts/clear")
     assert r.status_code == 200
     assert r.json().get("ok") is True
+
+
+# ---- Task 2 glanceable truth checks ----------------------------------------
+
+def test_task2_peek_instruments_ids():
+    """New peek instrument ids: si-ctx, m-batt-volts, mode-pill."""
+    html = _render_shell()
+    assert 'id="si-ctx"' in html, "si-ctx tile missing from peek instruments"
+    assert 'id="m-batt-volts"' in html, "m-batt-volts sub-label missing from BATT tile"
+    assert 'id="mode-pill"' in html, "mode-pill missing from #map-pills"
+    assert 'id="map-pills"' in html, "#map-pills container missing"
+    # Task-1 ids must still be present (no regression)
+    assert 'id="sheet-mob"' in html, "#sheet-mob (Task 1) must still be present"
+    assert 'id="sheet-stop"' in html, "#sheet-stop must still be present"
+
+
+def test_task2_no_emoji_bell():
+    """alerts-open must not contain the 🔔 emoji — replaced by inline SVG."""
+    html = _render_shell()
+    # Find the alerts-open button content
+    idx = html.find('id="alerts-open"')
+    assert idx >= 0
+    # The bell emoji must not appear in the button (look forward ~300 chars)
+    snippet = html[idx:idx + 300]
+    assert "\U0001F514" not in snippet, "Bell emoji 🔔 still present in alerts-open button"
+
+
+def test_task2_ctx_sub_ids():
+    """Peek ctx cell has label, unit, and sub-label ids."""
+    html = _render_shell()
+    assert 'id="si-ctx-label"' in html
+    assert 'id="si-ctx-unit"' in html
+    assert 'id="si-ctx-sub"' in html
+
+
+def test_task2_si_batt_ids():
+    """Peek BATT tile has the id and sub-label."""
+    html = _render_shell()
+    assert 'id="si-batt"' in html
+    assert 'id="m-batt-volts"' in html
+
+
+def test_task2_rtl_separation():
+    """RTL button has rtl-danger styling class and subtitle."""
+    html = _render_shell()
+    assert "rtl-danger" in html, "rtl-danger class missing from RTL button"
+    assert "rtl-sub" in html, "rtl-sub subtitle missing"
+    assert "drives the boat home" in html, "RTL subtitle text missing"
+
+
+def test_task2_jog_labels():
+    """Jog pad has bow-relative labels and 1 m per tap caption."""
+    html = _render_shell()
+    # Check for dpad-lbl spans and caption
+    assert 'class="dpad-lbl"' in html, "dpad-lbl spans missing"
+    assert "1 m per tap" in html, "'1 m per tap' caption missing"
+
+
+def test_task2_steer_hint_collapse():
+    """Steering hint has expand button and hidden extra paragraph."""
+    html = _render_shell()
+    assert 'id="steer-hint-expand"' in html, "steer-hint-expand button missing"
+    assert 'id="steer-hint-extra"' in html, "steer-hint-extra span missing"

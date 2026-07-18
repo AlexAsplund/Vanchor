@@ -180,6 +180,47 @@
     return "";
   };
 
+  // ---- VA.modeName / VA.modeSentence: single mode→display map (graft 6) ---
+  // Task 4 (WP7) owns the WORDING; edit only this map, not local copies.
+  VA.modeName = function (mode) {
+    const NAMES = {
+      manual: "Manual", anchor_hold: "Anchor", anchor_ml: "Anchor · Smart",
+      anchor_leif: "Anchor · Leif", heading_hold: "Heading",
+      waypoint: "Route", follow_apb: "Follow APB", drift: "Drift",
+      stop: "Stopped", remote: "Remote", contour_follow: "Contour",
+      orbit: "Orbit", trolling: "Trolling", work_area: "Work Area",
+      cruise: "Cruise",
+    };
+    return NAMES[mode] || (mode ? mode.replace(/_/g, " ") : "—");
+  };
+  VA.modeSentence = function (t) {
+    const mode = t && t.mode;
+    const base = VA.modeName(mode);
+    const suffix = VA.modeSuffix ? VA.modeSuffix(t) : "";
+    const aa = t && t.anchor_alarm;
+    // Dragging: alarm overrides everything
+    if (aa && aa.firing) {
+      const dist = Number.isFinite(t.distance_to_anchor_m)
+        ? t.distance_to_anchor_m.toFixed(0) + " m" : "—";
+      return base + " · DRAGGING " + dist + suffix;
+    }
+    // Anchor modes: show distance to anchor
+    if (mode && mode.startsWith("anchor") || (aa && aa.armed)) {
+      const dist = Number.isFinite(t.distance_to_anchor_m)
+        ? t.distance_to_anchor_m.toFixed(1) + " m" : "—";
+      return base + " — " + dist + suffix;
+    }
+    // Route: fold in waypoint progress
+    if (mode === "waypoint" && Number.isFinite(t.distance_to_waypoint_m)) {
+      return "Route · next " + Math.round(t.distance_to_waypoint_m) + " m" + suffix;
+    }
+    // Manual / stop / idle
+    if (!mode || mode === "manual" || mode === "stop") {
+      return base + (suffix || " — idle");
+    }
+    return base + suffix;
+  };
+
   function toast(msg, opts) {
     let el = $("va-toast");
     if (!el) {
@@ -248,4 +289,13 @@
     if (t.mode_availability) applyModeAvailability(t.mode_availability);
     highlightRail();
   });
+
+  // ---- steer-hint expand/collapse (works on desktop too) ------------------
+  const steerExpandBtn = $("steer-hint-expand");
+  const steerHintExtra = $("steer-hint-extra");
+  if (steerExpandBtn && steerHintExtra) {
+    steerExpandBtn.addEventListener("click", () => {
+      steerHintExtra.classList.toggle("hidden");
+    });
+  }
 })();

@@ -28,6 +28,7 @@
 
   let alerts = [];          // [{ ts, severity, message }]  newest LAST in storage
   let unread = 0;
+  let unreadSev = "info";   // highest severity among unread alerts (for bell color)
   let _aaFiringNow = false;  // live anchor-alarm state (per-entry Recover gate)
   const lastSeen = Object.create(null);  // key -> last logged epoch ms
 
@@ -40,11 +41,12 @@
           alerts = o.alerts.filter((a) => a && typeof a.message === "string").slice(-MAX);
         }
         if (o && Number.isFinite(o.unread)) unread = Math.max(0, o.unread | 0);
+        if (o && typeof o.unreadSev === "string" && o.unreadSev in SEV_RANK) unreadSev = o.unreadSev;
       }
     } catch (e) { /* ignore corrupt storage */ }
   }
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify({ alerts: alerts.slice(-MAX), unread })); }
+    try { localStorage.setItem(KEY, JSON.stringify({ alerts: alerts.slice(-MAX), unread, unreadSev })); }
     catch (e) { /* ignore */ }
   }
 
@@ -95,7 +97,11 @@
     // If the dialog is open, treat as read; otherwise bump the unread badge.
     const dlg = $("alerts-dialog");
     const open = dlg && dlg.open;
-    if (!open) unread++;
+    if (!open) {
+      unread++;
+      // Track highest severity among unread alerts.
+      if (SEV_RANK[severity] > SEV_RANK[unreadSev]) unreadSev = severity;
+    }
     save();
     renderBadge();
     if (open) renderList();
@@ -104,12 +110,15 @@
   // ---- badge ---------------------------------------------------------------
   function renderBadge() {
     const badge = $("alerts-badge");
+    const openBtn = $("alerts-open");
     if (!badge) return;
     if (unread > 0) {
       badge.textContent = unread > 99 ? "99+" : String(unread);
       badge.classList.remove("hidden");
+      if (openBtn) openBtn.dataset.sev = unreadSev;
     } else {
       badge.classList.add("hidden");
+      if (openBtn) delete openBtn.dataset.sev;
     }
   }
 
@@ -190,7 +199,7 @@
   function open() {
     const dlg = $("alerts-dialog");
     if (!dlg) return;
-    unread = 0; save(); renderBadge();
+    unread = 0; unreadSev = "info"; save(); renderBadge();
     renderList();
     if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); }
     else dlg.setAttribute("open", "");
@@ -226,7 +235,7 @@
       } else {
         resetClearBtn();
         // Clear locally.
-        alerts = []; unread = 0;
+        alerts = []; unread = 0; unreadSev = "info";
         for (const k in lastSeen) delete lastSeen[k];
         save(); renderBadge(); renderList();
         // Sync to server (best-effort).

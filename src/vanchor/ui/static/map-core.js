@@ -130,7 +130,12 @@
 
   map.on("overlayadd", (e) => { handleOverlayEvent(e.name, true); saveLayers(); });
   map.on("overlayremove", (e) => { handleOverlayEvent(e.name, false); saveLayers(); });
-  map.on("baselayerchange", saveLayers);
+  map.on("baselayerchange", (e) => {
+    saveLayers();
+    // Dark basemap contrast: tag #map so CSS can boost brightness/saturation.
+    const mapEl = document.getElementById("map");
+    if (mapEl) mapEl.classList.toggle("base-dark", e.name === "Dark");
+  });
 
   // Restore the saved basemap + overlay selection. Called once by the depth
   // module after the built-in overlays exist (that module registers the last
@@ -153,10 +158,20 @@
         }
       } catch (e) { /* ignore */ }
     }
+    // Apply dark contrast class for the active basemap on boot.
+    const mapEl = document.getElementById("map");
+    if (mapEl) {
+      let activeName = "Dark";
+      Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) activeName = n; });
+      mapEl.classList.toggle("base-dark", activeName === "Dark");
+    }
     // Load + restore complete: enable saving and persist the (restored or default)
     // state once. From here, basemap/overlay changes save normally.
     suppressSave = 0;
     saveLayers();
+    // Return true when saved prefs existed (depth module uses this to decide
+    // whether to probe for a default-on depth overlay on first run).
+    return !!prefs;
   }
 
   // Faint, geo-anchored REFERENCE GRID. Over featureless dark water the boat's

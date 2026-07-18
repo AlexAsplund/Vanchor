@@ -355,6 +355,14 @@
     // and skip the redraw so the committed route + drag/menu state are retained.
     if (t.waypoints === undefined) return;
     drawWaypoints(t.waypoints, t.active_waypoint);
+    // Stale route pins: dim committed pins + line when not actively routing or paused.
+    const nav = t.nav || {};
+    const inactive = t.mode !== "waypoint" && !nav.paused;
+    wpLayer.eachLayer((m) => {
+      const el = m.getElement && m.getElement();
+      if (el) el.classList.toggle("wp-pin-inactive", inactive);
+    });
+    if (routeLine) routeLine.setStyle({ opacity: inactive ? 0.35 : 0.7, dashArray: inactive ? "4 8" : "5 6" });
   });
 
   // ---- public API (extends VA.map) ---------------------------------------
