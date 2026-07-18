@@ -27,6 +27,29 @@ VA.num = function (v, d) {
     ? "—" : Number(v).toFixed(d);
 };
 VA.fin = function (v) { return Number.isFinite(v) ? v : null; };
+
+// ---- single mode→display map (WP7 item 22) --------------------------------
+// The ONLY place a mode string is turned into UI text. Used by all consumers.
+// glyph is decorative only — never the sole label (safety chrome excluded).
+VA.MODE_META = {
+  manual:        { label: "Manual",         glyph: "🕹",  family: "manual" },
+  stop:          { label: "Stopped",        glyph: "■",   family: "manual" },
+  anchor_hold:   { label: "Anchor",         glyph: "⚓",  family: "anchor" },
+  anchor_ml:     { label: "Anchor · Smart", glyph: "⚓",  family: "anchor" },
+  anchor_leif:   { label: "Anchor · Leif",  glyph: "⚓",  family: "anchor" },
+  heading_hold:  { label: "Heading",        glyph: "🧭",  family: "guided" },
+  waypoint:      { label: "Route",          glyph: "📍",  family: "guided" },
+  follow_apb:    { label: "Follow APB",     glyph: "🛰",  family: "guided" },
+  drift:         { label: "Drift",          glyph: "🌀",  family: "guided" },
+  contour_follow:{ label: "Depth line",     glyph: "〜",  family: "guided" },
+  orbit:         { label: "Orbit",          glyph: "🎯",  family: "guided" },
+  trolling:      { label: "Troll",          glyph: "🎣",  family: "guided" },
+  work_area:     { label: "Work Area",      glyph: "🪝",  family: "guided" },
+  remote:        { label: "Remote",         glyph: "🎮",  family: "manual" },
+};
+VA.modeName = (m) =>
+  (VA.MODE_META[m] && VA.MODE_META[m].label) || (m ? m.replace(/_/g, " ") : "—");
+
 // setText: cache element lookup and last-written value to avoid redundant DOM
 // writes.  ~60-70 calls/frame app-wide with mostly-unchanged values.
 // Map<id, {el, last}> — invalidated via isConnected when panels are rebuilt.

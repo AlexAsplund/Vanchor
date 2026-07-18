@@ -92,6 +92,16 @@
 
   applyUnitToSlider();
 
+  // ---- cruise chip: collapsed speed one-liner for panels with own speed slider --
+  let cruiseExpanded = false;
+  const cruiseChip = $("cruise-chip");
+  if (cruiseChip) cruiseChip.addEventListener("click", () => {
+    cruiseExpanded = true;
+    const speedBlock = $("navbar-speed");
+    if (speedBlock) speedBlock.classList.remove("hidden");
+    cruiseChip.classList.add("hidden");
+  });
+
   // ---- pause / resume / stop --------------------------------------------
   if (pauseBtn) pauseBtn.addEventListener("click", () => send({ type: "pause_nav" }));
   if (resumeBtn) resumeBtn.addEventListener("click", () => send({ type: "resume_nav" }));
@@ -119,12 +129,32 @@
       (paused && GUIDED.has(nav.suspended_mode));
     bar.classList.toggle("hidden", !guided);
 
+    // Cruise-collapsed: panels with their own speed slider get a one-line chip.
+    const chip = $("cruise-chip");
+    const ownSpeed = !!document.querySelector(".ctx-panel.active[data-own-speed]");
+    const speedBlock = $("navbar-speed");
+    if (chip && speedBlock) {
+      if (ownSpeed && !cruiseExpanded) {
+        // Show chip, hide full speed block.
+        const target = t.cruise && t.cruise.enabled && Number.isFinite(t.cruise.target_knots)
+          ? t.cruise.target_knots.toFixed(1) + " kn" : (value.kn.toFixed(1) + " kn");
+        chip.textContent = "Cruise " + target + " ▸";
+        chip.classList.remove("hidden");
+        speedBlock.classList.add("hidden");
+      } else {
+        chip.classList.add("hidden");
+        speedBlock.classList.remove("hidden");
+        if (!ownSpeed) cruiseExpanded = false;   // reset when leaving own-speed panel
+      }
+    }
+
     // paused banner + resume highlight (both main + remote)
     [banner, rmBanner].forEach((b) => { if (b) b.classList.toggle("hidden", !paused); });
-    if (resumeBtn) { resumeBtn.classList.toggle("hot", paused); resumeBtn.disabled = !paused; }
-    if (pauseBtn) pauseBtn.classList.toggle("hot", !paused && guided);
-    if (rmResume) { rmResume.classList.toggle("hot", paused); rmResume.disabled = !paused; }
-    if (rmPause) rmPause.classList.toggle("hot", !paused);
+    // Show exactly ONE of Pause/Resume at a time.
+    if (pauseBtn) pauseBtn.classList.toggle("hidden", paused);
+    if (resumeBtn) resumeBtn.classList.toggle("hidden", !paused);
+    if (rmPause) rmPause.classList.toggle("hidden", paused);
+    if (rmResume) rmResume.classList.toggle("hidden", !paused);
 
     // reflect throttle override % when not dragging
     const th = t.throttle_override || {};

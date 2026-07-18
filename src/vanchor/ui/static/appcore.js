@@ -45,7 +45,11 @@
   }
 
   // stop has no panel of its own; show the manual panel when stopped.
-  const panelFor = (m) => (m === "stop" ? "manual" : m === "anchor_ml" ? "anchor_hold" : m);
+  // All anchor_ variants share the anchor_hold panel.
+  const panelFor = (m) =>
+    (typeof m !== "string") ? "manual"
+    : m === "stop" ? "manual"
+    : m.startsWith("anchor_") ? "anchor_hold" : m;
 
   function highlightRail() {
     document.querySelectorAll(".mode-btn[data-mode]").forEach((b) =>
@@ -90,6 +94,8 @@
     panelFor,
     modeCommands,
     revealModeOptions,
+    toast,
+    holdToEngage: (btn, fn, opts) => bindHold(btn, (opts && opts.ms) || 600, fn),
     get currentMode() { return currentMode; },
   };
   // Expose helpers globally for cross-module use.
@@ -181,17 +187,10 @@
   };
 
   // ---- VA.modeName / VA.modeSentence: single mode→display map (graft 6) ---
-  // Task 4 (WP7) owns the WORDING; edit only this map, not local copies.
+  // Task 4 (WP7) owns the WORDING; VA.MODE_META in core.js is the single source.
   VA.modeName = function (mode) {
-    const NAMES = {
-      manual: "Manual", anchor_hold: "Anchor", anchor_ml: "Anchor · Smart",
-      anchor_leif: "Anchor · Leif", heading_hold: "Heading",
-      waypoint: "Route", follow_apb: "Follow APB", drift: "Drift",
-      stop: "Stopped", remote: "Remote", contour_follow: "Contour",
-      orbit: "Orbit", trolling: "Trolling", work_area: "Work Area",
-      cruise: "Cruise",
-    };
-    return NAMES[mode] || (mode ? mode.replace(/_/g, " ") : "—");
+    return (VA.MODE_META && VA.MODE_META[mode] && VA.MODE_META[mode].label)
+      || (mode ? mode.replace(/_/g, " ") : "—");
   };
   VA.modeSentence = function (t) {
     const mode = t && t.mode;
@@ -252,6 +251,33 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(() => el.classList.remove("show"), ttl);
   }
+  // ---- VA.infoSheet: accessible in-app info sheet -------------------------
+  // Opens a modal overlay with a title + HTML body. Pattern from routechoice.js.
+  VA.infoSheet = function (title, bodyHtml) {
+    let scrim = document.getElementById("va-info-scrim");
+    let sheet = document.getElementById("va-info-sheet");
+    if (!scrim) {
+      scrim = document.createElement("div");
+      scrim.id = "va-info-scrim";
+      scrim.className = "va-info-scrim route-choice-overlay";
+      document.body.appendChild(scrim);
+    }
+    if (!sheet) {
+      sheet = document.createElement("div");
+      sheet.id = "va-info-sheet";
+      sheet.className = "va-info-sheet route-choice-modal glass";
+      document.body.appendChild(sheet);
+    }
+    sheet.innerHTML = `<div class="rco-title">${VA.escapeHtml(title)}</div>
+      <div class="rco-body" style="text-align:left;line-height:1.5">${bodyHtml}</div>
+      <button class="rco-btn rco-confirm" id="va-info-close">Close</button>`;
+    scrim.classList.remove("hidden");
+    sheet.classList.remove("hidden");
+    const close = () => { scrim.classList.add("hidden"); sheet.classList.add("hidden"); };
+    document.getElementById("va-info-close").addEventListener("click", close);
+    scrim.addEventListener("click", close);
+  };
+
   // Capture-phase block: an unavailable mode click never reaches a mode handler.
   document.addEventListener("click", (e) => {
     const btn = e.target && e.target.closest &&

@@ -515,3 +515,129 @@ def test_chip_stale_state(live_server: _ServerHandle, pw_browser):
             live_server.restart()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Wheel snap-to-zero deadman + immediate-decrease (WP8)
+# ---------------------------------------------------------------------------
+
+def _dismiss_firstrun(page) -> None:
+    """Dismiss the WP3 first-run simulation dialog which overlays the dock."""
+    page.evaluate(
+        "() => { const b = document.getElementById('firstrun-sim'); if (b) b.click();"
+        " const c = document.getElementById('firstrun'); if (c) c.classList.add('hidden');"
+        " const s = document.getElementById('firstrun-scrim'); if (s) s.classList.add('hidden'); }"
+    )
+
+
+def test_wheel_snap_to_zero_and_immediate_decrease(live_server: _ServerHandle, pw_browser):
+    """The steering wheel is the UI's only manual motor path. Verify the owner's
+    snap-to-zero deadman (WP8):
+
+    1. Drag the dial outward -> commanded thrust rises (grace-ramped).
+    2. Release with HOLD off -> thrust snaps to 0 immediately (deadman).
+    3. A bare tap on the dial face engages nothing (drag must start + move).
+    4. With HOLD on, release KEEPS the thrust (trolling latch).
+    5. Dragging the knob inward always drops thrust immediately (never ramped).
+    """
+    base = live_server.base
+    ctx = pw_browser.new_context(viewport={"width": 390, "height": 844})
+    page = ctx.new_page()
+    page.set_default_timeout(10_000)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+
+    def _thrust() -> float:
+        m = _api_state(base).get("motor") or {}
+        t = m.get("thrust")
+        return float(t) if t is not None else 0.0
+
+    try:
+        # domcontentloaded (not networkidle): the wheel test needs telemetry +
+        # JS, not map tiles, and tile fetches can keep the network busy.
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
+        page.wait_for_function(
+            "() => window.VA && VA.last && VA.last.mode !== undefined", timeout=20_000)
+        page.wait_for_timeout(1200)
+        _dismiss_firstrun(page)
+        # Ensure a clean manual state.
+        _api_post(base, "/api/command", {"type": "manual", "thrust": 0, "steering": 0})
+        page.wait_for_timeout(400)
+
+        # Show the manual panel + wheel; expand the sheet so the dial is on-screen.
+        page.evaluate("() => { const b = document.querySelector('.mode-btn[data-mode=\"manual\"]'); if (b) b.click(); }")
+        page.evaluate("() => { try { VA.sheet && VA.sheet.reveal && VA.sheet.reveal('full'); } catch(e){} }")
+        page.wait_for_timeout(600)
+
+        rect = page.evaluate(
+            "() => { const s = document.querySelector('#steer-wheel svg'); if(!s) return null;"
+            " const r = s.getBoundingClientRect();"
+            " return {x:r.left+r.width/2, y:r.top+r.height/2, w:r.width, h:r.height}; }")
+        assert rect, "steering wheel SVG not found"
+
+        # --- 1 + 2: drag outward -> thrust rises, release -> snap to 0 ---
+        page.mouse.move(rect["x"], rect["y"])
+        page.mouse.down()
+        for i in range(1, 9):
+            page.mouse.move(rect["x"], rect["y"] - (rect["h"] * 0.32) * i / 8)
+            page.wait_for_timeout(60)
+        page.wait_for_timeout(400)
+        assert _poll(lambda: _thrust() > 0.2, timeout_s=3), (
+            f"wheel drag did not raise thrust; got {_thrust()}")
+        page.mouse.up()
+        # Snap-to-zero: thrust returns to ~0 immediately on release.
+        assert _poll(lambda: abs(_thrust()) < 0.05, timeout_s=3), (
+            f"thrust did not snap to zero on release; got {_thrust()}")
+
+        # --- 3: a bare tap on the dial face sends nothing ---
+        _api_post(base, "/api/command", {"type": "manual", "thrust": 0, "steering": 0})
+        page.wait_for_timeout(300)
+        page.mouse.move(rect["x"] + rect["w"] * 0.18, rect["y"] - rect["h"] * 0.10)
+        page.mouse.down()
+        page.wait_for_timeout(90)
+        page.mouse.up()
+        page.wait_for_timeout(500)
+        assert abs(_thrust()) < 0.05, f"a bare dial tap engaged the motor: {_thrust()}"
+
+        # --- 4: HOLD on -> release keeps thrust ---
+        page.evaluate(
+            "() => { const e = document.getElementById('wheel-hold');"
+            " if (e && !e.checked) { e.checked = true; e.dispatchEvent(new Event('change')); } }")
+        page.wait_for_timeout(200)
+        page.mouse.move(rect["x"], rect["y"])
+        page.mouse.down()
+        for i in range(1, 9):
+            page.mouse.move(rect["x"], rect["y"] - (rect["h"] * 0.30) * i / 8)
+            page.wait_for_timeout(60)
+        page.wait_for_timeout(400)
+        page.mouse.up()
+        page.wait_for_timeout(700)
+        held = _thrust()
+        assert held > 0.2, f"HOLD should keep thrust on release; got {held}"
+
+        # --- 5: immediate-decrease — dragging inward drops thrust fast ---
+        # Re-grab near the knob (out at ~0.30h up) and drag back toward the hub
+        # in stepped moves (with waits) so a send fires mid-drag, not just on up.
+        start_up = rect["h"] * 0.32
+        page.mouse.move(rect["x"], rect["y"] - start_up)
+        page.mouse.down()
+        for i in range(1, 9):
+            page.mouse.move(rect["x"], rect["y"] - start_up * (8 - i) / 8)
+            page.wait_for_timeout(60)
+        page.wait_for_timeout(300)
+        low = _thrust()
+        page.mouse.up()
+        assert low < held, f"inward drag did not reduce thrust ({held} -> {low})"
+        # Decreases are never grace-ramped: pulling to the hub reaches ~0 fast.
+        assert low < 0.15, f"thrust decrease should be immediate; got {low}"
+
+        # Cleanup: HOLD off + stop.
+        page.evaluate(
+            "() => { const e = document.getElementById('wheel-hold');"
+            " if (e && e.checked) { e.checked = false; e.dispatchEvent(new Event('change')); } }")
+        _api_post(base, "/api/command", {"type": "stop"})
+
+        assert not errors, f"Page JS errors: {errors[:3]}"
+    finally:
+        page.close()
+        ctx.close()

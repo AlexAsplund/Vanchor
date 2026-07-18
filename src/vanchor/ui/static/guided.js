@@ -72,6 +72,9 @@
       moreToggle.classList.toggle("active", open);
       moreToggle.setAttribute("aria-expanded", open ? "true" : "false");
     }
+    if (open && moreMenu) {
+      setTimeout(() => moreMenu.scrollIntoView({ behavior: "smooth", block: "nearest" }), 16);
+    }
   }
   if (moreToggle) moreToggle.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -286,15 +289,35 @@
     dot.style.left = (50 + frac * 50) + "%";
   }
 
+  // APB auto-show: once a feed is detected, reveal the APB item and persist.
+  const APB_SEEN_KEY = "vanchor-apb-seen";
+  const moreApb = $("more-apb");
+  function updateApbVisibility(seen) {
+    if (moreApb) moreApb.classList.toggle("hidden", !seen);
+  }
+  let apbSeen = false;
+  try { apbSeen = localStorage.getItem(APB_SEEN_KEY) === "1"; } catch (e) { /* ignore */ }
+  updateApbVisibility(apbSeen);
+
   // ===== telemetry fan-out ================================================
   VA.onTelemetry(function (t) {
     updateContour(t);
     updateOrbit(t);
     updateTroll(t);
     // Highlight the More button when the backend is in one of these modes.
-    const inGuided = ["contour_follow", "orbit", "trolling"].includes(t.mode);
+    const inGuided = ["contour_follow", "orbit", "trolling", "follow_apb"].includes(t.mode);
     if (moreToggle && !(moreMenu && !moreMenu.classList.contains("hidden"))) {
       moreToggle.classList.toggle("active", inGuided);
+    }
+    // APB auto-show: once a feed is detected, reveal the APB item.
+    if (!apbSeen) {
+      const seen = !!(t.last_apb) || t.mode === "follow_apb" ||
+        !!(t.auto_apb && (t.auto_apb.enabled || t.auto_apb.engaged));
+      if (seen) {
+        apbSeen = true;
+        try { localStorage.setItem(APB_SEEN_KEY, "1"); } catch (e) { /* ignore */ }
+        updateApbVisibility(true);
+      }
     }
   });
 })();

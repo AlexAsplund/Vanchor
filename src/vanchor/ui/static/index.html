@@ -307,7 +307,7 @@
     <!-- Battery RTL recommend -->
     <div id="rtl-banner" class="sbanner sbanner-warn hidden">
       <span class="sb-msg">Low battery — return now?</span>
-      <button id="rtl-banner-go" class="sb-act" type="button">Return to Launch</button>
+      <button id="rtl-banner-go" class="sb-act sb-hold-act" type="button">Return to Launch<small class="hold-tag">HOLD 0.6s</small></button>
       <button id="rtl-banner-stop" class="sb-act sb-act-stop" type="button">■ STOP</button>
     </div>
     <!-- Safety governor advisory -->
@@ -374,7 +374,7 @@
       </button>
       <!-- "Back to map" sits beside the grip (mid/full only) so the peekbar
            keeps the fixed STOP-left / mode / MOB-right law. -->
-      <button id="sheet-collapse" class="sheet-collapse" type="button" aria-label="Back to map">⌄&nbsp;Map</button>
+      <button id="sheet-collapse" class="sheet-collapse" type="button" aria-label="Back to chart">⌄</button>
       <div class="sheet-instruments" id="sheet-instruments">
         <!-- ctx cell: SOG by default; flips to DRIFT (red) on drag alarm, ANCHOR in anchor modes -->
         <div class="si-tile" id="si-ctx" data-ctx="sog">
@@ -407,44 +407,48 @@
       <button class="mode-btn" data-mode="waypoint" role="tab" title="Waypoint / route">
         <span class="mi" aria-hidden="true">📍</span><span class="ml">Route</span>
       </button>
-      <button class="mode-btn" data-mode="follow_apb" role="tab" title="Follow APB route">
-        <span class="mi" aria-hidden="true">🛰</span><span class="ml">APB</span>
+      <button class="mode-btn" data-mode="trolling" role="tab" title="Trolling pattern">
+        <span class="mi" aria-hidden="true">🎣</span><span class="ml">Troll</span>
       </button>
       <button class="mode-btn" data-mode="drift" role="tab" title="Drift">
         <span class="mi" aria-hidden="true">🌀</span><span class="ml">Drift</span>
-      </button>
-      <button class="mode-btn mode-stop" data-mode="stop" title="Stop all">
-        <span class="mi" aria-hidden="true">■</span><span class="ml">Stop</span>
       </button>
       <button class="mode-btn mode-remote" id="remote-toggle" title="Remote helm">
         <span class="mi" aria-hidden="true">🎮</span><span class="ml">Remote</span>
       </button>
       <!-- Overflow: guided "fishing" modes — keeps the rail tidy (#57/#58/#59). -->
       <button class="mode-btn mode-more" id="more-toggle" title="More guided modes" aria-haspopup="true" aria-expanded="false">
-        <span class="mi" aria-hidden="true">🎣</span><span class="ml">More</span>
+        <span class="mi" aria-hidden="true">•••</span><span class="ml">More</span>
+      </button>
+      <!-- STOP: full-width isolated red bar — the ONE rail stop. -->
+      <button class="mode-btn mode-stop" data-mode="stop" title="Stop all">
+        <span class="mi" aria-hidden="true">■</span><span class="ml">Stop</span>
       </button>
     </div>
 
-    <!-- Flyout grouping the new guided/fishing modes. Toggled by the More button;
+    <!-- Flyout grouping the extra guided modes. Toggled by the More button;
          each item activates its mode's contextual panel below. -->
     <div class="mode-more-menu hidden" id="more-menu" role="menu" aria-label="Guided fishing modes">
       <button class="more-item" data-mode="contour_follow" role="menuitem">
-        <span class="mi" aria-hidden="true">🪜</span><span class="ml">Contour</span>
+        <span class="mi" aria-hidden="true">〜</span><span class="ml">Depth line<span class="ms">follow a depth contour (CONTOUR)</span></span>
       </button>
       <button class="more-item" data-mode="orbit" role="menuitem">
-        <span class="mi" aria-hidden="true">🎯</span><span class="ml">Orbit</span>
-      </button>
-      <button class="more-item" data-mode="trolling" role="menuitem">
-        <span class="mi" aria-hidden="true">〰</span><span class="ml">Troll</span>
+        <span class="mi" aria-hidden="true">🎯</span><span class="ml">Orbit<span class="ms">circle a spot at a set radius</span></span>
       </button>
       <button class="more-item" data-mode="work_area" role="menuitem">
-        <span class="mi" aria-hidden="true">🪝</span><span class="ml">Work Area</span>
+        <span class="mi" aria-hidden="true">🪝</span><span class="ml">Work Area<span class="ms">hold at each spot in an area</span></span>
+      </button>
+      <!-- APB: auto-hidden until a feed is detected (guided.js) -->
+      <button class="more-item hidden" id="more-apb" data-mode="follow_apb" role="menuitem">
+        <span class="mi" aria-hidden="true">🛰</span><span class="ml">Follow APB<span class="ms">steer from your chartplotter</span></span>
       </button>
     </div>
 
     <!-- Always-on nav bar: speed control + pause/resume/stop. Shown while in a
          guided mode (route/heading/APB/drift) — task #49 + #50. -->
     <div class="dock-navbar hidden" id="dock-navbar">
+      <!-- Cruise chip: summary one-liner when the active panel owns its own speed slider -->
+      <button id="cruise-chip" class="cruise-chip hidden" type="button">Cruise — kn ▸</button>
       <div class="navbar-speed" id="navbar-speed">
         <div class="nspeed-head">
           <span class="nspeed-label">Speed</span>
@@ -460,12 +464,11 @@
       <div class="navbar-prs" id="navbar-prs">
         <button id="nav-pause" class="prs-btn prs-pause" type="button">⏸ Pause</button>
         <button id="nav-resume" class="prs-btn prs-resume" type="button">▶ Resume</button>
-        <button id="nav-stop" class="prs-btn prs-stop" type="button">■ Stop</button>
       </div>
       <div class="navbar-rtl" id="navbar-rtl">
         <!-- RTL is visually separated from Set Launch — different intent (drives home vs marks a point) -->
         <div class="rtl-group">
-          <button id="nav-rtl" class="prs-btn prs-rtl rtl-danger" type="button" title="Return to launch point">🏠 Return to Launch</button>
+          <button id="nav-rtl" class="prs-btn prs-rtl rtl-danger sb-hold-act" type="button" title="Return to launch point">🏠 Return to Launch<small class="hold-tag">HOLD 0.6s</small></button>
           <span class="rtl-sub">drives the boat home</span>
         </div>
         <button id="nav-set-launch" class="prs-btn prs-setlaunch" type="button" title="Mark the current position as launch">⚑ Set launch here</button>
@@ -482,15 +485,20 @@
           <label>Thrust <output id="thrust-val">0.0</output></label>
           <input type="range" id="thrust" min="-1" max="1" step="0.05" value="0" />
         </div>
+        <div class="thrust-scale"><span>REV</span><span>0</span><span>FWD</span></div>
         <div class="seg" id="steer-mode-seg" role="group" aria-label="Steering mode">
-          <button type="button" data-steermode="relative" class="on">Relative</button>
-          <button type="button" data-steermode="absolute">Absolute</button>
-          <button type="button" data-steermode="course">Course</button>
+          <button type="button" data-steermode="relative" class="on">Off the bow<small>relative</small></button>
+          <button type="button" data-steermode="absolute">Compass<small>hold a bearing</small></button>
+          <button type="button" data-steermode="course">Straight line<small>track</small></button>
         </div>
         <div id="steer-wheel" class="steer-wheel"></div>
         <div class="hint" id="steer-mode-hint">Drag the handle: around = direction, outward = power.
           <button class="hint-expand-btn" id="steer-hint-expand" aria-label="More about steering modes" type="button">ⓘ</button>
-          <span class="hint-extra hidden" id="steer-hint-extra">Relative: an angle off the bow. Absolute: the motor holds a compass bearing while the boat swings. Course: the boat follows the straight track line drawn from where you engaged it (shown on the chart).</span>
+          <span class="hint-extra hidden" id="steer-hint-extra">Off the bow: an angle off the bow. Compass: the motor holds a compass bearing while the boat swings. Straight line: the boat follows the track line drawn from where you engaged it (shown on the chart).</span>
+        </div>
+        <div class="wheel-release-row">
+          <span class="hint">Let go → power drops to 0. Turn on HOLD to keep thrust for trolling.</span>
+          <label class="switch"><input type="checkbox" id="wheel-hold" /><span class="track"></span> HOLD</label>
         </div>
       </div>
 
@@ -500,10 +508,22 @@
           <label>Anchor radius <output id="ar-val">5</output> m</label>
           <input type="range" id="ar" min="1" max="50" step="1" value="5" />
         </div>
-        <label class="switch"><input type="checkbox" id="hold-hdg" checked /><span class="track"></span> Hold heading while anchored</label>
-        <label class="switch" title="Use the learned neural-net station-keeper instead of the PID one (falls back automatically if unavailable)"><input type="checkbox" id="anchor-smart" /><span class="track"></span> Smart station-keeping (learned)</label>
-        <label class="switch"><input type="checkbox" id="anchor-leif" /><span class="track"></span> Leif <span class="info-dot" tabindex="0" role="img" aria-label="About Leif" title="Leif — an experimental pure neural-net station-keeper (no PID base) that steers the motor through its FULL rotation to vector thrust. Trained for a 5 m watch circle: it holds ~2.5–3 m of active wander and NEVER idles, so for tighter radii use Anchor or Smart (they sit still inside a small ring; Leif will look busy). No PID fallback: a fun, opt-in research mode.">ⓘ</span></label>
-        <label class="switch" title="Vector the motor through its full rotation to push directly against wind/current, instead of the ±35° band — holds a tighter spot in a beam set (PID station-keeper)"><input type="checkbox" id="anchor-vectored" /><span class="track"></span> Vectored thrust (full rotation)</label>
+        <div class="ctx-sub">Anchor style</div>
+        <div class="seg seg-anchor" id="anchor-style-seg" role="group" aria-label="Anchor style">
+          <button type="button" data-astyle="classic" class="on">Classic</button>
+          <button type="button" data-astyle="smart">Smart</button>
+          <button type="button" data-astyle="leif">Leif</button>
+        </div>
+        <button type="button" id="anchor-style-info" class="info-dot" aria-label="About anchor styles">ⓘ</button>
+        <div class="hint" id="anchor-style-desc">Classic — steady PID hold at the point.</div>
+        <div class="hint anchor-style-law">Style only changes <b>how</b> the boat holds; nothing engages until you tap <b>Drop anchor</b>.</div>
+        <details class="mini" id="anchor-advanced"><summary>Advanced</summary>
+          <label class="switch"><input type="checkbox" id="hold-hdg" checked /><span class="track"></span> Hold heading while anchored</label>
+          <label class="switch"><input type="checkbox" id="anchor-vectored" /><span class="track"></span> Vectored thrust (full rotation)</label>
+        </details>
+        <!-- Legacy checkboxes kept as hidden inputs for JS compat (controls.js reads them) -->
+        <input type="checkbox" id="anchor-smart" hidden />
+        <input type="checkbox" id="anchor-leif" hidden />
         <button id="anchor-go" class="btn-primary wide">Drop anchor here</button>
         <!-- Anchor engaged state — shown when anchor_hold or anchor_ml is active -->
         <div id="anchor-engaged" class="anchor-engaged hidden">
@@ -641,7 +661,7 @@
       </div>
 
       <!-- DRIFT -->
-      <div class="ctx-panel" id="ctx-drift" data-for="drift">
+      <div class="ctx-panel" id="ctx-drift" data-for="drift" data-own-speed="1">
         <div class="slider-row">
           <label>Drift speed <output id="drift-knots-val">0.5</output> kn</label>
           <input type="range" id="drift-knots" min="0" max="2.0" step="0.1" value="0.5" />
@@ -654,7 +674,7 @@
       </div>
 
       <!-- CONTOUR FOLLOW (#57) — hold a target depth contour. -->
-      <div class="ctx-panel" id="ctx-contour_follow" data-for="contour_follow">
+      <div class="ctx-panel" id="ctx-contour_follow" data-for="contour_follow" data-own-speed="1">
         <div class="hint">Follow a depth contour: the boat steers to keep the sounder on your target depth.</div>
         <div class="slider-row">
           <label>Target depth <output id="contour-depth-val">5.0</output> m</label>
@@ -708,7 +728,7 @@
       </div>
 
       <!-- TROLLING PATTERN (#59) — weave around the current heading. -->
-      <div class="ctx-panel" id="ctx-trolling" data-for="trolling">
+      <div class="ctx-panel" id="ctx-trolling" data-for="trolling" data-own-speed="1">
         <div class="hint">Trace a fixed-width S over the ground to cover water while trolling — the swath width holds regardless of wind, current or speed.</div>
         <div class="slider-row">
           <label>Amplitude <output id="troll-amp-val">10</output> m</label>
@@ -829,8 +849,8 @@
   <div id="view-dock" class="view-dock" aria-hidden="true">
     <div class="vd-quick" id="vd-quick">
       <button id="view-anchor" class="vd-act" type="button">⚓ Anchor here</button>
-      <button id="view-rtl" class="vd-act" type="button">🏠 Return to Launch</button>
-      <button id="view-mob" class="vd-act vd-mob" type="button">🛟 MOB</button>
+      <button id="view-rtl" class="vd-act sb-hold-act" type="button">🏠 Return to Launch<small class="hold-tag">HOLD 0.6s</small></button>
+      <button id="view-mob" class="vd-act vd-mob" type="button">MAN OVERBOARD</button>
     </div>
     <div class="vd-bottom">
       <button id="view-exit" class="vd-exit" type="button" title="Back to the chart view">🗺 Chart</button>

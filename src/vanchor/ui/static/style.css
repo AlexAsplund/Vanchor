@@ -2935,3 +2935,49 @@ body[data-view="manual"] #map-pills { display: none; }
   }
 }
 
+/* ---- Task 4 (WP7/WP8) additions ---------------------------------------- */
+
+/* Anchor style segmented control */
+.seg-anchor { display: flex; width: 100%; }
+.seg-anchor button { flex: 1; min-height: 44px; }
+
+/* More-menu sub-label */
+.more-item .ms { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+
+/* Steer seg small labels */
+.seg button small { display: block; font-size: 10px; font-weight: 600; opacity: .7; }
+
+/* STOP full-width at bottom of mode rail (desktop; mobile uses peek STOP) */
+.mode-rail .mode-stop { grid-column: 1 / -1; margin-top: 10px; }
+body.mobile .mode-rail .mode-stop { display: none; }
+
+/* Soft-disabled state (wp-go without waypoints) */
+.soft-disabled { opacity: .45; }
+
+/* Wheel HOLD toggle row */
+.wheel-release-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.wheel-release-row .hint { flex: 1; font-size: 11px; }
+
+/* Thrust scale tick labels */
+.thrust-scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); padding: 0 2px; margin-top: 2px; }
+
+/* Hold-tag: shown in sb-hold-act buttons */
+.hold-tag { display: block; font-size: 9px; font-weight: 700; letter-spacing: .05em; opacity: .7; margin-top: 2px; }
+
+/* Cruise chip */
+.cruise-chip { width: 100%; padding: 8px 12px; background: var(--faint); border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--text); text-align: left; cursor: pointer; font-size: 13px; margin-bottom: 6px; }
+
+/* Info-dot button (anchor style info) — sits NEXT TO the seg, never stretches. */
+button.info-dot { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; min-height: 28px; flex: 0 0 auto; align-self: flex-start; border-radius: 50%; background: var(--faint); border: 1px solid var(--line); color: var(--muted); cursor: pointer; font-size: 14px; vertical-align: middle; }
+/* Override the mobile 44px dock-button touch rule so it stays a round dot. */
+body.mobile .dock button.info-dot { min-height: 28px; }
+
+/* Anchor style law hint */
+.anchor-style-law { font-size: 12px; color: var(--muted); }
+
+/* Thrust slider height increase for touch */
+#ctx-manual .slider-row input[type=range] { height: 44px; padding: 10px 0; }
+
+/* sb-hold-act small tags are shown by default */
+.sb-hold-act small { display: block; }
+

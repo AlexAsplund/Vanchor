@@ -49,15 +49,12 @@
   // ---- active-mode badge + tappable boat info popup ----------------------
   // A small glyph+label beside the boat shows the ACTIVE mode at a glance;
   // tapping the boat opens its vitals + an "Anchor here" action.
-  const MODE_META = {
-    manual: ["🕹", "Manual"], anchor_hold: ["⚓", "Anchor"],
-    anchor_ml: ["⚓", "Anchor · Smart"], anchor_leif: ["⚓", "Anchor · Leif"],
-    heading_hold: ["🧭", "Heading"], waypoint: ["📍", "Route"], follow_apb: ["🛰", "Follow APB"],
-    drift: ["🌀", "Drift"], orbit: ["🔄", "Orbit"], contour: ["📈", "Contour"],
-    trolling: ["🎣", "Trolling"], work_area: ["🎯", "Work Area"],
-    cruise: ["🚤", "Cruise"], stop: ["■", "Stopped"],
+  // Use the authoritative mode map from core.js (VA.MODE_META).
+  const modeMeta = (m) => {
+    const meta = VA.MODE_META && VA.MODE_META[m];
+    if (meta) return [meta.glyph, meta.label];
+    return ["•", m || "—"];
   };
-  const modeMeta = (m) => MODE_META[m] || ["•", m || "—"];
 
   // Pixel-gated setLatLng: GPS/compass noise moves the markers by fractions of
   // a pixel on every 5-10 Hz frame; each ungated set repositions the marker

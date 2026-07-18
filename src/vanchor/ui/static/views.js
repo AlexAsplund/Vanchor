@@ -178,7 +178,12 @@
   const send = (c) => { try { VA.send && VA.send(c); } catch (e) { /* ignore */ } };
   bind("view-stop", () => { try { VA.sendCritical ? VA.sendCritical({ type: "stop" }) : send({ type: "stop" }); } catch (e) { send({ type: "stop" }); } });
   bind("view-anchor", () => send({ type: "anchor_hold", radius_m: 5 }));
-  bind("view-rtl", () => send({ type: "return_to_launch" }));
+  // view-rtl: hold-to-engage (drive-away action)
+  const viewRtlEl = $("view-rtl");
+  if (viewRtlEl) {
+    if (VA.bindHold) VA.bindHold(viewRtlEl, 600, () => send({ type: "return_to_launch" }));
+    else viewRtlEl.addEventListener("click", () => send({ type: "return_to_launch" }));
+  }
   bind("view-mob", () => send({ type: "mob" }));
   bind("view-exit", () => switchTo("chart"));
 

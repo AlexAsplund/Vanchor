@@ -17,9 +17,13 @@
  * compass bearing too, but the server follows the ground-track LINE drawn
  * from the engage position (`manual {steer_course}`, XTE-corrected).
  *
- * Safety: drags must START on the handle knob — taps elsewhere never engage
- * the motor. When the boat leaves manual mode (STOP, any autopilot) the
- * wheel zeroes its own state so a later touch can't re-apply a stale command.
+ * Safety: knob-grab (on the knob ± 12 px) gives fine control; dial-grab
+ * (anywhere on the face) arms a drag but does NOT send until 6+ viewBox units
+ * of movement, so accidental taps never engage the motor. When the boat leaves
+ * manual mode (STOP, any autopilot) the wheel zeroes its own state so a later
+ * touch can't re-apply a stale command.
+ * Snap-to-zero deadman: on pointerup, thrust snaps to 0 unless the HOLD toggle
+ * is on. Thrust DECREASES are never ramped. Grace ramp only for INCREASES >0.25.
  */
 "use strict";
 
@@ -32,7 +36,7 @@
   // Geometry (viewBox units).
   const S = 270, C = 135;
   const R_OUT = 132, R_CARD = 112, R_IN = 100;
-  const R_H_MIN = 40, R_H_MAX = 96;      // handle radius ↔ thrust 0..100%
+  const R_H_MIN = 36, R_H_MAX = 124;     // handle radius ↔ thrust 0..100%
   const KNOB_R = 13;
 
   const wrap180 = (d) => ((d + 180) % 360 + 360) % 360 - 180;
@@ -90,6 +94,7 @@
     `<text id="sw-rel" x="${C}" y="${C + 34}" fill="#1be4ff" font-size="13" font-weight="700" text-anchor="middle">0°</text>` +
     `<text id="sw-true" x="${C}" y="${C + 47}" fill="#ffb020" font-size="9" font-weight="600" text-anchor="middle">000° TRUE</text>` +
     `<text id="sw-thr" x="${C}" y="${C - 34}" fill="#27f5b1" font-size="11" font-weight="700" text-anchor="middle">0%</text>` +
+    `<text id="sw-deadman" x="${C}" y="${C + 60}" fill="#4a6b7a" font-size="7.5" font-weight="600" text-anchor="middle">RELEASE → 0</text>` +
     `</svg>`;
 
   const svg = host.querySelector("svg");
@@ -101,6 +106,10 @@
   let heading = 0;          // live heading from telemetry
   let ghostDeg = null;      // actual head angle (boat frame), from feedback
   let dragging = false;
+  let armed = false;        // dial-grab: armed but not yet dragging (< 6 unit move)
+  let grabKind = null;      // "knob" | "dial"
+  let grabStart = null;     // { dx, dy } at pointerdown for movement threshold
+  let sentThrust = 0;       // last commanded thrust (for grace ramp)
   let lastSent = 0;
   let prevMode = null;      // control mode, to zero the wheel on manual exit
 
@@ -149,6 +158,15 @@
       ghost.setAttribute("opacity", "0.55");
       ghost.setAttribute("transform", `rotate(${ghostDeg} ${C} ${C})`);
     }
+    const deadman = el("sw-deadman");
+    if (deadman) {
+      const hold = ctl.holdThrust && ctl.holdThrust();
+      const newText = hold ? "HOLD" : "RELEASE → 0";
+      if (deadman.textContent !== newText) {
+        deadman.textContent = newText;
+        deadman.setAttribute("fill", hold ? "#ffb020" : "#4a6b7a");
+      }
+    }
   }
 
   // ---- drag: direction (angle) + thrust (radius), knob-start only ----------
@@ -163,30 +181,67 @@
     const a = screenAngle(), t = clamp(Math.abs(ctl.state.thrust), 0, 1);
     const r = R_H_MIN + (R_H_MAX - R_H_MIN) * t;
     const kx = r * Math.sin(a * Math.PI / 180), ky = -r * Math.cos(a * Math.PI / 180);
-    if (Math.hypot(dx - kx, dy - ky) > KNOB_R + 12) return;   // must start ON the knob
-    dragging = true;
-    svg.setPointerCapture(ev.pointerId);
+    const distToKnob = Math.hypot(dx - kx, dy - ky);
+    const distToCenter = Math.hypot(dx, dy);
+    // Accept any touch within the dial face (R_OUT).
+    if (distToCenter > R_OUT) return;
     ev.preventDefault();
+    svg.setPointerCapture(ev.pointerId);
+    if (distToKnob <= KNOB_R + 12) {
+      // Fine-control knob grab: start dragging immediately.
+      grabKind = "knob"; dragging = true; armed = false;
+    } else {
+      // Dial-grab: arm but wait for movement before sending.
+      grabKind = "dial"; dragging = false; armed = true;
+    }
+    grabStart = { dx, dy };
+    lastSent = Date.now();
   });
   svg.addEventListener("pointermove", (ev) => {
-    if (!dragging) return;
+    if (!dragging && !armed) return;
     const { dx, dy } = evPoint(ev);
+    if (armed && !dragging) {
+      // Threshold: 6 viewBox units of movement to start a dial drag.
+      if (Math.hypot(dx - grabStart.dx, dy - grabStart.dy) < 6) return;
+      dragging = true; armed = false;
+    }
     const a = wrap180(Math.atan2(dx, -dy) * 180 / Math.PI);
     // Radius -> thrust, with a snap-to-zero deadzone at the hub.
-    let t = clamp((Math.hypot(dx, dy) - R_H_MIN) / (R_H_MAX - R_H_MIN), 0, 1);
-    if (t < 0.05) t = 0;
+    let tgt = clamp((Math.hypot(dx, dy) - R_H_MIN) / (R_H_MAX - R_H_MIN), 0, 1);
+    if (tgt < 0.05) tgt = 0;
     if (ctl.mode() !== "relative") ctl.state.steerBearing = norm360(a + heading);
     else ctl.state.steerNorm = a / 180;
-    ctl.setThrust(Math.round(t * 100) / 100);
+    // Thrust target (for display): always the user's gesture.
+    ctl.setThrust(Math.round(tgt * 100) / 100);
     const now = Date.now();
-    if (now - lastSent >= 150) { ctl.sendManual(); lastSent = now; }
+    if (now - lastSent >= 150) {
+      // Grace ramp: slew-limit INCREASES only (decreases are always instant).
+      const jump = tgt - sentThrust;
+      if (jump > 0.25) {
+        sentThrust = Math.min(tgt, sentThrust + 0.25);
+      } else {
+        sentThrust = tgt;   // instant decrease (or small increase)
+      }
+      // Override the ctl state with the ramped value for sending.
+      const prevThrust = ctl.state.thrust;
+      ctl.state.thrust = sentThrust;
+      ctl.sendManual();
+      ctl.state.thrust = prevThrust;   // restore display value
+      lastSent = now;
+    }
     render();
   });
   ["pointerup", "pointercancel"].forEach((n) => svg.addEventListener(n, (ev) => {
-    if (!dragging) return;
-    dragging = false;
+    if (!dragging && !armed) return;
+    dragging = false; armed = false; grabKind = null;
     try { svg.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
-    ctl.sendManual();               // final authoritative send
+    // Snap-to-zero deadman: thrust drops to 0 on release, unless HOLD is on.
+    const hold = ctl.holdThrust && ctl.holdThrust();
+    if (!hold) {
+      ctl.setThrust(0);
+      sentThrust = 0;
+    }
+    ctl.sendManual();   // final authoritative send (thrust 0 if snap)
     render();
   }));
 
@@ -212,6 +267,7 @@
       if ((prevMode === "manual" && t.mode !== "manual") ||
           (serverZero && quiet && stale)) {
         ctl.setThrust(0);
+        sentThrust = 0;
         ctl.state.steerNorm = 0;
         ctl.state.steerBearing = heading;
       }
@@ -221,5 +277,19 @@
   });
   ctl.onModeChange(() => render());
   ctl.onStateEdit(() => { if (!dragging) render(); });
+
+  // Update deadman display when HOLD toggle changes.
+  const holdToggle = document.getElementById("wheel-hold");
+  if (holdToggle) {
+    // Restore persisted state.
+    try {
+      holdToggle.checked = localStorage.getItem("vanchor-wheel-hold") === "true";
+    } catch (e) { /* ignore */ }
+    holdToggle.addEventListener("change", () => {
+      try { localStorage.setItem("vanchor-wheel-hold", holdToggle.checked ? "true" : "false"); } catch (e) { /* ignore */ }
+      render();
+    });
+  }
+
   render();
 })();

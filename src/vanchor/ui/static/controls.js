@@ -114,6 +114,11 @@
       const out = $("thrust-val");
       if (out) out.textContent = v.toFixed(2);
     },
+    // HOLD toggle: true = keep thrust on release (trolling), false = snap to 0.
+    holdThrust() {
+      const el = document.getElementById("wheel-hold");
+      return !!(el && el.checked);
+    },
   };
   // NOTE: no modeCommands.manual — tapping the Manual rail button selects the
   // panel only (see appcore.js). The motor engages solely from slider input, so
@@ -160,39 +165,88 @@
   // ===== anchor + jog ======================================================
   const arSlider = $("ar");
   const holdHdgBox = $("hold-hdg");
+  const vectoredBox = $("anchor-vectored");
+  // Hidden legacy checkboxes (kept for telemetry reflection compat below)
   const smartBox = $("anchor-smart");
   const leifBox = $("anchor-leif");
-  const vectoredBox = $("anchor-vectored");
+
+  // Anchor style segmented control (WP7 item 24).
+  let anchorStyle = "classic";  // "classic" | "smart" | "leif"
+  const ANCHOR_STYLE_KEY = "vanchor-anchor-style";
+  try {
+    const saved = localStorage.getItem(ANCHOR_STYLE_KEY);
+    if (saved === "classic" || saved === "smart" || saved === "leif") anchorStyle = saved;
+  } catch (e) { /* ignore */ }
+
+  const ANCHOR_STYLE_DESCS = {
+    classic: "Classic — steady PID hold at the point.",
+    smart: "Smart — learned station-keeping, uses less battery.",
+    leif: "Leif — experimental: never idles, expect constant motion.",
+  };
+
+  function styleType() {
+    return anchorStyle === "leif" ? "anchor_leif"
+      : anchorStyle === "smart" ? "anchor_ml" : "anchor_hold";
+  }
+
+  const anchorStyleSeg = $("anchor-style-seg");
+  const anchorStyleDesc = $("anchor-style-desc");
+
+  function applyAnchorStyleUI() {
+    if (anchorStyleSeg) anchorStyleSeg.querySelectorAll("button").forEach((b) =>
+      b.classList.toggle("on", b.dataset.astyle === anchorStyle));
+    if (anchorStyleDesc) anchorStyleDesc.textContent = ANCHOR_STYLE_DESCS[anchorStyle] || "";
+    // Keep legacy hidden checkboxes in sync (telemetry reflection below still reads them).
+    if (smartBox) smartBox.checked = anchorStyle === "smart";
+    if (leifBox) leifBox.checked = anchorStyle === "leif";
+  }
+
+  function isAnchorModeActive() {
+    return !!(VA.last && typeof VA.last.mode === "string" && /^anchor_/.test(VA.last.mode));
+  }
+
   function applyAnchor(redrop) {
-    // Station-keeper choice: "Leif" (pure full-azimuth learned) > "Smart"
-    // (hybrid learned) > PID anchor_hold. The backend falls back automatically
-    // if a model isn't loaded. "Vectored" drives the PID keeper through the full
-    // rotation (an anchor_hold flag; the learned modes vector on their own).
-    const leif = leifBox && leifBox.checked;
-    const smart = smartBox && smartBox.checked;
-    const type = leif ? "anchor_leif" : (smart ? "anchor_ml" : "anchor_hold");
-    const cmd = { type, radius_m: parseFloat(arSlider.value),
-                  hold_heading: holdHdgBox.checked,
-                  vectored: !!(vectoredBox && vectoredBox.checked) };
+    const type = styleType();
+    const cmd = {
+      type,
+      radius_m: parseFloat(arSlider.value),
+      hold_heading: holdHdgBox ? holdHdgBox.checked : false,
+      vectored: !!(vectoredBox && vectoredBox.checked),
+    };
     const last = VA.map.getLastAnchor();
     if (!redrop && last) cmd.anchor = { lat: last.lat, lon: last.lon };
     send(cmd);
   }
-  // Leif and Smart are alternative learned keepers -- only one at a time.
-  function pickKeeper(chosen) {
-    if (chosen === smartBox && smartBox.checked && leifBox) leifBox.checked = false;
-    if (chosen === leifBox && leifBox.checked && smartBox) smartBox.checked = false;
-    if (VA.map.getLastAnchor()) applyAnchor(false);
-  }
+
+  // Seg clicks: update style, persist, re-send only if live.
+  if (anchorStyleSeg) anchorStyleSeg.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => {
+      anchorStyle = b.dataset.astyle || "classic";
+      try { localStorage.setItem(ANCHOR_STYLE_KEY, anchorStyle); } catch (e) { /* ignore */ }
+      applyAnchorStyleUI();
+      if (isAnchorModeActive()) applyAnchor(false);
+    }));
+
+  // ⓘ info sheet (anchor-style-info).
+  const anchorInfoBtn = $("anchor-style-info");
+  if (anchorInfoBtn) anchorInfoBtn.addEventListener("click", () => {
+    if (VA.infoSheet) VA.infoSheet("Anchor styles", [
+      "<p><b>Classic</b> — " + ANCHOR_STYLE_DESCS.classic + "</p>",
+      "<p><b>Smart</b> — " + ANCHOR_STYLE_DESCS.smart + "</p>",
+      "<p><b>Leif</b> — " + ANCHOR_STYLE_DESCS.leif + "</p>",
+      "<p style='margin-top:8px;font-size:12px;opacity:.8'>Leif detail: trained for a 5 m watch circle; holds ~2.5–3 m of active wander and NEVER idles, so for tighter radii use Classic or Smart. No PID fallback — an opt-in research mode.</p>",
+    ].join(""));
+  });
+
+  applyAnchorStyleUI();
+
   bindSlider("ar", "ar-val");
-  arSlider.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
-  holdHdgBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
-  if (smartBox) smartBox.addEventListener("change", () => pickKeeper(smartBox));
-  if (leifBox) leifBox.addEventListener("change", () => pickKeeper(leifBox));
-  if (vectoredBox) vectoredBox.addEventListener("change", () => { if (VA.map.getLastAnchor()) applyAnchor(false); });
-  // Explicit engage control only — the rail button just opens this panel, so
-  // selecting Anchor no longer drops the anchor and engages station-keeping on
-  // a single tap; the user presses "Drop anchor" (#anchor-go) to engage.
+  // Advanced controls: only re-send if an anchor mode is LIVE.
+  if (arSlider) arSlider.addEventListener("change", () => { if (isAnchorModeActive()) applyAnchor(false); });
+  if (holdHdgBox) holdHdgBox.addEventListener("change", () => { if (isAnchorModeActive()) applyAnchor(false); });
+  if (vectoredBox) vectoredBox.addEventListener("change", () => { if (isAnchorModeActive()) applyAnchor(false); });
+
+  // "Drop anchor here" — the ONLY cold engage; single-tap (owner decision).
   $("anchor-go").addEventListener("click", () => applyAnchor(true));
 
   // ---- Anchor engaged state (D10) ----
@@ -299,10 +353,14 @@
     updateCruise(t.cruise);
     updateTrack(t.track);
     updateDrift(t);
-    // Keep the keeper toggles honest: reflect the live anchor mode.
+    // Reflect the live anchor mode into the style segmented control.
     if (t.mode === "anchor_ml" || t.mode === "anchor_hold" || t.mode === "anchor_leif") {
-      if (smartBox) smartBox.checked = t.mode === "anchor_ml";
-      if (leifBox) leifBox.checked = t.mode === "anchor_leif";
+      const newStyle = t.mode === "anchor_ml" ? "smart"
+        : t.mode === "anchor_leif" ? "leif" : "classic";
+      if (newStyle !== anchorStyle) {
+        anchorStyle = newStyle;
+        applyAnchorStyleUI();
+      }
     }
 
     // ---- Anchor engaged state block ----

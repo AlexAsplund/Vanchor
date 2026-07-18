@@ -171,7 +171,16 @@
   }
   function doRtl() { send({ type: "return_to_launch" }); }
   function doSetLaunch() { send({ type: "set_launch" }); }
-  ["set-rtl", "nav-rtl", "rm-rtl", "rtl-banner-go"].forEach((id) => { const el = $(id); if (el) el.addEventListener("click", doRtl); });
+  // set-rtl (settings panel) stays single-tap (confirmed modal context).
+  const setRtlEl = $("set-rtl");
+  if (setRtlEl) setRtlEl.addEventListener("click", doRtl);
+  // Drive-away RTL buttons get 600 ms hold-to-engage.
+  ["nav-rtl", "rm-rtl", "rtl-banner-go"].forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    if (VA.bindHold) VA.bindHold(el, 600, doRtl);
+    else el.addEventListener("click", doRtl);
+  });
   ["set-set-launch", "nav-set-launch", "rm-set-launch"].forEach((id) => { const el = $(id); if (el) el.addEventListener("click", doSetLaunch); });
   // Battery-strip RTL buttons are hold-to-engage (600 ms): RTL drives the
   // boat away, so it gets the same hold gate as MOB (owner decision).

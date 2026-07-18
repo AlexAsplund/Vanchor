@@ -90,7 +90,7 @@
   function updateRemoteStatus(t) {
     const overlay = document.getElementById("remote");
     if (!overlay || overlay.classList.contains("hidden")) return;
-    VA.setText("rm-mode", t.mode ?? "—");
+    VA.setText("rm-mode", VA.modeName ? VA.modeName(t.mode) : (t.mode ?? "—"));
     VA.setText("rm-hdg", Number.isFinite(t.heading_deg) ? String(((Math.round(t.heading_deg) % 360) + 360) % 360) : "—");
     const anchoredRm = !!t.anchor && typeof t.mode === "string" && t.mode.startsWith("anchor");
     VA.setText("rm-anchor", anchoredRm && Number.isFinite(t.distance_to_anchor_m) ? t.distance_to_anchor_m.toFixed(1) : "—");

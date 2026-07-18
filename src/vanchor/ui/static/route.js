@@ -220,7 +220,13 @@
     updatePatrolIndicator(t && t.mode === "waypoint" && t.route_patrol === true);
   });
 
-  $("wp-go").addEventListener("click", startRoute);
+  $("wp-go").addEventListener("click", () => {
+    if (!VA.map.pending().length) {
+      if (VA.toast) VA.toast("No waypoints yet — tap Add waypoints, then tap the map.");
+      return;
+    }
+    startRoute();
+  });
   $("wp-clear").addEventListener("click", () => {
     VA.map.setPending([]); renderWpList(); setWpArmed(false);
     setLoopFlag(false);   // clearing the route drops any island-loop flag
