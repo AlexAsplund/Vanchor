@@ -241,9 +241,15 @@ easy to set up. Effort: S=days, M=1-2 weeks, L=bigger. The five bolded
 **TOP-5** items are in active development (branch `dev/adoption-pack`).
 
 Setup & first contact:
-1. **TOP-5** Flashable SD-card image (L): Raspberry Pi Imager preset ->
-   hotspot -> vanchor.local -> wizard; in-UI auto-updater. Kills the
-   apt/git/pip barrier.
+1. **TOP-5** Flashable SD-card image (L), hassio-style architecture (owner
+   directive 2026-07-18): Docker on the Pi + a host-side vanchor-supervisor
+   owning atomic image updates w/ health-gated auto-rollback, volume
+   backups w/ retention, disk stewardship (df + image prune + thresholds
+   -> notifications), and a declared-device passthrough policy
+   (/dev/serial|ttyACM|ttyUSB|i2c|gpio incl. hotplug) verified visible
+   in-container. Pi Imager preset -> hotspot -> vanchor.local -> wizard;
+   Settings cards for update/backup/storage. Kills the apt/git/pip
+   barrier; upgrades become pull+recreate, never brick.
 2. **TOP-5** Hardware setup wizard (M): scan serial/I2C -> autodetect known
    devices -> live per-sensor preview -> wiring help. Pairs with helm PCB.
 3. WiFi onboarding (S-M): hotspot-first + captive "join your WiFi" page.
