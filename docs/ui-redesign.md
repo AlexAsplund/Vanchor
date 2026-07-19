@@ -1,5 +1,17 @@
 # UI Rehaul — command menu, views, reachability
 
+> **Status: SHIPPED (Evolution+, July 2026).** This document was the design spec;
+> it has been fully executed across UX tasks 1–6 on branch `dev/adoption-pack`.
+> For the authoritative post-ship review (findings, screenshots, expert-tag
+> breakdown) see [docs/design/ux-review-2026-07.md](design/ux-review-2026-07.md).
+> For the pre-ship concepts and IA rationale see
+> [docs/design/ux-revamp-concepts-2026-07.md](design/ux-revamp-concepts-2026-07.md).
+> The shipped JS/CSS lives under `src/vanchor/ui/static/` (menu.js, views.js,
+> mobile.js, layout.js, safety.js, etc.); the spec below is preserved as design
+> rationale.
+
+---
+
 Goal: the app is a control surface used **on a boat** — wet hands, glare, motion,
 one-handed. Nothing wrong with the map/visualisation; the problem is *reach*.
 The right-side settings drawer is cramped and its categories are muddled. This

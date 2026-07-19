@@ -202,6 +202,33 @@ Symptoms that look like bad PID gains are often these instead:
   time-constants for the GPS/compass fusion, calibrated per-boat by the
   fusion calibration — they change the *quality/lag of the inputs* the PIDs
   see. Retune fusion before touching control gains if headings lag turns.
+- **`AnchorMLMode.thrust_tau_s` (0.7 s, first-order low-pass on Smart/Leif
+  OUTPUT thrust)**: the ES training env models steering slew but not the
+  motor's 1 s forward↔reverse dead-time, so trained policies can flip thrust
+  sign several times a second. Without smoothing, the governor and firmware
+  block ~45% of those reversals, zeroing the braking the policy wanted and
+  leaving it hunting. The low-pass turns sub-second sign oscillations into a
+  command the motor can execute (measured: reverse-block events drop from 45%
+  to 16% of ticks). Tuning interaction: *too high* mutes real braking thrust
+  on a fast approach; *too low* lets the raw oscillating signal through
+  again. Set to 0 to restore the raw policy output (useful when benchmarking
+  the policy itself). This is the `control.anchor_ml_thrust_tau_s` knob if
+  ever broken out into config; currently a constructor default.
+- **Reverse dead-time and the governor advisory**:
+  - The **firmware / sim motor** apply a 1.0 s reverse dead-time
+    (`SimMotorConfig.reverse_delay_s: 1.0`) — thrust is held at zero for 1 s
+    after a sign flip. This is the dead-time the learned anchor policies
+    were trained *without*, hence the `thrust_tau_s` mitigation above.
+  - The **safety governor** has a separate Pi-side interlock
+    (`SafetyConfig.reverse_delay_s: 0.5`) that fires earlier; the stricter
+    of the two governs in practice.
+  - The UI governor advisory banner has a **4 s dwell** (`GOV_DWELL_MS =
+    4000` in `safety.js`): the "Reverse blocked" notice only appears after
+    the governor has been *continuously* blocking for 4 s, so routine
+    sub-second interlock flicker during Smart/Leif station-keeping never
+    surfaces the banner. If you see the banner during anchor hold, the policy
+    is genuinely stuck in a reverse-demand loop — the `thrust_tau_s` value is
+    too low or zero.
 
 ## 8. Auto-tuning — where the shipped numbers come from
 

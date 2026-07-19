@@ -44,21 +44,60 @@ PID, APB/cross-track steering, a per-function "mode" model) and discarded the
   `GpsFix`, `MotorCommand`, setpoints, `BoatState`, `Environment`), `geo.py`
   (haversine, bearing, destination, cross-track), `pid.py` (PID with
   anti-windup), `state.py` (`NavigationState`, the single typed state object),
-  `events.py` (async pub/sub `EventBus`).
+  `events.py` (async pub/sub `EventBus`). Also: `anchor_alarm.py` (passive
+  motor-OFF GPS watch circle, adoption #10), `backup.py` (config/data
+  backup+restore), `boat_profiles.py` (per-boat preset profiles),
+  `capabilities.py` (device capability registry), `contract.py` (API contract
+  types), `debug_recorder.py` (chunked gzip flight recorder, #20),
+  `observability.py` (always-on blackbox ring buffer), `prefs.py`
+  (server-side user preferences), `alertlog.py` (alarm history log).
 - **nav/** — `nmea.py` parses *and* encodes RMC/GGA/HDM/HDT/APB with checksums
   (no pynmea2 dependency); `navigator.py` is the single writer of *perceived*
   position/heading from sentences.
 - **hardware/** — `interfaces.py`: the HAL. `Sensor`, `MotorController`,
   `Actuator` ABCs. This is the seam between the controller and the physical
-  world.
+  world. Shipped additions: `probe.py` (passive serial hardware fingerprinting
+  for the setup wizard), `i2c_link.py` (I²C transport for the helm-Pico motor
+  controller tunnel), `registry.py` (device driver registry), `link_plan.py`
+  (motor-link planner for split-motor configs), `serial_channels.py` /
+  `serial_devices.py` / `serial_link.py` (serial HAL), `split_motor.py`
+  (dual-channel motor support), `watchdog.py` (external GPIO hardware watchdog).
 - **controller/** — `controller.py` owns the active mode, the steering `Helm`
   (one shared heading PID = the "autopilot inner loop"), and translates UI
-  commands. `modes.py` holds the four behaviours as pure strategies.
+  commands. `modes.py` holds the control behaviours as pure strategies.
+  Also: `anchor_ml.py` (`AnchorMLMode` Smart hybrid + `AnchorLeifMode` pure
+  learned station-keepers), `safety.py` (safety governor), `calibration.py`
+  (auto-calibration runner), `estimator.py` (GNSS/INS fusion).
 - **sim/** — `boat.py` physics, `devices.py` (`SimGps`/`SimCompass`/
   `SimMotorController`/`SimServo`, each implementing a HAL ABC), `simulator.py`
   ties them together and owns ground truth.
 - **ui/** — FastAPI server: WebSocket telemetry + REST/WS commands + a Leaflet
   map. `app.py` wires a `Runtime` and runs every async loop.
+- **Top-level app modules** (under `src/vanchor/`):
+  - `push.py` — Web Push notification dispatch (adoption #7); server-initiated
+    alarms to a locked phone.
+  - `wifi.py` — nmcli-backed WiFi scan/join for the SD-image setup flow.
+  - `discovery.py` — mDNS service advertisement (`vanchor.local`).
+  - `supervisor_client.py` — stdlib-only HTTP client for the host-side
+    `supervisor/` daemon (lifecycle management, OTA updates, disk monitor).
+  - `tls.py` — self-signed TLS cert generation for the HTTPS listener.
+- **`supervisor/` package** (top-level, Pi-host only) — runs *outside* the
+  app container. Provides the update, rollback, backup, and disk-monitoring
+  API that `supervisor_client.py` calls over localhost:9300. Key modules:
+  `vanchor_supervisor/core.py`, `selfupdate.py`, `disk.py`, `backup.py`,
+  `bundles.py`, `versionspec.py`.
+- **UI static modules** (`src/vanchor/ui/static/`) — the shipped Evolution+
+  rehaul added: `menu.js` (command-menu / category tiles), `views.js`
+  (URL-addressable view system: chart / helm / instruments / manual),
+  `mobile.js` (mobile sheet + landscape parity), `layout.js` (responsive
+  layout engine), `safety.js` (governor advisory + anchor-alarm banner, incl.
+  4 s dwell), `armbar.js` (arm-to-engage bar), `pinpopup.js` (map-tap
+  popup), `wifi.js` (WiFi setup UI), `wizard.js` / `hwwizard.js` (setup +
+  hardware wizards), `supervisor.js` (OTA/update UI), `push.js` (Web Push
+  opt-in), `roles.js` (observer/operator role gate), `demo.js` (demo mode),
+  `themectl.js` (daylight/dark theme toggle), among others. Leaflet, uPlot,
+  and fonts are vendored under `static/vendor/` — no external CDN dependency
+  at runtime.
 
 ### The closed loop
 
