@@ -116,13 +116,27 @@
   }
   function invalidatePeekCache() { _peekPxCache = null; }
   function vh(frac) { return window.innerHeight * frac; }
+  // Bottom edge of the fixed topbar (accounts for safe-area-inset-top on
+  // notched phones, where the topbar is taller than a bare viewport).
+  function topbarBottom() {
+    const tb = document.querySelector("#topbar, .topbar");
+    return tb ? Math.ceil(tb.getBoundingClientRect().bottom) : 0;
+  }
+  // FULL sheet height. Was a fixed 88vh, which on a notched device pushed the
+  // sheet TOP (grip + collapse ⌄) up UNDER the taller topbar so they couldn't
+  // be reached — the boat was stuck maximized. Clamp so the sheet top never
+  // rises above the topbar's bottom (leave a 6px sliver), so the drag grip and
+  // collapse control stay visible in every state.
+  function fullH() {
+    return Math.max(vh(0.5), window.innerHeight - topbarBottom() - 6);
+  }
   function heights() {
-    const full = vh(0.88), mid = vh(0.46), peek = peekPx();
+    const full = fullH(), mid = vh(0.46), peek = peekPx();
     return { full, mid, peek };
   }
   // translateY (px, downward) for a given visible height.
   function offsetFor(h) { return heights().full - h; }
-  const STATE_HEIGHT = { peek: peekPx, mid: () => vh(0.46), full: () => vh(0.88) };
+  const STATE_HEIGHT = { peek: peekPx, mid: () => vh(0.46), full: fullH };
 
   const dock = document.getElementById("dock");
 
@@ -196,7 +210,6 @@
     grip.addEventListener("touchmove", onMove, { passive: false });
     grip.addEventListener("touchend", onEnd);
     grip.addEventListener("touchcancel", onEnd);
-    // Mouse fallback (desktop testing at narrow widths).
     grip.addEventListener("mousedown", (e) => {
       onStart(e);
       const mm = (ev) => onMove(ev);
@@ -204,6 +217,39 @@
       window.addEventListener("mousemove", mm);
       window.addEventListener("mouseup", mu);
     });
+
+    // Also drag from the ALWAYS-VISIBLE sticky head, so the natural "swipe the
+    // sheet down" gesture works from the visible band (the grip can be a thin
+    // target and, before the height clamp, was hidden under a notched topbar).
+    // STOP and MAN OVERBOARD are excluded so a safety press is never turned
+    // into a drag; the mode text and empty head areas ARE drag handles. A real
+    // drag (moved) collapses and swallows the trailing click so it can't also
+    // fire "change mode"; a plain tap falls through to the element's own click.
+    const head = document.getElementById("sheet-head");
+    if (head) {
+      const safeTarget = (e) => !(e.target.closest &&
+        e.target.closest("#sheet-stop, #sheet-mob"));
+      let headMoved = false;
+      const hStart = (e) => { if (!safeTarget(e)) return; headMoved = false; onStart(e); };
+      const hMove = (e) => { if (!dragging) return; if (Math.abs((e.touches ? e.touches[0].clientY : e.clientY) - startY) > 4) headMoved = true; onMove(e); };
+      head.addEventListener("touchstart", hStart, { passive: true });
+      head.addEventListener("touchmove", hMove, { passive: false });
+      head.addEventListener("touchend", (e) => { onEnd(); }, false);
+      head.addEventListener("touchcancel", onEnd);
+      head.addEventListener("mousedown", (e) => {
+        if (!safeTarget(e)) return;
+        headMoved = false; onStart(e);
+        const mm = (ev) => { if (Math.abs(ev.clientY - startY) > 4) headMoved = true; onMove(ev); };
+        const mu = () => { onEnd(); window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); };
+        window.addEventListener("mousemove", mm);
+        window.addEventListener("mouseup", mu);
+      });
+      // Swallow the click that follows a real head-drag so it can't also
+      // trigger the mode-chip's change-mode handler.
+      head.addEventListener("click", (e) => {
+        if (headMoved) { headMoved = false; e.preventDefault(); e.stopImmediatePropagation(); }
+      }, true);
+    }
   }
 
   // ---- mode buttons: switching a mode reveals its panel ---------------------
