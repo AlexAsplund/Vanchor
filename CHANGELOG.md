@@ -2,7 +2,9 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## [Unreleased]
+## Unreleased
+
+## [1.5.0a10] — 2026-07-19
 
 - **Mobile layout could fail to activate on a slow first paint (real fix).**
   `mobile.js` set `body.mobile` from a single `applyMobile()` run at
@@ -38,6 +40,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   without reading, so a client mid-write can see a reset instead of a clean
   413); the mobile e2e layout tests settle the viewport before measuring so they
   observe the real mobile layout, not a first-paint transient.
+
+- **Nightly soak false positive fixed.** The soak's post-STOP check sampled
+  thrust a fixed 0.25 s after STOP and flagged a "stuck motor" whenever the mode
+  churn left the prop near full thrust — but the safety governor *intentionally*
+  slew-limits thrust, so STOP ramps to zero over ~1 s. It now polls until the
+  motor settles (failing only if it never does within 3 s), distinguishing the
+  designed ramp-down from a genuinely stuck motor.
+
+- **Docs screenshots no longer covered by sim chrome.** The README/docs
+  screenshot script now dismisses the first-run "real boat / simulator" modal
+  and hides the "SIMULATION" pill so they don't sit on top of the captured UI.
 
 ## [1.5.0a9] — 2026-07-19
 
