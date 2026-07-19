@@ -122,6 +122,10 @@ jobs:
             --version "$VERSION" \
             --bundle "$BUNDLE_NAME" \
             --workdir /tmp/pi-gen-work
+          # pi-gen runs as root in a container, so its deploy/ output is
+          # root-owned. Hand it back to the runner user so the later checksum,
+          # size-report and os_list steps can write alongside the image.
+          sudo chown -R "$(id -u):$(id -g)" /tmp/pi-gen-work/pi-gen/deploy
         env:
           REPO_DIR: ${{ github.workspace }}
 
