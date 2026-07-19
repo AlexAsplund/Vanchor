@@ -429,6 +429,14 @@
 
   // ---- boot -----------------------------------------------------------------
   applyMobile();
+  // Re-evaluate once the viewport has settled.  applyMobile() above runs at
+  // script-execution time; if it fires before the layout viewport is final
+  // (observed under headless Chromium and possible on slow first paints) it
+  // reads a stale width and leaves body.mobile unset — the whole mobile layout
+  // then depends on a later resize that may never come.  A rAF and the load
+  // event both re-run it against the settled viewport; both are idempotent.
+  requestAnimationFrame(applyMobile);
+  window.addEventListener("load", applyMobile);
   // matchMedia change + resize + orientation all re-evaluate mobile state.
   if (mq.addEventListener) mq.addEventListener("change", applyMobile);
   else if (mq.addListener) mq.addListener(applyMobile);

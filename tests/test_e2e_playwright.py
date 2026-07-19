@@ -478,72 +478,32 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
         dims = page.evaluate(
             """() => {
                 const el = document.getElementById('chips');
-                const tb = document.querySelector('.topbar');
-                const ct = document.querySelector('#chip-conn .chip-text');
-                const lbl = document.querySelector('.chip-label');
-                const vis = [...el.children]
-                    .filter(c => c.offsetParent !== null)
-                    .map(c => (c.id || c.className) + ':' + Math.round(
-                        c.getBoundingClientRect().width));
                 return {
                     sw: el.scrollWidth,
                     cw: el.clientWidth,
-                    inter: document.fonts.check('12px Inter')
-                           && document.fonts.check('700 12px Inter'),
-                    topbarFits: tb.scrollWidth <= Math.ceil(tb.clientWidth) + 1,
-                    // --- diagnostics: why is #chips content wide on CI? ---
-                    iw: window.innerWidth,
-                    dpr: window.devicePixelRatio,
-                    mq760: matchMedia('(max-width: 760px)').matches,
-                    mq420: matchMedia('(max-width: 420px)').matches,
-                    connText: ct ? getComputedStyle(ct).display : 'none-el',
-                    lblDisp: lbl ? getComputedStyle(lbl).display : 'none-el',
-                    vis: vis,
-                    bodyCls: document.body.className,
+                    mobile: document.body.classList.contains('mobile'),
+                    vis: [...el.children]
+                        .filter(c => c.offsetParent !== null)
+                        .map(c => (c.id || c.className) + ':' + Math.round(
+                            c.getBoundingClientRect().width)),
                 };
             }"""
         )
-        # Probe: does a resize nudge (re-running applyMobile) restore body.mobile
-        # and collapse the chips?  If so this is the same first-paint race as the
-        # landscape test.
-        page.evaluate("window.dispatchEvent(new Event('resize'))")
-        page.wait_for_timeout(200)
-        after = page.evaluate(
-            "() => ({m: document.body.classList.contains('mobile'),"
-            " sw: document.getElementById('chips').scrollWidth,"
-            " cw: document.getElementById('chips').clientWidth})"
-        )
-        dims["afterResize"] = after
         slack = dims["cw"] - dims["sw"]
-        print(
-            f"\n  #{vp_w}px #chips {{sw:{dims['sw']},cw:{dims['cw']},"
-            f"slack:{slack},inter:{dims['inter']}}}"
+        print(f"\n  #{vp_w}px #chips {{sw:{dims['sw']},cw:{dims['cw']},slack:{slack}}}")
+        # The mobile chip compaction — secondary chips (speed/hdg/depth/…) hidden
+        # and compact padding — is keyed on body.mobile.  mobile.js re-runs
+        # applyMobile on rAF + load so a stale first-paint viewport can't leave
+        # the class unset (that left the secondary chips visible on CI and blew
+        # #chips past its width).  Assert the class is set before the pixel guard
+        # so a regression there gives a clear message instead of an overflow.
+        assert dims["mobile"], (
+            f"body.mobile not set at {vp_w}px — mobile layout inactive; vis={dims['vis']}"
         )
-        # The no-overflow property only holds with the vendored Inter font
-        # loaded — its metrics are what Fix2's ≤430px compact breakpoint was
-        # tuned for.  `.chips` shrinks (flex + overflow) so a wide fallback font
-        # (headless CI's DejaVu, before the web font is applied) degrades to the
-        # chips scrolling/clipping inside a bar that still fits the screen,
-        # rather than a broken topbar.  So gate the strict pixel guard on Inter
-        # being active; otherwise assert the whole-bar invariant that actually
-        # matters — the topbar never overflows the viewport.
-        _diag = (
-            f"iw={dims['iw']} dpr={dims['dpr']} mq760={dims['mq760']} "
-            f"mq420={dims['mq420']} connText={dims['connText']} "
-            f"lblDisp={dims['lblDisp']} bodyCls='{dims['bodyCls']}' "
-            f"afterResize={dims['afterResize']} vis={dims['vis']}"
+        assert dims["sw"] <= dims["cw"], (
+            f"chips overflow at {vp_w}px: scrollWidth={dims['sw']} > clientWidth={dims['cw']}"
+            f" (slack={slack}); vis={dims['vis']}"
         )
-        if dims["inter"]:
-            assert dims["sw"] <= dims["cw"], (
-                f"chips overflow at {vp_w}px with Inter loaded: "
-                f"scrollWidth={dims['sw']} > clientWidth={dims['cw']} (slack={slack}) "
-                f"|| {_diag}"
-            )
-        else:
-            assert dims["topbarFits"], (
-                f"topbar overflows the viewport at {vp_w}px (fallback font) — "
-                f"the mobile top bar is broken, not just the chips || {_diag}"
-            )
         assert not errors, f"Page JS errors: {errors[:3]}"
     finally:
         page.close()
