@@ -437,6 +437,14 @@
   // event both re-run it against the settled viewport; both are idempotent.
   requestAnimationFrame(applyMobile);
   window.addEventListener("load", applyMobile);
+  // A viewport that settles to its final size *after* first paint without
+  // firing a 'resize' (observed under headless Chromium, where the emulated
+  // size lands late) would otherwise leave body.mobile stuck on whatever the
+  // transient early width implied.  Observe the root element's box so
+  // applyMobile re-runs the moment the layout viewport actually changes.
+  if (window.ResizeObserver) {
+    new ResizeObserver(applyMobile).observe(document.documentElement);
+  }
   // matchMedia change + resize + orientation all re-evaluate mobile state.
   if (mq.addEventListener) mq.addEventListener("change", applyMobile);
   else if (mq.addListener) mq.addListener(applyMobile);

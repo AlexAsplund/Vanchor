@@ -482,6 +482,8 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
                     sw: el.scrollWidth,
                     cw: el.clientWidth,
                     mobile: document.body.classList.contains('mobile'),
+                    iw: window.innerWidth,
+                    mq: matchMedia('(max-width: 760px), (max-height: 480px)').matches,
                     vis: [...el.children]
                         .filter(c => c.offsetParent !== null)
                         .map(c => (c.id || c.className) + ':' + Math.round(
@@ -498,7 +500,8 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
         # #chips past its width).  Assert the class is set before the pixel guard
         # so a regression there gives a clear message instead of an overflow.
         assert dims["mobile"], (
-            f"body.mobile not set at {vp_w}px — mobile layout inactive; vis={dims['vis']}"
+            f"body.mobile not set at {vp_w}px — mobile layout inactive; "
+            f"iw={dims['iw']} mq={dims['mq']} errors={errors[:2]} vis={dims['vis']}"
         )
         assert dims["sw"] <= dims["cw"], (
             f"chips overflow at {vp_w}px: scrollWidth={dims['sw']} > clientWidth={dims['cw']}"
