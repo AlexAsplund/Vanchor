@@ -3142,22 +3142,33 @@ body.mobile.ls .dock {
   width: clamp(280px, 46vw, 420px);
   height: auto; max-height: none;
   border-radius: 0;                          /* flat right edge */
-  /* Peek (default): rail hidden off-screen to the right. */
-  transform: translateX(100%);
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  /* SAFETY FIX — two-part: the dock must not create a containing block for
+     position:fixed descendants (#sheet-stop, #sheet-mob inside .sheet-peekbar).
+     Both `transform` AND `backdrop-filter` create containing blocks per the CSS
+     spec and Chromium's implementation.  Clear BOTH:
+       1. transform: none  — removes the translateX() trap from portrait overrides.
+       2. backdrop-filter: none  — removes the .glass blur trap that ALSO creates
+          a containing block (CSS Filter Effects L2, implemented in Chrome).
+     With neither property set, .sheet-peekbar's position:fixed is correctly
+     relative to the viewport, keeping STOP + MOB on-screen at all times. */
+  transform: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  right: calc(-1 * clamp(280px, 46vw, 420px));  /* hidden: dock off right edge */
+  transition: right 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
-/* Override sheet snap states from portrait rules. */
-body.mobile.ls[data-sheet="peek"]  .dock { transform: translateX(100%); }  /* hidden */
-body.mobile.ls[data-sheet="mid"]   .dock { transform: translateX(0);   }   /* visible */
-body.mobile.ls[data-sheet="full"]  .dock { transform: translateX(0);   }   /* also visible */
+/* Override sheet snap states from portrait rules (also clears portrait translateY). */
+body.mobile.ls[data-sheet="peek"]  .dock { transform: none; right: calc(-1 * clamp(280px, 46vw, 420px)); }  /* hidden */
+body.mobile.ls[data-sheet="mid"]   .dock { transform: none; right: 0; }   /* visible */
+body.mobile.ls[data-sheet="full"]  .dock { transform: none; right: 0; }   /* also visible */
 
-/* 3. In landscape the bottom safety band is the portrait peek row-2 (STOP/mode/MOB).
-   Pull it out of the sheet and pin it to the bottom of the viewport. Because
-   the DOM node is inside #dock we use CSS to make it escape the sheet stacking:
-   make it fixed + override the dock's overflow-hidden on just this row. */
+/* 3. In landscape the safety band (.sheet-peekbar, containing #sheet-stop +
+   #sheet-mob) stays a DOM child of #dock but escapes to the viewport via
+   position:fixed. This works because the fix above ensures body.mobile.ls .dock
+   has no transform AND no backdrop-filter, so the viewport is the containing
+   block for all position:fixed descendants. */
 body.mobile.ls .dock {
-  /* allow the safety band to visually overflow beyond the dock in portrait —
-     in landscape the dock is hidden by default so safety band is always visible. */
+  /* allow the peekbar to paint outside the dock clip box. */
   overflow: visible;
 }
 /* In landscape, the safety band lives at the bottom of the viewport below the map. */

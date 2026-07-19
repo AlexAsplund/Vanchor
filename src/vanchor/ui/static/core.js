@@ -654,7 +654,7 @@ const RESTORED_THRESHOLD_MS = 5000;  // only toast if gone for ≥5 s
 function _showOfflineStrip(show) {
   _banner(OFFLINE_BANNER_ID, show ? {
     show: true, belowTopbar: true, bg: "#374151",
-    text: "No internet connection — waiting for the boat",
+    text: "Offline — showing the cached app. Map tiles come from your saved areas.",
   } : { show: false });
 }
 

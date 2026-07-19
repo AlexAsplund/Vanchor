@@ -671,6 +671,13 @@ def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
 
+    # Dismiss first-run simulation modal before any page load so it never
+    # blocks the UI or causes false positives in bounding-box assertions.
+    page.add_init_script(
+        "localStorage.setItem('vanchor-sim-ack','1');"
+        "localStorage.setItem('vanchor-firstrun','done');"
+    )
+
     try:
         page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
         # Wait for mobile.js to add the mobile class; landscape (ls) follows.
@@ -683,10 +690,28 @@ def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
         has_ls = page.evaluate("document.body.classList.contains('ls')")
         assert has_ls, "body.ls not set at 844×390 — landscape layout did not activate"
 
-        # #sheet-stop (STOP button) must be visible at all times.
-        stop_btn = page.locator("#sheet-stop")
-        assert stop_btn.count() > 0, "#sheet-stop not found"
-        assert stop_btn.first.is_visible(), "#sheet-stop not visible in landscape"
+        # SEV-2: Verify #sheet-stop and #sheet-mob are WITHIN the 844×390 viewport.
+        # is_visible() passes for off-screen elements; bounding_box() catches them.
+        # This assertion MUST fail on the pre-fix CSS (transform: translateX(100%)
+        # traps the buttons inside the dock off-screen) and PASS after the fix
+        # (transform:none + right offset keeps the viewport-fixed band on screen).
+        vp_w, vp_h = 844, 390
+        for btn_id, btn_label in [("#sheet-stop", "STOP"), ("#sheet-mob", "MOB")]:
+            btn = page.locator(btn_id).first
+            assert btn.count() >= 0, f"{btn_id} not in DOM"
+            bb = btn.bounding_box()
+            assert bb is not None, (
+                f"{btn_label} ({btn_id}) has no bounding box — not rendered"
+            )
+            assert bb["x"] >= 0, (
+                f"{btn_label} left edge off-screen: x={bb['x']:.0f}px (landscape peek)"
+            )
+            assert bb["y"] + bb["height"] <= vp_h, (
+                f"{btn_label} bottom edge off viewport: y+h={bb['y'] + bb['height']:.0f}px > {vp_h}"
+            )
+            assert bb["x"] + bb["width"] <= vp_w, (
+                f"{btn_label} right edge off viewport: x+w={bb['x'] + bb['width']:.0f}px > {vp_w}"
+            )
 
         # Map (#map) must occupy ≥40% of viewport width.
         map_width = page.eval_on_selector(
