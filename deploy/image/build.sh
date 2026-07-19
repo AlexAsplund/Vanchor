@@ -103,6 +103,19 @@ cp -a "${SCRIPT_DIR}/stage-vanchor" "${PIGEN_DIR}/"
 # Copy the bundle as the fixed staging name consumed by 02-stack/00-run.sh
 install -m 644 "$BUNDLE" "${PIGEN_DIR}/stage-vanchor/02-stack/files/factory-bundle.tar"
 
+# Stage the repo files the stage script installs into the rootfs. pi-gen runs
+# its stage scripts INSIDE a build container where our exported REPO_DIR is not
+# visible, so the compose file and supervisor package must be baked into the
+# stage's files/ dir (like the bundle above) rather than read from REPO_DIR at
+# stage-run time.
+install -m 644 "${REPO_DIR}/docker-compose.yml" \
+    "${PIGEN_DIR}/stage-vanchor/02-stack/files/docker-compose.yml"
+rm -rf "${PIGEN_DIR}/stage-vanchor/02-stack/files/supervisor"
+cp -a "${REPO_DIR}/supervisor" "${PIGEN_DIR}/stage-vanchor/02-stack/files/supervisor"
+# Drop any local build cruft so it can't leak into the image.
+find "${PIGEN_DIR}/stage-vanchor/02-stack/files/supervisor" \
+    -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
 # ---- build via pi-gen's docker wrapper ----------------------------------
 echo "==> Running pi-gen build-docker.sh (this takes 30-60 min on arm64 natively)"
 cd "$PIGEN_DIR"

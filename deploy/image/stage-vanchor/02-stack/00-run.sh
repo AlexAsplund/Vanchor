@@ -1,20 +1,19 @@
 #!/bin/bash -e
 # Copy the vanchor stack into the rootfs.
-# REPO_DIR must be exported by build.sh before calling pi-gen.
-# Task-5 reconciliation: artifacts are at the repo root, not deploy/docker/:
-#   Dockerfile   → REPO_DIR/Dockerfile
-#   compose      → REPO_DIR/docker-compose.yml
-#   supervisor   → REPO_DIR/supervisor/
-#
+# pi-gen runs this INSIDE a build container where build.sh's exported REPO_DIR
+# is NOT visible, so build.sh stages the repo files it needs into this stage's
+# files/ dir (docker-compose.yml, supervisor/, factory-bundle.tar) and we
+# install from files/ — never from REPO_DIR.
 install -d "${ROOTFS_DIR}/opt/vanchor/compose" \
            "${ROOTFS_DIR}/opt/vanchor/factory" \
            "${ROOTFS_DIR}/opt/vanchor/data"
 
 # Compose file (owns the container contract: host network, /data, devices)
-install -m 644 "${REPO_DIR}/docker-compose.yml" "${ROOTFS_DIR}/opt/vanchor/compose/"
+install -m 644 files/docker-compose.yml "${ROOTFS_DIR}/opt/vanchor/compose/"
 
 # Supervisor package (host-side python daemon + systemd unit + guard)
-cp -a "${REPO_DIR}/supervisor/." "${ROOTFS_DIR}/opt/vanchor-supervisor/"
+install -d "${ROOTFS_DIR}/opt/vanchor-supervisor"
+cp -a files/supervisor/. "${ROOTFS_DIR}/opt/vanchor-supervisor/"
 
 # Factory bundle: the docker image pre-baked at CI time.
 # build.sh copies the bundle to files/factory-bundle.tar (fixed staging name).
