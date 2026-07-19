@@ -32,6 +32,12 @@
 
 (function () {
   const $ = (id) => document.getElementById(id);
+
+  // Governor-advisory dwell: the banner only appears after the governor has
+  // been CONTINUOUSLY blocking for this long, so routine station-keeping
+  // reverse-interlock flicker (Smart/Leif, ~2x/sec) never strobes it.
+  const GOV_DWELL_MS = 4000;
+  let _govSince = 0;
   const send = (c) => VA.send(c);
   const map = window.VA && VA.map && VA.map.leaflet;
   const L = window.L;
@@ -536,13 +542,26 @@
       }
     }
 
-    // Safety governor advisory
+    // Safety governor advisory.
+    // reverse-block + thrust-slew-limit are ROUTINE, expected mechanics while a
+    // station-keeper holds: Smart/Leif vector the motor and flip thrust sign
+    // several times a second, and the reverse interlock (a motor-protection
+    // dead-time) trips on each flip. Surfacing that per-tick strobed the banner
+    // ~2x/second during a perfectly healthy Smart anchor hold. Only advise the
+    // user of a SUSTAINED governor intervention (continuously active ≥ the
+    // dwell) — a genuinely stuck condition worth acting on — and never the
+    // normal sub-second flicker. Any clear tick resets the dwell, so flapping
+    // never reaches the threshold.
     const gov = $("gov-banner");
     if (gov) {
       const govActive = !!(safety.thrust_limited || safety.reverse_blocked);
-      gov.classList.toggle("hidden", !govActive);
+      const now = Date.now();
+      if (!govActive) _govSince = 0;
+      else if (_govSince === 0) _govSince = now;
+      const govShow = govActive && (now - _govSince) >= GOV_DWELL_MS;
+      gov.classList.toggle("hidden", !govShow);
       const msg = $("gov-banner-msg");
-      if (msg && govActive) {
+      if (msg && govShow) {
         msg.textContent = safety.reverse_blocked ? "Reverse blocked by safety governor"
           : "Thrust limited by safety governor";
       }
