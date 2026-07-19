@@ -29,8 +29,10 @@ export REPO_DIR
 # arm64 branch of pi-gen (Bookworm 64-bit). Pin an exact commit for
 # reproducibility. To upgrade: find the current HEAD of the arm64 branch at
 # https://github.com/RPi-Distro/pi-gen and update this SHA.
-# BENCH-VERIFY: pi-gen arm64 branch HEAD at 2026-07-18; bump when needed.
-PIGEN_SHA="e4f7df5d4dff5bd3f4af57f06eaccbc2de476882"
+# Pinned to pi-gen tag 2026-06-18-raspios-bookworm-arm64 (a real, stable
+# Bookworm 64-bit release commit). Bump to a newer *-raspios-bookworm-arm64
+# tag from https://github.com/RPi-Distro/pi-gen/tags when needed.
+PIGEN_SHA="d7a31c6aa09f4b867902c51da2b45807c0a1709e"
 PIGEN_URL="https://github.com/RPi-Distro/pi-gen.git"
 
 # ---- argument parsing ----------------------------------------------------

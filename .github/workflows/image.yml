@@ -21,7 +21,7 @@ permissions:
   contents: write
 
 env:
-  PIGEN_SHA: "e4f7df5d4dff5bd3f4af57f06eaccbc2de476882"
+  PIGEN_SHA: "d7a31c6aa09f4b867902c51da2b45807c0a1709e"
 
 jobs:
   bundle:
