@@ -67,7 +67,12 @@
   function applyMobile() {
     const on = mq.matches;
     const was = body.classList.contains("mobile");
-    const ls = on && mqLand.matches;  // landscape sub-mode
+    // Landscape sub-mode: a short viewport in a wide (landscape) aspect. Derived
+    // from the actual viewport dimensions rather than the CSS `orientation`
+    // media feature, which some headless/embedded browsers evaluate
+    // inconsistently (e.g. reporting portrait at an 844×390 viewport). Robust
+    // and identical to the feature's definition (orientation:landscape ⇔ w≥h).
+    const ls = on && window.innerHeight <= 480 && window.innerWidth > window.innerHeight;
     if (on) {
       ensureScrollWrap();
       // Fix 5: hudframe.js adds dock-collapsed on ≤760px viewports; that class

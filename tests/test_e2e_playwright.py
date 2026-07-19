@@ -472,6 +472,7 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
         # in the parametrized group can catch a transitional render frame before
         # the compact view-chip CSS has fully committed.  600 ms is consistent
         # with the landscape smoke test's post-mobile wait.
+        page.evaluate("() => (document.fonts && document.fonts.ready) || true")
         page.wait_for_timeout(600)
 
         dims = page.eval_on_selector(
@@ -599,6 +600,7 @@ def test_wheel_snap_to_zero_and_immediate_decrease(live_server: _ServerHandle, p
         # Show the manual panel + wheel; expand the sheet so the dial is on-screen.
         page.evaluate("() => { const b = document.querySelector('.mode-btn[data-mode=\"manual\"]'); if (b) b.click(); }")
         page.evaluate("() => { try { VA.sheet && VA.sheet.reveal && VA.sheet.reveal('full'); } catch(e){} }")
+        page.evaluate("() => (document.fonts && document.fonts.ready) || true")
         page.wait_for_timeout(600)
 
         rect = page.evaluate(
@@ -717,6 +719,7 @@ def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
         page.wait_for_function(
             "document.body.classList.contains('mobile')", timeout=8000
         )
+        page.evaluate("() => (document.fonts && document.fonts.ready) || true")
         page.wait_for_timeout(600)   # let CSS settle
 
         # body.mobile.ls must be set (landscape media query fired).
