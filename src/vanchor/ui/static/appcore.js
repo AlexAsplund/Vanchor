@@ -42,6 +42,13 @@
       p.classList.toggle("active", p.dataset.for === mode));
     // a new mode supersedes any pending go-to destination
     VA.map.clearGotoMarker();
+    // Mobile portrait: hide the mode-rail when a non-default panel is active so
+    // its ~134px is freed for the options. "manual" is the default/idle state —
+    // keep the rail visible there so the user can pick a mode.
+    // The mode-chip in the peek bar (always visible) + tapping it re-shows the
+    // rail as a "change mode" affordance (wired in mobile.js).
+    document.body.classList.toggle("panel-active",
+      !!(mode && mode !== "manual"));
   }
 
   // stop has no panel of its own; show the manual panel when stopped.
@@ -56,24 +63,34 @@
       b.classList.toggle("active", b.dataset.mode === currentMode));
   }
 
-  // On mobile, picking a mode should slide the bottom sheet up AND scroll the
-  // mode rail out of view, so the mode's options fill the sheet — instead of
-  // forcing the user to drag it up and then scroll past the mode buttons.
+  // On mobile, picking a mode should slide the bottom sheet up so the mode's
+  // options fill the sheet. With panel-active hiding the rail, the options are
+  // at the top of the scroll area, so no additional scrollIntoView is needed.
+  // Fix 6: if we are in a non-chart view (helm/manual/instruments) when a mode
+  // tile is tapped, switch to chart first so the bottom sheet becomes visible.
   function revealModeOptions() {
     if (!(VA.sheet && VA.sheet.active())) return;
+    // Switch to chart if in a non-chart view so the sheet is visible.
+    try {
+      const view = document.body.dataset.view;
+      if (view && view !== "chart" && VA.views && VA.views.set) {
+        VA.views.set("chart");
+      }
+    } catch (_) {}
     // Expand to FULL (as tall as dragging the sheet all the way up) so the
-    // mode's options get the whole sheet, then scroll the mode rail off-screen.
+    // mode's options get the whole sheet.
     VA.sheet.reveal("full");
-    // Wait for the sheet's expand transition, then scroll the rail off-screen:
-    // target the guided nav bar if it's showing (keeps Speed/Pause visible),
-    // else the active panel — either way the mode buttons scroll away.
+    // Wait for the sheet's expand transition, then scroll to top so the options
+    // are immediately visible (rail is hidden by panel-active; no need to scroll
+    // it away). If a guided nav bar is showing, scroll to that instead.
     setTimeout(() => {
-      const dock = document.getElementById("dock");
-      if (!dock) return;
+      const scroll = document.querySelector(".dock-scroll");
+      if (!scroll) return;
       const navbar = document.querySelector("#dock-navbar:not(.hidden)");
-      const target = navbar || document.querySelector(".ctx-panel.active");
-      if (target && target.scrollIntoView) {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (navbar && navbar.scrollIntoView) {
+        navbar.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        scroll.scrollTop = 0;
       }
     }, 170);
   }

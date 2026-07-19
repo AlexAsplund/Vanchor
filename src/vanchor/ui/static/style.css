@@ -2232,6 +2232,32 @@ body.mobile .mode-btn .mi { font-size: 20px; }
 body.mobile .ctx-panel { padding-bottom: 8px; }
 body.mobile .dock-panels { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
 
+/* ---- Mobile hotfix: hide mode-rail + overflow menu when a ctx-panel is
+   active (portrait only). The 6 big tiles waste ~134px that options need.
+   The mode-chip in the peek-bar (always visible) + HELM view tiles are the
+   mode switchers; tapping the mode-chip re-shows the rail. ------------------ */
+body.mobile:not(.ls).panel-active .mode-rail,
+body.mobile:not(.ls).panel-active .mode-more-menu { display: none; }
+
+/* ---- Mobile hotfix: sticky primary CTA at the bottom of the scroll area
+   (portrait). Mirrors the landscape rule at line ~3236. Keeps "Drop anchor
+   here" / "Start drift" / "Start trolling" always reachable even when the
+   user scrolls into the jog or alarm sections below it. --------------------- */
+body.mobile:not(.ls) .dock-panels .ctx-panel > .btn-primary.wide {
+  position: sticky;
+  bottom: max(4px, env(safe-area-inset-bottom));
+  z-index: 2;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.40);
+}
+
+/* ---- Mobile hotfix: compact vertical rhythm inside ctx-panels (portrait).
+   Default gap is 8px; reduce to 6px so the essential controls + CTA fit on
+   one screen without the advanced/jog/alarm sections. ----------------------- */
+body.mobile:not(.ls) .ctx-panel { gap: 6px; }
+body.mobile:not(.ls) .dock-panels { padding-top: 6px; }
+/* Tighten the anchor-style law hint (verbose on desktop; trim on phone). */
+body.mobile:not(.ls) .ctx-panel .anchor-style-law { font-size: 11px; }
+
 /* Bigger touch targets for sliders / buttons inside the sheet. */
 body.mobile .dock input[type="range"] { height: 28px; }
 body.mobile .dock .btn-primary,
@@ -3212,8 +3238,26 @@ body.mobile.ls .sheet-head {
   padding: 0;
   /* Hidden when rail is open (the whole dock is visible) */
 }
+/* SAFETY-CRITICAL FIX: the .sheet-peekbar (STOP + MAN OVERBOARD) is a CHILD
+   of .sheet-head. CSS opacity: 0 on a parent is NOT overridable on children
+   (unlike pointer-events), so using opacity: 0 here would make STOP and MOB
+   invisible and unreachable — a safety failure. Instead, make the grip tab
+   visually transparent (background + border) and hide only the collapse button;
+   the peekbar remains fully opaque and re-asserts pointer-events: auto. */
 body.mobile.ls[data-sheet="mid"]  .sheet-head,
-body.mobile.ls[data-sheet="full"] .sheet-head { opacity: 0; pointer-events: none; }
+body.mobile.ls[data-sheet="full"] .sheet-head {
+  background: transparent;
+  box-shadow: none;
+  border-color: transparent;
+  pointer-events: none;  /* map taps pass through the hidden tab area */
+}
+/* Collapse button inside the grip tab: hide when rail is already open. */
+body.mobile.ls[data-sheet="mid"]  .sheet-head .sheet-collapse,
+body.mobile.ls[data-sheet="full"] .sheet-head .sheet-collapse { display: none; }
+/* Safety band: STOP + MOB must remain fully visible and tappable in ALL
+   landscape states — including rail-open (mid / full). */
+body.mobile.ls[data-sheet="mid"]  .sheet-peekbar,
+body.mobile.ls[data-sheet="full"] .sheet-peekbar { pointer-events: auto; }
 body.mobile.ls .sheet-grip-bar {
   display: block;
   width: 5px; height: 28px; border-radius: 3px;

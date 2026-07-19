@@ -54,12 +54,28 @@
     d.appendChild(wrap);
   }
 
+  // ---- advanced details: close all .mini <details> in the dock on first
+  // mobile entry so the options panels are compact on phones. Desktop keeps
+  // them open (the <details> elements have the `open` attribute in HTML).
+  function closeAdvancedDetails() {
+    document.querySelectorAll(".dock-panels details.mini").forEach(function (d) {
+      d.removeAttribute("open");
+    });
+  }
+
   // ---- mobile on/off --------------------------------------------------------
   function applyMobile() {
     const on = mq.matches;
     const was = body.classList.contains("mobile");
     const ls = on && mqLand.matches;  // landscape sub-mode
-    if (on) ensureScrollWrap();
+    if (on) {
+      ensureScrollWrap();
+      // Fix 5: hudframe.js adds dock-collapsed on ≤760px viewports; that class
+      // is irrelevant (and visually benign but semantically stale) in mobile
+      // sheet mode, so clear it. Also clear panel-active on mobile init to start
+      // with the rail visible (applyModePanels will set it when a mode fires).
+      body.classList.remove("dock-collapsed");
+    }
     body.classList.toggle("mobile", on);
     // body.ls gates all landscape CSS; cleared when portrait or desktop.
     body.classList.toggle("ls", ls);
@@ -69,6 +85,9 @@
       // CSS custom property so the sheet transform + FAB bottom calc are exact.
       invalidatePeekCache();
       document.body.style.setProperty("--peek-h", peekPx() + "px");
+      // On first entry to mobile mode close all advanced/secondary <details>
+      // so the primary CTA is immediately visible without scrolling.
+      if (!was) closeAdvancedDetails();
     }
     if (on !== was) refitMap();
   }
@@ -218,10 +237,21 @@
     });
   }
 
-  // Mode chip tap: open the sheet to mid.
+  // Mode chip tap: change-mode affordance (portrait) or expand (landscape/peek).
+  // When a mode panel is already active on portrait mobile, tapping the chip
+  // reveals the mode-rail so the user can pick a different mode — it temporarily
+  // clears panel-active and scrolls the rail into view. Any mode-rail tap will
+  // re-set panel-active via applyModePanels(). In all other cases, expand sheet.
   const sheetMode = document.getElementById("sheet-mode");
   if (sheetMode) {
     sheetMode.addEventListener("click", () => {
+      if (body.classList.contains("panel-active") &&
+          !body.classList.contains("ls")) {
+        // Show the rail so the user can switch modes.
+        body.classList.remove("panel-active");
+        const scrollEl = document.querySelector(".dock-scroll");
+        if (scrollEl) scrollEl.scrollTop = 0;
+      }
       ensureAtLeast("mid");
     });
   }

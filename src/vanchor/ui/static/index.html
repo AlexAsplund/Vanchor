@@ -542,30 +542,34 @@
             <button id="ae-redrop" class="ae-redrop" type="button">Re-drop here — moves the point</button>
           </div>
         </div>
-        <div class="ctx-sub">Jog anchor</div>
-        <div class="dpad">
-          <button id="jog-fwd" class="dpad-up" aria-label="Jog forward">↑<span class="dpad-lbl">Fwd</span></button>
-          <button id="jog-left" class="dpad-left" aria-label="Jog port">←<span class="dpad-lbl">Port</span></button>
-          <button id="jog-right" class="dpad-right" aria-label="Jog starboard">→<span class="dpad-lbl">Stbd</span></button>
-          <button id="jog-back" class="dpad-down" aria-label="Jog back">↓<span class="dpad-lbl">Back</span></button>
-        </div>
-        <div class="dpad-caption">1 m per tap</div>
-        <div class="ctx-sub">Anchor alarm (motor off)</div>
-        <div class="hint">Watches a GPS circle with the motor OFF — the real
-          anchor holds the boat; Vanchor only alarms if it drags. Keeps
-          watching on the boat even when this phone sleeps.</div>
-        <div class="slider-row">
-          <label>Alarm radius <output id="aa-radius-val">30</output> m</label>
-          <input type="range" id="aa-radius" min="10" max="150" step="5" value="30" />
-        </div>
-        <div class="btn-row">
-          <button id="aa-set" class="btn-primary">🔔 Set alarm here</button>
-          <button id="aa-clear" class="btn-ghost hidden">Clear</button>
-        </div>
-        <button id="aa-recover" class="btn-primary wide hidden">⚓ Recover — hold at alarm point</button>
-        <div id="aa-status" class="hint"></div>
-        <!-- Push cross-link: shown only when push is supported-but-unsubscribed (push.js toggles hidden). -->
-        <button id="aa-push-link" class="btn-ghost wide hidden">Phone notifications are off — get alarms when the app is closed</button>
+        <details class="mini" id="anchor-jog" open>
+          <summary>Jog anchor point</summary>
+          <div class="dpad">
+            <button id="jog-fwd" class="dpad-up" aria-label="Jog forward">↑<span class="dpad-lbl">Fwd</span></button>
+            <button id="jog-left" class="dpad-left" aria-label="Jog port">←<span class="dpad-lbl">Port</span></button>
+            <button id="jog-right" class="dpad-right" aria-label="Jog starboard">→<span class="dpad-lbl">Stbd</span></button>
+            <button id="jog-back" class="dpad-down" aria-label="Jog back">↓<span class="dpad-lbl">Back</span></button>
+          </div>
+          <div class="dpad-caption">1 m per tap</div>
+        </details>
+        <details class="mini" id="anchor-alarm" open>
+          <summary>Anchor alarm (motor off)</summary>
+          <div class="hint">Watches a GPS circle with the motor OFF — the real
+            anchor holds the boat; Vanchor only alarms if it drags. Keeps
+            watching on the boat even when this phone sleeps.</div>
+          <div class="slider-row">
+            <label>Alarm radius <output id="aa-radius-val">30</output> m</label>
+            <input type="range" id="aa-radius" min="10" max="150" step="5" value="30" />
+          </div>
+          <div class="btn-row">
+            <button id="aa-set" class="btn-primary">🔔 Set alarm here</button>
+            <button id="aa-clear" class="btn-ghost hidden">Clear</button>
+          </div>
+          <button id="aa-recover" class="btn-primary wide hidden">⚓ Recover — hold at alarm point</button>
+          <div id="aa-status" class="hint"></div>
+          <!-- Push cross-link: shown only when push is supported-but-unsubscribed (push.js toggles hidden). -->
+          <button id="aa-push-link" class="btn-ghost wide hidden">Phone notifications are off — get alarms when the app is closed</button>
+        </details>
       </div>
 
       <!-- WAYPOINT / ROUTE -->
