@@ -48,7 +48,7 @@
   function setTheme(theme) {
     const t = (theme === "daylight" || theme === "light") ? "daylight" : "dark";
     // Owner decision: daylight switches map tiles too (restore prior layer after).
-    const BRIGHT_LAYERS = ["Light", "Topo", "Satellite"];
+    const BRIGHT_LAYERS = ["Light", "Topo", "Satellite", "Nautical"];
     const PREV_LAYER_KEY = "vanchor-theme-prev-layer";
     if (t === "daylight") {
       // Stash the current layer and switch to Light — unless the user already

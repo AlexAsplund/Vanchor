@@ -13,9 +13,11 @@ only device construction, not the control logic.
 
 A dark, futuristic "tactical HUD" marine app over a live map.
 
-- **Map backdrop** — Leaflet with selectable basemaps: CARTO Dark / Light, **Esri
-  World Imagery** (satellite), **OpenTopoMap**, plus an **OpenSeaMap sea-marks**
-  overlay. Deep-zoom tile upscaling (no "no data" tiles).
+- **Map backdrop** — Leaflet with selectable basemaps: CARTO Dark / Light, a
+  **Nautical** chartplotter style (CARTO Voyager with a marine tint), an on-brand
+  **Vanchor Teal** dark chart (the dark tiles recoloured toward the app's cyan
+  identity), **Esri World Imagery** (satellite), **OpenTopoMap**, plus an
+  **OpenSeaMap sea-marks** overlay. Deep-zoom tile upscaling (no "no data" tiles).
 - **North-up / heading-up orientation** — compass toggle rotates the chart so
   up = the bow (stabilized against compass jitter: low-pass + deadband +
   slew-limited easing); markers and menus stay upright.

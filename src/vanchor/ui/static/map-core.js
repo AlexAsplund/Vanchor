@@ -38,6 +38,16 @@
   const base = {
     "Dark": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
+    // Vanchor Teal: the same dark tiles (so it shares Dark's tile cache — no extra
+    // tiles to prefetch) recoloured toward the app's cyan identity via a CSS
+    // filter keyed on #map.base-vanchorteal. Deep-teal water, stays night-friendly.
+    "Vanchor Teal": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
+    // Nautical: CARTO Voyager (free, no key) — a soft chart-blue / cream
+    // cartographic style that reads like a chartplotter, with a light marine
+    // tint (#map.base-nautical). Pairs with the Sea-marks + depth overlays.
+    "Nautical": L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+      { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
     "Satellite": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       // maxNativeZoom kept where real imagery exists (remote water/shore has none
       // deeper) so Leaflet UPSCALES the deepest available tile past it instead of
@@ -49,6 +59,20 @@
       { maxZoom: 17, attribution: OSM + ", © OpenTopoMap" }),
   };
   base.Dark.addTo(map);
+
+  // Per-basemap recolour: a class on #map drives the CSS tile filters (Dark
+  // contrast boost, Vanchor-teal recolour, Nautical marine tint).
+  const BASE_CLASSES = {
+    "Dark": "base-dark",
+    "Vanchor Teal": "base-vanchorteal",
+    "Nautical": "base-nautical",
+  };
+  function setBaseClass(name) {
+    const mapEl = document.getElementById("map");
+    if (!mapEl) return;
+    Object.values(BASE_CLASSES).forEach((c) => mapEl.classList.remove(c));
+    if (BASE_CLASSES[name]) mapEl.classList.add(BASE_CLASSES[name]);
+  }
 
   // Selectable overlays. Sea marks = OpenSeaMap nautical buoys/marks/depths.
   const overlays = {
@@ -136,9 +160,8 @@
   map.on("overlayremove", (e) => { handleOverlayEvent(e.name, false); saveLayers(); });
   map.on("baselayerchange", (e) => {
     saveLayers();
-    // Dark basemap contrast: tag #map so CSS can boost brightness/saturation.
-    const mapEl = document.getElementById("map");
-    if (mapEl) mapEl.classList.toggle("base-dark", e.name === "Dark");
+    // Recolour the tiles for the active basemap (Dark contrast, teal, nautical).
+    setBaseClass(e.name);
     // Notify settings.js of a USER-initiated basemap change (not our programmatic
     // theme swap) so it can drop the daylight layer-stash.
     if (!settingBaseLayer) window.dispatchEvent(new CustomEvent("va:basemap-user-change", { detail: e.name }));
@@ -165,13 +188,10 @@
         }
       } catch (e) { /* ignore */ }
     }
-    // Apply dark contrast class for the active basemap on boot.
-    const mapEl = document.getElementById("map");
-    if (mapEl) {
-      let activeName = "Dark";
-      Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) activeName = n; });
-      mapEl.classList.toggle("base-dark", activeName === "Dark");
-    }
+    // Apply the recolour class for the active basemap on boot.
+    let activeBase = "Dark";
+    Object.keys(base).forEach((n) => { if (map.hasLayer(base[n])) activeBase = n; });
+    setBaseClass(activeBase);
     // Load + restore complete: enable saving and persist the (restored or default)
     // state once. From here, basemap/overlay changes save normally.
     suppressSave = 0;
@@ -232,11 +252,13 @@
   VA._baseLayers = base;
   VA._baseTemplates = {
     Dark: "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+    "Vanchor Teal": "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+    Nautical: "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
     Satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     Light: "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
     Topo: "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
   };
-  VA._baseNativeMax = { Dark: 20, Satellite: 17, Light: 20, Topo: 17 };
+  VA._baseNativeMax = { Dark: 20, "Vanchor Teal": 20, Nautical: 20, Satellite: 17, Light: 20, Topo: 17 };
 
   // Tile-cache integration point. offline.js installs VA.tileCache.get(url) ->
   // Promise<Blob|null> and VA.tileCache.put(url, blob). We patch createTile on

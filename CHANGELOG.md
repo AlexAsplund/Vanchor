@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Two new stylized basemaps.** Added a **Nautical** chartplotter style (CARTO
+  Voyager — soft chart-blue water, cream land — with a light marine tint, pairs
+  with the sea-marks + depth overlays) and an on-brand **Vanchor Teal** dark
+  chart (the CARTO dark tiles recoloured toward the app's cyan identity via a CSS
+  filter; reuses the Dark tiles so there are no extra tiles to prefetch for
+  offline). Both are selectable alongside Dark / Light / Topo / Satellite, are
+  persisted, tile-cached for offline, and daylight-aware (Nautical counts as a
+  bright basemap).
+
 ## [1.5.0a10] — 2026-07-19
 
 - **Mobile layout could fail to activate on a slow first paint (real fix).**

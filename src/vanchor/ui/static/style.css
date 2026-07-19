@@ -2825,6 +2825,20 @@ body.mobile.ls[data-view="chart"] #map-pills { display: none; }
   filter: brightness(1.12) saturate(1.15);
 }
 
+/* Vanchor Teal: recolour the CARTO dark tiles toward the app's cyan identity.
+   The dark basemap's blue-grey water/land is hue-shifted to teal and saturated
+   so it reads on-brand while staying dark/night-friendly. */
+#map.base-vanchorteal .leaflet-tile {
+  filter: brightness(1.06) saturate(1.55) hue-rotate(-26deg) contrast(1.04);
+}
+
+/* Nautical: a light marine tint over CARTO Voyager — nudges the water cooler
+   and lifts saturation a touch for a chartplotter feel, kept subtle so the
+   place labels stay legible. */
+#map.base-nautical .leaflet-tile {
+  filter: saturate(1.16) contrast(1.03) brightness(1.02) hue-rotate(-6deg);
+}
+
 /* ---- Stale waypoint route pins ---- */
 .wp-pin-inactive { opacity: 0.4; filter: grayscale(0.7); }
 
