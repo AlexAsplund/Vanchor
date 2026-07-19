@@ -89,13 +89,17 @@ def _fake_rt(thrust=0.0, steering=0.0, tasks=None):
     )
 
 
-def test_check_stopped_flags_stuck_motor():
+async def test_await_stopped_flags_stuck_motor():
+    # _await_stopped polls until the motor settles (the governor slew-limits
+    # thrust, so STOP ramps down over ~1s) and flags only a motor that never
+    # settles. A fake rt with constant thrust never settles -> flagged after
+    # the (short, for the test) timeout; an already-quiet motor passes at once.
     res = sk.SoakResult(duration_s=1.0)
-    sk._check_stopped(_fake_rt(thrust=0.4), res, "unit")
+    await sk._await_stopped(_fake_rt(thrust=0.4), res, "unit", timeout_s=0.2)
     assert res.violations and "stuck motor" in res.violations[0]
 
     ok = sk.SoakResult(duration_s=1.0)
-    sk._check_stopped(_fake_rt(thrust=0.0), ok, "unit")
+    await sk._await_stopped(_fake_rt(thrust=0.0), ok, "unit", timeout_s=0.2)
     assert ok.ok
 
 
