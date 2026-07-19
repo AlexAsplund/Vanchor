@@ -214,11 +214,10 @@ compass rose under **Heading** that spins as the boat turns, **Depth**,
 **The mode rail** (the row of tiles along the bottom): this is where you
 pick *what job the autopilot should do*. The tiles are **Manual** (you
 drive — with Relative / Absolute / Course steering), **Anchor** (hold a spot),
-**Route** (follow a path you draw), **APB** (follow an external
-chartplotter — ignore this one for now), **Drift** (controlled slow drift),
-**Stop**, **Remote** (a giant-button layout for phones), and **More**, which
-opens the guided fishing modes (**Contour**, **Orbit**, **Troll**,
-**Work Area**).
+**Route** (follow a path you draw), **Troll** (S-curve trolling pattern),
+**Drift** (controlled slow drift), **Remote** (a giant-button layout for
+phones), **More** (opens the guided fishing modes — **Contour**, **Orbit**,
+**Work Area**, and the chartplotter **APB** follow), and **Stop**.
 
 **The big STOP.** The most important control on the screen. One tap cuts
 all motor commands — and it works in every mode, every time, no matter what
@@ -302,28 +301,29 @@ in the HUD rises and falls with each cycle.
   Your browser can't show the clip inline — <a href="media/drop-anchor.mp4">open drop-anchor.mp4</a> instead.
 </video>
 
-*Clip: the **Smart station-keeping (learned)** and **Vectored thrust (full
-rotation)** switches are turned on and the anchor is dropped. A steady
-simulated wind and current push the boat off the spot; the station-keeper
-drives it back. The view then zooms out and the basemap is switched to
-**Topo**. A right-click on the water near the shoreline opens the map menu,
-and **Along shoreline** plans a water-only route whose waypoints follow the
-shoreline. A right-click on an island swaps that menu entry to **Loop around
-island**, which plans a closed ring of waypoints around the island.*
+*Clip: the **Smart** anchor style is selected in the Classic | Smart | Leif
+control, and **Vectored thrust (full rotation)** is toggled on, before the
+anchor is dropped. A steady simulated wind and current push the boat off the
+spot; the station-keeper drives it back. The view then zooms out and the
+basemap is switched to **Topo**. A right-click on the water near the
+shoreline opens the map menu, and **Along shoreline** plans a water-only
+route whose waypoints follow the shoreline. A right-click on an island swaps
+that menu entry to **Loop around island**, which plans a closed ring of
+waypoints around the island.*
 
-The anchor panel has additional switches. None of them are needed today:
+The anchor panel has a few extras. None of them are needed today:
 
-- **Hold heading while anchored** — also holds the bow on the heading the
-  boat had when the anchor was dropped.
-- **Smart station-keeping (learned)** — uses a learned neural-net
-  station-keeper instead of the PID one. Falls back automatically if the
-  model is unavailable.
-- **Leif** — an experimental pure neural-net station-keeper that steers the
-  motor through its full rotation. It has no PID fallback and uses more
-  battery. Only one of Smart / Leif can be selected at a time.
+- **Classic | Smart | Leif** (the segmented control at the top of the panel)
+  — picks *how* the boat holds position, without re-dropping the anchor.
+  **Classic** is the steady PID station-keeper. **Smart** adds a learned
+  neural net on top of it — same worst-case guarantee, usually less battery.
+  **Leif** is an experimental all-learned mode with no PID fallback; it
+  never fully idles, so choose it at ≥ 5 m radius.
+- **Hold heading while anchored** — also holds the bow on the compass
+  heading the boat had when the anchor was dropped.
 - **Vectored thrust (full rotation)** — vectors the motor through its full
   rotation to push directly against wind and current, instead of the ±35°
-  band. This is an option of the PID station-keeper.
+  band. Works with Classic and Smart.
 
 The **Jog anchor** pad — the four arrow buttons under the drop button —
 moves the anchor point a small step in the chosen direction, without

@@ -26,8 +26,10 @@ A dark, futuristic "tactical HUD" marine app over a live map.
   **layout profiles**, and an **opacity control** (fade just the tile or the text
   too). Optional tactical frame (heading tape + reticles).
 - **Steering gauge** — closed-loop commanded-vs-feedback azimuth with cable-wrap arc.
-- **Mode rail + contextual panels** — Manual, Anchor, Route, APB,
-  Drift, Stop, Remote, and a **"🎣 More"** group for the fishing modes.
+- **Mode rail + contextual panels** — Manual, Anchor, Route, Troll,
+  Drift, Remote, Stop, and a **"•••  More"** group for fishing modes (Contour,
+  Orbit, Work Area, and Follow APB — the last is auto-hidden until an APB
+  feed is detected).
 - **Remote helm** — full-screen, big-button mode for use at the helm/phone.
 - **Sound feedback** — synthesized audio cues (offline, no files): alarms in
   three severities (calm beep → warble → siren) with a sonar-ping exception
@@ -39,6 +41,10 @@ A dark, futuristic "tactical HUD" marine app over a live map.
   toggleable in Settings → Sound & touch.
 - **Markers** — drop/import, selectable icons, with **"Take me here"** (Fastest /
   Along-shoreline) straight from a marker.
+- **Pin popup** — an idle tap on the map (no tool armed) opens a glass card with
+  distance + ETA + best known depth and three actions: **Take me here** (600 ms
+  hold-to-engage → routes there), **Anchor here** (SOG-gated: tap when near +
+  slow, hold otherwise; farther away it drives there then holds), **Drop marker**.
 - **Route editor** — explicit **"Add waypoint"** mode (taps don't litter pins),
   drag waypoints (pending *and* active), long-press menu (insert/delete/**set
   speed**), **Save / Load** named routes (pending *or* the active route).
@@ -54,11 +60,24 @@ A dark, futuristic "tactical HUD" marine app over a live map.
   analytics** (per-species stats, best time-of-day, best depth band, heatmap).
 - **Trip log** — live distance/duration/avg-max speed; past-trips list with track
   preview and **GPX export**.
-- **Init-boat wizard** (in the menu) + **multiple editable boat profiles** applied
-  live; auto-calibration drive; auto PID-tune panel.
+- **Boat setup wizard** (☰ → Get started, or Boat & tuning → Set up / calibrate
+  boat) + **multiple editable boat profiles** applied live; auto-calibration
+  drive; auto PID-tune panel.
 - **Settings drawer** — weather presets/controls, GPS-position calibration, sonar
   cone angle, offline-map downloader (+ storage mgmt), debug recorder/replay, species editor.
 - **Safety banners** — shallow / no-go / man-overboard / return-to-launch / link-loss.
+- **Daylight theme** — opt-in high-contrast palette (Appearance card, persisted,
+  applied pre-paint) for direct sun; automatically swaps to CARTO Light map tiles
+  so nothing reads dark-on-dark.
+- **Landscape layout** — STOP and MOB dock out of the sliding sheet and pin to the
+  safe area so they stay reachable at any orientation; the SIM honesty pill hides
+  to stay clear of controls.
+- **SIM honesty pill** — a tappable "SIM" badge on the chart while the simulator
+  is active (full sentence until acked, then compact); tapping opens the
+  **first-run dialog** (two choices: "Set up my real boat" → opens the hardware
+  setup wizard, or "Play with the simulator" → acks and closes).
+- **Demo mode badge** — a non-tappable **DEMO** chip appears in place of the SIM
+  pill when `--demo` is active; `--demo-readonly` appends "· read-only".
 
 ---
 
@@ -66,8 +85,14 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 
 **Control modes**
 - **Manual** (thrust/steering, full ±180° swing, snap-to-zero).
-- **Anchor hold** — heading-aware station keeping with drift
-  anticipation and **anchor jog** (nudge the hold point).
+- **Anchor hold** — heading-aware station keeping with drift anticipation and
+  **anchor jog** (nudge the hold point). The **Classic | Smart | Leif** segmented
+  control (in the Anchor panel) picks the station-keeper style without re-dropping:
+  *Classic* = steady PID hold; *Smart* = learned neural-net residual on top of PID
+  (less battery, same worst-case floor); *Leif* = experimental pure learned mode,
+  no PID fallback, expects constant motion, best at ≥ 5 m radius. **Vectored
+  thrust (full rotation)** is an independent toggle that works with Classic and
+  Smart.
 - **Anchor alarm (motor off)** — passive GPS watch circle over the physical
   anchor: arm from the Anchor panel; server-side 1 Hz watch keeps alarming
   even while the phone sleeps (banner + high-severity sound + telemetry);
@@ -120,6 +145,22 @@ A dark, futuristic "tactical HUD" marine app over a live map.
 - **NMEA-over-TCP** server (feed a phone/plotter), **debug recorder** (gzip NDJSON
   capture + replay), typed YAML/JSON config.
 - **Offline operation** — pre-download map tiles + the routing chart for an area.
+- **Demo mode** — `vanchor --demo` boots a forced-sim session on the charted demo
+  lake (seeded boat, ephemeral data dir, **DEMO** badge); `--demo-readonly` pins
+  every connected browser to observer (controls dimmed; STOP always works).
+- **Hardware setup wizard** — guided 5-step modal (Scan → GPS → Compass → Motor →
+  Finish) in Settings → Devices → "🧭 Guided hardware setup…"; scans serial ports
+  and I²C buses, probes each passively for UBX / WitMotion / NMEA / motor frames.
+  See [docs/setup-wizard.md](setup-wizard.md).
+- **Web Push notifications** — anchor drag / anchor watch / battery / depth /
+  link-loss alarms reach the phone with the app closed. Optional extra
+  `pip install vanchor-ng[push]`; opt-in per device in Settings → Sound & touch.
+  Needs HTTPS. See [docs/push-notifications.md](push-notifications.md).
+- **Docker + supervisor deployment** — hassio-style supervisor (runs outside the
+  container) handles OTA updates via offline-first sideload bundles, health-gated
+  rollback, backups, and WiFi management. A flashable **SD image** (pi-gen,
+  arm64, offline-first) is available for Raspberry Pi Imager. See
+  [docs/deploy-pi.md](deploy-pi.md).
 - **Safety matrix + chaos suite** — `docs/safety-matrix.md` maps 12 failure modes
   (Pi crash, GPS loss, link loss, serial loss, compass silence, …) to their
   detecting layer and proving test; `tests/test_chaos.py` (24 deterministic

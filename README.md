@@ -41,17 +41,18 @@ orbiting), snaps back if pushed outside a watch circle you set, and takes a
 readout (RMS error, % of time inside the circle) lets you compare how tightly
 it's holding.
 
-Two station-keepers are available, and you can switch between them live:
+Three anchor styles are available via a **Classic | Smart | Leif** segmented
+control in the Anchor panel — switchable live without re-dropping the anchor:
 
-- **Robust PID (default)** — a hand-tuned deadband/drive/reverse law: idle in
+- **Classic (default)** — a hand-tuned deadband/drive/reverse PID law: idle in
   the middle of the circle, drive back toward the mark when pushed out, back
   *straight* up when the mark is astern (no wasteful looping). Predictable and
   dependable.
-- **Learned ML station-keeper (opt-in)** — a tiny neural net that *refines* the
-  PID rather than replacing it: the command is `clip(pid + 0.3 · net(obs))`, so
-  the **worst case is just the PID**. The net is a ~1.6k-parameter tanh MLP
-  (8-dim body-frame observation × 4 stacked frames → 32 → 16 → 2), small enough
-  to run on the Raspberry Pi as a few microsecond numpy matrix multiplies —
+- **Smart (opt-in)** — a tiny neural net that *refines* the PID rather than
+  replacing it: the command is `clip(pid + 0.3 · net(obs))`, so the **worst
+  case is just the PID**. The net is a ~1.6k-parameter tanh MLP (8-dim
+  body-frame observation × 4 stacked frames → 32 → 16 → 2), small enough to
+  run on the Raspberry Pi as a few microsecond numpy matrix multiplies —
   **no ML runtime, no GPU**. It's trained offline by **Evolution Strategies**
   (gradient-free, numpy-only) against the exact Fossen 3-DOF physics across
   thousands of randomised scenarios — wind 0–12 m/s with gusts, current up to
@@ -61,13 +62,15 @@ Two station-keepers are available, and you can switch between them live:
   the PID baseline: an equally tight (slightly tighter) hold at **3–4× less
   motor energy** — easier on the battery while anchored — across bow *and*
   stern mounts.
+- **Leif (experimental)** — a *pure* full-azimuth learned station-keeper with
+  no PID fallback. Holds a stern mount exceptionally tight but runs the motor
+  constantly and is best at ≥ 5 m radius. A research mode.
 
-- **Thrust vectoring (opt-in)** — normally the autopilot only steers within a
-  ±35° band; vectored station-keeping instead swings the motor through its
-  **full rotation** to push *directly* against the wind/current, instead of
-  reorienting the whole hull first. In a beam set that tightens the hold
-  dramatically (measured RMS radial error **3.3 m → 1.3 m**, 100 % of the time
-  inside the circle), and it's stable on bow and stern mounts alike.
+- **Vectored thrust (opt-in toggle)** — works with Classic and Smart; swings
+  the motor through its **full rotation** to push *directly* against the
+  wind/current instead of reorienting the whole hull first. In a beam set that
+  tightens the hold dramatically (measured RMS radial error **3.3 m → 1.3 m**,
+  100 % of the time inside the circle), and it's stable on bow and stern mounts.
 
 > Everything above runs in the [built-in simulator](#sim-first) with no hardware
 > — you can watch the anchor hold against a gusting beam current on your laptop.
@@ -164,7 +167,9 @@ An opt-in **Daylight** high-contrast theme keeps it readable in direct sun (dark
   compensation (crabs into wind/current so the *ground* track stays true).
 - **Smart "take me here" water routing** — water-only routes that avoid land and
   islands: *Fastest* (visibility graph + A\*) or *Along-shoreline* (hugs the
-  coast, into bays). Routes load editable and unstarted for review.
+  coast, into bays). Routes load editable and unstarted for review. An idle tap
+  on the chart opens a **pin popup** (distance, ETA, depth) with one-tap
+  **Anchor here** and 600 ms hold-to-engage **Take me here**.
 - **Loop-around-island routing** and **area-survey "map mode"** (lawnmower
   coverage over a drawn box/polygon).
 - **Work Area mode** — work a set of spots: tap them in, or draw an area and
@@ -188,6 +193,11 @@ An opt-in **Daylight** high-contrast theme keeps it readable in direct sun (dark
 - **Link-loss failsafe** — holds position if the controlling phone drops off.
 - **Man-overboard** (mark + return) and a **safety governor** (thrust slew
   limiting, reverse delay, loss-of-fix failsafe, anchor-drag alarm).
+- **Passive anchor alarm** — motor-off GPS watch circle over the physical anchor:
+  arm from the Anchor panel; server-side 1 Hz watch keeps alarming while the
+  phone sleeps (banner + sound + telemetry); one-tap **Recover** engages anchor
+  hold at the alarm point. Persists across restarts. Zero motor commands while
+  passive.
 
 **Sensing & data**
 
@@ -211,6 +221,22 @@ An opt-in **Daylight** high-contrast theme keeps it readable in direct sun (dark
 - **Versioned backup / restore** of all persistent state (one ZIP).
 - **Measure tool**, **reference grid**, a phone-friendly **mobile / remote-helm**
   mode, and **PWA / offline** support.
+- **Demo mode** — `vanchor --demo` boots an instant forced-sim demo (seeded
+  looping route, ephemeral data, **DEMO** badge, never touches real devices or your
+  data dir). `--demo-readonly` adds an observer-only posture for hosted demos
+  (controls dimmed; STOP always works from any client).
+- **Hardware setup wizard** — guided 5-step scan-and-probe modal
+  (Settings → Devices → "🧭 Guided hardware setup…") that detects your GPS,
+  compass and motor on the correct ports and writes the config. See
+  [docs/setup-wizard.md](docs/setup-wizard.md).
+- **Web Push notifications** — anchor drag, anchor watch, battery, depth and
+  link-loss alarms reach the phone with the app closed. Optional extra
+  (`pip install vanchor-ng[push]`); opt-in per device; needs HTTPS. See
+  [docs/push-notifications.md](docs/push-notifications.md).
+- **Docker + hassio-style supervisor** deployment with offline-first sideload
+  updates, health-gated rollback, backups and WiFi management; a ready-made
+  **flashable SD image** for Raspberry Pi Imager. See
+  [docs/deploy-pi.md](docs/deploy-pi.md).
 
 ## Sim-first
 
