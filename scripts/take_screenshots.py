@@ -34,6 +34,23 @@ VANCHOR = str(Path(sys.executable).parent / "vanchor")
 LAKE = (59.8779, 12.0293)
 TIME_SCALE = 5.0  # sim seconds per wall second
 
+# Keep the simulation chrome out of the shots: dismiss the first-run "real boat
+# / simulator" modal (which otherwise sits on top of every screenshot) and hide
+# the persistent "SIMULATION — not your motor" pill.  The docs already say in
+# text that these are simulator captures, so the on-canvas chrome is redundant
+# and obscures the UI being documented.  Applied as a context init script so it
+# runs before the app on every page + reload.
+FIRSTRUN_INIT = (
+    "localStorage.setItem('vanchor-sim-ack','1');"
+    "localStorage.setItem('vanchor-firstrun','done');"
+    "document.addEventListener('DOMContentLoaded', function () {"
+    "  var s = document.createElement('style');"
+    "  s.textContent = '#sim-indicator{display:none!important}"
+    "#firstrun,#firstrun-scrim{display:none!important}';"
+    "  document.head.appendChild(s);"
+    "});"
+)
+
 
 # --------------------------------------------------------------------------- #
 # server plumbing
@@ -324,6 +341,7 @@ def shot_views(page, base):
 def shot_mobile(pw, browser, base):
     ctx = browser.new_context(viewport={"width": 390, "height": 844},
                               device_scale_factor=2, is_mobile=True, has_touch=True)
+    ctx.add_init_script(FIRSTRUN_INIT)
     # clear any server-side route/mode from earlier shots (no page needed)
     cmd(base, {"type": "stop"})
     cmd(base, {"type": "goto", "waypoints": []})
@@ -354,6 +372,7 @@ def shot_alarm_mobile(pw, browser, base):
     x ≈ -167 and clipped to "G ALARM")."""
     ctx = browser.new_context(viewport={"width": 390, "height": 844},
                               device_scale_factor=2, is_mobile=True, has_touch=True)
+    ctx.add_init_script(FIRSTRUN_INIT)
     cmd(base, {"type": "stop"})
     page = ctx.new_page()
     page.goto(BASE_URL, wait_until="domcontentloaded")
@@ -407,6 +426,7 @@ def main() -> None:
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(args=["--no-sandbox"])
                 ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+                ctx.add_init_script(FIRSTRUN_INIT)
                 page = ctx.new_page()
                 page.goto(base, wait_until="domcontentloaded")
                 wait_app(page)
