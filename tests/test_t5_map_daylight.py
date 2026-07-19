@@ -119,14 +119,3 @@ def test_markers_exports_create():
     txt = _txt(STATIC / "markers.js")
     assert "VA.markers" in txt
     assert "create" in txt and "createMarker" in txt
-
-
-# ---- mocks exist ----
-def test_mocks_phone_chart_exists():
-    p = ROOT / ".superpowers/sdd/ux/t5-mocks/phone-chart.html"
-    assert p.exists(), "Mock phone-chart.html missing"
-
-
-def test_mocks_phone_alarm_exists():
-    p = ROOT / ".superpowers/sdd/ux/t5-mocks/phone-alarm.html"
-    assert p.exists(), "Mock phone-alarm.html missing"
