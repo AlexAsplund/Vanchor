@@ -474,6 +474,15 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
         # with the landscape smoke test's post-mobile wait.
         page.evaluate("() => (document.fonts && document.fonts.ready) || true")
         page.wait_for_timeout(600)
+        # Settle the mobile layout against the FINAL viewport.  Under headless
+        # Chromium applyMobile() can latch to a transient early width and leave
+        # body.mobile unset even though the settled viewport is mobile (iw=360,
+        # matchMedia true) — a resize event re-runs it.  Nudge one and wait for
+        # the class, mirroring the landscape smoke test.
+        page.evaluate("window.dispatchEvent(new Event('resize'))")
+        page.wait_for_function(
+            "document.body.classList.contains('mobile')", timeout=5000
+        )
 
         dims = page.evaluate(
             """() => {
