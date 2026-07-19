@@ -59,7 +59,11 @@ jobs:
         run: |
           VER="${{ steps.v.outputs.version }}"
           NOTES=$(awk -v v="[$VER]" '$0 ~ /^## / && index($0, v){f=1; next} f && /^## /{exit} f{print}' CHANGELOG.md)
-          gh release create "v$VER" --title "v$VER" --prerelease \
+          # Mark alpha/beta/rc versions as pre-releases; a final X.Y.Z is a full
+          # release. Keep this in sync with the pushed-tag publish job below.
+          PRE=""
+          case "$VER" in *a*|*b*|*rc*) PRE="--prerelease" ;; esac
+          gh release create "v$VER" --title "v$VER" $PRE \
             --notes "${NOTES:-Release v$VER}"
 
   publish:
