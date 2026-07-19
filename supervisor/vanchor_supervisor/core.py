@@ -433,18 +433,25 @@ class SupervisorCore:
         self._persist_job(job)
         log.info("[job %s] phase → %s", job["id"][:8], phase)
 
+    # Terminal-state setters. The terminal fields are persisted to DISK BEFORE
+    # they become observable on the in-memory job dict, so a poller that sees a
+    # terminal phase via get_job() is guaranteed the on-disk copy a fresh
+    # SupervisorCore would load is already terminal too. Persisting after the
+    # in-memory mutation (the obvious order) left a window where a second
+    # instance could load a still-running job — a cross-instance persist-vs-read
+    # race that flaked test_jobs_persisted_across_instances under load.
     def _fail_job(self, job: dict, error: str) -> None:
+        self._persist_job({**job, "ok": False, "error": error, "phase": "failed"})
         job["ok"] = False
         job["error"] = error
         job["phase"] = "failed"
-        self._persist_job(job)
         log.error("[job %s] FAILED: %s", job["id"][:8], error)
         self._release_worker()
 
     def _complete_job(self, job: dict) -> None:
+        self._persist_job({**job, "ok": True, "phase": "done"})
         job["ok"] = True
         job["phase"] = "done"
-        self._persist_job(job)
         log.info("[job %s] done", job["id"][:8])
         self._release_worker()
 
