@@ -479,14 +479,26 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
             """() => {
                 const el = document.getElementById('chips');
                 const tb = document.querySelector('.topbar');
+                const ct = document.querySelector('#chip-conn .chip-text');
+                const lbl = document.querySelector('.chip-label');
+                const vis = [...el.children]
+                    .filter(c => c.offsetParent !== null)
+                    .map(c => (c.id || c.className) + ':' + Math.round(
+                        c.getBoundingClientRect().width));
                 return {
                     sw: el.scrollWidth,
                     cw: el.clientWidth,
                     inter: document.fonts.check('12px Inter')
                            && document.fonts.check('700 12px Inter'),
-                    // Whole-bar invariant: the topbar itself never spills the
-                    // viewport (chips shrink/scroll inside it instead).
                     topbarFits: tb.scrollWidth <= Math.ceil(tb.clientWidth) + 1,
+                    // --- diagnostics: why is #chips content wide on CI? ---
+                    iw: window.innerWidth,
+                    dpr: window.devicePixelRatio,
+                    mq760: matchMedia('(max-width: 760px)').matches,
+                    mq420: matchMedia('(max-width: 420px)').matches,
+                    connText: ct ? getComputedStyle(ct).display : 'none-el',
+                    lblDisp: lbl ? getComputedStyle(lbl).display : 'none-el',
+                    vis: vis,
                 };
             }"""
         )
@@ -503,15 +515,21 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
         # rather than a broken topbar.  So gate the strict pixel guard on Inter
         # being active; otherwise assert the whole-bar invariant that actually
         # matters — the topbar never overflows the viewport.
+        _diag = (
+            f"iw={dims['iw']} dpr={dims['dpr']} mq760={dims['mq760']} "
+            f"mq420={dims['mq420']} connText={dims['connText']} "
+            f"lblDisp={dims['lblDisp']} vis={dims['vis']}"
+        )
         if dims["inter"]:
             assert dims["sw"] <= dims["cw"], (
                 f"chips overflow at {vp_w}px with Inter loaded: "
-                f"scrollWidth={dims['sw']} > clientWidth={dims['cw']} (slack={slack})"
+                f"scrollWidth={dims['sw']} > clientWidth={dims['cw']} (slack={slack}) "
+                f"|| {_diag}"
             )
         else:
             assert dims["topbarFits"], (
                 f"topbar overflows the viewport at {vp_w}px (fallback font) — "
-                f"the mobile top bar is broken, not just the chips"
+                f"the mobile top bar is broken, not just the chips || {_diag}"
             )
         assert not errors, f"Page JS errors: {errors[:3]}"
     finally:
