@@ -52,7 +52,7 @@
     return out;
   }
   const thrustRings = [0.25, 0.5, 0.75, 1.0].map((f) =>
-    `<circle cx="${C}" cy="${C}" r="${R_H_MIN + (R_H_MAX - R_H_MIN) * f}" fill="none" stroke="#0f1e2e" stroke-width="1"/>`).join("");
+    `<circle class="sw-thrust-ring" cx="${C}" cy="${C}" r="${R_H_MIN + (R_H_MAX - R_H_MIN) * f}" fill="none" stroke="#0f1e2e" stroke-width="1"/>`).join("");
 
   host.innerHTML =
     `<svg viewBox="0 0 ${S} ${S}" class="sw-svg" aria-label="steering wheel">` +
@@ -60,7 +60,8 @@
     `<feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>` +
     `<radialGradient id="sw-dial" cx="50%" cy="45%">` +
     `<stop offset="0%" stop-color="#0e1a28"/><stop offset="80%" stop-color="#081120"/><stop offset="100%" stop-color="#060c14"/></radialGradient></defs>` +
-    `<circle cx="${C}" cy="${C}" r="${R_OUT}" fill="url(#sw-dial)" stroke="#16283a" stroke-width="1.5"/>` +
+    // F6: id="sw-face" exposes the dial background to daylight CSS overrides.
+    `<circle id="sw-face" cx="${C}" cy="${C}" r="${R_OUT}" fill="url(#sw-dial)" stroke="#16283a" stroke-width="1.5"/>` +
     // OUTER: compass card (rotated by -heading each frame)
     `<g id="sw-card" style="transition: transform 0.18s linear">` +
     ticks(R_CARD + 4, R_OUT - 6, 45, "#7a5c1d", 2) +
@@ -69,18 +70,20 @@
     `<text x="${C}" y="${C + R_CARD + 13}" fill="#a58733" font-size="10" text-anchor="middle">S</text>` +
     `<text x="${C - R_CARD - 9}" y="${C + 4}" fill="#a58733" font-size="10" text-anchor="middle">W</text>` +
     `</g>` +
+    // INNER: boat frame ring + ticks wrapped for daylight CSS targeting.
+    `<g id="sw-inner-frame">` +
     `<circle cx="${C}" cy="${C}" r="${R_CARD}" fill="none" stroke="#1d3348" stroke-width="1.5"/>` +
-    // INNER: boat frame (fixed, bow up)
     ticks(R_IN - 8, R_IN, 30, "#28425c", 1.5) +
-    `<text x="${C}" y="${C - R_IN + 16}" fill="#8fa8bd" font-size="9" text-anchor="middle">0°</text>` +
-    `<text x="${C + R_IN - 14}" y="${C + 3}" fill="#5d7893" font-size="9" text-anchor="middle">90</text>` +
-    `<text x="${C}" y="${C + R_IN - 9}" fill="#5d7893" font-size="9" text-anchor="middle">180</text>` +
-    `<text x="${C - R_IN + 14}" y="${C + 3}" fill="#5d7893" font-size="9" text-anchor="middle">90</text>` +
+    `</g>` +
+    `<text class="sw-tick-lbl" x="${C}" y="${C - R_IN + 16}" fill="#8fa8bd" font-size="9" text-anchor="middle">0°</text>` +
+    `<text class="sw-tick-lbl" x="${C + R_IN - 14}" y="${C + 3}" fill="#5d7893" font-size="9" text-anchor="middle">90</text>` +
+    `<text class="sw-tick-lbl" x="${C}" y="${C + R_IN - 9}" fill="#5d7893" font-size="9" text-anchor="middle">180</text>` +
+    `<text class="sw-tick-lbl" x="${C - R_IN + 14}" y="${C + 3}" fill="#5d7893" font-size="9" text-anchor="middle">90</text>` +
     thrustRings +
     // heading lubber line (bow reference at the top of the card ring)
     `<path d="M ${C - 6} ${C - R_OUT + 2} L ${C + 6} ${C - R_OUT + 2} L ${C} ${C - R_OUT + 13} Z" fill="#e8f4fb"/>` +
-    // boat silhouette
-    `<path d="M ${C} ${C - 26} C ${C + 9} ${C - 15} ${C + 11} ${C + 1} ${C + 10} ${C + 16} L ${C - 10} ${C + 16} C ${C - 11} ${C + 1} ${C - 9} ${C - 15} ${C} ${C - 26} Z"` +
+    // boat silhouette — class="sw-boat" for daylight fill override
+    `<path class="sw-boat" d="M ${C} ${C - 26} C ${C + 9} ${C - 15} ${C + 11} ${C + 1} ${C + 10} ${C + 16} L ${C - 10} ${C + 16} C ${C - 11} ${C + 1} ${C - 9} ${C - 15} ${C} ${C - 26} Z"` +
     ` fill="#14324a" stroke="#2d5b7c" stroke-width="1.2"/>` +
     // ghost tick: ACTUAL head angle (steering feedback)
     `<g id="sw-ghost" opacity="0.55"><line x1="${C}" y1="${C - R_IN}" x2="${C}" y2="${C - R_IN + 14}" stroke="#9fb4c6" stroke-width="3.5" stroke-linecap="round"/></g>` +

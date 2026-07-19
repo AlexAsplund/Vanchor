@@ -2794,6 +2794,10 @@ body.mobile .dock-stop-bar { display: none; }
 body[data-view="helm"] #map-pills,
 body[data-view="instruments"] #map-pills,
 body[data-view="manual"] #map-pills { display: none; }
+/* F3: in landscape chart the pills occupy the same top-left band as
+   .sheet-instruments (DEPTH/ANCHOR numerals) — hide them to prevent occlusion.
+   The mode is still readable in the safety-band .sheet-mode text. */
+body.mobile.ls[data-view="chart"] #map-pills { display: none; }
 
 #mode-pill {
   display: inline-flex; align-items: center;
@@ -2908,18 +2912,19 @@ body[data-view="manual"] #map-pills { display: none; }
 }
 .maprot-seg button:first-child { border-right: 1px solid var(--line); }
 
-/* ---- ≤390px narrow mobile: tight chip budget (M1) + peek-mode shrink (M3) ---
- * At 360px the #chips container is only ~120px wide (topbar-actions claim the
- * rest).  Three health chips (conn + fix + batt) overflow at current padding;
- * fix: reduce padding/font and drop chip-fix to a colored dot.
+/* ---- ≤420px narrow mobile: tight chip budget (M1) + peek-mode shrink (M3) ---
+ * F4: extended from ≤390px to ≤420px so "100%" battery digits don't clip on
+ * 390 px and 412 px phones (iPhone 14 / Pixel 7) — the topbar-actions row
+ * claims enough space that the #chips container overflows at default padding.
+ * Three health chips (conn + fix + batt) must fit in ~120px clientWidth.
  *
- * chip-fix .chip-dot is invisible by default; it is only revealed at ≤390px
+ * chip-fix .chip-dot is invisible by default; it is only revealed at ≤420px
  * so chip-fix keeps its text on tablet/desktop.
  * ---- */
 #chip-fix .chip-dot { display: none; }
 
-@media (max-width: 390px) {
-  /* Tighten chip footprint so 3 health chips fit in ~120px (360px) clientWidth. */
+@media (max-width: 420px) {
+  /* Tighten chip footprint so 3 health chips fit in #chips. */
   body.mobile .chip  { padding: 3px 5px; font-size: 10px; gap: 4px; }
   body.mobile .chips { gap: 3px; }
   /* chip-fix: drop val text → dot-only; dot color mirrors data-fix state. */
@@ -3052,8 +3057,10 @@ body.mobile .dock button.info-dot { min-height: 28px; }
 }
 
 /* ---- Armed-state banner (WP6 item 19, armbar.js) ---- */
+/* F2: z-index 1150 > #map-pills (1100) so the opaque banner paints over the
+   mode-pill and SIM pill when arming — the full instruction text is readable. */
 .arm-banner {
-  position: fixed; top: 58px; left: 0; right: 0; z-index: 480;
+  position: fixed; top: 58px; left: 0; right: 0; z-index: 1150;
   display: flex; align-items: center; gap: 8px; padding: 8px 14px;
   background: var(--glass-solid); border-bottom: 2px solid var(--accent);
   font: 600 13px var(--font-display); color: var(--text);
@@ -3094,7 +3101,9 @@ html[data-theme="daylight"] .sbanner-batt-warn {
   color: #fff;
 }
 html[data-theme="daylight"] .sbanner-mob {
-  background: #e8820c;
+  /* F5: MOB must be the MOST urgent color — use alarm red, not orange.
+     Urgency hierarchy: MOB (red #d21f3c) ≥ alarm (red) > warn (amber). */
+  background: #d21f3c;
   color: #fff;
 }
 
@@ -3124,6 +3133,25 @@ html[data-theme="daylight"] #mode-pill[data-mode^="anchor"] { color: #9a1730; bo
 html[data-theme="daylight"] #mode-pill.dragging {
   background: #d21f3c; color: #fff; border-color: #d21f3c;
 }
+
+/* ---- F6: daylight steer-wheel rose theming ----
+   CSS presentation-attribute overrides (CSS beats attr in SVG spec).
+   IDs/classes were added to steerwheel.js to make these selectable. */
+html[data-theme="daylight"] #sw-face {
+  /* Dial face: replace the very-dark radialGradient with a light nautical blue. */
+  fill: #cdd9e4;
+  stroke: #89afc6;
+}
+html[data-theme="daylight"] #sw-card line { stroke: #9a7010; }   /* compass card ticks */
+html[data-theme="daylight"] #sw-card text { fill: #7a5c08; }     /* N/E/S/W labels */
+html[data-theme="daylight"] #sw-inner-frame circle { stroke: #5c8fae; }  /* card ring */
+html[data-theme="daylight"] #sw-inner-frame line  { stroke: #5c8fae; }   /* boat-frame ticks */
+html[data-theme="daylight"] .sw-tick-lbl { fill: #4a7a98; }              /* 0°/90°/180° */
+html[data-theme="daylight"] .sw-thrust-ring { stroke: #9fbdce; }
+html[data-theme="daylight"] .sw-boat { fill: #5e7a98; stroke: #3a6080; }
+html[data-theme="daylight"] #sw-ghost line { stroke: #3a6888; }
+/* Hub deadman label: visible on light dial */
+html[data-theme="daylight"] #sw-deadman { fill: #5a8aaa; }
 
 /* ---- WP5 Task-5 carryovers ---- */
 
@@ -3265,9 +3293,22 @@ body.mobile.ls .sheet-grip-bar {
   /* portrait: wide; landscape: tall and rotated */
   transform: none;
 }
-/* Back-to-map collapse button in landscape: shown inside the rail head. */
+/* Back-to-map collapse button in landscape: shown inside the rail head.
+   F9: override the default browser white background (rgb 239,239,239) with a
+   themed pill so the grip tab reads as dark/themed chrome in peek state. */
 body.mobile.ls .sheet-collapse {
   display: inline-flex;  /* always show in landscape (not just mid/full) */
+}
+/* F9: in landscape the collapse button sits inside a 28×60 px grip tab, not
+   a wide portrait rail head — reset the portrait pill to a compact themed style. */
+body.mobile.ls .sheet-head .sheet-collapse {
+  background: transparent;
+  border: 1px solid var(--line-bright);
+  border-radius: 6px;
+  color: var(--muted);
+  min-height: unset;
+  padding: 4px;
+  position: static;  /* not absolute (portrait puts it top-right of head) */
 }
 
 /* 5. The dock-scroll in landscape: normal flex column, standard scrolling. */

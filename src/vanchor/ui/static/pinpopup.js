@@ -18,8 +18,12 @@
     const map = VA.map.leaflet;
 
     let currentPopup = null;
+    // F8: generation counter — each open() increments this so old telemetry
+    // watchers self-disable immediately (no unsubscribe from VA.onTelemetry).
+    let _telGen = 0;
 
     function open(lat, lon) {
+      const myGen = ++_telGen;
       // Close any existing popup
       if (currentPopup) { map.closePopup(currentPopup); currentPopup = null; }
 
@@ -121,16 +125,23 @@
             else VA.send({ type: "anchor_hold", anchor: { lat: lat, lon: lon } });
           }
         };
-        if (!isNear || isUnderway) {
-          // Hold required
-          if (VA.bindHold) VA.bindHold(anchorBtn, 600, doAnchor);
-        } else {
-          // Single tap
-          anchorBtn.addEventListener("click", doAnchor);
-        }
-        // Live badge update while popup is open (SOG changes)
+        // F1: hold always available (moving/far cases); tap only when currently
+        // near+slow at activation time (live check prevents stationary-open →
+        // boat-starts-moving → bare tap engages hold while underway).
+        if (VA.bindHold) VA.bindHold(anchorBtn, 600, doAnchor);
+        anchorBtn.addEventListener("click", function() {
+          // bindHold swallows the click after a completed hold (justFired),
+          // so this handler only fires on a genuine bare tap.
+          const liveSog = VA.fin ? VA.fin(VA.last && VA.last.sog_knots) : null;
+          const liveUnderway = liveSog !== null && liveSog > 0.5;
+          if (!isNear || liveUnderway) return;  // moving or far — require hold
+          doAnchor();
+        });
+        // Live badge update while popup is open (SOG changes).
+        // F8: guard with generation so handlers from old opens self-disable.
         if (VA.onTelemetry) {
           VA.onTelemetry(function ppSogWatch(t) {
+            if (_telGen !== myGen) return;  // superseded by a later open()
             const gate = node.querySelector("#pp-anchor-gate");
             if (!gate || !gate.isConnected) { return; }
             const liveSog = VA.fin ? VA.fin(t.sog_knots) : null;

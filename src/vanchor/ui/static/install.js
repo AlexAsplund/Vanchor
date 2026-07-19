@@ -45,23 +45,42 @@
   }
 
   // ---- case 2: Chromium/Edge — `beforeinstallprompt` available or pending -
-  function _showChromiumPrompt(promptEvent) {
+  function _showChromiumPrompt(initialPrompt) {
+    // F7: BeforeInstallPromptEvent is one-shot — null it after use so a second
+    // tap never tries to re-call a consumed prompt (which throws + leaves button
+    // stuck "Adding…").
+    let prompt = initialPrompt;
     const btn = document.createElement("button");
     btn.className = "btn-primary wide";
     btn.id = "install-prompt-btn";
     btn.textContent = "Add Vanchor to home screen";
     btn.addEventListener("click", function () {
-      promptEvent.prompt();
-      promptEvent.userChoice.then(function (choice) {
-        if (choice.outcome === "accepted") {
-          _render('<p class="hint">Vanchor is being added to your home screen.</p>');
-        } else {
-          btn.textContent = "Add Vanchor to home screen";
-          btn.disabled = false;
-        }
-      });
+      if (!prompt) {
+        // Prompt already consumed or expired — tell the user.
+        _render('<p class="hint">Install prompt expired. Reload the page and try again.</p>');
+        return;
+      }
+      const pe = prompt;
+      prompt = null;    // consume: any re-tap sees null above
       btn.disabled = true;
       btn.textContent = "Adding…";
+      function onRejected() {
+        btn.textContent = "Add Vanchor to home screen";
+        btn.disabled = false;
+      }
+      try {
+        pe.prompt();
+      } catch (e) {
+        onRejected();
+        return;
+      }
+      pe.userChoice.then(function (choice) {
+        if (choice && choice.outcome === "accepted") {
+          _render('<p class="hint">Vanchor is being added to your home screen.</p>');
+        } else {
+          onRejected();
+        }
+      }).catch(onRejected);
     });
     const wrap = document.createElement("div");
     const hint = document.createElement("p");
