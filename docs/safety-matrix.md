@@ -41,6 +41,22 @@ time of writing (`fix/review-2026-07`).
 | 11 | Wall-clock step (NTP) mid-session | Monotonic timers throughout (governor accumulates `dt`; link failsafe reads `_mono_fn`, `app.py:1155-1181`) | A wall-clock jump can neither prematurely engage nor indefinitely defer a failsafe — only monotonic elapsed time matters. | `tests/test_chaos.py::test_wall_clock_step_does_not_disturb_link_failsafe` |
 | 12 | STOP command from every mode | Controller `stop` handler (`controller.py:631-634`) via WS + POST (`ui/server.py:281-283`) | `stop` clears paused nav, sets manual (0,0), switches to MANUAL. Boat comes to rest; works from every motor-engaging mode and over both transports. | `tests/test_chaos.py::test_stop_from_every_mode_zeroes_and_goes_manual[*]` (11 modes), `::test_stop_via_post_api_goes_manual_zero` |
 
+## Demo / hosted-mode posture
+
+The two demo flags are enforced by server middleware and handler gates, not by the
+safety governor or firmware, but they are part of the hosted-deployment safety
+posture.
+
+| Flag | Where enforced | Effect |
+| --- | --- | --- |
+| `demo.enabled` | `Runtime.__init__`: `apply_demo_mode()` | Forces simulator (no real hardware), ephemeral temp data dir. Telemetry: `demo_mode: true`. |
+| `demo.readonly` | `_DemoReadonlyMiddleware` (server.py) + WS `_demo_readonly` gate | Every WebSocket client is pinned as *observer* (`take_helm` refused); all mutating REST calls to `/api/…` return 403 except `POST /api/command`. Inside that handler, only `stop` passes the `ctype != "stop"` gate. Telemetry: `demo_readonly: true`. SAFETY FLOOR: `stop` always works. |
+
+The readonly gate is verified at the handler level (not via body-reading
+middleware, which is a known Starlette footgun for POST bodies). An observer-role
+client's `stop` goes through the normal `_OBSERVER_ALLOWED` path, which includes
+`stop` unconditionally.
+
 ## Known gaps
 
 Gaps found while writing the tests, kept visible rather than silently worked

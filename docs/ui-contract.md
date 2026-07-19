@@ -7,9 +7,13 @@ the front-end builds against.
 ## Telemetry (WS `/ws` and `GET /api/state`) — fields
 Read everything defensively (older runtimes may omit fields).
 
-Core nav: `mode` (manual|anchor_hold|anchor_ml|heading_hold|waypoint|work_area|follow_apb|drift|contour_follow|orbit|trolling),
+Core nav: `mode` (manual|anchor_hold|anchor_ml|anchor_leif|heading_hold|waypoint|work_area|follow_apb|drift|contour_follow|orbit|trolling),
 `position{lat,lon}`, `heading_deg`, `sog_knots`, `depth_m`,
-`truth{lat,lon,heading_deg,speed_mps}` (sim only), `fix_seq`, `has_fix`.
+`truth{lat,lon,heading_deg,speed_mps}` (sim only), `fix_seq`, `has_fix`,
+`heading_from_cog` (bool — heading derived from GPS COG when the compass is lost),
+`sim_enabled` (bool — simulator is running; show/hide sim-only controls),
+`demo_mode` (bool — server started with `--demo`; forced sim, ephemeral data dir),
+`demo_readonly` (bool — every client is pinned to observer; only `stop` is accepted).
 
 Anchor / nav targets: `anchor{lat,lon}|null`, `anchor_radius_m`, `anchor_heading`,
 `target_heading`, `distance_to_anchor_m`, `distance_to_waypoint_m`,
@@ -22,6 +26,15 @@ Work Area: `work_holding` (bool — currently holding position at a spot), `work
 
 Safety / nav extras: `launch{lat,lon,set}` (recorded home point), `rtl_recommended` (bool),
 `mob{active,lat,lon}` (man-overboard mark), `nav{paused,suspended_mode}`.
+
+**Anchor alarm (passive, motor-off):**
+`anchor_alarm` — watch-circle state `{armed, lat, lon, radius_m, distance_m, firing, stale, fix_age_s, set_at, breach_count}`. `firing:true` triggers the alarm banner + sound. No motor action; recover via `anchor_alarm_recover`.
+
+**Link / presence (multi-client):**
+`link` — `{client_connected, since_s, failsafe_engaged, failsafe_action}` where `failsafe_action` is `"continue"|"hold"|"stop"` once the lost-connection failsafe fires. WS frames also carry `clients` (count) and `helm_present` (bool) at broadcast level.
+
+**System / supervisor:**
+`supervisor` — `{available, app_version, supervisor_version, disk, job, backups}`. Present only when the host-side supervisor daemon is reachable.
 
 Guided pattern modes: `contour{target_depth_m,depth_m,error_m}`,
 `orbit{center_lat,center_lon,radius_m,direction,range_m}`,
@@ -38,6 +51,19 @@ Subsystems: `safety{...}`, `cruise{enabled,target_knots}`,
 `track{recording,count,points[[lat,lon]]}`, `depth_points[[lat,lon,depth]]`,
 `sensors{heading_rejected,position_rejected}`,
 `environment{current_speed,current_dir,wind_speed,wind_dir,gust_amplitude_mps,wind_gust_now}`.
+
+Additional subsystems (read defensively — may be absent on older runtimes):
+`imu` — `{accel:{x,y,z}, gyro:{x,y,z}}|null` from the AHRS.
+`fusion` — GNSS/INS fusion outputs `{yaw_rate, ground_velocity, crab, dead_reckoning}`.
+`manual_course` — course-hold line `{bearing, lat, lon}|null` (set by `manual {steer_course}` commands; chart overlay anchor).
+`auto_apb` — auto Follow-APB state `{enabled, engaged}`.
+`safety_geometry` — server-persisted no-go zones / min-depth / fix-failsafe geometry (for the chart overlay; absent on non-full WS frames).
+`mode_availability` — per-mode `{available, reason}` from device connectivity (UI greys out unavailable modes).
+`health` — per-sensor freshness + controller-loop health.
+`devices` — per-device `{source, connected, healthy}`.
+`hold_quality` — anchor-hold quality `{rms_m, pct_in_radius}`.
+`anchor_ml` — Smart station-keeper telemetry `{residual_scale, guard}`.
+`sonar` — live sonar vs chart divergence (grounding alert).
 
 **New** `boat{ length_m, beam_m, mass_kg, max_speed_mps, max_thrust_n,
 thruster_mount("bow"|"stern"), max_steer_angle_deg, max_turn_rate_deg,
@@ -56,8 +82,9 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 - `manual {thrust(-1..1), steer_course(0..360)}` — COURSE hold: follow the ground-track LINE drawn from the engage position along the bearing (cross-track corrected, ±45° authority). The line anchors when the course value changes; re-sending the same course (thrust tweaks) keeps it. Telemetry `manual_course {bearing,lat,lon}|null` carries the anchored line for the chart overlay
 - link-loss failsafe: telemetry `link.failsafe_action` reports what engaged — `"continue"` (guided modes keep flying; the default), `"hold"` (anchor-hold, `link_loss_continue_mission: false`), `"stop"` (manual deadman)
 - `anchor_hold {anchor?{lat,lon}, radius_m?}` — drop anchor at current position (or supplied point)
-- `anchor_ml {anchor?{lat,lon}, radius_m?}` — ML-trained anchor hold; falls back to PID if model absent
-- `heading_hold {throttle?, heading?}` — hold a compass heading (defaults to current heading). DEPRECATED in the UI (2026-07-15): superseded by `manual {steer_bearing|steer_course}`; kept for the API / RF remotes / NMEA2000 connectors
+- `anchor_ml {anchor?{lat,lon}, radius_m?}` — Smart (ML-trained) anchor hold; falls back to PID if model absent
+- `anchor_leif {anchor?{lat,lon}, radius_m?}` — pure learned full-azimuth station-keep (experimental; requires a trained model)
+- `heading_hold {throttle?, heading?}` — hold a compass heading (defaults to current heading). **Deprecated in the UI (2026-07-15):** superseded by `manual {steer_bearing|steer_course}`; kept for the API / RF remotes / NMEA2000 connectors
 - `goto {waypoints:[{lat,lon,name?,throttle_pct?,speed_kn?},...], on_arrival?, loop?, patrol?, throttle?, active?}` — follow waypoints; `active` for live in-place edits (resume from that index without restarting). A waypoint's optional `throttle_pct` (engine %, 0..100) **or** `speed_kn` (SOG target) is adopted on arrival at that mark for the following legs, via the throttle-override / cruise channels (so `set_throttle`/`cruise` sent mid-route override it until the next speed-carrying mark)
 - `load_route {gpx, loop?, patrol?, throttle?}` — start navigation from GPX text
 - `follow_apb {throttle?}` — track external autopilot bearing (NMEA APB sentences)
@@ -87,10 +114,16 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
 - `set_min_depth {min_depth_m}` — shallow-water auto-stop threshold
 - `set_fix_failsafe {enabled}` — enable/disable loss-of-fix motor cut
 - `set_auto_apb {enabled}` — auto-engage Follow-APB when an APB feed appears (idle-manual only; persisted; telemetry `auto_apb {enabled, engaged}`)
+- `set_land_guard {enabled?, margin_m?}` — land-collision guard: auto-stop before land in manual modes (persisted; uses cached OSM water polygon)
+
+**Passive anchor alarm (motor-off)**
+- `anchor_alarm_set {lat?, lon?, radius_m?}` — arm the watch circle at the boat's current position (or explicit coords). The watcher runs in the supervisor (~1 Hz); `anchor_alarm.firing` goes true when the boat leaves the circle. No motor action.
+- `anchor_alarm_clear {}` — disarm the alarm.
+- `anchor_alarm_recover {}` — one-tap recover: engage `anchor_hold` at the alarm point via the standard command path (all failsafes still apply).
 
 **Return-to-launch / MOB**
 - `set_launch {}` — record the current position as the launch/home point
-- `return_to_launch {}` — navigate back to launch via water routing; anchors on arrival
+- `return_to_launch {}` — navigate back to launch via water routing; anchors on arrival. **Note:** this command is accepted by the server but is _not declared_ in `contract.py` COMMANDS (known pre-existing gap). Prefer `POST /api/route/rtl` which runs the heavy plan off the event loop.
 - `mob {}` — mark current position as Man-Overboard and return to it
 - `mob_clear {}` — cancel an active MOB return
 
@@ -118,5 +151,25 @@ tuned{heading_kp,heading_kd,anchor_kp,...} }`.
   applies the result. Progress streams in telemetry `calibration`.
 - **New** `POST /api/calibrate/cancel` → `{cancelled:true}`.
 
-`sim_enabled` (bool) is in telemetry so the UI can show/hide simulator-only
-controls (environment sliders, teleport).
+## REST
+- `GET /api/state` → full telemetry snapshot.
+- `POST /api/command` → `{ok:true}`.
+- `GET /api/tune/jobs` · `POST /api/tune {job,max_evals,apply}` — auto-tuner.
+- **New** `GET /api/boat` → boat profile (same shape as telemetry `boat`).
+- **New** `POST /api/boat {fields...}` → update + apply live; returns the profile.
+- **New** `POST /api/calibrate {mode:"quick"|"full"}` → `{started:true}`; an
+  auto-calibration **drive** runs maneuvers, measures the boat, auto-tunes, and
+  applies the result. Progress streams in telemetry `calibration`.
+- **New** `POST /api/calibrate/cancel` → `{cancelled:true}`.
+- `GET /api/hw/scan` → hardware wizard candidate list (no ports opened).
+- `POST /api/hw/probe` → probe one port/bus briefly; 409 if conflicted.
+- `GET /api/push/status|pubkey` · `POST /api/push/subscribe|unsubscribe|test` — Web Push.
+- `GET|POST /api/supervisor/proxy/{path}` · `POST /api/supervisor/upload` — supervisor proxy + OTA bundle upload.
+- `GET /api/system/wifi` · `GET /api/system/wifi/scan` · `POST /api/system/wifi/join` — WiFi management.
+- `GET /api/alerts` · `POST /api/alerts/clear` — server-persisted alert history.
+
+See [`docs/api-contract.md`](api-contract.md) for the full endpoint list.
+
+## Demo / readonly gate
+
+When `demo_mode` is true the server forces the simulator (no real hardware, ephemeral data dir). When `demo_readonly` is additionally true every WebSocket client is pinned to the observer role (`take_helm` is refused) and all mutating REST calls to `/api/…` other than `POST /api/command` return 403. Inside `POST /api/command` only `stop` passes the handler gate — all other command types are rejected. This means `stop` (the SAFETY FLOOR) always works, and nothing else can command the boat in a hosted demo.
