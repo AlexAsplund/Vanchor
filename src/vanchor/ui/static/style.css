@@ -2626,9 +2626,11 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   body[data-view="helm"] #mode-rail, body[data-view="manual"] #dock-panels { top: 128px; }
   body[data-view="instruments"] #hud { top: 56px !important; }
 }
-@media (max-width: 420px) {
-  /* Abbreviate view-chip labels at narrow widths: show data-short content.
-     font-size:0 hides the text node; ::before renders the abbrev. */
+@media (max-width: 430px) {
+  /* Abbreviate view-chip labels at portrait-pressure widths: show data-short.
+     font-size:0 hides the text node; ::before renders the abbrev.
+     F4: extended from ≤420px to ≤430px so the chip budget also holds at
+     the 421–430 px range (Pixel 7a etc). */
   .view-chip { padding: 6px 7px; min-width: 36px; font-size: 0; }
   .view-chip::before {
     content: attr(data-short); font: 700 9px/1 var(--font-display); letter-spacing: 0.06em;
@@ -2912,18 +2914,19 @@ body.mobile.ls[data-view="chart"] #map-pills { display: none; }
 }
 .maprot-seg button:first-child { border-right: 1px solid var(--line); }
 
-/* ---- ≤420px narrow mobile: tight chip budget (M1) + peek-mode shrink (M3) ---
- * F4: extended from ≤390px to ≤420px so "100%" battery digits don't clip on
- * 390 px and 412 px phones (iPhone 14 / Pixel 7) — the topbar-actions row
- * claims enough space that the #chips container overflows at default padding.
- * Three health chips (conn + fix + batt) must fit in ~120px clientWidth.
+/* ---- ≤430px narrow mobile: tight chip budget (M1) + peek-mode shrink (M3) ---
+ * F4 fix2: extended from ≤420px to ≤430px so "100%" battery digits don't clip
+ * on 390 / 412 / 430 px phones (iPhone 14, Pixel 7, Pixel 7a).  The
+ * topbar-actions row claims enough space that the #chips container overflows at
+ * default padding when view-chip labels are not yet at their most compact.
+ * Three health chips (conn + fix + batt) must fit in the #chips clientWidth.
  *
- * chip-fix .chip-dot is invisible by default; it is only revealed at ≤420px
+ * chip-fix .chip-dot is invisible by default; it is only revealed at ≤430px
  * so chip-fix keeps its text on tablet/desktop.
  * ---- */
 #chip-fix .chip-dot { display: none; }
 
-@media (max-width: 420px) {
+@media (max-width: 430px) {
   /* Tighten chip footprint so 3 health chips fit in #chips. */
   body.mobile .chip  { padding: 3px 5px; font-size: 10px; gap: 4px; }
   body.mobile .chips { gap: 3px; }
@@ -2936,6 +2939,13 @@ body.mobile.ls[data-view="chart"] #map-pills { display: none; }
   /* M3: prevent "Manu..." truncation — 14px doesn't fit in the ~90px flex
      gap between STOP (min-width 104px) and MOB ("MAN OVERBOARD" ~120px). */
   body.mobile .sheet-peekbar .sheet-mode { font-size: 11px; }
+  /* F4 fix2: max-compact view-chip padding for the full portrait-pressure range
+     (overrides the 6px 7px / 36px from the ≤430px abbreviation block above).
+     No body.mobile qualifier — see note in ≤360px block below.
+     4 × 26 px + 2 px borders = 106 px view-switcher vs 4 × 36 px = 146 px:
+     40 px freed, giving #chips ≥16 px slack at 390 px and ≥38 px at 412 px. */
+  .view-chip { padding: 4px 3px; min-width: 26px; }
+  .view-chip::before { font-size: 8px; letter-spacing: 0.02em; }
 }
 
 @media (max-width: 360px) {
@@ -2951,19 +2961,11 @@ body.mobile.ls[data-view="chart"] #map-pills { display: none; }
   body.mobile .sheet-peekbar .sheet-mode {
     white-space: normal; line-height: 1.2; letter-spacing: 0.02em;
   }
-  /* Compact view-switcher at 360px so #chips keeps ≥90px.
-     The ≤420px breakpoint gives each view-chip padding:6px 7px + min-width:36px
-     → 4 chips total ~167-180px; with alerts(38)+settings(40)+gaps(16) the
-     topbar-actions claims ~261-274px, leaving #chips only ~62px while content
-     is 86px (24px overflow).  Shrinking padding to 4px 3px + min-width:26px
-     cuts the 4 chips to ~112-120px → topbar-actions ~206-214px → #chips ≥118px
-     (86px content + ≥32px slack).
-     Note: no body.mobile qualifier — the ≤420px parent rule is also unconditional,
-     and body.mobile may not yet be set when Playwright evaluates layout on first
-     load (mobile.js runs after many other scripts).  Applying unconditionally at
-     this narrow width is safe: a real desktop at 360px is an edge case. */
-  .view-chip { padding: 4px 3px; min-width: 26px; }
-  .view-chip::before { font-size: 8px; letter-spacing: 0.02em; }
+  /* Note: no body.mobile qualifier on the view-chip rule above (≤430px block)
+     because body.mobile may not yet be set when Playwright evaluates layout on
+     first load (mobile.js runs after many other scripts).  Applying
+     unconditionally at these narrow widths is safe: real desktops at ≤430 px
+     are an edge case. */
 }
 
 /* ---- Task 4 (WP7/WP8) additions ---------------------------------------- */

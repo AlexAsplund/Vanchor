@@ -423,18 +423,22 @@ def test_routechoice_append_and_replace(live_server: _ServerHandle, pw_browser):
 
 
 # ---------------------------------------------------------------------------
-# Test 4: Chips no-overflow at 360px (M1 fix verification)
+# Test 4: Chips no-overflow — 360 / 390 / 412 px (F4 fix2 regression guard)
 # ---------------------------------------------------------------------------
 
-def test_chips_no_overflow_360px(live_server: _ServerHandle, pw_browser):
-    """#chips scrollWidth must not exceed clientWidth at 360×780 mobile viewport.
+@pytest.mark.parametrize("vp_w", [360, 390, 412, 430])
+def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
+    """#chips scrollWidth must not exceed clientWidth at each tested portrait width.
 
-    At 360px the topbar-actions (4 view-chips + alerts + settings) claim ~220px
-    leaving ~120px for the health chips.  The M1 fix reduces chip padding/font
-    and drops chip-fix to dot-only so all three chips fit within that budget.
+    F4 root cause: the view-chip compact-padding rule (4px 3px / min-width 26px)
+    only fired at ≤360px while the pressure range extends to ≥430px.  At 390 and
+    412 px the view-switcher stayed at 36px/chip → topbar-actions claimed ~40px
+    more → #chips.clientWidth dropped to 92–114px while content was 116px.
+    Fix2 extends the compact rule to ≤430px.  Regression guard: assert no overflow
+    at all three widths so a future breakpoint regression can't go undetected.
     """
     base = live_server.base
-    ctx = pw_browser.new_context(viewport={"width": 360, "height": 780})
+    ctx = pw_browser.new_context(viewport={"width": vp_w, "height": 780})
     page = ctx.new_page()
     page.set_default_timeout(10_000)
     errors: list[str] = []
@@ -444,7 +448,7 @@ def test_chips_no_overflow_360px(live_server: _ServerHandle, pw_browser):
         page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
         # Wait for telemetry AND mobile layout to settle.  chip-batt can unhide
         # (via WS telemetry) before mobile.js has finished loading — mobile.js is
-        # the 57th script in the bundle and the WS can deliver state between
+        # the last script in the bundle and the WS can deliver state between
         # earlier scripts.  Without body.mobile the mobile-only CSS (chip hiding,
         # gap reduction) is absent and the topbar-actions spill into #chips.
         page.wait_for_function(
@@ -452,14 +456,23 @@ def test_chips_no_overflow_360px(live_server: _ServerHandle, pw_browser):
             " && document.body.classList.contains('mobile')",
             timeout=8000,
         )
-        page.wait_for_timeout(300)  # let layout settle
+        # Extra settle time: on a cold module-scope server start the first test
+        # in the parametrized group can catch a transitional render frame before
+        # the compact view-chip CSS has fully committed.  600 ms is consistent
+        # with the landscape smoke test's post-mobile wait.
+        page.wait_for_timeout(600)
 
         dims = page.eval_on_selector(
             "#chips",
             "el => ({ sw: el.scrollWidth, cw: el.clientWidth })",
         )
+        slack = dims["cw"] - dims["sw"]
+        # Print measured dimensions so they appear in the pass output too
+        # (useful for proof/regression baseline).
+        print(f"\n  #{vp_w}px #chips {{sw:{dims['sw']},cw:{dims['cw']},slack:{slack}}}")
         assert dims["sw"] <= dims["cw"], (
-            f"chips overflow at 360px: scrollWidth={dims['sw']} > clientWidth={dims['cw']}"
+            f"chips overflow at {vp_w}px: scrollWidth={dims['sw']} > clientWidth={dims['cw']}"
+            f" (slack={slack})"
         )
         assert not errors, f"Page JS errors: {errors[:3]}"
     finally:
@@ -656,6 +669,9 @@ def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
     """At 844×390 (phone landscape) body.mobile.ls must be set, STOP must be
     visible and clickable, the map must occupy ≥40% of the viewport width, and
     the chart-view FAB cluster must be hidden in non-chart views.
+
+    F3 regression guard: #sheet-instruments DEPTH numerals must be visible AND
+    a SIM indicator must be present in landscape chart (task-3 sim-honesty).
     """
     base = live_server.base
     ctx = pw_browser.new_context(
@@ -673,6 +689,8 @@ def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
 
     # Dismiss first-run simulation modal before any page load so it never
     # blocks the UI or causes false positives in bounding-box assertions.
+    # Do NOT set 'vanchor-sim-ack' so the SIM pill shows its full sentence;
+    # but even if acked the "· SIM" tag in sheet-mode must appear.
     page.add_init_script(
         "localStorage.setItem('vanchor-sim-ack','1');"
         "localStorage.setItem('vanchor-firstrun','done');"
@@ -719,6 +737,46 @@ def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
         )
         assert map_width >= 844 * 0.40, (
             f"map too narrow in landscape: {map_width:.0f}px < 40% of 844px"
+        )
+
+        # F3: In landscape chart with sim enabled, the SIM indicator must be
+        # visible.  The fix appends "· SIM" to the safety-band #sheet-mode text
+        # because #map-pills is hidden to protect .sheet-instruments numerals.
+        # Wait for sim_enabled to arrive via telemetry (server is in sim mode by
+        # default; may take up to 3 s for first WS frame).
+        sim_visible = _poll(
+            lambda: page.evaluate(
+                "() => {"
+                "  const el = document.getElementById('sheet-mode');"
+                "  if (!el) return false;"
+                "  const txt = (el.textContent || '').toLowerCase();"
+                "  return txt.includes('sim');"
+                "}"
+            ),
+            timeout_s=6,
+        )
+        sim_text = page.eval_on_selector(
+            "#sheet-mode", "el => el.textContent || ''"
+        )
+        assert sim_visible, (
+            "F3: no SIM indicator in landscape chart — #sheet-mode text does not"
+            f" contain 'sim'.  Current text: {sim_text!r}"
+        )
+
+        # F3: DEPTH numeral in .sheet-instruments must not be occluded.
+        # A rendered bounding box with width > 0 confirms it is in the DOM
+        # and CSS-visible (not display:none / visibility:hidden).
+        depth_bb = page.eval_on_selector(
+            "#m-depth",
+            "el => { const r = el.getBoundingClientRect();"
+            " return { x: r.x, y: r.y, w: r.width, h: r.height }; }",
+        )
+        assert depth_bb["w"] > 0 and depth_bb["h"] > 0, (
+            f"F3: DEPTH numeral (#m-depth) has zero size — not rendered: {depth_bb}"
+        )
+        # Must be within the viewport (not scrolled off).
+        assert 0 <= depth_bb["x"] <= vp_w and 0 <= depth_bb["y"] <= vp_h, (
+            f"F3: DEPTH numeral out of viewport bounds: {depth_bb}"
         )
 
         # In the default chart view (body[data-view="chart"]), leaflet FABs are

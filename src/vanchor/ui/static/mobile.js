@@ -347,7 +347,12 @@
     // ---- Mode sentence (VA.modeSentence defined in appcore.js) ----
     if (t.mode !== undefined) {
       const sentence = VA.modeSentence ? VA.modeSentence(t) : (t.mode || "—");
-      VA.setText("sheet-mode", sentence);
+      // F3 fix: in landscape the #map-pills (SIM pill) is hidden to prevent
+      // occlusion of the .sheet-instruments numerals.  Append a compact "· SIM"
+      // tag to the safety-band mode text so a fisherman can still tell it's a
+      // simulated boat even when rotated sideways.
+      const simTag = (t.sim_enabled && document.body.classList.contains("ls")) ? " · SIM" : "";
+      VA.setText("sheet-mode", sentence + simTag);
       const modeEl = document.getElementById("sheet-mode");
       const suffix = VA.modeSuffix ? VA.modeSuffix(t) : "";
       if (modeEl) modeEl.classList.toggle("stopped", suffix !== "");
