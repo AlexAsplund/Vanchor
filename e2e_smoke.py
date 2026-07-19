@@ -128,8 +128,19 @@ def frontend_checks():
         errs: list[str] = []
         pg.on("pageerror", lambda e: errs.append(str(e)))
         pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
-        pg.goto(BASE + "/", wait_until="networkidle", timeout=20000)
-        pg.wait_for_timeout(1500)
+        # Deterministic readiness instead of `networkidle`: the app holds a live
+        # telemetry WebSocket and streams map tiles, so the 500 ms network-quiet
+        # window `networkidle` needs may never occur within the timeout (observed
+        # flaky in CI). Wait for the map's layers control to be built — that is
+        # what every check below actually depends on.
+        pg.goto(BASE + "/", wait_until="domcontentloaded", timeout=20000)
+        # `attached`, not visible: the layers control is collapsed by default so
+        # its overlay labels are in the DOM but hidden until expanded (the checks
+        # read them via textContent, which does not need visibility).
+        pg.wait_for_selector(
+            ".leaflet-control-layers-overlays label", state="attached", timeout=20000
+        )
+        pg.wait_for_timeout(1000)
         check("UI loads, map present", pg.locator("#map").count() == 1)
         ovs = pg.evaluate(
             "()=>[...new Set([...document.querySelectorAll('.leaflet-control-layers-overlays label span')].map(s=>s.textContent.trim()))]"
