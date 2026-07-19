@@ -11,9 +11,14 @@ install -d "${ROOTFS_DIR}/opt/vanchor/compose" \
 # Compose file (owns the container contract: host network, /data, devices)
 install -m 644 files/docker-compose.yml "${ROOTFS_DIR}/opt/vanchor/compose/"
 
-# Supervisor package (host-side python daemon + systemd unit + guard)
+# Supervisor package (host-side python daemon + systemd unit + guard).
+# Wipe the target first so the copy is idempotent: on a pi-gen re-run (or when
+# a prior partial run left the tree hardlinked into the rootfs) `cp -a` onto an
+# existing same-inode file aborts with "are the same file". Removing the dest
+# breaks any such link and guarantees a clean copy from the staged files/.
+rm -rf "${ROOTFS_DIR}/opt/vanchor-supervisor"
 install -d "${ROOTFS_DIR}/opt/vanchor-supervisor"
-cp -a files/supervisor/. "${ROOTFS_DIR}/opt/vanchor-supervisor/"
+cp -a --no-preserve=links files/supervisor/. "${ROOTFS_DIR}/opt/vanchor-supervisor/"
 
 # Factory bundle: the docker image pre-baked at CI time.
 # build.sh copies the bundle to files/factory-bundle.tar (fixed staging name).
