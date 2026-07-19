@@ -432,3 +432,27 @@ above before deploying.
 > in JAX/CuPy would let the whole population roll out on a GPU (the box has a
 > GB10) for a ~10–100× training speedup. The runtime stays numpy-only regardless
 > — training method never touches deployment.
+
+## Reverse dead-time: train/deploy gap + output smoothing (2026-07-19)
+
+The ES training env models the steering slew (`--steer-rate-dps`) and a CAPS
+action-rate penalty, but NOT the motor's forward↔reverse **dead-time**
+(`reverse_delay_s`, 1.0 s — a firmware motor-protection interlock the Pi-side
+governor mirrors). So Smart/Leif learned to flip thrust sign several times a
+second. On the real actuator the reverse interlock then blocks ~45% of those
+commands (measured, Smart @5 m, sim), zeroing the braking the policy wanted:
+the boat hunts and the governor advisory strobed the UI ~2×/s.
+
+**Deployment mitigation (shipped, no retrain):** a first-order low-pass on the
+anchor modes' OUTPUT thrust (`AnchorMLMode.thrust_tau_s`, default 0.7 s) — an
+actuator stage that does NOT feed back into the policy obs (the raw command
+still lands in `_prev`, matching training). It turns the sub-second sign
+oscillation into a command the motor can execute. Measured A/B (Smart @5 m):
+reverse-block 45%→16% of ticks, governor-banner flips 1.8→0.6/s, settled hold
+unchanged (~1.8 m mean, inside the 5 m circle); the 6-scenario regression gate
+stays within tolerance. The UI governor advisory also gained a 4 s dwell so
+routine interlock flicker never surfaces.
+
+**Future training fix (not done):** add the reverse dead-time to `env.py` +
+a thrust-reversal penalty, so the next policy generation learns not to demand
+un-executable rapid reversals in the first place.

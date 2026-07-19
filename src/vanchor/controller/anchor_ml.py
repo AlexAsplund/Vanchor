@@ -131,7 +131,7 @@ class AnchorMLMode:
                  steer_sign: float = 1.0, *, guard_window_s: float = 30.0,
                  guard_bad_ratio: float = 1.0, guard_good_ratio: float = 0.7,
                  guard_decay_s: float = 15.0, guard_recover_s: float = 45.0,
-                 guard_min_scale: float = 0.0) -> None:
+                 guard_min_scale: float = 0.0, thrust_tau_s: float = 0.7) -> None:
         with open(model_path) as f:
             d = json.load(f)
         self._mlp = _TinyMLP(d["sizes"], d["params"])
@@ -170,6 +170,26 @@ class AnchorMLMode:
         self._hist: deque | None = None
         self._prev = np.zeros(2)
         self._prev_heading: float | None = None
+        # Output thrust low-pass (actuator stage, NOT fed back into the policy
+        # obs). The ES training env models steering slew but NOT the motor's
+        # forward<->reverse dead-time, so the learned policies flip thrust sign
+        # several times a second; at deployment the reverse interlock blocks
+        # ~45% of those commands, zeroing the braking the policy wanted and
+        # leaving it hunting (and strobing the governor banner). Smoothing the
+        # OUTPUT to ~tau turns that sub-second oscillation into a command the
+        # motor can actually execute, so far fewer reversals are blocked and the
+        # applied thrust is what the policy intends on average. 0 disables.
+        self.thrust_tau_s = max(0.0, thrust_tau_s)
+        self._th_lp = 0.0
+
+    def _smooth_thrust(self, th: float, dt: float) -> float:
+        """First-order low-pass on the OUTPUT thrust (anti sign-flip)."""
+        if self.thrust_tau_s <= 0.0 or dt <= 0.0:
+            self._th_lp = th
+            return th
+        a = dt / (self.thrust_tau_s + dt)
+        self._th_lp += (th - self._th_lp) * a
+        return self._th_lp
 
     @property
     def residual_scale_effective(self) -> float:
@@ -186,6 +206,7 @@ class AnchorMLMode:
         self._hist = None
         self._prev = np.zeros(2)
         self._prev_heading = None
+        self._th_lp = 0.0
         # Heading-hold target = the boat's heading when the mode engaged (only
         # consumed when the loaded policy declares obs_heading).
         h = getattr(state, "heading_deg", None)
@@ -288,7 +309,7 @@ class AnchorMLMode:
             st = float(np.clip(st * (self.train_azimuth_deg / max(1.0, state.max_steer_angle_deg)),
                                -1.0, 1.0))
         self._prev_heading = state.heading_deg
-        return ManualSetpoint(thrust=th, steering=st)
+        return ManualSetpoint(thrust=self._smooth_thrust(th, dt), steering=st)
 
 
 _Leif_PATH = os.path.join(os.path.dirname(__file__), "anchor_leif.json")
@@ -353,4 +374,4 @@ class AnchorLeifMode(AnchorMLMode):
         azscale = self.TRAIN_AZIMUTH_DEG / max(1.0, state.max_steer_angle_deg)
         st = float(np.clip(st_helm * azscale, -1.0, 1.0))
         self._prev_heading = state.heading_deg
-        return ManualSetpoint(thrust=th, steering=st)
+        return ManualSetpoint(thrust=self._smooth_thrust(th, dt), steering=st)
