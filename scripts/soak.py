@@ -206,9 +206,8 @@ async def soak(
         finally:
             # Final STOP + settle, then assert the motor actually goes quiet.
             rt.handle_command({"type": "stop"})
-            await asyncio.sleep(0.5)
             result.stop_checks += 1
-            _check_stopped(rt, result, "final")
+            await _await_stopped(rt, result, "final")
             _check_tasks(rt, result)
             with contextlib.suppress(Exception):
                 await rt.stop()
@@ -256,10 +255,10 @@ async def _run_loop(
         # Occasionally slam STOP and verify the motor obeys within a settle.
         if result.commands_issued and result.commands_issued % 7 == 0:
             rt.handle_command({"type": "stop"})
-            await asyncio.sleep(tick)
             result.stop_checks += 1
-            _check_stopped(rt, result, f"t={elapsed:.1f}s")
-            continue  # already slept a tick
+            await _await_stopped(rt, result, f"t={elapsed:.1f}s")
+            await asyncio.sleep(tick)  # pace the loop until the next churn
+            continue
 
         # --- health checks ---------------------------------------------- #
         _check_tasks(rt, result)
@@ -315,11 +314,33 @@ def _track_motor(rt: Runtime, result: SoakResult) -> None:
         _add(result, f"motor command out of range: thrust={cmd.thrust} steering={cmd.steering}")
 
 
-def _check_stopped(rt: Runtime, result: SoakResult, when: str) -> None:
-    """After a STOP, the motor must be quiet (no stuck thrust)."""
+async def _await_stopped(
+    rt: Runtime, result: SoakResult, when: str, *, timeout_s: float = 3.0
+) -> None:
+    """After a STOP, the motor must go quiet — but not necessarily instantly.
+
+    The safety governor slew-limits thrust (``max_thrust_slew_per_s``, 1.0/s by
+    default), so a STOP issued while the prop is near full thrust ramps to zero
+    over up to ~1 s rather than snapping — that ramp is the intended
+    prop-protection behaviour, not a stuck motor.  Poll until the motor settles
+    within the epsilon and fail only if it never does within ``timeout_s`` (a
+    genuinely stuck motor).  Returns as soon as it is quiet, so the common case
+    stays fast.
+    """
+    deadline = time.monotonic() + timeout_s
     thr = rt.state.motor_command.thrust
-    if abs(thr) > 0.02:
-        _add(result, f"stuck motor after STOP ({when}): thrust={thr:.3f}")
+    while True:
+        thr = rt.state.motor_command.thrust
+        if abs(thr) <= 0.02:
+            return
+        if time.monotonic() >= deadline:
+            _add(
+                result,
+                f"stuck motor after STOP ({when}): thrust={thr:.3f} "
+                f"(never settled within {timeout_s:.1f}s)",
+            )
+            return
+        await asyncio.sleep(0.1)
 
 
 def _check_tasks(rt: Runtime, result: SoakResult) -> None:
