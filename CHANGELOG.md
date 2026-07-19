@@ -23,13 +23,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   record was durably written; the result is now persisted atomically before it
   becomes observable.
 
-- **SD image build unblocked.** The image build ran on the owner's bench CI for
-  the first time and surfaced two blockers, both fixed: `supervisor/install.sh`
-  copied `guard.py` onto itself when run from the image chroot
-  (`SCRIPT_DIR == INSTALL_ROOT` → `cp … are the same file`) — the full pi-gen
-  build now completes past that point — and pi-gen's root-owned `deploy/` output
-  made the post-build checksum/size steps fail with "Permission denied", so the
-  deploy tree is now handed back to the runner user after the root build.
+- **SD image now builds green end-to-end on CI.** The image build ran on the
+  owner's bench CI for the first time and surfaced two blockers, both fixed:
+  `supervisor/install.sh` copied `guard.py` onto itself when run from the image
+  chroot (`SCRIPT_DIR == INSTALL_ROOT` → `cp … are the same file`), and pi-gen's
+  root-owned `deploy/` output made the post-build checksum/size steps fail with
+  "Permission denied" (deploy tree is now handed back to the runner user after
+  the root build). The full pi-gen build + checksums + artifact upload now
+  complete; flashing to a real Pi + first-boot remains a BENCH-VERIFY item.
 
 - **CI test robustness (no behaviour change).** Hardened tests that were fragile
   to the headless-CI environment rather than to real defects: the oversized-body

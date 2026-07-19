@@ -1,8 +1,8 @@
-# BENCH-VERIFY: This workflow has not been run yet. It builds the SD image on
-# a GitHub-hosted arm64 runner (ubuntu-24.04-arm) using pi-gen. The first run
-# requires the owner to push a v* tag (or trigger workflow_dispatch) and monitor
-# the Actions run for issues. See docs/image-testing.md checklist item for the
-# first-CI-run verification step.
+# Builds the SD image on a GitHub-hosted arm64 runner (ubuntu-24.04-arm) using
+# pi-gen. Runs green end-to-end on CI (2026-07-19, via workflow_dispatch); trigger
+# with a v* tag or workflow_dispatch. BENCH-VERIFY remains for the parts CI can't
+# cover: flashing the produced image to a real Raspberry Pi and first-boot. See
+# docs/image-testing.md for the on-hardware checklist.
 #
 # Two jobs:
 #   bundle  — build the docker image, create the update bundle tar
