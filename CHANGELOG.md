@@ -2,6 +2,42 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
+## [Unreleased]
+
+- **Mobile layout could fail to activate on a slow first paint (real fix).**
+  `mobile.js` set `body.mobile` from a single `applyMobile()` run at
+  script-execution time; if that ran before the layout viewport had settled to
+  its final size — and no later `resize`/`orientationchange` fired — the class
+  stayed unset and the entire phone layout silently reverted to desktop mode:
+  the secondary status chips (speed/heading/depth) stayed visible and overflowed
+  the top bar, and the bottom sheet never engaged. `applyMobile()` now also
+  re-runs on `requestAnimationFrame`, on `window` `load`, and via a
+  `ResizeObserver` on the document element, so it always re-evaluates against
+  the settled viewport (all idempotent). Landscape sub-mode (`body.ls`) is now
+  derived from the live viewport aspect (`innerWidth > innerHeight &&
+  innerHeight ≤ 480`) instead of the CSS `orientation` media feature, which some
+  embedded/headless browsers evaluate inconsistently.
+
+- **Supervisor job status race.** Fixed a cross-instance persist-vs-read race in
+  the supervisor's job store that could surface a job's `ok`/`phase` before the
+  record was durably written; the result is now persisted atomically before it
+  becomes observable.
+
+- **SD image build unblocked.** The image build ran on the owner's bench CI for
+  the first time and surfaced two blockers, both fixed: `supervisor/install.sh`
+  copied `guard.py` onto itself when run from the image chroot
+  (`SCRIPT_DIR == INSTALL_ROOT` → `cp … are the same file`) — the full pi-gen
+  build now completes past that point — and pi-gen's root-owned `deploy/` output
+  made the post-build checksum/size steps fail with "Permission denied", so the
+  deploy tree is now handed back to the runner user after the root build.
+
+- **CI test robustness (no behaviour change).** Hardened tests that were fragile
+  to the headless-CI environment rather than to real defects: the oversized-body
+  cap test accepts a connection reset as a valid rejection (the server rejects
+  without reading, so a client mid-write can see a reset instead of a clean
+  413); the mobile e2e layout tests settle the viewport before measuring so they
+  observe the real mobile layout, not a first-paint transient.
+
 ## [1.5.0a9] — 2026-07-19
 
 - **UI overhaul — "Evolution+" (built + reviewed as a 6-task program, then
