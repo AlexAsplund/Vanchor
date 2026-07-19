@@ -4,6 +4,54 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## [Unreleased]
 
+- **UI overhaul — "Evolution+" (built + reviewed as a 6-task program, then
+  hardened by live on-water testing).** A ground-up pass over the whole PWA
+  for a fisherman with wet hands in sunlight: (1) **safety core** — full-width
+  priority-stacked alarm strips with inline actions, STOP bottom-left reachable
+  in *every* viewport and state (portrait, landscape, menus, modals, first-run),
+  spelled-out MAN OVERBOARD; (2) **glanceable truth** — a two-row peek bar
+  (values + mode/STOP/MOB always visible), ≥26px numerals, honest link/GPS
+  staleness (chips grey out, single staleness clock), battery never
+  voltage-only; (3) **sim honesty + onboarding** — a "SIMULATION — not your
+  motor" pill, a first-run "real boat / simulator" choice (Helm view first run
+  then remembers), humanized wizard errors; (4) **modes & driving** —
+  plain-language mode names, a Classic|Smart|Leif segmented anchor control,
+  a snap-to-zero steering wheel (with a "hold thrust" toggle) where thrust
+  decreases are always immediate, 600 ms hold-to-engage on drive-away actions
+  (RTL / take-me-here / replay), Follow-APB auto-hidden until a feed appears;
+  (5) **map interaction + honest daylight** — tap the map for "Take me here /
+  Anchor here" (SOG-gated), tap the anchor ring to manage it, and a Daylight
+  theme that switches the *map tiles* to light too (restoring your layer on
+  exit); (6) **landscape + settings IA + PWA** — a usable phone-landscape
+  layout, grouped Settings, an install prompt, and honest offline messaging.
+  Mobile mode-sheet hardening from live testing: the options panel is compact
+  with a sticky header + sticky primary action (anchor DROP went from ~480 px
+  of scroll to ~2), a topbar-aware maximized height + drag-to-collapse so the
+  sheet can't get stuck under a notched topbar. Two full design rounds
+  (docs/design/ux-review-2026-07.md, ux-revamp-concepts-2026-07.md).
+
+- **Docker + hassio-style supervisor deployment (adoption #5)** — the boat runs
+  as a container managed by a small host-side `vanchor-supervisor` daemon
+  (localhost token API) that owns updates, backups, and disk. Updates are
+  **offline-first**: the browser downloads a signed bundle from GitHub Releases
+  and uploads it through the UI; the supervisor verifies the sha256,
+  `docker load`s, recreates, health-gates, and **auto-rolls-back** on failure
+  — an update can never brick the boat. Version constraints (`min_supervisor`)
+  are enforced, the supervisor self-updates with its own boot-guard rollback,
+  and the managed-container model is **add-on-generic** (vanchor is entry #0;
+  future add-ons are further entries). Bounded container logging protects the
+  SD card. Settings gains Update / Backups / Storage cards. See docs/deploy-pi.md.
+
+- **Anchor hold: calmer Smart/Leif (reverse-hunt fix).** The learned
+  station-keepers were flipping thrust sign faster than the motor's 1 s reverse
+  dead-time allows, so the reverse interlock blocked ~45% of their commands —
+  the boat hunted and the governor advisory strobed "reverse blocked" ~2×/s. A
+  first-order low-pass on the anchor modes' output thrust (`thrust_tau_s`, 0.7 s)
+  makes the command executable (reverse-block 45%→16%, hold quality unchanged),
+  and the UI governor advisory gained a 4 s dwell so routine station-keeping
+  interlock flicker never surfaces. Root cause (training env doesn't model the
+  reverse dead-time) + retrain plan documented in docs/anchor-ml.md.
+
 - **Demo mode (`vanchor --demo`)** — one flag boots a forced-sim demo on
   the charted lake with a seeded looping route (or `demo.scenario: anchor`),
   an ephemeral data dir (never touches vanchor_data/ or real devices), a
