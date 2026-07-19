@@ -14,8 +14,16 @@ mkdir -p "$INSTALL_ROOT/versions"
 # Copy the package into versions/$VER/ so selfupdate.py's sanity-check
 # (sys.path.insert(0, target_dir); import vanchor_supervisor) works:
 #   target_dir/vanchor_supervisor/__init__.py  ← required layout
+# In the Pi-image chroot this script runs FROM $INSTALL_ROOT (00-run.sh copied
+# supervisor/. there), so $SCRIPT_DIR == $INSTALL_ROOT and guard.py is already
+# in place — copying it onto itself makes `cp` abort ("are the same file").
+# Guard every copy on source != destination so both contexts work.
+rm -rf "$INSTALL_ROOT/versions/$VER"
+mkdir -p "$INSTALL_ROOT/versions/$VER"
 cp -r "$SCRIPT_DIR/vanchor_supervisor" "$INSTALL_ROOT/versions/$VER/"
-cp "$SCRIPT_DIR/guard.py" "$INSTALL_ROOT/guard.py"
+if [ "$SCRIPT_DIR/guard.py" != "$INSTALL_ROOT/guard.py" ]; then
+  cp "$SCRIPT_DIR/guard.py" "$INSTALL_ROOT/guard.py"
+fi
 # current symlink (atomic update)
 CURRENT="$INSTALL_ROOT/current"
 if [ ! -L "$CURRENT" ]; then
