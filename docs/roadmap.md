@@ -288,3 +288,16 @@ Community & growth:
     opt-in community lake library later.
 18. Device driver-pack install UI (M): ship the parked HACS-style plan on the
     existing entry-point hook (#43); safety floor stays core-only.
+
+## Control backlog (2026-07-19)
+
+- **Reverse dead-time in ES training (retrain).** The anchor-policy training
+  env models steering slew but not the motor's 1 s forward↔reverse dead-time,
+  so Smart/Leif learned to flip thrust sign several times a second; at
+  deployment the reverse interlock blocks ~45% of those commands. Shipped a
+  deployment mitigation (output thrust low-pass, `thrust_tau_s`) — see
+  docs/anchor-ml.md § "Reverse dead-time". The proper fix is a retrain: add
+  the reverse dead-time + a thrust-reversal penalty to `experiments/
+  anchor_policy/env.py`, regenerate Smart/Leif, and run the promote gauntlet
+  (sim-in-the-loop). Size L (a training day). Would also let the mitigation
+  low-pass be relaxed.
