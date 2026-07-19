@@ -101,7 +101,6 @@ echo "==> Config written: $(grep IMG_NAME "${PIGEN_DIR}/config")"
 cp -a "${SCRIPT_DIR}/stage-vanchor" "${PIGEN_DIR}/"
 
 # Copy the bundle as the fixed staging name consumed by 02-stack/00-run.sh
-install -m 644 "$BUNDLE" "${PIGEN_DIR}/stage-vanchan/02-stack/files/factory-bundle.tar" 2>/dev/null || \
 install -m 644 "$BUNDLE" "${PIGEN_DIR}/stage-vanchor/02-stack/files/factory-bundle.tar"
 
 # ---- build via pi-gen's docker wrapper ----------------------------------
