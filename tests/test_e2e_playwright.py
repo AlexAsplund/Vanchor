@@ -27,6 +27,14 @@ import pytest
 # Resolve `vanchor` from the same venv as the running interpreter.
 _VANCHOR = str(Path(sys.executable).parent / "vanchor")
 
+# Every e2e page must pre-dismiss the first-run sim-notice modal (added by the
+# UX revamp); its scrim intercepts clicks otherwise. sim-ack=='1' suppresses
+# it (onboard.js). Applied to every page before its first navigation.
+_FIRSTRUN_INIT = (
+    "localStorage.setItem('vanchor-sim-ack','1');"
+    "localStorage.setItem('vanchor-firstrun','done');"
+)
+
 # Skip the whole module if Playwright isn't importable.
 playwright_mod = pytest.importorskip("playwright", reason="playwright not installed")
 
@@ -189,6 +197,7 @@ def test_stop_integrity(live_server: _ServerHandle, pw_browser):
     """
     base = live_server.base
     page = pw_browser.new_page(viewport={"width": 1200, "height": 860})
+    page.add_init_script(_FIRSTRUN_INIT)
     page.set_default_timeout(8000)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -278,6 +287,7 @@ def test_reconnect_and_staleness(live_server: _ServerHandle, pw_browser):
     # Use a fresh context so state is independent of test_stop_integrity.
     ctx = pw_browser.new_context(viewport={"width": 1200, "height": 860})
     page = ctx.new_page()
+    page.add_init_script(_FIRSTRUN_INIT)
     page.set_default_timeout(15_000)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -355,6 +365,7 @@ def test_routechoice_append_and_replace(live_server: _ServerHandle, pw_browser):
     base = live_server.base
     ctx = pw_browser.new_context(viewport={"width": 1200, "height": 860})
     page = ctx.new_page()
+    page.add_init_script(_FIRSTRUN_INIT)
     page.set_default_timeout(10_000)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -440,6 +451,7 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
     base = live_server.base
     ctx = pw_browser.new_context(viewport={"width": vp_w, "height": 780})
     page = ctx.new_page()
+    page.add_init_script(_FIRSTRUN_INIT)
     page.set_default_timeout(10_000)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -494,6 +506,7 @@ def test_chip_stale_state(live_server: _ServerHandle, pw_browser):
     base = live_server.base
     ctx = pw_browser.new_context(viewport={"width": 390, "height": 844})
     page = ctx.new_page()
+    page.add_init_script(_FIRSTRUN_INIT)
     page.set_default_timeout(15_000)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -561,6 +574,7 @@ def test_wheel_snap_to_zero_and_immediate_decrease(live_server: _ServerHandle, p
     base = live_server.base
     ctx = pw_browser.new_context(viewport={"width": 390, "height": 844})
     page = ctx.new_page()
+    page.add_init_script(_FIRSTRUN_INIT)
     page.set_default_timeout(10_000)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
@@ -683,6 +697,7 @@ def test_landscape_layout_smoke(live_server: _ServerHandle, pw_browser):
         ),
     )
     page = ctx.new_page()
+    page.add_init_script(_FIRSTRUN_INIT)
     page.set_default_timeout(12_000)
     errors: list[str] = []
     page.on("pageerror", lambda e: errors.append(str(e)))
