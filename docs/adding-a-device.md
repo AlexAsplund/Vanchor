@@ -1,5 +1,12 @@
 # Adding a new device (sensor or motor)
 
+> **Using a standard GPS, compass, or motor board?** The [hardware setup
+> wizard](setup-wizard.md) (Settings → Devices & hardware → Guided hardware
+> setup…) scans your ports, identifies common devices by their USB descriptor or
+> firmware fingerprint, and writes the right config for you — no manual driver
+> work required. Come back here only if you need a custom driver for hardware the
+> wizard does not recognise.
+
 This is the friendly, big-picture guide to teaching Vanchor about a new piece of
 hardware — a compass/IMU, a GPS, a depth sounder, a motor board. If you want the
 terse engineering reference (exact signatures, the checklist), see

@@ -22,8 +22,9 @@ receiver`).
 
 ### Step 1 — GPS
 
-Pick the port your GPS receiver is plugged into and click **Probe**. The server
-opens the port (read-only, 2.5 s) and classifies what it hears:
+Pick the port your GPS receiver is plugged into and click **Probe** (fires
+`POST /api/hw/probe`). The server opens the port (read-only, 2.5 s) and
+classifies what it hears:
 
 | Detected | Confidence | What it means |
 |---|---|---|

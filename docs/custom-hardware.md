@@ -1,5 +1,11 @@
 # Custom hardware: independent Steering + Thrust channels
 
+> **Running a standard single-board motor controller?** The [hardware setup
+> wizard](setup-wizard.md) is the easy path: it probes the port, identifies
+> firmware via the `INFO` command fingerprint, and writes the config
+> automatically. This page covers the advanced split-channel case where
+> steering and thrust live on separate controllers.
+
 Vanchor's motor is modelled as two logical channels — **steering** (the azimuth
 head) and **thrust** (the prop) — that normally live on one microcontroller (the
 default rig: a single Arduino speaking the combined `CMD <pwm> <dir> <steer>*HH`

@@ -102,7 +102,14 @@ steady-state operation.
     shows NMEA sentences, not garbled data).
 
 13. **Supervisor integration** (task 5 integration):
-    - `curl http://localhost:9300/v1/health` → `{"ok": true, ...}`.
+    - Check supervisor status (requires the auth token):
+      ```bash
+      TOKEN=$(cat /var/lib/vanchor-supervisor/token)
+      curl -s -H "X-Supervisor-Token: $TOKEN" http://localhost:9300/v1/status \
+        | python3 -m json.tool
+      ```
+      Expect JSON with `supervisor_version`, `containers` (list with `state:
+      running`), `disk`, and `warnings: []`.
     - Download the release's `vanchor-update-<version>.bundle.tar`, upload
       via Settings → System & updates → Sideload. Confirm update applies,
       health-gates, and the previous container is gone.

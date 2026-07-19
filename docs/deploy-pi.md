@@ -185,7 +185,8 @@ path via the supervisor API.
 ### Backups
 
 Settings → System & updates → **Volume backups** → Snapshot now. Backups land
-in `host:/opt/vanchor/data/backups/`. Download through the UI or `scp`.
+in `/var/lib/vanchor-supervisor/backups/` on the host. Download through the UI
+or `scp`.
 
 ### Disk stewardship
 
@@ -205,7 +206,7 @@ build guide.
 ```bash
 # Build the update bundle first (needs Docker)
 python3 scripts/make_bundle.py app \
-    --image ghcr.io/alexasplund/vanchor --tag <version> \
+    --image "vanchor/vanchor" --tag <version> \
     --min-supervisor 0.1.0 --arch arm64 \
     --image-tar <saved-image.tar.gz> --out bundle.tar
 
