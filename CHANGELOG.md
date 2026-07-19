@@ -2,7 +2,7 @@
 
 All notable changes to Vanchor-NG. Dates are ISO-8601.
 
-## [Unreleased]
+## [1.5.0a9] — 2026-07-19
 
 - **UI overhaul — "Evolution+" (built + reviewed as a 6-task program, then
   hardened by live on-water testing).** A ground-up pass over the whole PWA
