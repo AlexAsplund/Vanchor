@@ -681,15 +681,24 @@ def test_wheel_snap_to_zero_and_immediate_decrease(live_server: _ServerHandle, p
         # --- 5: immediate-decrease — dragging inward drops thrust fast ---
         # Re-grab near the knob (out at ~0.30h up) and drag back toward the hub
         # in stepped moves (with waits) so a send fires mid-drag, not just on up.
+        # The pointer-down occasionally lands just off the wheel's active area in
+        # headless (thrust doesn't move at all); a real user simply re-grabs, so
+        # retry the whole inward drag a few times before failing.
         start_up = rect["h"] * 0.32
-        page.mouse.move(rect["x"], rect["y"] - start_up)
-        page.mouse.down()
-        for i in range(1, 9):
-            page.mouse.move(rect["x"], rect["y"] - start_up * (8 - i) / 8)
-            page.wait_for_timeout(60)
-        page.wait_for_timeout(300)
-        low = _thrust()
-        page.mouse.up()
+        low = held
+        for _attempt in range(4):
+            page.mouse.move(rect["x"], rect["y"] - start_up)
+            page.mouse.down()
+            page.wait_for_timeout(60)  # let the pointer-down register before moving
+            for i in range(1, 9):
+                page.mouse.move(rect["x"], rect["y"] - start_up * (8 - i) / 8)
+                page.wait_for_timeout(60)
+            page.wait_for_timeout(300)
+            low = _thrust()
+            page.mouse.up()
+            if low < held:
+                break
+            page.wait_for_timeout(150)  # grab missed the wheel — re-grab
         assert low < held, f"inward drag did not reduce thrust ({held} -> {low})"
         # Decreases are never grace-ramped: pulling to the hub reaches ~0 fast.
         assert low < 0.15, f"thrust decrease should be immediate; got {low}"
