@@ -499,9 +499,21 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
                     connText: ct ? getComputedStyle(ct).display : 'none-el',
                     lblDisp: lbl ? getComputedStyle(lbl).display : 'none-el',
                     vis: vis,
+                    bodyCls: document.body.className,
                 };
             }"""
         )
+        # Probe: does a resize nudge (re-running applyMobile) restore body.mobile
+        # and collapse the chips?  If so this is the same first-paint race as the
+        # landscape test.
+        page.evaluate("window.dispatchEvent(new Event('resize'))")
+        page.wait_for_timeout(200)
+        after = page.evaluate(
+            "() => ({m: document.body.classList.contains('mobile'),"
+            " sw: document.getElementById('chips').scrollWidth,"
+            " cw: document.getElementById('chips').clientWidth})"
+        )
+        dims["afterResize"] = after
         slack = dims["cw"] - dims["sw"]
         print(
             f"\n  #{vp_w}px #chips {{sw:{dims['sw']},cw:{dims['cw']},"
@@ -518,7 +530,8 @@ def test_chips_no_overflow(live_server: _ServerHandle, pw_browser, vp_w: int):
         _diag = (
             f"iw={dims['iw']} dpr={dims['dpr']} mq760={dims['mq760']} "
             f"mq420={dims['mq420']} connText={dims['connText']} "
-            f"lblDisp={dims['lblDisp']} vis={dims['vis']}"
+            f"lblDisp={dims['lblDisp']} bodyCls='{dims['bodyCls']}' "
+            f"afterResize={dims['afterResize']} vis={dims['vis']}"
         )
         if dims["inter"]:
             assert dims["sw"] <= dims["cw"], (
