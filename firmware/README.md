@@ -9,6 +9,9 @@ firmware/
 ├── common/vanchor_protocol.h   shared line protocol + CMD parser (the contract)
 ├── engine/engine.ino           thrust via a HIJACKED commercial speed controller + F/R relay
 ├── steering/steering.ino       closed-loop azimuth: worm gearmotor + H-bridge + feedback pot + PID
+├── hotrc_translator/           RC receiver → rf-remote protocol bridge (see below)
+│   ├── hotrc_translator.ino    reads HotRC PWM → emits STICK/BTN lines to the Pi
+│   └── README.md               wiring, BOM, calibration for the translator
 └── README.md                   this file (schematics, pin maps, wiring, BOM)
 ```
 
@@ -370,3 +373,20 @@ preferred) and the legacy combined `CMD` line (its `steer` field maps
 split thrust board is a fork of `firmware/engine/engine.ino` that reads
 `THRUST <pwm> <dir>` instead of `CMD`. The shared protocol header
 (`firmware/common/vanchor_protocol.h`) provides `vanchorParseSteerDeg()`.
+
+---
+
+## 7. HotRC translator — RC receiver → rf-remote bridge
+
+A third Arduino (or the same Nano on a spare USB port) that bridges a **HotRC**
+(or any standard RC PWM receiver) to the Pi's `rf-remote` connector. It reads
+PWM pulse widths from 3 receiver channels and emits the `STICK` / `BTN` / `PING`
+text protocol that `src/vanchor/connectors/rf_remote.py` expects.
+
+This gives physical handheld control: proportional thrust/steering on the sticks,
+plus a **3-position mode switch** for STOP / MANUAL / ANCHOR HOLD. The anchor
+button engages GPS station-keeping at the boat's current position — tap the switch
+while fishing and the boat holds the spot.
+
+See [`firmware/hotrc_translator/README.md`](hotrc_translator/README.md) for full
+wiring, BOM, calibration, and testing instructions.
