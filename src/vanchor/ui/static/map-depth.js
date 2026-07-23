@@ -25,9 +25,8 @@
   const addOverlay = ctx.addOverlay;
 
   // ---- depth overlay -----------------------------------------------------
-  // Selectable depth palettes (#palette). Two opposing chart conventions per the
-  // research doc (docs/research/depth-map-design.md §1–2), and DELIBERATELY not
-  // mixed within one ramp:
+  // Selectable depth palettes (#palette). Two opposing chart conventions,
+  // DELIBERATELY not mixed within one ramp:
   //   "angler"  — high-contrast, shallow = warm/light, deep = dark (the public's
   //               stated preference): coral shoal -> amber -> sand -> teal ->
   //               blue -> deep navy.

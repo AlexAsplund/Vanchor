@@ -21,7 +21,7 @@ Two registration flavours, both keyed by ``(kind, source)``:
   versioned :class:`DriverContext` (publish a reading, report health, read its
   own config, a logger/clock) and **never** the ``Runtime``, motor or governor.
   This is the contract community driver packs target (see
-  ``docs/community-plan.md`` — the safety floor is never a pack concern).
+  ``docs/extension-packs.md`` — the safety floor is never a pack concern).
 
 Packs are discovered via the ``vanchor.drivers`` entry-point group (see
 :func:`vanchor.hardware.drivers.load_drivers`), so a pip-installed pack registers

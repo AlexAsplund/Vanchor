@@ -2,7 +2,7 @@
 
 > Part of the `docs/llms/` developer guide. 🔁 **If you change the physics, a
 > boat parameter, sensor noise, a preset, or an environment effect, update this
-> file** (and `docs/nav-control-api.md` / `docs/simulator-options.md`).
+> file** (and `docs/nav-control-api.md` / `docs/simulator.md`).
 
 The simulator lets the whole stack run + be tested with no hardware. It is the
 project's main asset — *use it to reproduce and measure before changing control*.

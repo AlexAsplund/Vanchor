@@ -1,9 +1,9 @@
-# Community & packs — a plan (notes, not yet built)
+# Extension packs
 
-> Status: **design notes only.** Nothing here is implemented. This sketches how a
-> community/sharing layer *could* look so we build the enabling pieces (a
-> versioned driver API, roadmap #43) in a shape that doesn't paint us into a
-> corner. It deliberately stays small and safety-first.
+> Status: **design notes only — not yet built.** This sketches how a
+> community/sharing layer *could* work, so the enabling piece (a versioned
+> driver API) gets built in a shape that doesn't paint us into a corner. It
+> stays small and safety-first.
 
 ## Why
 

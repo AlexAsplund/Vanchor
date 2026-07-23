@@ -79,7 +79,7 @@ from the package docstrings (one file per top-level package). Regenerate with
 
 There are also older, narrower design docs in `docs/` (`architecture.md`,
 `nav-control-api.md`, `ui-contract.md`, `routing-weather-api.md`,
-`simulator-options.md`, `FEATURES.md`). They are reference material; the
+`simulator.md`, `FEATURES.md`). They are reference material; the
 `docs/llms/` set is the curated developer guide and takes precedence when they
 disagree (fix the older doc if you spot the drift).
 

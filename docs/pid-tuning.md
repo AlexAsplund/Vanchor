@@ -171,7 +171,7 @@ Shipped: `KP 6.0` PWM/°, `KI 0.8`, `KD 0.6`, `INTEGRAL_LIMIT 120` PWM,
   tracking, risk of perpetual micro-hunting the worm was chosen to avoid.
 - **Runtime interaction:** the Pi-side stack treats the head as ideal — the
   sim does not model this loop's settle/deadband yet (documented gap in
-  [sim-vs-real.md](sim-vs-real.md)), which is one reason sim-tuned helm
+  [simulator.md](simulator.md)), which is one reason sim-tuned helm
   gains can need a small nudge down on the real boat.
 
 ## 7. Things that *interact* with the PIDs (tune these first!)

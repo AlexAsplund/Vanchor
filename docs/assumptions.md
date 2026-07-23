@@ -82,12 +82,11 @@ the `boat` config section (default: a **4.1 m** boat, 1.7 m beam, ~300 kg):
   steady drift, inside the radius.
 
 ## UI
-- ~~Leaflet + OpenStreetMap tiles loaded from public CDNs.~~ **Invalidated by
-  the Evolution+ UX work (July 2026).** Leaflet, uPlot, and fonts are now
-  *vendored* under `src/vanchor/ui/static/vendor/`; a service worker (`sw.js`)
-  caches tiles and the app shell for offline use. The app installs as a PWA and
-  works without internet once cached. An internet connection is only needed the
-  first time a map area is visited (to pull OSM tiles into the cache).
+- Leaflet, uPlot, and fonts are **vendored** under
+  `src/vanchor/ui/static/vendor/`; a service worker (`sw.js`) caches tiles and
+  the app shell, so the app installs as a PWA and runs offline once cached.
+  Internet is needed only the first time a map area is visited (to pull OSM
+  tiles into the cache).
 - The UI shows both **ground truth** (green arrow) and the **GPS fix** (blue
   dot) for debugging in sim mode; a real deployment (or real-hardware mode)
   shows only the GPS fix (no ground truth available).

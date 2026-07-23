@@ -149,6 +149,27 @@ In the UI → Settings → "Data & system" → **WiFi & network** card:
 > trade-off, but be aware if your threat model includes local-user access to
 > the Pi while a WiFi join is in progress.
 
+### Verify first boot on real hardware
+
+CI (`.github/workflows/image.yml`) builds the image **green end-to-end** on
+every `v*` tag (verified 2026-07-19). What CI cannot test is flashing to a real
+Pi and the first boot — do that once per release on a Pi 4/5 with a 16 GB card.
+File a GitHub issue for any failing box.
+
+- [ ] **Flash** — Imager shows **Vanchor-NG** from the custom URL; write the card.
+- [ ] **Boot** — insert, power on; root auto-expands (one reboot is normal);
+  `vanchor-load-images` completes; container is up. Responsive UI ≤ ~3 min.
+- [ ] **Hotspot** — SSID `vanchor-setup` appears; join with `vanchor-boat`; phone
+  gets a `10.42.0.x` lease.
+- [ ] **UI reachable** — `http://10.42.0.1:8000` and `http://vanchor.local:8000`
+  both load (test iOS **and** Android — Android mDNS is the weak spot).
+- [ ] **Join home WiFi** — Settings → WiFi & network → Scan → pick network →
+  hotspot drops; reconnect phone to home WiFi, `http://vanchor.local:8000` loads.
+  Wrong password → hotspot returns within ~60 s, and the error does **not** echo
+  the PSK.
+- [ ] **Device probe** — `systemctl status ModemManager` is `not-found`; a USB GPS
+  on `/dev/ttyACM0` streams clean NMEA (not seized by ModemManager).
+
 ---
 
 ## 3. Updates, backups, and disk
@@ -277,7 +298,7 @@ Not having HTTPS costs you only the screen-stay-awake convenience.
 - [`firmware/README.md`](../firmware/README.md) — schematics, pin maps, BOM
 - [`docs/firmware.md`](firmware.md) — the Pi ↔ Arduino software contract
 - [`docs/safety-matrix.md`](safety-matrix.md) — failure-mode × layer × test matrix
-- [`docs/image-testing.md`](image-testing.md) — first-flash BENCH-VERIFY checklist
+- [Verify first boot on real hardware](#verify-first-boot-on-real-hardware) — the first-flash checklist (§2)
 - [`.env.example`](../.env.example) / [`vanchor.example.yaml`](../vanchor.example.yaml) — every config key
 - [`requirements.lock`](../requirements.lock) — the pinned install set
 
