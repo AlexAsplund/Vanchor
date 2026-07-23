@@ -32,7 +32,25 @@ matching `docs/llms/*` file in the same change**, before considering the task
 done. A stale guide misleads the next agent. See the "Keeping these docs
 current" section in [`docs/llms/README.md`](docs/llms/README.md).
 
-## 4. Verify before done
+## 4. Writing docs
+
+For the human docs in `docs/` (the `docs/llms/*` rule above still governs the LLM
+guide):
+
+- **Concise and spacious.** A shorter version with the same information is
+  better. Prefer tables over prose lists. One idea per paragraph.
+- **One home per topic.** Don't duplicate across files — link instead. Adding or
+  removing a doc means updating the index in [`docs/README.md`](docs/README.md).
+- **Describe current reality, not history.** `roadmap.md` is what's *next*;
+  shipped work belongs in the `CHANGELOG`. When you implement a design/research
+  doc, fold the still-useful bits into the living docs and **delete the stale
+  design doc** — don't leave a "recommend X" doc once X ships. Never rewrite the
+  `CHANGELOG`'s dated entries (they're point-in-time).
+- **No stale claims, no broken links.** Update wording when behaviour changes;
+  keep internal `.md` links valid.
+- **`docs/api/` is generated** by `make docs` — don't hand-edit it.
+
+## 5. Verify before done
 
 `python -m pytest -q` green, `node --check` any JS you touched, and for UI work a
 headless Playwright pass (no console errors). See the testing guide.
