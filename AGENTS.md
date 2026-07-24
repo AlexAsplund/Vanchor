@@ -96,6 +96,18 @@ in any code and the full suite runs. Runs also **cancel** when superseded, and
 feature branches validate via the `pull_request` event only (no duplicate
 push-run) — `push` CI is restricted to `main`.
 
+**Tests are part of the change.** Every PR that changes behaviour — a new
+feature, a bug fix, a handled edge case — must **add or update tests** that would
+fail without the change. If a change genuinely isn't testable (docs, comments, a
+pure refactor already covered), say so in the PR's *Tests* section. The
+[`.github/pull_request_template.md`](.github/pull_request_template.md) checklist
+makes this explicit on every PR.
+
+**Issues are optional for a PR** — an issue is *never* required to open a PR, but
+linking or opening one is **encouraged** for anything non-trivial (`Closes #N`),
+and roadmap work should reference its [`roadmap`](#5-the-roadmap-lives-in-github-issues)
+issue.
+
 **Flow:**
 ```bash
 git checkout -b feat/<slug>          # or fix/… , docs/…
