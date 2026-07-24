@@ -4,6 +4,22 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Paint a route (free-hand).** A new way to build a route in Route mode: tap
+  **🖌 Paint a route** and drag on the map to draw a continuous line, then tap
+  **Finished** to turn it into waypoints. The simplification is turn-aware —
+  straights collapse to a couple of marks, turns keep their shape, and a turn
+  *after a long straight* gets extra marks packed around the corner (a deliberate
+  swerve is usually dodging an obstacle, so it's traced faithfully). An always-on
+  toolbar carries a **Draw / Pan** toggle — pause the line to pan or zoom, then
+  resume drawing from where you stopped — with **Finished** and **Cancel** always
+  visible. (`route.js` `VA.paint.pathToWaypoints`: RDP + curvature densification.)
+- **Trace tightly (hug corners).** A new per-route option (checkbox in the route
+  panel; auto-enabled for painted routes) that shrinks the waypoint arrival radius
+  (~5 m → ~1.5 m) so the boat hugs each corner instead of turning early and
+  cutting inside it — for routes where the exact shape matters, e.g. steering
+  around an obstacle. The abeam perpendicular-pass gate keeps the normal radius,
+  so a tight route can't stall on GPS noise/drift. (`state.route_trace_tight`,
+  `WaypointConfig.tight_arrival_radius_m`.)
 - **Two new stylized basemaps.** Added a **Nautical** chartplotter style (CARTO
   Voyager — soft chart-blue water, cream land — with a light marine tint, pairs
   with the sea-marks + depth overlays) and an on-brand **Vanchor Teal** dark

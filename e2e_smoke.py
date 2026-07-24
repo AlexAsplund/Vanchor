@@ -152,6 +152,34 @@ def frontend_checks():
             check(f"settings card #{cid}", pg.locator("#" + cid).count() == 1)
         check("measure tool control", pg.locator(".measure-btn").count() == 1)
         check("alert-history bell", pg.locator("#alerts-open").count() == 1)
+
+        # --- Paint route (free-hand) ---------------------------------------
+        # Exercise the pure path->waypoints algorithm in-browser (deterministic,
+        # no flaky synthetic pointer drags): a long straight into a sharp turn
+        # should collapse the straight yet keep detail at the corner.
+        n_wp = pg.evaluate(
+            """() => {
+                const base = {lat: 59.66275, lon: 13.32247};
+                const path = [];
+                for (let i = 0; i < 120; i++) path.push({lat: base.lat, lon: base.lon + 0.0009 * (i/119)});
+                for (let i = 1; i < 120; i++) path.push({lat: base.lat + 0.0009 * (i/119), lon: base.lon + 0.0009});
+                return VA.paint.pathToWaypoints(path, 1.2).length;
+            }"""
+        )
+        check(f"paint algorithm yields waypoints ({n_wp})", 3 <= n_wp <= 80)
+        # UI wiring: Paint button reveals the always-visible toolbar; the Draw/Pan
+        # toggle flips; Cancel tears it back down.
+        pg.evaluate("()=>document.getElementById('wp-paint').click()")
+        pg.wait_for_timeout(100)
+        check("paint toolbar shows", not pg.locator("#paint-bar").evaluate("el=>el.classList.contains('hidden')"))
+        check("finished + cancel visible", pg.locator("#paint-finish").is_visible() and pg.locator("#paint-cancel").is_visible())
+        pg.evaluate("()=>document.getElementById('paint-toggle').click()")
+        pg.wait_for_timeout(50)
+        check("draw/pan toggle flips", pg.locator("#paint-toggle").evaluate("el=>el.classList.contains('panning')"))
+        pg.evaluate("()=>document.getElementById('paint-cancel').click()")
+        pg.wait_for_timeout(50)
+        check("paint toolbar hides on cancel", pg.locator("#paint-bar").evaluate("el=>el.classList.contains('hidden')"))
+
         check("no console errors", not errs)
         if errs:
             print("    console errors:", errs[:5])

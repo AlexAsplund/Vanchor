@@ -113,6 +113,16 @@ telemetry + route snapshots, set from a `goto`/`load_route` flag):
   adjacent in-range mark). Distinct from `route_loop`; a plain route (neither
   flag) completes and idles.
 
+**Trace-tightly (`route_trace_tight`).** A third route flag (goto/load_route +
+route snapshot). When set, `WaypointMode` swaps `arrival_radius_m` for the much
+smaller `tight_arrival_radius_m` (5 m → 1.5 m) everywhere it decides arrival —
+including the multi-advance loop — so the boat **hugs corners** instead of turning
+early and cutting inside. Set for hand-drawn "paint" routes and any route where
+the exact shape matters. The passed-perpendicular gate deliberately keeps the
+*normal* radius (its 3× bound) so a tight circle the boat is blown just outside of
+can't wedge the route — the abeam pass still advances the leg. Front end sends it
+via the **Trace tightly** checkbox (auto-ticked when a painted route loads).
+
 **Work Area mode (`WorkAreaMode`).** Visit each spot, HOLD position there, then
 advance. The spots are `state.waypoints`; `active_waypoint` is the current spot.
 A two-phase machine: TRAVEL reuses the waypoint leg (cross-track + fwd/reverse);

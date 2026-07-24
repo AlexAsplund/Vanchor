@@ -131,6 +131,19 @@
     <button id="arm-banner-cancel" type="button">Cancel</button>
   </div>
 
+  <!-- Paint-route toolbar: always visible while free-hand drawing a route.
+       The Draw / Pan toggle lets you pause the line to pan/zoom, then resume
+       from where you stopped; Finished + Cancel stay on screen throughout. -->
+  <div id="paint-bar" class="paint-bar hidden" role="toolbar" aria-label="Paint route">
+    <button id="paint-toggle" type="button" class="paint-toggle">✏️ Draw</button>
+    <span id="paint-hint" class="paint-hint">Drag on the map to draw your route.</span>
+    <span id="paint-count" class="paint-count"></span>
+    <div class="paint-actions">
+      <button id="paint-finish" type="button" class="paint-finish">&#x2713; Finished</button>
+      <button id="paint-cancel" type="button" class="paint-cancel">Cancel</button>
+    </div>
+  </div>
+
   <!-- Alert history (#97): a dialog listing recent safety alerts, newest first.
        Driven by VA.logAlert(); persisted to localStorage. -->
   <dialog id="alerts-dialog" class="alerts-dialog">
@@ -574,12 +587,16 @@
 
       <!-- WAYPOINT / ROUTE -->
       <div class="ctx-panel" id="ctx-waypoint" data-for="waypoint">
-        <div class="hint">Turn on <b>Add waypoints</b> to drop pins by tapping the map; otherwise map taps do nothing.</div>
+        <div class="hint">Turn on <b>Add waypoints</b> to drop pins by tapping the map; otherwise map taps do nothing. Or <b>Paint a route</b> to free-hand draw a line and turn it into waypoints.</div>
         <div class="btn-row">
           <button id="wp-arm" class="btn-primary wide">＋ Add waypoints</button>
         </div>
+        <div class="btn-row">
+          <button id="wp-paint" class="btn-ghost wide">🖌 Paint a route (free-hand)</button>
+        </div>
         <ol id="wp-list" class="wp-list"></ol>
         <label class="switch" title="At the end of the route, reverse and run it back — patrolling there-and-back continuously."><input type="checkbox" id="wp-patrol" /><span class="track"></span> Patrol (there &amp; back)</label>
+        <label class="switch" title="Follow the route tightly — hug each corner instead of cutting inside it. Auto-enabled for painted routes; good when the exact shape matters (e.g. steering around an obstacle)."><input type="checkbox" id="wp-tight" /><span class="track"></span> Trace tightly (hug corners)</label>
         <div class="btn-row">
           <button id="wp-go" class="btn-primary">▶ Start route</button>
           <button id="wp-clear" class="btn-ghost">Clear</button>

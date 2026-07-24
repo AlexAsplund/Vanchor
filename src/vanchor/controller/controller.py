@@ -789,6 +789,8 @@ class Controller:
                     self.state.route_loop = bool(command.get("loop", False))
                     # Patrol: at each end, reverse and run the route back.
                     self.state.route_patrol = bool(command.get("patrol", False))
+                    # Trace tightly: hug corners (small arrival radius) -- paint routes.
+                    self.state.route_trace_tight = bool(command.get("trace_tight", False))
                     self.set_mode(ControlModeName.WAYPOINT)
                 else:
                     n = len(self.state.waypoints)
@@ -801,6 +803,7 @@ class Controller:
                 self.state.active_waypoint = 0
                 self.state.route_loop = bool(command.get("loop", False))
                 self.state.route_patrol = bool(command.get("patrol", False))
+                self.state.route_trace_tight = bool(command.get("trace_tight", False))
                 if "throttle" in command:
                     cast(
                         WaypointMode, self.modes[ControlModeName.WAYPOINT]
@@ -989,6 +992,7 @@ class Controller:
             "route_on_arrival": self.state.route_on_arrival,
             "route_loop": self.state.route_loop,
             "route_patrol": self.state.route_patrol,
+            "route_trace_tight": self.state.route_trace_tight,
             "target_heading": self.state.target_heading,
             "anchor": self.state.anchor,
             "anchor_radius_m": self.state.anchor_radius_m,
@@ -1016,6 +1020,7 @@ class Controller:
         self.state.route_on_arrival = snap["route_on_arrival"]
         self.state.route_loop = snap.get("route_loop", False)
         self.state.route_patrol = snap.get("route_patrol", False)
+        self.state.route_trace_tight = snap.get("route_trace_tight", False)
         self.state.target_heading = snap["target_heading"]
         self.state.anchor = snap["anchor"]
         self.state.anchor_radius_m = snap["anchor_radius_m"]

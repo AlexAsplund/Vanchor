@@ -594,6 +594,13 @@ def maneuver_to_bearing(
 @dataclass
 class WaypointConfig:
     arrival_radius_m: float = 5.0
+    # Arrival radius used when the route is flagged "trace tightly"
+    # (state.route_trace_tight) -- hand-drawn paint routes and any route where the
+    # exact shape matters. Much smaller than the normal radius so the boat hugs
+    # each corner instead of turning off early and cutting inside it. The abeam
+    # perpendicular-pass gate still advances the leg, so a tight radius can't stall
+    # the route if GPS noise or drift keeps the boat just outside the circle.
+    tight_arrival_radius_m: float = 1.5
     throttle: float = 0.6
     # Degrees of heading correction per metre of cross-track error.
     xte_gain: float = 2.0
@@ -679,13 +686,21 @@ class WaypointMode(ControlMode):
         if self._leg_start is None:
             self._leg_start = pos
 
+        # Effective arrival radius: tiny when the route is flagged "trace tightly"
+        # (paint routes) so corners are hugged, not cut inside the normal radius.
+        radius = (
+            self.config.tight_arrival_radius_m
+            if state.route_trace_tight
+            else self.config.arrival_radius_m
+        )
+
         target = state.waypoints[state.active_waypoint].point
         distance = haversine_m(pos, target)
         state.distance_to_waypoint_m = distance
 
         # Arrival: within the radius, OR passed the leg's perpendicular (the
         # boat sailed past the waypoint abeam without entering the circle).
-        arrived = distance <= self.config.arrival_radius_m
+        arrived = distance <= radius
         if not arrived:
             leg_len = haversine_m(self._leg_start, target)
             if leg_len > 0.0:
@@ -696,6 +711,10 @@ class WaypointMode(ControlMode):
                     math.radians(angle_difference(brg_leg, brg_pos))
                 )
                 xte_m = abs(cross_track(self._leg_start, target, pos).distance_m)
+                # This abeam gate deliberately keeps the NORMAL radius even when
+                # tracing tightly: it's the anti-stall net that advances the leg
+                # once the boat has passed the mark's perpendicular, so a 1.5 m
+                # circle the boat is blown just outside of can't wedge the route.
                 if along >= leg_len and xte_m <= 3.0 * self.config.arrival_radius_m:
                     arrived = True
 
@@ -710,7 +729,7 @@ class WaypointMode(ControlMode):
                 if not 0 <= state.active_waypoint < len(state.waypoints):
                     break
                 nxt = state.waypoints[state.active_waypoint].point
-                if haversine_m(pos, nxt) <= self.config.arrival_radius_m:
+                if haversine_m(pos, nxt) <= radius:
                     self._post_speed(state, state.active_waypoint)
                     state.active_waypoint += self._step
                     self._leg_start = nxt

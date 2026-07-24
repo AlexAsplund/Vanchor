@@ -141,6 +141,11 @@ class NavigationState:
     # back the other way -- a continuous there-and-back "patrol" (distinct from
     # route_loop, which closes the ring). Set via the goto/load_route "patrol" flag.
     route_patrol: bool = False
+    # When True, follow the route TIGHTLY: WaypointMode uses a much smaller arrival
+    # radius so it hugs each corner instead of cutting it inside the normal radius.
+    # Set for hand-drawn "paint" routes (and any route where the exact traced shape
+    # matters -- e.g. steering around an obstacle). Via the goto/load_route flag.
+    route_trace_tight: bool = False
 
     # --- Work Area mode: visit spots, hold at each, then advance. -------- #
     # The spots are state.waypoints; active_waypoint is the current spot. While

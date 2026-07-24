@@ -36,6 +36,18 @@ route you saved last trip.
 3. Tap **＋ Add waypoints** again (or it clears on start) when done.
 4. Press **▶ Start route**.
 
+*Paint a route (free-hand):* tap **🖌 Paint a route** to draw the line instead of
+placing pins one by one.
+1. An always-on toolbar appears with a **Draw / Pan** toggle and **Finished** /
+   **Cancel**. In **Draw** mode, drag on the map to draw a continuous line.
+2. Release to pause. Tap the toggle to **🤚 Pan** to pan or zoom the map, then tap
+   **✏️ Draw** and keep drawing **from where you stopped** — the line joins up.
+3. Tap **✓ Finished**. The line becomes waypoints and lands **unstarted** in the
+   editor to review. Straights collapse to a couple of marks; turns keep their
+   shape; a turn *after a long straight* gets extra marks packed around the corner
+   (a deliberate swerve is usually dodging something, so it's traced faithfully).
+   **Trace tightly** is auto-enabled (see Settings). Review, then **▶ Start route**.
+
 *"Take me here" smart water routing:* open **Take me here (smart route)** in the
 panel.
 1. Tap **Pick destination**, then tap the map. (Or long-press / right-click any
@@ -74,6 +86,12 @@ restart at waypoint 1.
 - **Patrol (there & back)** — checkbox in the route panel. At each end, reverse
   and run the route back, indefinitely. *Default off.* A **↩ patrol** badge lights
   while active.
+- **Trace tightly (hug corners)** — checkbox in the route panel. Shrinks the
+  arrival radius (~5 m → ~1.5 m) so the boat hugs each corner instead of turning
+  early and cutting inside it. *Default off; auto-enabled for painted routes.* Use
+  it whenever the exact drawn shape matters — e.g. the line steers around an
+  obstacle. The boat still can't stall on it: passing a mark abeam advances the
+  leg even when noise or drift holds it just outside the tighter circle.
 - **Loop** — set by the **Loop around island** planner (not a manual checkbox).
   At the end the route wraps to waypoint 1 and circles continuously. A **↻ loop**
   badge lights. Clearing or starting a normal route drops the loop flag.
