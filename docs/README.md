@@ -60,7 +60,8 @@ The interfaces the front end and integrations build against.
 
 ## Project
 
-- **[roadmap.md](roadmap.md)** — what's next (done work lives in the CHANGELOG).
+- **[roadmap.md](roadmap.md)** — pointer to the roadmap, which now lives in
+  GitHub issues (label `roadmap`); done work lives in the CHANGELOG.
 - **[assumptions.md](assumptions.md)** — the deliberate simplifications taken.
 - **[extension-packs.md](extension-packs.md)** — design notes for a future
   HACS-style pack system (not yet built).
