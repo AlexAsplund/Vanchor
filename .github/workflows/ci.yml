@@ -1,12 +1,57 @@
 name: CI
 
+# Feature branches are validated via the pull_request event only; push runs are
+# restricted to main (post-merge) so a branch+PR doesn't double-run everything.
 on:
   push:
+    branches: [main]
   pull_request:
 
+# Cancel superseded runs for the same ref (a new push to a PR supersedes the old).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Detect a docs-only change so the heavy jobs can skip it. A skipped required
+  # job still reports its check (as "skipped" = pass), so this does NOT deadlock
+  # branch protection — unlike workflow-level paths filtering, which never creates
+  # the check and would block the PR forever.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.detect.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        name: Detect docs-only change
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+            head='${{ github.event.pull_request.head.sha }}'
+          else
+            base='${{ github.event.before }}'
+            head='${{ github.sha }}'
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0   # can't diff -> run everything
+          fi
+          files="$(git diff --name-only "$base" "$head")"
+          printf 'changed files:\n%s\n' "$files"
+          # docs-only = every changed file is markdown / under docs/ / the PR template / LICENSE
+          if [ -z "$files" ] || ! printf '%s\n' "$files" | grep -qvE '(^docs/|\.md$|^\.github/pull_request_template\.md$|^LICENSE$)'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     name: Test (Python ${{ matrix.python-version }})
+    needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -30,6 +75,8 @@ jobs:
 
   lint:
     name: Lint
+    needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -49,6 +96,8 @@ jobs:
 
   js-syntax:
     name: JS syntax
+    needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -62,6 +111,8 @@ jobs:
 
   browser-e2e:
     name: Browser E2E
+    needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
