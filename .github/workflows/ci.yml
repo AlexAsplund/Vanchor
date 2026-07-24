@@ -48,10 +48,14 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # NOTE: this is a MATRIX job, so its steps (not the job) are gated on the
+  # docs-only skip. A skipped matrix job would report the unexpanded check name
+  # "Test (Python ${{ matrix.python-version }})", leaving the required contexts
+  # "Test (Python 3.11/3.12)" unreported and the PR blocked. Running the job with
+  # its steps skipped expands the matrix and reports both names as success.
   test:
     name: Test (Python ${{ matrix.python-version }})
     needs: changes
-    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -59,18 +63,22 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - if: ${{ needs.changes.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
+        if: ${{ needs.changes.outputs.skip != 'true' }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install dependencies
+        if: ${{ needs.changes.outputs.skip != 'true' }}
         run: pip install -e . -r requirements-dev.txt
 
       - name: Run tests
+        if: ${{ needs.changes.outputs.skip != 'true' }}
         run: python -m pytest -q
 
   lint:
