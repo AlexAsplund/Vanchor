@@ -38,10 +38,12 @@ route you saved last trip.
 
 *Paint a route (free-hand):* tap **🖌 Paint a route** to draw the line instead of
 placing pins one by one.
-1. An always-on toolbar appears with a **Draw / Pan** toggle and **Finished** /
-   **Cancel**. In **Draw** mode, drag on the map to draw a continuous line.
+1. An always-on toolbar appears with a **Draw / Pan** toggle, **Undo**, and
+   **Finished** / **Cancel**. In **Draw** mode, drag on the map to draw a
+   continuous line.
 2. Release to pause. Tap the toggle to **🤚 Pan** to pan or zoom the map, then tap
    **✏️ Draw** and keep drawing **from where you stopped** — the line joins up.
+   Drew a stretch wrong? Tap **↶ Undo** to drop the last segment and redraw it.
 3. Tap **✓ Finished**. The line becomes waypoints and lands **unstarted** in the
    editor to review. Straights collapse to a couple of marks; turns keep their
    shape; a turn *after a long straight* gets extra marks packed around the corner

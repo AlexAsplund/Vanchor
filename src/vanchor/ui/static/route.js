@@ -439,17 +439,22 @@
   const paintMap = VA.map.leaflet;
   const paintBar = $("paint-bar");
   const paintToggle = $("paint-toggle");
+  const paintUndoBtn = $("paint-undo");
   const paintHint = $("paint-hint");
   const paintCount = $("paint-count");
   let paintArmed = false, paintPanning = false, paintDrawing = false;
   let paintPts = [];              // accumulated latlngs across all strokes
+  let paintStrokeStarts = [];     // index into paintPts where each stroke began (for Undo)
   let paintLine = null;           // live Leaflet polyline
   let paintLastClient = null;     // last raw client point (pixel throttle)
 
   function mapEl() { return document.getElementById("map"); }
   function paintLatLng(ev) {
     const rect = paintMap.getContainer().getBoundingClientRect();
-    return paintMap.containerPointToLatLng(L.point(ev.clientX - rect.left, ev.clientY - rect.top));
+    // Leaflet's LatLng uses `.lng`; the rest of the paint code (and the waypoint
+    // model) uses `.lon` — normalise here so the drawn points carry `.lon`.
+    const ll = paintMap.containerPointToLatLng(L.point(ev.clientX - rect.left, ev.clientY - rect.top));
+    return { lat: ll.lat, lon: ll.lng };
   }
   function metresPerPixel() {
     const c = paintMap.getSize();
@@ -473,6 +478,15 @@
         : (paintPts.length ? "Drag to keep drawing where you left off." : "Drag on the map to draw your route.");
     }
     if (paintCount) paintCount.textContent = paintPts.length ? paintPts.length + " pts" : "";
+    if (paintUndoBtn) paintUndoBtn.disabled = paintStrokeStarts.length === 0;
+  }
+  // Undo the last STROKE (everything drawn since the last pointer-down) — the
+  // natural unit when a stretch comes out wrong: pause, tap Undo, redraw it.
+  function undoPaintStroke() {
+    if (!paintStrokeStarts.length) return;
+    const start = paintStrokeStarts.pop();
+    paintPts.length = start;         // drop that stroke's points
+    paintDrawLine(); paintUpdateBar();
   }
   function paintZoomHandlers(enable) {
     // Toggle Leaflet's own gestures so Draw mode locks the map and Pan mode frees it.
@@ -497,10 +511,21 @@
     if (!paintArmed || paintPanning) return;
     if (ev.button !== undefined && ev.button !== 0) return;   // left / primary only
     ev.preventDefault();
+    // Release the browser's IMPLICIT pointer capture, which targets whichever tile
+    // element is under the cursor at pointerdown. Leaflet can swap that tile out
+    // mid-stroke; the pointerup would then fire on a detached node and never reach
+    // us, so the stroke never "ends" and the next one can't start. With it
+    // released, events hit-test normally and reach the window listeners below —
+    // which we bind per-stroke so move/up keep flowing even off the map element.
+    try { if (ev.target && ev.target.releasePointerCapture) ev.target.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
     paintDrawing = true;
+    paintStrokeStarts.push(paintPts.length);   // mark this stroke's start for Undo
     paintLastClient = { x: ev.clientX, y: ev.clientY };
     paintPts.push(paintLatLng(ev));
     paintDrawLine(); paintUpdateBar();
+    window.addEventListener("pointermove", onPaintMove);
+    window.addEventListener("pointerup", onPaintUp);
+    window.addEventListener("pointercancel", onPaintUp);
   }
   function onPaintMove(ev) {
     if (!paintDrawing) return;
@@ -509,20 +534,25 @@
     paintPts.push(paintLatLng(ev));
     paintDrawLine(); paintUpdateBar();
   }
-  function onPaintUp() { paintDrawing = false; }   // pause; the drawn path is kept
+  function onPaintUp() {
+    window.removeEventListener("pointermove", onPaintMove);
+    window.removeEventListener("pointerup", onPaintUp);
+    window.removeEventListener("pointercancel", onPaintUp);
+    paintDrawing = false;   // pause; the drawn path is kept
+  }
+  // A native drag started on a tile <img> would eat the stroke — cancel it.
+  function onPaintDragStart(ev) { if (paintArmed && !paintPanning) ev.preventDefault(); }
 
   function enterPaint() {
     if (paintArmed) return;
     setWpArmed(false); setGotoArmed(false);        // paint owns the map alone
-    paintArmed = true; paintPts = []; paintDrawing = false;
+    paintArmed = true; paintPts = []; paintStrokeStarts = []; paintDrawing = false;
     if (paintLine) { paintMap.removeLayer(paintLine); paintLine = null; }
     if (paintBar) paintBar.classList.remove("hidden");
     if (VA.sheet && VA.sheet.collapse) VA.sheet.collapse();   // clear the map to draw on
     const c = paintMap.getContainer();
-    c.addEventListener("pointerdown", onPaintDown);
-    c.addEventListener("pointermove", onPaintMove);
-    c.addEventListener("pointerup", onPaintUp);
-    c.addEventListener("pointercancel", onPaintUp);
+    c.addEventListener("pointerdown", onPaintDown);   // move/up bind per-stroke on window
+    c.addEventListener("dragstart", onPaintDragStart);
     paintSetPanning(false);                         // start in Draw mode
   }
   function exitPaint() {
@@ -530,9 +560,8 @@
     paintArmed = false; paintDrawing = false;
     const c = paintMap.getContainer();
     c.removeEventListener("pointerdown", onPaintDown);
-    c.removeEventListener("pointermove", onPaintMove);
-    c.removeEventListener("pointerup", onPaintUp);
-    c.removeEventListener("pointercancel", onPaintUp);
+    c.removeEventListener("dragstart", onPaintDragStart);
+    onPaintUp();   // unbind any live per-stroke window listeners
     mapEl().classList.remove("painting");
     paintZoomHandlers(true);                        // restore normal map gestures
     if (paintLine) { paintMap.removeLayer(paintLine); paintLine = null; }
@@ -553,6 +582,7 @@
   }
 
   if (paintToggle) paintToggle.addEventListener("click", () => paintSetPanning(!paintPanning));
+  if (paintUndoBtn) paintUndoBtn.addEventListener("click", undoPaintStroke);
   const paintBtn = $("wp-paint");
   if (paintBtn) paintBtn.addEventListener("click", enterPaint);
   const paintFinishBtn = $("paint-finish");

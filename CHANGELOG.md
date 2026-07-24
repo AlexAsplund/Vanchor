@@ -11,8 +11,9 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   *after a long straight* gets extra marks packed around the corner (a deliberate
   swerve is usually dodging an obstacle, so it's traced faithfully). An always-on
   toolbar carries a **Draw / Pan** toggle — pause the line to pan or zoom, then
-  resume drawing from where you stopped — with **Finished** and **Cancel** always
-  visible. (`route.js` `VA.paint.pathToWaypoints`: RDP + curvature densification.)
+  resume drawing from where you stopped — plus **Undo** (drop the last segment)
+  and always-visible **Finished** / **Cancel**. (`route.js`
+  `VA.paint.pathToWaypoints`: RDP + curvature densification.)
 - **Trace tightly (hug corners).** A new per-route option (checkbox in the route
   panel; auto-enabled for painted routes) that shrinks the waypoint arrival radius
   (~5 m → ~1.5 m) so the boat hugs each corner instead of turning early and
