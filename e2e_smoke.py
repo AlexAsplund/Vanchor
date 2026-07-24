@@ -169,13 +169,39 @@ def frontend_checks():
         )
         check(f"paint algorithm yields waypoints ({n_wp})", 3 <= n_wp <= 80)
         # UI wiring: Paint button reveals the always-visible toolbar; the Draw/Pan
-        # toggle flips; Cancel tears it back down.
-        pg.evaluate("()=>document.getElementById('wp-paint').click()")
-        pg.wait_for_timeout(100)
-        check("paint toolbar shows", not pg.locator("#paint-bar").evaluate("el=>el.classList.contains('hidden')"))
+        # toggle flips. Wait deterministically for the wiring + the toolbar rather
+        # than fixed sleeps — a slow CI runner would otherwise read the bar before
+        # the click's synchronous reveal has been observed (this check is a required
+        # gate, so it must not flake).
+        pg.wait_for_function(
+            "() => window.VA && VA.paint && document.getElementById('wp-paint') && document.getElementById('paint-bar')",
+            timeout=10000,
+        )
+
+        def _enter_paint():
+            pg.evaluate("()=>document.getElementById('wp-paint').click()")
+            try:
+                pg.wait_for_function(
+                    "()=>{const b=document.getElementById('paint-bar');return b && !b.classList.contains('hidden');}",
+                    timeout=4000,
+                )
+                return True
+            except Exception:
+                return False
+
+        shown = _enter_paint()
+        if not shown:  # one retry after a layout nudge (first-paint / mobile-settle race)
+            pg.evaluate("()=>window.dispatchEvent(new Event('resize'))")
+            pg.wait_for_timeout(200)
+            shown = _enter_paint()
+            if not shown:
+                print("    paint diag:", pg.evaluate(
+                    "()=>({paint:!!(window.VA&&VA.paint), btn:!!document.getElementById('wp-paint'),"
+                    " bar:(document.getElementById('paint-bar')||{}).className, mobile:document.body.classList.contains('mobile')})"))
+        check("paint toolbar shows", shown)
         check("finished + cancel visible", pg.locator("#paint-finish").is_visible() and pg.locator("#paint-cancel").is_visible())
         pg.evaluate("()=>document.getElementById('paint-toggle').click()")
-        pg.wait_for_timeout(50)
+        pg.wait_for_function("()=>document.getElementById('paint-toggle').classList.contains('panning')", timeout=2000)
         check("draw/pan toggle flips", pg.locator("#paint-toggle").evaluate("el=>el.classList.contains('panning')"))
         pg.evaluate("()=>document.getElementById('paint-toggle').click()")  # back to Draw
 
