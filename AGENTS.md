@@ -87,6 +87,15 @@ Protection also has **strict** mode on: a PR must be **up to date with `main`**
 before it merges (rebase/merge `main` in if it moved). No reviews are required
 (solo maintainer).
 
+**Docs-only changes skip the heavy CI.** Each workflow has a `changes` job that
+diffs the PR; if every changed file is markdown / under `docs/` / the PR template
+/ `LICENSE`, the expensive jobs are **skipped** (a skipped required check still
+counts as passing, so the PR stays mergeable — that's why the skip is at the *job*
+level, not a workflow-level `paths` filter, which would deadlock protection). Mix
+in any code and the full suite runs. Runs also **cancel** when superseded, and
+feature branches validate via the `pull_request` event only (no duplicate
+push-run) — `push` CI is restricted to `main`.
+
 **Tests are part of the change.** Every PR that changes behaviour — a new
 feature, a bug fix, a handled edge case — must **add or update tests** that would
 fail without the change. If a change genuinely isn't testable (docs, comments, a

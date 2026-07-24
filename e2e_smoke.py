@@ -154,96 +154,79 @@ def frontend_checks():
         check("alert-history bell", pg.locator("#alerts-open").count() == 1)
 
         # --- Paint route (free-hand) ---------------------------------------
-        # First the pure path->waypoints algorithm (deterministic): a long
-        # straight into a sharp turn should collapse the straight yet keep detail
-        # at the corner. The actual drawing is exercised further down with real
-        # PointerEvents.
-        n_wp = pg.evaluate(
-            """() => {
-                const base = {lat: 59.66275, lon: 13.32247};
-                const path = [];
-                for (let i = 0; i < 120; i++) path.push({lat: base.lat, lon: base.lon + 0.0009 * (i/119)});
-                for (let i = 1; i < 120; i++) path.push({lat: base.lat + 0.0009 * (i/119), lon: base.lon + 0.0009});
-                return VA.paint.pathToWaypoints(path, 1.2).length;
-            }"""
-        )
-        check(f"paint algorithm yields waypoints ({n_wp})", 3 <= n_wp <= 80)
-        # UI wiring: Paint button reveals the always-visible toolbar; the Draw/Pan
-        # toggle flips. Wait deterministically for the wiring + the toolbar rather
-        # than fixed sleeps — a slow CI runner would otherwise read the bar before
-        # the click's synchronous reveal has been observed (this check is a required
-        # gate, so it must not flake).
+        # enterPaint / toggle / dispatched PointerEvents / undo / finish are all
+        # SYNCHRONOUS JS, so the whole flow runs inside ONE page.evaluate. Doing it
+        # atomically removes the cross-call timing races that made this (required)
+        # check flaky on slow CI runners — no waits between clicks and reads.
         pg.wait_for_function(
-            "() => window.VA && VA.paint && document.getElementById('wp-paint') && document.getElementById('paint-bar')",
-            timeout=10000,
+            "() => window.VA && VA.paint && VA.map && VA.map.leaflet"
+            " && document.getElementById('wp-paint') && document.getElementById('paint-bar')",
+            timeout=15000,
         )
-
-        def _enter_paint():
-            pg.evaluate("()=>document.getElementById('wp-paint').click()")
-            try:
-                pg.wait_for_function(
-                    "()=>{const b=document.getElementById('paint-bar');return b && !b.classList.contains('hidden');}",
-                    timeout=4000,
-                )
-                return True
-            except Exception:
-                return False
-
-        shown = _enter_paint()
-        if not shown:  # one retry after a layout nudge (first-paint / mobile-settle race)
-            pg.evaluate("()=>window.dispatchEvent(new Event('resize'))")
-            pg.wait_for_timeout(200)
-            shown = _enter_paint()
-            if not shown:
-                print("    paint diag:", pg.evaluate(
-                    "()=>({paint:!!(window.VA&&VA.paint), btn:!!document.getElementById('wp-paint'),"
-                    " bar:(document.getElementById('paint-bar')||{}).className, mobile:document.body.classList.contains('mobile')})"))
-        check("paint toolbar shows", shown)
-        check("finished + cancel visible", pg.locator("#paint-finish").is_visible() and pg.locator("#paint-cancel").is_visible())
-        pg.evaluate("()=>document.getElementById('paint-toggle').click()")
-        pg.wait_for_function("()=>document.getElementById('paint-toggle').classList.contains('panning')", timeout=2000)
-        check("draw/pan toggle flips", pg.locator("#paint-toggle").evaluate("el=>el.classList.contains('panning')"))
-        pg.evaluate("()=>document.getElementById('paint-toggle').click()")  # back to Draw
-
-        # ACTUAL drawing: dispatch real PointerEvents for two strokes with a pan
-        # toggle between them (resume). This drives onPaintDown/Move/Up end-to-end
-        # — the earlier checks would miss a lat/lon-shaped bug where nothing draws.
-        drew = pg.evaluate(
+        res = pg.evaluate(
             """() => {
+                const $ = (id) => document.getElementById(id);
+                const line = () => { let n = 0; VA.map.leaflet.eachLayer((l) => {
+                    if (l instanceof L.Polyline && l.options.color === '#1be4ff' && l.options.weight === 4)
+                        n = l.getLatLngs().length; }); return n; };
+                const out = {};
+
+                // 1) pure algorithm: straight-into-turn -> collapse straight, keep corner
+                const b = {lat: 59.66275, lon: 13.32247}, path = [];
+                for (let i = 0; i < 120; i++) path.push({lat: b.lat, lon: b.lon + 0.0009 * (i / 119)});
+                for (let i = 1; i < 120; i++) path.push({lat: b.lat + 0.0009 * (i / 119), lon: b.lon + 0.0009});
+                out.algoWps = VA.paint.pathToWaypoints(path, 1.2).length;
+
+                // 2) enter paint (idempotent) — the toolbar reveals synchronously
+                if ($('paint-bar').classList.contains('hidden')) $('wp-paint').click();
+                out.toolbarShown = !$('paint-bar').classList.contains('hidden');
+                out.controls = !!($('paint-finish') && $('paint-cancel') && $('paint-undo') && $('paint-toggle'));
+
+                // 3) Draw/Pan toggle flips; then force Draw mode for the strokes
+                const tog = $('paint-toggle'), was = tog.classList.contains('panning');
+                tog.click();
+                out.toggleFlips = tog.classList.contains('panning') !== was;
+                if (tog.classList.contains('panning')) tog.click();   // ensure Draw
+
+                // 4) draw a stroke, pause (toggle), resume with a second stroke
                 const c = VA.map.leaflet.getContainer(), r = c.getBoundingClientRect();
-                const fire = (t, x, y, b) => (t === 'pointerdown' ? c : window).dispatchEvent(
-                    new PointerEvent(t, {bubbles:true, cancelable:true, pointerId:1,
-                        pointerType:'mouse', button:0, buttons:b, clientX:r.left+x, clientY:r.top+y}));
+                const fire = (t, x, y, bt) => (t === 'pointerdown' ? c : window).dispatchEvent(
+                    new PointerEvent(t, {bubbles: true, cancelable: true, pointerId: 1,
+                        pointerType: 'mouse', button: 0, buttons: bt, clientX: r.left + x, clientY: r.top + y}));
                 const stroke = (pts) => { fire('pointerdown', pts[0][0], pts[0][1], 1);
-                    for (let i=1;i<pts.length;i++) fire('pointermove', pts[i][0], pts[i][1], 1);
-                    fire('pointerup', pts[pts.length-1][0], pts[pts.length-1][1], 0); };
-                const line = () => { let n=0; VA.map.leaflet.eachLayer(l=>{ if (l instanceof L.Polyline
-                    && l.options.color==='#1be4ff' && l.options.weight===4) n=l.getLatLngs().length; }); return n; };
-                const s1=[]; for (let i=0;i<24;i++) s1.push([120+i*18, 300+Math.sin(i/3)*90]); stroke(s1);
-                const a1 = line();
-                document.getElementById('paint-toggle').click();   // pause -> pan
-                document.getElementById('paint-toggle').click();   // -> draw (resume)
-                const s2=[]; for (let i=0;i<16;i++) s2.push([520+i*12, 500-i*10]); stroke(s2);
-                return {a1, a2: line()};
+                    for (let i = 1; i < pts.length; i++) fire('pointermove', pts[i][0], pts[i][1], 1);
+                    fire('pointerup', pts[pts.length - 1][0], pts[pts.length - 1][1], 0); };
+                const s1 = []; for (let i = 0; i < 24; i++) s1.push([120 + i * 18, 300 + Math.sin(i / 3) * 90]);
+                stroke(s1); out.afterS1 = line();
+                $('paint-toggle').click(); $('paint-toggle').click();   // pan then draw (resume)
+                const s2 = []; for (let i = 0; i < 16; i++) s2.push([520 + i * 12, 500 - i * 10]);
+                stroke(s2); out.afterS2 = line();
+
+                // 5) undo drops the last stroke
+                out.undoWasDisabled = $('paint-undo').disabled;
+                $('paint-undo').click(); out.afterUndo = line();
+
+                // 6) finish -> waypoints in the editor, trace-tight auto-on, toolbar gone
+                $('paint-finish').click();
+                out.pending = VA.map.pending().length;
+                out.tight = $('wp-tight').checked;
+                out.barHidden = $('paint-bar').classList.contains('hidden');
+                $('wp-clear').click();   // tidy up the pending route
+                return out;
             }"""
         )
-        check(f"paint stroke draws a line ({drew['a1']} pts)", drew["a1"] >= 3)
-        check(f"paint resumes after pause ({drew['a1']} -> {drew['a2']} pts)", drew["a2"] > drew["a1"])
-        # Undo removes the last stroke (back to the pre-resume length).
-        undone = pg.evaluate(
-            """() => { const b=document.getElementById('paint-undo'); const was=b.disabled; b.click();
-                let n=0; VA.map.leaflet.eachLayer(l=>{ if (l instanceof L.Polyline
-                    && l.options.color==='#1be4ff' && l.options.weight===4) n=l.getLatLngs().length; });
-                return {was, n}; }"""
-        )
-        check(f"undo removes last stroke ({drew['a2']} -> {undone['n']} pts)", (not undone["was"]) and undone["n"] == drew["a1"])
-        pg.evaluate("()=>document.getElementById('paint-finish').click()")
-        pg.wait_for_timeout(150)
-        n_pending = pg.evaluate("()=>VA.map.pending().length")
-        check(f"Finished builds waypoints ({n_pending})", 3 <= n_pending <= 80)
-        check("trace-tight auto-enabled for paint", pg.evaluate("()=>document.getElementById('wp-tight').checked"))
-        check("paint toolbar hides after finish", pg.locator("#paint-bar").evaluate("el=>el.classList.contains('hidden')"))
-        pg.evaluate("()=>document.getElementById('wp-clear').click()")  # tidy up the pending route
+        if not res["toolbarShown"]:
+            print("    paint diag:", res)
+        check(f"paint algorithm yields waypoints ({res['algoWps']})", 3 <= res["algoWps"] <= 80)
+        check("paint toolbar shows", res["toolbarShown"])
+        check("paint controls present (finish/cancel/undo/toggle)", res["controls"])
+        check("draw/pan toggle flips", res["toggleFlips"])
+        check(f"paint stroke draws a line ({res['afterS1']} pts)", res["afterS1"] >= 3)
+        check(f"paint resumes after pause ({res['afterS1']} -> {res['afterS2']} pts)", res["afterS2"] > res["afterS1"])
+        check(f"undo removes last stroke ({res['afterS2']} -> {res['afterUndo']} pts)", (not res["undoWasDisabled"]) and res["afterUndo"] == res["afterS1"])
+        check(f"Finished builds waypoints ({res['pending']})", 3 <= res["pending"] <= 80)
+        check("trace-tight auto-enabled for paint", res["tight"])
+        check("paint toolbar hides after finish", res["barHidden"])
 
         check("no console errors", not errs)
         if errs:
