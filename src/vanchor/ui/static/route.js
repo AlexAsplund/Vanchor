@@ -17,6 +17,7 @@
   // map tap (panning, deselecting) doesn't litter the route with pins.
   let wpArmed = false;
   function setWpArmed(on) {
+    if (on && paintArmed) exitPaint();   // adding pins ends free-hand paint
     wpArmed = on;
     const b = $("wp-arm");
     if (b) { b.classList.toggle("active", on); b.textContent = on ? "✓ Tap map to add — done" : "＋ Add waypoints"; }
@@ -33,6 +34,7 @@
     }
   }
   VA.map.setOnMapClick((lat, lon, armed) => {
+    if (paintArmed) return;                       // free-hand paint owns the map
     if (armed) { gotoTo(lat, lon); setGotoArmed(false); return; }
     if (wpArmed) { VA.map.addPending(lat, lon); renderWpList(); return; }
     if (VA.pinPopup) VA.pinPopup.open(lat, lon);   // item 18: plain tap = pin popup
@@ -103,6 +105,10 @@
   // #wp-patrol checkbox in the route editor.
   const patrolBox = $("wp-patrol");
   const routeIsPatrol = () => !!(patrolBox && patrolBox.checked);
+  // Trace-tightly flag: hug corners (small arrival radius on the backend) instead
+  // of cutting inside them. Auto-ticked for painted routes (see finishPaint).
+  const tightBox = $("wp-tight");
+  const routeIsTight = () => !!(tightBox && tightBox.checked);
   function updatePatrolIndicator(active) {
     const el = $("patrol-indicator");
     if (el) el.classList.toggle("hidden", !(routeIsPatrol() || !!active));
@@ -122,6 +128,7 @@
     };
     if (routeIsLoop) cmd.loop = true;       // circle continuously around the island
     if (routeIsPatrol()) cmd.patrol = true; // run the route there-and-back continuously
+    if (routeIsTight()) cmd.trace_tight = true; // hug corners (paint / exact-shape routes)
     send(cmd);
     // The route is now ACTIVE — its committed waypoints come back via telemetry
     // and render as the active (coloured) route. Clear the editable "not started"
@@ -246,6 +253,7 @@
   $("wp-clear").addEventListener("click", () => {
     VA.map.setPending([]); renderWpList(); setWpArmed(false);
     setLoopFlag(false);   // clearing the route drops any island-loop flag
+    if (tightBox) tightBox.checked = false;   // ...and the trace-tightly flag
   });
 
   // Live editing of an ACTIVE route: when the user drags or edits a committed
@@ -254,6 +262,7 @@
     if (!waypoints || !waypoints.length) { send({ type: "stop" }); setLoopFlag(false); return; }
     const cmd = { type: "goto", waypoints, throttle: 0.6 };
     if (routeIsLoop) cmd.loop = true;   // (loop/patrol also preserved server-side on edits)
+    if (routeIsTight()) cmd.trace_tight = true;
     // active = resume index: keep navigating from the current target instead of
     // restarting at waypoint 1 when a committed waypoint is dragged/edited (#51).
     if (Number.isInteger(resume)) cmd.active = resume;
@@ -264,6 +273,7 @@
   const gotoArm = $("goto-arm");
   const gotoAction = $("goto-action");
   function setGotoArmed(on) {
+    if (on && paintArmed) exitPaint();   // go-to arming ends free-hand paint
     VA.map.setGotoArmed(on);
     if (gotoArm) {
       gotoArm.classList.toggle("active", on);
@@ -318,6 +328,267 @@
     }).catch(() => { if (contourStatus) contourStatus.textContent = "Contour lookup failed."; });
     return true;                            // consumed the click
   });
+
+  // ===== Paint route (free-hand) ===========================================
+  // Draw a continuous line on the map; Finished simplifies it into waypoints.
+  // The simplification is turn-aware: straights collapse to a couple of points,
+  // turns keep their shape, and a turn that FOLLOWS a long straight gets extra
+  // waypoints packed around the corner — a long run into a sudden turn usually
+  // means the skipper is threading past an obstacle, so we trace it faithfully
+  // instead of letting the boat cut the corner. A Draw / Pan toggle lets you
+  // pause mid-line to pan or zoom, then resume from where you stopped; Finished
+  // and Cancel stay on screen the whole time.
+
+  // ---- pure geometry: raw drawn path -> waypoints -------------------------
+  const PDEG = Math.PI / 180, PR = 6371000;
+  function paintProject(latlngs) {
+    // Equirectangular projection to local metres (accurate over a lake-sized draw).
+    const cos0 = Math.cos(latlngs[0].lat * PDEG);
+    return latlngs.map((p) => ({ x: p.lon * PDEG * cos0 * PR, y: p.lat * PDEG * PR, lat: p.lat, lon: p.lon }));
+  }
+  function pDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function pPerp(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+    if (L2 === 0) return pDist(p, a);
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+  function pRdp(P, eps) {
+    // Ramer–Douglas–Peucker: keep the vertices that carry the line's shape.
+    const n = P.length;
+    if (n < 3) return P.map((_, i) => i);
+    const keep = new Array(n).fill(false);
+    keep[0] = keep[n - 1] = true;
+    const stack = [[0, n - 1]];
+    while (stack.length) {
+      const seg = stack.pop(), a = seg[0], b = seg[1];
+      let maxD = -1, idx = -1;
+      for (let i = a + 1; i < b; i++) {
+        const d = pPerp(P[i], P[a], P[b]);
+        if (d > maxD) { maxD = d; idx = i; }
+      }
+      if (maxD > eps && idx > -1) { keep[idx] = true; stack.push([a, idx]); stack.push([idx, b]); }
+    }
+    const out = [];
+    for (let i = 0; i < n; i++) if (keep[i]) out.push(i);
+    return out;
+  }
+  function pTurn(prev, cur, next) {
+    const ax = cur.x - prev.x, ay = cur.y - prev.y, bx = next.x - cur.x, by = next.y - cur.y;
+    const la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+    if (la === 0 || lb === 0) return 0;
+    let c = (ax * bx + ay * by) / (la * lb);
+    c = Math.max(-1, Math.min(1, c));
+    return Math.acos(c) / PDEG;                   // degrees of course change
+  }
+  function pArc(P, i, j) { let s = 0; for (let k = i; k < j; k++) s += pDist(P[k], P[k + 1]); return s; }
+  function pWalk(P, from, dir, target) {
+    // Walk raw indices from `from` until the arc length reaches `target` metres.
+    let acc = 0, i = from;
+    for (;;) {
+      const nx = i + dir;
+      if (nx < 0 || nx >= P.length) return i;
+      acc += pDist(P[i], P[nx]); i = nx;
+      if (acc >= target) return i;
+    }
+  }
+  function pathToWaypoints(latlngs, mpp, opts) {
+    opts = opts || {};
+    const MAX_WP = opts.maxWp || 80, MIN_SPACING = opts.minSpacing || 1.5;
+    const TURN_SOFT = 25, TURN_HARD = 60;
+    if (!latlngs || latlngs.length < 2) return (latlngs || []).map((p) => ({ lat: p.lat, lon: p.lon }));
+    const P = paintProject(latlngs);
+    // Base tolerance ~6 screen px, clamped to a sane metric band: finer where the
+    // user zoomed in to draw carefully, coarser on a low-zoom overview sketch.
+    let eps = Math.max(1.5, Math.min(25, 6 * (mpp || 1)));
+    let selected = [];
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const kept = pRdp(P, eps);
+      const marks = new Set(kept);
+      const LONG = 6 * eps;                        // "long straight" threshold
+      for (let k = 1; k < kept.length - 1; k++) {
+        const r = kept[k];
+        const ang = pTurn(P[kept[k - 1]], P[r], P[kept[k + 1]]);
+        if (ang < TURN_SOFT) continue;
+        let nExtra = ang >= TURN_HARD ? 2 : 1;
+        if (pArc(P, kept[k - 1], r) > LONG) nExtra += 1;   // obstacle-avoidance detail
+        nExtra = Math.min(3, nExtra);
+        for (let j = 1; j <= nExtra; j++) {
+          marks.add(pWalk(P, r, -1, j * eps));
+          marks.add(pWalk(P, r, +1, j * eps));
+        }
+      }
+      selected = Array.from(marks).sort((a, b) => a - b);
+      if (selected.length <= MAX_WP) break;
+      eps *= 1.6;                                  // too many — coarsen and retry
+    }
+    // Drop points closer than the min spacing (but never the final one).
+    const out = [];
+    let last = null;
+    for (let i = 0; i < selected.length; i++) {
+      const p = P[selected[i]], isLast = i === selected.length - 1;
+      if (last && !isLast && pDist(p, last) < MIN_SPACING) continue;
+      out.push({ lat: p.lat, lon: p.lon }); last = p;
+    }
+    return out;
+  }
+  VA.paint = { pathToWaypoints };   // exposed for tests
+
+  // ---- paint UI controller ------------------------------------------------
+  const paintMap = VA.map.leaflet;
+  const paintBar = $("paint-bar");
+  const paintToggle = $("paint-toggle");
+  const paintUndoBtn = $("paint-undo");
+  const paintHint = $("paint-hint");
+  const paintCount = $("paint-count");
+  let paintArmed = false, paintPanning = false, paintDrawing = false;
+  let paintPts = [];              // accumulated latlngs across all strokes
+  let paintStrokeStarts = [];     // index into paintPts where each stroke began (for Undo)
+  let paintLine = null;           // live Leaflet polyline
+  let paintLastClient = null;     // last raw client point (pixel throttle)
+
+  function mapEl() { return document.getElementById("map"); }
+  function paintLatLng(ev) {
+    const rect = paintMap.getContainer().getBoundingClientRect();
+    // Leaflet's LatLng uses `.lng`; the rest of the paint code (and the waypoint
+    // model) uses `.lon` — normalise here so the drawn points carry `.lon`.
+    const ll = paintMap.containerPointToLatLng(L.point(ev.clientX - rect.left, ev.clientY - rect.top));
+    return { lat: ll.lat, lon: ll.lng };
+  }
+  function metresPerPixel() {
+    const c = paintMap.getSize();
+    const a = paintMap.containerPointToLatLng(L.point(0, c.y / 2));
+    const b = paintMap.containerPointToLatLng(L.point(100, c.y / 2));
+    return haversineM(a.lat, a.lng, b.lat, b.lng) / 100;
+  }
+  function paintDrawLine() {
+    const pts = paintPts.map((p) => [p.lat, p.lon]);
+    if (!paintLine) paintLine = L.polyline(pts, { color: "#1be4ff", weight: 4, opacity: 0.9 }).addTo(paintMap);
+    else paintLine.setLatLngs(pts);
+  }
+  function paintUpdateBar() {
+    if (paintToggle) {
+      paintToggle.textContent = paintPanning ? "🤚 Pan" : "✏️ Draw";
+      paintToggle.classList.toggle("panning", paintPanning);
+    }
+    if (paintHint) {
+      paintHint.textContent = paintPanning
+        ? "Pan / zoom the map, then tap Draw to keep going."
+        : (paintPts.length ? "Drag to keep drawing where you left off." : "Drag on the map to draw your route.");
+    }
+    if (paintCount) paintCount.textContent = paintPts.length ? paintPts.length + " pts" : "";
+    if (paintUndoBtn) paintUndoBtn.disabled = paintStrokeStarts.length === 0;
+  }
+  // Undo the last STROKE (everything drawn since the last pointer-down) — the
+  // natural unit when a stretch comes out wrong: pause, tap Undo, redraw it.
+  function undoPaintStroke() {
+    if (!paintStrokeStarts.length) return;
+    const start = paintStrokeStarts.pop();
+    paintPts.length = start;         // drop that stroke's points
+    paintDrawLine(); paintUpdateBar();
+  }
+  function paintZoomHandlers(enable) {
+    // Toggle Leaflet's own gestures so Draw mode locks the map and Pan mode frees it.
+    ["dragging", "scrollWheelZoom", "touchZoom", "doubleClickZoom"].forEach((h) => {
+      try { paintMap[h][enable ? "enable" : "disable"](); } catch (e) { /* ignore */ }
+    });
+  }
+  function paintSetPanning(on) {
+    paintPanning = !!on;
+    if (paintPanning) {
+      paintDrawing = false;
+      mapEl().classList.remove("painting");
+      paintZoomHandlers(true);      // free the map to pan / zoom
+    } else {
+      mapEl().classList.add("painting");
+      paintZoomHandlers(false);     // lock the map so a drag paints
+    }
+    paintUpdateBar();
+  }
+
+  function onPaintDown(ev) {
+    if (!paintArmed || paintPanning) return;
+    if (ev.button !== undefined && ev.button !== 0) return;   // left / primary only
+    ev.preventDefault();
+    // Release the browser's IMPLICIT pointer capture, which targets whichever tile
+    // element is under the cursor at pointerdown. Leaflet can swap that tile out
+    // mid-stroke; the pointerup would then fire on a detached node and never reach
+    // us, so the stroke never "ends" and the next one can't start. With it
+    // released, events hit-test normally and reach the window listeners below —
+    // which we bind per-stroke so move/up keep flowing even off the map element.
+    try { if (ev.target && ev.target.releasePointerCapture) ev.target.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
+    paintDrawing = true;
+    paintStrokeStarts.push(paintPts.length);   // mark this stroke's start for Undo
+    paintLastClient = { x: ev.clientX, y: ev.clientY };
+    paintPts.push(paintLatLng(ev));
+    paintDrawLine(); paintUpdateBar();
+    window.addEventListener("pointermove", onPaintMove);
+    window.addEventListener("pointerup", onPaintUp);
+    window.addEventListener("pointercancel", onPaintUp);
+  }
+  function onPaintMove(ev) {
+    if (!paintDrawing) return;
+    if (paintLastClient && Math.hypot(ev.clientX - paintLastClient.x, ev.clientY - paintLastClient.y) < 3) return;
+    paintLastClient = { x: ev.clientX, y: ev.clientY };
+    paintPts.push(paintLatLng(ev));
+    paintDrawLine(); paintUpdateBar();
+  }
+  function onPaintUp() {
+    window.removeEventListener("pointermove", onPaintMove);
+    window.removeEventListener("pointerup", onPaintUp);
+    window.removeEventListener("pointercancel", onPaintUp);
+    paintDrawing = false;   // pause; the drawn path is kept
+  }
+  // A native drag started on a tile <img> would eat the stroke — cancel it.
+  function onPaintDragStart(ev) { if (paintArmed && !paintPanning) ev.preventDefault(); }
+
+  function enterPaint() {
+    if (paintArmed) return;
+    setWpArmed(false); setGotoArmed(false);        // paint owns the map alone
+    paintArmed = true; paintPts = []; paintStrokeStarts = []; paintDrawing = false;
+    if (paintLine) { paintMap.removeLayer(paintLine); paintLine = null; }
+    if (paintBar) paintBar.classList.remove("hidden");
+    if (VA.sheet && VA.sheet.collapse) VA.sheet.collapse();   // clear the map to draw on
+    const c = paintMap.getContainer();
+    c.addEventListener("pointerdown", onPaintDown);   // move/up bind per-stroke on window
+    c.addEventListener("dragstart", onPaintDragStart);
+    paintSetPanning(false);                         // start in Draw mode
+  }
+  function exitPaint() {
+    if (!paintArmed) return;
+    paintArmed = false; paintDrawing = false;
+    const c = paintMap.getContainer();
+    c.removeEventListener("pointerdown", onPaintDown);
+    c.removeEventListener("dragstart", onPaintDragStart);
+    onPaintUp();   // unbind any live per-stroke window listeners
+    mapEl().classList.remove("painting");
+    paintZoomHandlers(true);                        // restore normal map gestures
+    if (paintLine) { paintMap.removeLayer(paintLine); paintLine = null; }
+    if (paintBar) paintBar.classList.add("hidden");
+  }
+  function finishPaint() {
+    if (paintPts.length < 2) {
+      if (VA.toast) VA.toast("Draw a line on the map first, then tap Finished.");
+      return;
+    }
+    const wps = pathToWaypoints(paintPts, metresPerPixel())
+      .map((w, i) => ({ name: "WP" + (i + 1), lat: w.lat, lon: w.lon }));
+    exitPaint();
+    VA.map.setPending(wps); renderWpList(); setWpArmed(false);
+    if (tightBox) tightBox.checked = true;   // a hand-drawn line is traced tightly by default
+    if (VA.sheet && VA.sheet.reveal) VA.sheet.reveal("mid");   // show the list to review
+    if (VA.toast) VA.toast(wps.length + " waypoints from your line — review, then Start route.");
+  }
+
+  if (paintToggle) paintToggle.addEventListener("click", () => paintSetPanning(!paintPanning));
+  if (paintUndoBtn) paintUndoBtn.addEventListener("click", undoPaintStroke);
+  const paintBtn = $("wp-paint");
+  if (paintBtn) paintBtn.addEventListener("click", enterPaint);
+  const paintFinishBtn = $("paint-finish");
+  if (paintFinishBtn) paintFinishBtn.addEventListener("click", finishPaint);
+  const paintCancelBtn = $("paint-cancel");
+  if (paintCancelBtn) paintCancelBtn.addEventListener("click", exitPaint);
 
   // Render the (empty) waypoint list once at startup.
   renderWpList();

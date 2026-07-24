@@ -62,6 +62,7 @@ auto-reload.
 | `VA.map.setOnMapClick(fn)` | the fallback click handler (`fn(lat,lon,armed)`). |
 | `VA.map.setGotoArmed/isGotoArmed`, `setGotoMarker/clearGotoMarker` | go-to ("tap map") state. |
 | `VA.map.addPending(lat,lon)`, `pending()`, `setPending(arr)`, `redrawWaypoints()`, `onWaypointChange(fn)`, `onRouteEdit(fn)` | the pending-route-waypoint editor. |
+| `VA.paint.pathToWaypoints(latlngs, mpp)` | pure geometry (in `route.js`): simplify a free-hand drawn line into waypoints (RDP + curvature densification — sparse on straights, dense on turns, extra detail on a turn after a long straight). Used by the **Paint a route** tool; `mpp` = metres/screen-pixel for scale-relative tolerance. |
 | `VA.map.setDepthShow`, `setContourShow`, `redrawDepth` | depth overlays. |
 | `VA.routeEditor` (in `app.js`) | `setLoop/clearLoop/refresh` — refresh the route list after editing pending waypoints. |
 

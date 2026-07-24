@@ -3093,6 +3093,38 @@ body.mobile .dock button.info-dot { min-height: 28px; }
 #arm-banner-done.hidden { display: none; }
 #arm-banner-cancel:hover { background: rgba(var(--accent-rgb), 0.1); }
 
+/* ---- Paint-route toolbar (free-hand route drawing) ---- */
+.paint-bar {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  z-index: 1600; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  justify-content: center; max-width: calc(100vw - 24px);
+  padding: 8px 10px 8px 12px; border-radius: 14px;
+  background: var(--glass-solid); border: 1px solid var(--accent); box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  font: 600 13px var(--font-display); color: var(--text);
+}
+.paint-bar.hidden { display: none; }
+.paint-hint { color: var(--muted); font-size: 12px; }
+.paint-count { color: var(--accent); font: 700 12px var(--font-num); }
+.paint-toggle, .paint-undo, .paint-finish, .paint-cancel {
+  flex-shrink: 0; padding: 7px 13px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--text);
+  font: 700 12px var(--font-display); letter-spacing: 0.03em;
+}
+.paint-toggle { border-color: var(--accent); color: var(--accent); min-width: 84px; }
+.paint-undo:disabled { opacity: 0.4; cursor: default; }
+.paint-undo:not(:disabled):hover { background: rgba(var(--accent-rgb), 0.1); }
+.paint-toggle.panning { border-color: var(--line); color: var(--text); }
+.paint-actions { display: flex; gap: 8px; margin-left: 4px; }
+.paint-finish { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-rgb), 0.14); }
+.paint-cancel:hover, .paint-toggle:hover { background: rgba(var(--accent-rgb), 0.1); }
+/* While actively drawing, the map shows a crosshair and swallows touch-scroll so
+   a finger-drag paints the line instead of panning the page. user-select /
+   user-drag off stop a mouse-drag over the tile <img>s from starting a native
+   image-drag or text selection that would eat the stroke. */
+#map.painting, #map.painting .leaflet-container { cursor: crosshair; touch-action: none; -webkit-user-select: none; user-select: none; }
+#map.painting img { -webkit-user-drag: none; user-drag: none; pointer-events: none; }
+
 /* ---- Peek-echo: collapsed sheet head flips red during a drag alarm (item 21).
    The ctx cell already reddens via #si-ctx[data-ctx="alarm"]; this reinforces
    the whole head so the peek reads as an alarm at a glance. ---- */
