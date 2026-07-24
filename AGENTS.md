@@ -50,7 +50,24 @@ guide):
   keep internal `.md` links valid.
 - **`docs/api/` is generated** by `make docs` — don't hand-edit it.
 
-## 5. Verify before done
+## 5. The roadmap lives in GitHub issues
+
+Planned/future work is tracked as **GitHub issues labelled `roadmap`** (plus an
+area label: `adoption`, `control-ml`, `safety`, `hardware`, `sim`), not in a
+markdown file. [`docs/roadmap.md`](docs/roadmap.md) is only a pointer.
+
+- **See what's next:** `gh issue list --label roadmap` (filter by area, e.g.
+  `--label safety`).
+- **Propose work:** `gh issue create` and label it `roadmap` + an area label.
+  State what, why, acceptance, and the files it touches — concretely.
+- **When it ships:** close the issue and add a dated [`CHANGELOG`](CHANGELOG.md)
+  entry. Don't reintroduce a roadmap list in the docs.
+
+Design detail for two big areas still lives in docs the issues link to:
+[`docs/simulator.md`](docs/simulator.md) (sim-vs-real gaps) and
+[`docs/extension-packs.md`](docs/extension-packs.md) (the pack system).
+
+## 6. Verify before done
 
 `python -m pytest -q` green, `node --check` any JS you touched, and for UI work a
 headless Playwright pass (no console errors). See the testing guide.
