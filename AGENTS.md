@@ -67,7 +67,48 @@ Design detail for two big areas still lives in docs the issues link to:
 [`docs/simulator.md`](docs/simulator.md) (sim-vs-real gaps) and
 [`docs/extension-packs.md`](docs/extension-packs.md) (the pack system).
 
-## 6. Verify before done
+## 6. Branching, PRs & merging (`main` is protected)
 
-`python -m pytest -q` green, `node --check` any JS you touched, and for UI work a
-headless Playwright pass (no console errors). See the testing guide.
+**Never commit to `main` directly.** Branch off `main`, push, open a PR, let CI
+go green, then merge. `main` is protected — force-push and deletion are blocked,
+and **8 status checks are required** before a PR can merge:
+
+| Required check | Reproduce locally before pushing |
+|---|---|
+| `Test (Python 3.11)` / `Test (Python 3.12)` | `python -m pytest -q` |
+| `Lint` | `ruff check src tests` |
+| `JS syntax` | `node --check` on each `.js` you touched |
+| `Browser E2E` | `python e2e_smoke.py` **and** `pytest -m e2e tests/test_e2e_playwright.py -q` |
+| `Sim regression gate` | `python scripts/regression_check.py --verbose` **and** `pytest scripts/test_ci_regression.py -q` |
+| `NMEA parser fuzz (Hypothesis)` | `python -m pytest tests/test_nmea_fuzz.py -q` |
+| `Firmware command-parser host test` | `make -C firmware/steering/tests` |
+
+Protection also has **strict** mode on: a PR must be **up to date with `main`**
+before it merges (rebase/merge `main` in if it moved). No reviews are required
+(solo maintainer).
+
+**Flow:**
+```bash
+git checkout -b feat/<slug>          # or fix/… , docs/…
+# …work, committing with the required trailers…
+git push -u origin feat/<slug>
+gh pr create --base main --fill      # or --title/--body
+gh pr merge <n> --squash --auto --delete-branch
+```
+`--auto` now **waits for the required checks** and merges only once they pass —
+that is the point of the protection (before it existed, `--auto` merged
+instantly). Prefer **squash** merges to keep `main` linear.
+
+Admin can bypass in a genuine emergency (`enforce_admins` is off), but **don't
+merge red or pending CI** — reproduce the failing check locally, fix, push.
+
+To change the required set or strictness later:
+`gh api --method PUT repos/AlexAsplund/Vanchor/branches/main/protection --input <file>`
+(GET the same path to see the current config).
+
+## 7. Verify before done
+
+Before opening/merging a PR, get the required checks (§6) green **locally** — at
+minimum `python -m pytest -q`, `ruff check src tests`, `node --check` on any JS
+you touched, and for UI work `python e2e_smoke.py` (no console errors). Pushing
+red CI just burns a round-trip.
