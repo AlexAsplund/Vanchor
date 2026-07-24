@@ -6,11 +6,50 @@ name: Fuzz
 
 on:
   push:
+    branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Detect docs-only changes so the fuzz + firmware jobs can skip them (a skipped
+  # required job still reports its check = pass, so protection isn't deadlocked).
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.detect.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        name: Detect docs-only change
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+            head='${{ github.event.pull_request.head.sha }}'
+          else
+            base='${{ github.event.before }}'
+            head='${{ github.sha }}'
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files="$(git diff --name-only "$base" "$head")"
+          printf 'changed files:\n%s\n' "$files"
+          if [ -z "$files" ] || ! printf '%s\n' "$files" | grep -qvE '(^docs/|\.md$|^\.github/pull_request_template\.md$|^LICENSE$)'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   nmea-fuzz:
     name: NMEA parser fuzz (Hypothesis)
+    needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -32,6 +71,8 @@ jobs:
 
   firmware-host-test:
     name: Firmware command-parser host test
+    needs: changes
+    if: ${{ needs.changes.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
