@@ -24,6 +24,14 @@
  * touch can't re-apply a stale command.
  * Snap-to-zero deadman: on pointerup, thrust snaps to 0 unless the HOLD toggle
  * is on. Thrust DECREASES are never ramped. Grace ramp only for INCREASES >0.25.
+ * Dwell-to-lock (cruise): hold the knob roughly still (~1.1 s) at a non-zero
+ * speed and it LOCKS — a ring fills clockwise around the rim, then goes solid
+ * amber and the hub reads "CRUISE n%". Release then keeps that speed (like HOLD,
+ * but engaged by the gesture). GRABBING the knob again picks the throttle back up
+ * and re-arms the deadman (the lock clears on touch), so releasing snaps back to
+ * 0 unless you hold still to re-lock — that's how you drag a cruise back to zero
+ * to stop. The lock also drops on STOP or leaving manual. Release-to-0 springs
+ * the knob back to the neutral rest position.
  */
 "use strict";
 
@@ -38,6 +46,12 @@
   const R_OUT = 132, R_CARD = 112, R_IN = 100;
   const R_H_MIN = 36, R_H_MAX = 124;     // handle radius ↔ thrust 0..100%
   const KNOB_R = 13;
+  const R_LOCK = 130;                    // dwell-lock progress ring (just inside the rim)
+  const LOCK_CIRC = 2 * Math.PI * R_LOCK;
+  // Hold the knob roughly still for DWELL_MS to LOCK the speed (cruise): release
+  // then keeps thrust instead of snapping to 0. STILL_TOL = jitter allowed while
+  // "holding still" (viewBox units); only speeds >= LOCK_MIN_THRUST can lock.
+  const DWELL_MS = 1100, STILL_TOL = 9, LOCK_MIN_THRUST = 0.05;
 
   const wrap180 = (d) => ((d + 180) % 360 + 360) % 360 - 180;
   const norm360 = (d) => ((d % 360) + 360) % 360;
@@ -87,6 +101,10 @@
     ` fill="#14324a" stroke="#2d5b7c" stroke-width="1.2"/>` +
     // ghost tick: ACTUAL head angle (steering feedback)
     `<g id="sw-ghost" opacity="0.55"><line x1="${C}" y1="${C - R_IN}" x2="${C}" y2="${C - R_IN + 14}" stroke="#9fb4c6" stroke-width="3.5" stroke-linecap="round"/></g>` +
+    // dwell-lock progress ring: fills clockwise from 12 o'clock while holding the
+    // knob still, then goes solid amber when the speed locks. pointer-events off
+    // so it never steals a drag. Starts at the top via the -90° rotation.
+    `<circle id="sw-lockring" cx="${C}" cy="${C}" r="${R_LOCK}" fill="none" stroke="#1be4ff" stroke-width="4.5" stroke-linecap="round" opacity="0" transform="rotate(-90 ${C} ${C})" pointer-events="none"/>` +
     // command spoke + knob (the ONE control)
     `<line id="sw-spoke" x1="${C}" y1="${C}" x2="${C}" y2="${C - R_H_MIN}" stroke="#1be4ff" stroke-width="2.5" opacity="0.55" stroke-dasharray="3,5"/>` +
     `<g id="sw-knob" role="button" aria-label="steering handle" filter="url(#sw-glow)" style="cursor:grab">` +
@@ -115,6 +133,93 @@
   let sentThrust = 0;       // last commanded thrust (for grace ramp)
   let lastSent = 0;
   let prevMode = null;      // control mode, to zero the wheel on manual exit
+  // Dwell-to-lock (cruise): hold the knob still long enough and the speed locks
+  // so releasing keeps thrust. Behaves like the HOLD toggle but engaged by the
+  // gesture, and persists until you drag to 0, STOP, or leave manual.
+  let dwellLocked = false;  // cruise lock engaged
+  let dwellAnchor = null;   // { dx, dy } where the current stillness began
+  let dwellSince = 0;       // ms timestamp the stillness began
+  let dwellProgress = 0;    // 0..1 fill of the lock ring
+  let dwellRaf = 0;         // rAF handle for the dwell loop
+  let snapping = false;     // true while the knob springs back to the 0 rest pos
+  let snapRaf = 0;          // rAF handle for the snap-back animation
+
+  // Spring the knob back to the zero rest radius (at the released angle) so a
+  // release-without-lock reads as a decisive "back to neutral", not a jump. The
+  // COMMAND already went to 0 (motor stops instantly) — this is display only.
+  function springBackToZero(fromR, angDeg) {
+    if (snapRaf) cancelAnimationFrame(snapRaf);
+    const t0 = Date.now(), DUR = 210, rad = angDeg * Math.PI / 180;
+    snapping = true;
+    if (VA.haptic) VA.haptic("tap");
+    function step() {
+      const k = Math.min(1, (Date.now() - t0) / DUR);
+      const ease = 1 - Math.pow(1 - k, 3);         // easeOutCubic
+      const r = fromR + (R_H_MIN - fromR) * ease;
+      const x = C + r * Math.sin(rad), y = C - r * Math.cos(rad);
+      knobC.setAttribute("cx", x); knobC.setAttribute("cy", y);
+      knobDot.setAttribute("cx", x); knobDot.setAttribute("cy", y);
+      spoke.setAttribute("x2", x); spoke.setAttribute("y2", y);
+      if (k < 1) { snapRaf = requestAnimationFrame(step); }
+      else { snapRaf = 0; snapping = false; lastSig = null; render(); }
+    }
+    snapRaf = requestAnimationFrame(step);
+  }
+  function cancelSnap() {
+    if (snapRaf) { cancelAnimationFrame(snapRaf); snapRaf = 0; }
+    snapping = false;
+  }
+
+  function updateLockRing() {
+    const ring = el("sw-lockring");
+    if (!ring) return;
+    if (dwellLocked) {
+      ring.setAttribute("stroke", "#ffb020");                 // solid amber = locked
+      ring.setAttribute("stroke-dasharray", `${LOCK_CIRC} ${LOCK_CIRC}`);
+      ring.setAttribute("opacity", "0.9");
+    } else if (dwellProgress > 0.001) {
+      ring.setAttribute("stroke", "#1be4ff");                 // filling = cruise arming
+      ring.setAttribute("stroke-dasharray", `${dwellProgress * LOCK_CIRC} ${LOCK_CIRC}`);
+      ring.setAttribute("opacity", "0.85");
+    } else {
+      ring.setAttribute("opacity", "0");
+    }
+  }
+  // rAF loop: while dragging a real speed and held still, fill the ring; on
+  // completion, lock. Reset the timer whenever not eligible (idle/zero/HOLD/moving).
+  function dwellTick() {
+    dwellRaf = 0;
+    if (!dragging && !armed) return;                          // gesture ended
+    const now = Date.now();
+    const t = clamp(Math.abs(ctl.state.thrust), 0, 1);
+    const hold = ctl.holdThrust && ctl.holdThrust();
+    if (!dragging || t < LOCK_MIN_THRUST || hold || dwellLocked) {
+      dwellSince = now;                                       // not accumulating
+      if (!dwellLocked && dwellProgress !== 0) { dwellProgress = 0; updateLockRing(); }
+    } else {
+      dwellProgress = clamp((now - dwellSince) / DWELL_MS, 0, 1);
+      if (dwellProgress >= 1) {
+        dwellLocked = true;
+        if (VA.haptic) VA.haptic("press");                   // confirm the lock
+        render();                                            // refresh the CRUISE readout
+      }
+      updateLockRing();
+    }
+    dwellRaf = requestAnimationFrame(dwellTick);
+  }
+  function startDwell(dx, dy) {
+    dwellAnchor = { dx, dy };
+    dwellSince = Date.now();
+    dwellProgress = 0;
+    if (!dwellRaf) dwellRaf = requestAnimationFrame(dwellTick);
+  }
+  function stopDwell() {
+    if (dwellRaf) { cancelAnimationFrame(dwellRaf); dwellRaf = 0; }
+    dwellProgress = 0;
+  }
+  function clearLock() {
+    dwellLocked = false; dwellProgress = 0; updateLockRing();
+  }
 
   // Handle's boat-frame angle for the current steering mode.
   function screenAngle() {
@@ -139,16 +244,20 @@
     // values; skip the ~13 attribute writes (each an SVG style invalidation)
     // unless something visible moved by at least its display resolution. (perf)
     const sig = `${hd}|${a.toFixed(1)}|${t.toFixed(2)}|` +
-      `${ctl.state.thrust < 0}|${ghostDeg === null ? "-" : ghostDeg.toFixed(1)}`;
+      `${ctl.state.thrust < 0}|${ghostDeg === null ? "-" : ghostDeg.toFixed(1)}|${dwellLocked}`;
     if (sig === lastSig) return;
     lastSig = sig;
     card.setAttribute("transform", `rotate(${-hd} ${C} ${C})`);
     const r = R_H_MIN + (R_H_MAX - R_H_MIN) * clamp(t, 0, 1);
     const rad = a * Math.PI / 180;
     const x = C + r * Math.sin(rad), y = C - r * Math.cos(rad);
-    knobC.setAttribute("cx", x); knobC.setAttribute("cy", y);
-    knobDot.setAttribute("cx", x); knobDot.setAttribute("cy", y);
-    spoke.setAttribute("x2", x); spoke.setAttribute("y2", y);
+    // While the snap-back animation is running it owns the knob/spoke geometry;
+    // don't fight it with the instant thrust=0 position.
+    if (!snapping) {
+      knobC.setAttribute("cx", x); knobC.setAttribute("cy", y);
+      knobDot.setAttribute("cx", x); knobDot.setAttribute("cy", y);
+      spoke.setAttribute("x2", x); spoke.setAttribute("y2", y);
+    }
     // Reverse thrust (set via the slider) tints the knob amber.
     const rev = ctl.state.thrust < 0;
     knobC.setAttribute("stroke", rev ? "#ffb020" : "#1be4ff");
@@ -164,10 +273,11 @@
     const deadman = el("sw-deadman");
     if (deadman) {
       const hold = ctl.holdThrust && ctl.holdThrust();
-      const newText = hold ? "HOLD" : "RELEASE → 0";
+      const newText = dwellLocked ? `CRUISE ${Math.round(t * 100)}%`
+        : (hold ? "HOLD" : "RELEASE → 0");
       if (deadman.textContent !== newText) {
         deadman.textContent = newText;
-        deadman.setAttribute("fill", hold ? "#ffb020" : "#4a6b7a");
+        deadman.setAttribute("fill", (dwellLocked || hold) ? "#ffb020" : "#4a6b7a");
       }
     }
   }
@@ -189,6 +299,12 @@
     // Accept any touch within the dial face (R_OUT).
     if (distToCenter > R_OUT) return;
     ev.preventDefault();
+    cancelSnap();   // grabbing again interrupts any in-flight snap-back
+    // Grabbing the knob "picks up" the throttle and re-arms the deadman: a locked
+    // cruise clears the moment you touch it, so releasing snaps back to 0 (you're
+    // in control again). Hold still to re-lock. This is what lets you drag a
+    // locked cruise back down to zero to stop.
+    if (dwellLocked) { clearLock(); render(); }
     svg.setPointerCapture(ev.pointerId);
     if (distToKnob <= KNOB_R + 12) {
       // Fine-control knob grab: start dragging immediately.
@@ -199,6 +315,7 @@
     }
     grabStart = { dx, dy };
     lastSent = Date.now();
+    startDwell(dx, dy);   // begin timing a hold-still-to-lock gesture
   });
   svg.addEventListener("pointermove", (ev) => {
     if (!dragging && !armed) return;
@@ -207,6 +324,14 @@
       // Threshold: 6 viewBox units of movement to start a dial drag.
       if (Math.hypot(dx - grabStart.dx, dy - grabStart.dy) < 6) return;
       dragging = true; armed = false;
+    }
+    // Moving the knob beyond the jitter tolerance restarts the hold-to-lock timer
+    // (you must settle before it locks). Once locked, movement just re-aims the
+    // cruise — it stays locked.
+    if (dwellAnchor && !dwellLocked &&
+        Math.hypot(dx - dwellAnchor.dx, dy - dwellAnchor.dy) > STILL_TOL) {
+      dwellAnchor = { dx, dy }; dwellSince = Date.now();
+      if (dwellProgress !== 0) { dwellProgress = 0; updateLockRing(); }
     }
     const a = wrap180(Math.atan2(dx, -dy) * 180 / Math.PI);
     // Radius -> thrust, with a snap-to-zero deadzone at the hub.
@@ -237,14 +362,25 @@
   ["pointerup", "pointercancel"].forEach((n) => svg.addEventListener(n, (ev) => {
     if (!dragging && !armed) return;
     dragging = false; armed = false; grabKind = null;
+    stopDwell();
     try { svg.releasePointerCapture(ev.pointerId); } catch (e) { /* ignore */ }
-    // Snap-to-zero deadman: thrust drops to 0 on release, unless HOLD is on.
+    // Snap-to-zero deadman: thrust drops to 0 on release UNLESS the HOLD toggle
+    // is on OR the speed was dwell-LOCKED (cruise) at a real value. Dragging the
+    // knob to ~0 before releasing clears the lock (a natural stop).
     const hold = ctl.holdThrust && ctl.holdThrust();
-    if (!hold) {
+    const keepLocked = dwellLocked && Math.abs(ctl.state.thrust) >= LOCK_MIN_THRUST;
+    if (!hold && !keepLocked) {
+      const fromT = clamp(Math.abs(ctl.state.thrust), 0, 1);
+      const ang = screenAngle();
       ctl.setThrust(0);
       sentThrust = 0;
+      if (dwellLocked) clearLock();   // released at ~0 -> drop the cruise lock
+      // Spring the knob back to the zero rest position (display only; the motor
+      // already got thrust 0). Skip the animation if it was already at rest.
+      if (fromT > 0.03) springBackToZero(R_H_MIN + (R_H_MAX - R_H_MIN) * fromT, ang);
     }
-    ctl.sendManual();   // final authoritative send (thrust 0 if snap)
+    updateLockRing();
+    ctl.sendManual();   // final authoritative send (thrust 0 if snap, held if locked)
     render();
   }));
 
@@ -273,6 +409,7 @@
         sentThrust = 0;
         ctl.state.steerNorm = 0;
         ctl.state.steerBearing = heading;
+        if (dwellLocked) clearLock();   // STOP / leaving manual drops the cruise lock
       }
       prevMode = t.mode;
     }
