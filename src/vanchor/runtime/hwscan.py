@@ -418,7 +418,7 @@ class HardwareScan:
         config, a logger/clock, and coarse boat motion. Deliberately carries NO
         reference to the runtime, the motor, or the safety governor, so a driver
         (or a community pack) can never reach STOP/the deadman/the failsafes
-        through it (see docs/extension-packs.md — the safety floor is never a pack
+        through it (see docs/extensibility.md — the safety floor is never a pack
         concern)."""
         from ..hardware import registry
         rt = self._rt
