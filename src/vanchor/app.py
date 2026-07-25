@@ -60,6 +60,27 @@ from .sim.bathymetry import Bathymetry
 from .sim.devices import SimCompass, SimDepthSounder, SimGps
 from .sim.simulator import Simulator
 
+# Module-level helpers extracted to runtime/ sub-package (issue #69).
+from .runtime.channels import (  # noqa: E402
+    _NeutralChannelMotor,
+    _TeeMotor,
+    _SimChannelState,
+    _SimThrustChannel,
+    _SimSteeringChannel,
+    _start_motor,
+    _stop_motor,
+)
+from .runtime.builders import (  # noqa: E402
+    _build_boat_params,
+    _thrust_yaw_ff_norm,
+    _make_fusion,
+    _make_gps_filter,
+    _build_battery_config,
+    _mask_connector_settings,
+    _overlay_menu_values,
+)
+from .runtime.demo import demo_route_waypoints, apply_demo_mode  # noqa: E402
+
 logger = logging.getLogger("vanchor.app")
 
 # Populate the pluggable device-driver registry (self-registering modules under
@@ -90,313 +111,6 @@ _UNDERWAY_MODES = frozenset(
 # In MANUAL, |commanded thrust| above this counts as "driving" (making way) for
 # the lost-connection failsafe (#64) -- below it the boat is effectively idle.
 _MANUAL_UNDERWAY_THRUST_EPS = 0.02
-
-
-async def _start_motor(motor) -> None:
-    """Open a motor controller's lifecycle if it has one.
-
-    The real ``SerialMotorController`` opens its transport (and starts the
-    feedback reader) in ``start()``; without this its first ``flush()`` raises
-    on a never-opened port. The sim motor (and a bare ``_TeeMotor``) has no
-    ``start`` and is a no-op. Raises on failure so callers can roll back."""
-    start = getattr(motor, "start", None)
-    if start is None:
-        return
-    res = start()
-    if hasattr(res, "__await__"):
-        await res
-
-
-async def _stop_motor(motor) -> None:
-    """Best-effort stop of a motor controller (sends the shutdown CMD 0 and
-    closes the port on the serial controller). Swallows errors -- a shutdown /
-    device-swap must never be blocked by a motor that won't close cleanly. A
-    motor with no ``stop`` (sim motor) is a no-op."""
-    stop = getattr(motor, "stop", None)
-    if stop is None:
-        return
-    try:
-        res = stop()
-        if hasattr(res, "__await__"):
-            await res
-    except Exception:  # noqa: BLE001 - shutdown/swap must not be blocked
-        logger.debug("motor stop failed (best-effort)")
-
-
-def _mask_connector_settings(schema: list, stored: dict) -> dict:
-    """Build a display-safe settings dict from ``schema`` and ``stored`` values.
-
-    For each field in ``schema``:
-    - The value is taken from ``stored`` if present, else from the field's
-      ``default``.
-    - Secret fields (``secret: True``) are masked: ``"•••"`` when the stored
-      value is non-empty, ``""`` when it is empty/absent.
-    - Internal runtime keys (``data_dir``, ``user_edited``) are never included.
-
-    Returns a ``{key: value}`` dict covering every schema field.
-    """
-    result: dict = {}
-    for field in schema:
-        key = field.get("key")
-        if not key:
-            continue
-        default = field.get("default", "")
-        val = stored.get(key, default)
-        if field.get("secret"):
-            result[key] = "•••" if val else ""
-        else:
-            result[key] = val
-    return result
-
-
-def _overlay_menu_values(schema: dict, saved: dict) -> dict:
-    """Return a copy of a device-menu ``schema`` with each setting's ``value``
-    replaced by the saved value for that key (when present) -- so the UI shows
-    persisted choices, not just factory defaults."""
-    settings = []
-    for s in schema.get("settings", []):
-        s = dict(s)
-        if s.get("key") in saved:
-            s["value"] = saved[s["key"]]
-        settings.append(s)
-    return {**schema, "settings": settings, "actions": list(schema.get("actions", []))}
-
-
-def _build_boat_params(cfg: AppConfig):
-    """Build the physics-model parameters for the configured boat geometry."""
-    bc = cfg.boat
-    if cfg.sim.model == "fossen":
-        from .sim.fossen import FossenParams
-
-        return FossenParams(
-            length=bc.length_m,
-            beam=bc.beam_m,
-            mass=bc.mass_kg,
-            max_thrust_n=bc.max_thrust_n,
-            reverse_efficiency=bc.reverse_efficiency,
-            max_speed_mps=bc.max_speed_mps,
-            thruster_x_m=bc.thruster_x_m(),
-            thruster_y_m=bc.thruster_y_m,
-            max_steer_angle_deg=bc.max_steer_angle_deg,
-            hull_tracking=bc.hull_tracking,
-        )
-    from .sim.boat import BoatParams
-
-    return BoatParams(
-        max_speed_mps=bc.max_speed_mps,
-        max_turn_rate_deg=bc.max_turn_rate_deg,
-        reverse_efficiency=bc.reverse_efficiency,
-    )
-
-
-def _thrust_yaw_ff_norm(cfg: AppConfig) -> float:
-    """Thrust-yaw feed-forward as a steering-command fraction.
-
-    The boat config gives the cancelling deflection in radians; the helm command
-    is a fraction of the full mechanical swing (``max_steer_angle_deg``, the same
-    range the sim maps the command onto), so normalise by that. ``steer_sign`` is
-    applied by the helm, not here.
-    """
-    bc = cfg.boat
-    if bc.max_steer_angle_deg <= 0:
-        return 0.0
-    return bc.thrust_yaw_ff_angle() / math.radians(bc.max_steer_angle_deg)
-
-
-def _make_fusion():
-    """A GNSS/INS complementary fusion filter (M9N UBX + HWT901B IMU)."""
-    from .nav.fusion import NavFusion
-    return NavFusion()
-
-
-def _make_gps_filter():
-    """An accuracy-weighted GPS position low-pass (nav.gps_filter)."""
-    from .nav.gps_filter import GpsPositionFilter
-    return GpsPositionFilter()
-
-
-def _build_battery_config(cfg: AppConfig):
-    """Map the app `battery:` config onto the sim battery model (#60)."""
-    from .sim.battery import BatteryConfig as SimBatteryConfig
-
-    b = cfg.battery
-    return SimBatteryConfig(
-        capacity_ah=b.capacity_ah,
-        nominal_v=b.nominal_v,
-        reserve_pct=b.reserve_pct,
-        # Pass the recent-draw smoothing time constant through so YAML tuning of
-        # the range/time-to-empty estimate actually takes effect (#10); without
-        # this the sim battery silently kept its default draw_tau_s.
-        draw_tau_s=b.draw_tau_s,
-    )
-
-
-class _NeutralChannelMotor:
-    """Hold a disabled channel at neutral (0.0) before delegating to the inner
-    motor controller.
-
-    Used for combined-plan configs where one channel source is ``"none"`` while
-    the other rides the shared serial/sim board.  The combined controller still
-    transmits both ``thrust`` and ``steering`` fields in every frame; this adapter
-    ensures the disabled field is always 0.0 regardless of what the control loop
-    computes, honouring the docstring promise in
-    :func:`~vanchor.hardware.link_plan.plan_motor_links`.
-
-    Duck-typed to the ``MotorController`` interface.
-    """
-
-    def __init__(self, inner, neutral_channel: str) -> None:
-        self._inner = inner
-        self._neutral = neutral_channel  # "steering" or "thrust"
-
-    def apply(self, command) -> None:
-        import dataclasses
-        command = dataclasses.replace(command, **{self._neutral: 0.0})
-        self._inner.apply(command)
-
-    async def flush(self) -> None:
-        flush = getattr(self._inner, "flush", None)
-        if flush is None:
-            return
-        res = flush()
-        if hasattr(res, "__await__"):
-            await res
-
-    async def start(self) -> None:
-        await _start_motor(self._inner)
-
-    async def stop(self) -> None:
-        await _stop_motor(self._inner)
-
-    def debug(self) -> str:
-        try:
-            inner_dbg = self._inner.debug()
-        except Exception:  # noqa: BLE001
-            inner_dbg = repr(self._inner)
-        return f"NeutralChannel({self._neutral}=0) -> {inner_dbg}"
-
-
-class _TeeMotor:
-    """Fan one ``MotorCommand`` out to several motor controllers at once — e.g.
-    drive the simulated boat AND a real steering servo for bench testing.
-    Duck-typed to the ``MotorController`` interface (sync ``apply`` + ``flush``,
-    which may be sync or async)."""
-
-    def __init__(self, motors) -> None:
-        self._motors = [m for m in motors if m is not None]
-
-    def apply(self, command) -> None:
-        for m in self._motors:
-            m.apply(command)
-
-    async def flush(self) -> None:
-        for m in self._motors:
-            flush = getattr(m, "flush", None)
-            if flush is None:
-                continue
-            res = flush()
-            if hasattr(res, "__await__"):
-                await res
-
-    async def start(self) -> None:
-        # Open every inner motor that has a lifecycle (e.g. the real serial
-        # controller opens its port + feedback task here). The sim motor has no
-        # start() and is skipped.
-        for m in self._motors:
-            await _start_motor(m)
-
-    async def stop(self) -> None:
-        # Best-effort stop of every inner motor (sends CMD 0 + closes the port on
-        # the serial controller). Never let one failure block the others.
-        for m in self._motors:
-            await _stop_motor(m)
-
-
-class _SimChannelState:
-    """Shared mutable state for a pair of sim split-motor channel adapters.
-
-    Both :class:`_SimThrustChannel` and :class:`_SimSteeringChannel` hold a
-    reference to the same state object so that either channel's flush can
-    reconstruct the full :class:`~vanchor.core.models.MotorCommand` that the
-    :class:`~vanchor.sim.devices.SimMotorController` expects.
-    """
-
-    __slots__ = ("thrust", "steering")
-
-    def __init__(self) -> None:
-        self.thrust: float = 0.0
-        self.steering: float = 0.0
-
-
-class _SimThrustChannel:
-    """A split :class:`~vanchor.hardware.split_motor.MotorChannel` that drives
-    the thrust axis of a :class:`~vanchor.sim.devices.SimMotorController`.
-
-    ``set_normalized`` records the commanded thrust; ``flush`` applies the
-    combined (thrust + steering) command to the underlying sim motor so the
-    physics simulation sees the correct full command. Shares its
-    :class:`_SimChannelState` with a sibling :class:`_SimSteeringChannel`.
-    """
-
-    def __init__(self, sim_motor, state: _SimChannelState) -> None:
-        self._sim = sim_motor
-        self._state = state
-
-    def set_normalized(self, value: float) -> None:
-        self._state.thrust = max(-1.0, min(1.0, value))
-
-    async def flush(self) -> None:
-        from .core.models import MotorCommand
-        self._sim.apply(MotorCommand(
-            thrust=self._state.thrust, steering=self._state.steering))
-
-    async def start(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
-
-    def debug(self) -> str:
-        return f"SimThrustChannel: thrust={self._state.thrust:+.3f}"
-
-    @property
-    def healthy(self) -> bool | None:
-        return None  # sim: health not applicable
-
-
-class _SimSteeringChannel:
-    """A split :class:`~vanchor.hardware.split_motor.MotorChannel` that drives
-    the steering axis of a :class:`~vanchor.sim.devices.SimMotorController`.
-
-    Symmetric counterpart to :class:`_SimThrustChannel`; flush applies the
-    combined command (so both channels' flushes are idempotent — the second
-    just re-applies the same already-complete command).
-    """
-
-    def __init__(self, sim_motor, state: _SimChannelState) -> None:
-        self._sim = sim_motor
-        self._state = state
-
-    def set_normalized(self, value: float) -> None:
-        self._state.steering = max(-1.0, min(1.0, value))
-
-    async def flush(self) -> None:
-        from .core.models import MotorCommand
-        self._sim.apply(MotorCommand(
-            thrust=self._state.thrust, steering=self._state.steering))
-
-    async def start(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
-
-    def debug(self) -> str:
-        return f"SimSteeringChannel: steering={self._state.steering:+.3f}"
-
-    @property
-    def healthy(self) -> bool | None:
-        return None  # sim: health not applicable
 
 
 # Environment fields persisted across restarts (environment.json): the base
@@ -5167,65 +4881,6 @@ class Runtime:
                 await task
         self.recorder.stop()
         logger.info("runtime stopped")
-
-
-def demo_route_waypoints(lat: float, lon: float) -> list[dict]:
-    """A small ~600 m looping triangle NE of the start (fits the charted lake).
-    Offsets match the README screenshot route (scripts/take_screenshots.py)."""
-    return [
-        {"name": "Demo 1", "lat": lat + 0.0022, "lon": lon + 0.0018},
-        {"name": "Demo 2", "lat": lat + 0.0034, "lon": lon + 0.0075},
-        {"name": "Demo 3", "lat": lat + 0.0012, "lon": lon + 0.0110},
-    ]
-
-
-def apply_demo_mode(config: "AppConfig", *, readonly: bool = False,
-                    data_dir: str | None = None) -> "AppConfig":
-    """Force the demo posture onto ``config`` (in place) and return it.
-
-    - hardware OFF, every device source pinned to the simulator: no real
-      serial/i2c device is ever probed, regardless of devices.json or env.
-    - ephemeral data dir (``data_dir`` arg, else a fresh mkdtemp) so a demo
-      never writes the operator's vanchor_data/. If the CWD has the repo's
-      imported depth chart, symlink it (read-only) into the demo dir so the
-      charted lake renders; a chartless install still works (sim depth builds
-      the live map).
-    - boat starts on the charted demo lake; time_scale stays 1.0.
-    """
-    config.demo.enabled = True
-    config.demo.readonly = bool(readonly)
-    # Forced sim: overwrite the whole hardware block (nothing may probe a port).
-    config.hardware = HardwareConfig()          # enabled=False, all sources None -> "sim"
-    config.hardware.battery_source = "sim"
-    config.nmea_tcp = NmeaTcpConfig()           # enabled=False
-    config.watchdog.enabled = False
-    # World: charted demo lake, real-time physics.
-    config.sim.start_lat = config.demo.start_lat
-    config.sim.start_lon = config.demo.start_lon
-    config.sim.time_scale = 1.0
-    # Ephemeral data dir + best-effort chart seeding (mirrors take_screenshots).
-    src_dir = Path(config.data_dir)             # usually ./vanchor_data
-    config.data_dir = data_dir or tempfile.mkdtemp(prefix="vanchor-demo-")
-    dst = Path(config.data_dir)
-    for name in ("depthchart.npz", "depthmap.json"):
-        s = src_dir / name
-        if s.exists() and not (dst / name).exists():
-            try:
-                (dst / name).symlink_to(s.resolve())
-            except OSError:
-                pass  # best-effort: chartless demo still works
-    wc_src = src_dir / "water_cache"
-    if wc_src.is_dir():
-        wc = dst / "water_cache"
-        wc.mkdir(exist_ok=True)
-        for f in wc_src.iterdir():
-            if not (wc / f.name).exists():
-                try:
-                    (wc / f.name).symlink_to(f.resolve())
-                except OSError:
-                    pass  # best-effort
-    logger.info("DEMO MODE: sim-only, data dir %s (ephemeral)", config.data_dir)
-    return config
 
 
 def main(argv: list[str] | None = None) -> None:
