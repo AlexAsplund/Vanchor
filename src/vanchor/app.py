@@ -89,6 +89,7 @@ from .runtime.nav_glue import NavGlue  # noqa: E402
 from .runtime.safety_runtime import SafetyRuntime  # noqa: E402
 from .runtime.sessions import SessionService  # noqa: E402
 from .runtime.telemetry import TelemetryBuilder  # noqa: E402
+from .runtime.trips import TripService  # noqa: E402
 
 logger = logging.getLogger("vanchor.app")
 
@@ -296,6 +297,10 @@ class Runtime:
         # nav-glue methods live in NavGlue; Runtime delegates via shims or
         # direct repoints.
         self._nav = NavGlue(self)
+        # Trip-recorder cluster (issue #78): trip_start, trip_stop, trip_list,
+        # trip_get, trip_gpx, trip_delete all live in TripService; Runtime
+        # delegates via shims (server.py + tests call Runtime methods).
+        self._trips = TripService(self)
         # Black-box / backup / replay cluster (issue #77): _build_blackbox,
         # _install_blackbox_hook, blackbox_dumps, blackbox_path_for,
         # create_backup, restore_backup, start_replay, stop_replay all live in
@@ -1421,29 +1426,31 @@ class Runtime:
         return result
 
     # ------------------------------------------------------------------ #
-    # Trip log (#66)
+    # Trip log (#66) — shims → TripService (issue #78)
     # ------------------------------------------------------------------ #
     def trip_start(self, name: str | None = None) -> dict:
-        """Manually start a trip (overrides/replaces any active one)."""
-        trip = self.trip.start(name, self._now_fn())
-        return self.trip.snapshot(self._now_fn())
+        """Shim → TripService (issue #78)."""
+        return self._trips.trip_start(name)
 
     def trip_stop(self) -> dict:
-        """Manually stop + persist the active trip. No-op when none is active."""
-        self.trip.stop(self._now_fn())
-        return self.trip.snapshot(self._now_fn())
+        """Shim → TripService (issue #78)."""
+        return self._trips.trip_stop()
 
     def trip_list(self) -> list[dict]:
-        return self.trip.list_trips()
+        """Shim → TripService (issue #78)."""
+        return self._trips.trip_list()
 
     def trip_get(self, trip_id: str) -> dict | None:
-        return self.trip.get_trip(trip_id)
+        """Shim → TripService (issue #78)."""
+        return self._trips.trip_get(trip_id)
 
     def trip_gpx(self, trip_id: str) -> str | None:
-        return self.trip.gpx(trip_id)
+        """Shim → TripService (issue #78)."""
+        return self._trips.trip_gpx(trip_id)
 
     def trip_delete(self, trip_id: str) -> bool:
-        return self.trip.delete_trip(trip_id)
+        """Shim → TripService (issue #78)."""
+        return self._trips.trip_delete(trip_id)
 
     # ------------------------------------------------------------------ #
     # Battery (#60)
