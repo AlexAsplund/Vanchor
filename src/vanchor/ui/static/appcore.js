@@ -226,8 +226,8 @@
         ? t.distance_to_anchor_m.toFixed(1) + " m" : "—";
       return base + " — " + dist + suffix;
     }
-    // Route: fold in waypoint progress
-    if (mode === "waypoint" && Number.isFinite(t.distance_to_waypoint_m)) {
+    // Route: fold in waypoint progress (both leg + path-track followers)
+    if (VA.isRouteMode(mode) && Number.isFinite(t.distance_to_waypoint_m)) {
       return "Route · next " + Math.round(t.distance_to_waypoint_m) + " m" + suffix;
     }
     // Manual / stop / idle

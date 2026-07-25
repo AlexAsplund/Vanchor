@@ -20,7 +20,7 @@
   const $ = (id) => document.getElementById(id);
 
   const GUIDED = new Set([
-    "waypoint", "heading_hold", "follow_apb", "drift",
+    "waypoint", "path_track", "heading_hold", "follow_apb", "drift",
     "contour_follow", "orbit", "trolling",
   ]);
 

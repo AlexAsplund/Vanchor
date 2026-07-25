@@ -32,3 +32,6 @@ experiments/*/checkpoints/
 #docs/api/
 .superpowers/
 experiments/*/runs/
+
+# graphify knowledge-graph output (local only)
+graphify-out/

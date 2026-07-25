@@ -119,6 +119,9 @@
       // A smart route is a normal point-to-point route, not a loop: drop any
       // lingering island-loop flag so it doesn't circle.
       if (VA.routeEditor && VA.routeEditor.clearLoop) VA.routeEditor.clearLoop();
+      // Along-shoreline routes hug the bank with sparse waypoints and long legs,
+      // where leg-tracking cuts corners -- so default them to path tracking (#35).
+      if (mode === "shoreline" && VA.routePathTrack) VA.routePathTrack.set(true);
       // Refresh the route editor list (app.js owns it; expose a hook).
       if (VA.routeEditor && VA.routeEditor.refresh) VA.routeEditor.refresh();
       // Surface the route panel so the user can review + press Start.

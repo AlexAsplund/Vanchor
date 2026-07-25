@@ -39,6 +39,7 @@ VA.MODE_META = {
   anchor_leif:   { label: "Anchor · Leif",  glyph: "⚓",  family: "anchor" },
   heading_hold:  { label: "Heading",        glyph: "🧭",  family: "guided" },
   waypoint:      { label: "Route",          glyph: "📍",  family: "guided" },
+  path_track:    { label: "Route · Path",   glyph: "📍",  family: "guided" },
   follow_apb:    { label: "Follow APB",     glyph: "🛰",  family: "guided" },
   drift:         { label: "Drift",          glyph: "🌀",  family: "guided" },
   contour_follow:{ label: "Depth line",     glyph: "〜",  family: "guided" },
@@ -49,6 +50,9 @@ VA.MODE_META = {
 };
 VA.modeName = (m) =>
   (VA.MODE_META[m] && VA.MODE_META[m].label) || (m ? m.replace(/_/g, " ") : "—");
+// Both route followers (leg-based "waypoint" and pure-pursuit "path_track") are
+// "route mode" for the UI (route line, progress chip, nav bar, arrival sounds).
+VA.isRouteMode = (m) => m === "waypoint" || m === "path_track";
 
 // setText: cache element lookup and last-written value to avoid redundant DOM
 // writes.  ~60-70 calls/frame app-wide with mostly-unchanged values.

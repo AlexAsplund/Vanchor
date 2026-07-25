@@ -21,6 +21,7 @@ class ControlModeName(str, Enum):
     ANCHOR_LEIF = "anchor_leif"  # "Leif" -- pure learned, full-azimuth (experimental)
     HEADING_HOLD = "heading_hold"
     WAYPOINT = "waypoint"
+    PATH_TRACK = "path_track"  # continuous pure-pursuit path follower (alt. to WAYPOINT)
     WORK_AREA = "work_area"  # visit spots, hold at each, advance (timed/manual)
     FOLLOW_APB = "follow_apb"
     DRIFT = "drift"

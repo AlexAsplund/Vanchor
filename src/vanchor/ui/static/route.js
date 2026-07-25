@@ -109,6 +109,12 @@
   // of cutting inside them. Auto-ticked for painted routes (see finishPaint).
   const tightBox = $("wp-tight");
   const routeIsTight = () => !!(tightBox && tightBox.checked);
+  // Path-tracking flag (#35): continuous pure-pursuit follower instead of leg-by-leg
+  // WaypointMode. Auto-ticked for painted + along-shoreline routes (see finishPaint
+  // and routing.js). Sends `follow:"path"` on the goto command.
+  const pathBox = $("wp-pathtrack");
+  const routeIsPath = () => !!(pathBox && pathBox.checked);
+  VA.routePathTrack = { set: (on) => { if (pathBox) pathBox.checked = !!on; } };
   function updatePatrolIndicator(active) {
     const el = $("patrol-indicator");
     if (el) el.classList.toggle("hidden", !(routeIsPatrol() || !!active));
@@ -129,6 +135,7 @@
     if (routeIsLoop) cmd.loop = true;       // circle continuously around the island
     if (routeIsPatrol()) cmd.patrol = true; // run the route there-and-back continuously
     if (routeIsTight()) cmd.trace_tight = true; // hug corners (paint / exact-shape routes)
+    if (routeIsPath()) cmd.follow = "path";     // pure-pursuit path tracking (#35)
     send(cmd);
     // The route is now ACTIVE — its committed waypoints come back via telemetry
     // and render as the active (coloured) route. Clear the editable "not started"
@@ -208,7 +215,7 @@
     if (Array.isArray(t.waypoints)) lastWaypoints = t.waypoints;   // cache defined frames
     const wps = Array.isArray(t.waypoints) ? t.waypoints : lastWaypoints;
     const pos = t.position || t.truth;
-    if (t.mode !== "waypoint" || wps.length < 1 || !pos) {
+    if (!VA.isRouteMode(t.mode) || wps.length < 1 || !pos) {
       chip.classList.add("hidden");
       routeStartMs = null;   // route no longer active — reset elapsed clock
       return;
@@ -238,9 +245,9 @@
   // Keep the loop indicator lit while an active loop route is running on the boat
   // (telemetry reflects it). Falls back to the pending flag when not in waypoint.
   VA.onTelemetry((t) => {
-    const activeLoop = t && t.mode === "waypoint" && t.route_loop === true;
+    const activeLoop = t && VA.isRouteMode(t.mode) && t.route_loop === true;
     updateLoopIndicator(activeLoop);
-    updatePatrolIndicator(t && t.mode === "waypoint" && t.route_patrol === true);
+    updatePatrolIndicator(t && VA.isRouteMode(t.mode) && t.route_patrol === true);
   });
 
   $("wp-go").addEventListener("click", () => {
@@ -254,6 +261,7 @@
     VA.map.setPending([]); renderWpList(); setWpArmed(false);
     setLoopFlag(false);   // clearing the route drops any island-loop flag
     if (tightBox) tightBox.checked = false;   // ...and the trace-tightly flag
+    if (pathBox) pathBox.checked = false;     // ...and the path-tracking flag
   });
 
   // Live editing of an ACTIVE route: when the user drags or edits a committed
@@ -263,6 +271,7 @@
     const cmd = { type: "goto", waypoints, throttle: 0.6 };
     if (routeIsLoop) cmd.loop = true;   // (loop/patrol also preserved server-side on edits)
     if (routeIsTight()) cmd.trace_tight = true;
+    if (routeIsPath()) cmd.follow = "path";   // keep path-tracking across a live edit
     // active = resume index: keep navigating from the current target instead of
     // restarting at waypoint 1 when a committed waypoint is dragged/edited (#51).
     if (Number.isInteger(resume)) cmd.active = resume;
@@ -576,7 +585,8 @@
       .map((w, i) => ({ name: "WP" + (i + 1), lat: w.lat, lon: w.lon }));
     exitPaint();
     VA.map.setPending(wps); renderWpList(); setWpArmed(false);
-    if (tightBox) tightBox.checked = true;   // a hand-drawn line is traced tightly by default
+    if (tightBox) tightBox.checked = true;   // fallback hug if the user turns path-tracking off
+    if (pathBox) pathBox.checked = true;     // a hand-drawn line follows it exactly by default (#35)
     if (VA.sheet && VA.sheet.reveal) VA.sheet.reveal("mid");   // show the list to review
     if (VA.toast) VA.toast(wps.length + " waypoints from your line — review, then Start route.");
   }

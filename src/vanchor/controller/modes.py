@@ -17,6 +17,7 @@ import math
 from dataclasses import dataclass
 
 from ..core.geo import (
+    EARTH_RADIUS_M,
     angle_difference,
     cross_track,
     destination_point,
@@ -791,6 +792,213 @@ class WaypointMode(ControlMode):
         # Positive xte => boat is right of track => steer left => reduce heading.
         heading = normalize_deg(bearing - correction + crab)
         return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
+
+
+@dataclass
+class PathTrackConfig:
+    """Pure-pursuit path follower (#35). Tunable in the Fossen sim."""
+
+    # Lookahead distance = base + k * speed, clamped. Smaller hugs the line more
+    # (but risks weaving); larger is smoother but cuts corners. A trolling motor
+    # runs ~1.6 m/s, so a few metres tracks a hand-drawn line closely.
+    lookahead_m: float = 3.0
+    lookahead_speed_k: float = 1.1
+    min_lookahead_m: float = 2.0
+    max_lookahead_m: float = 10.0
+    throttle: float = 0.6
+    boat_speed_mps: float = 1.6
+    end_radius_m: float = 3.0        # within this of the route end -> complete
+    # Small explicit cross-track trim ON TOP of the pure-pursuit geometry (which
+    # already pulls the boat back onto the line). Keeps a steady offset from
+    # building at low speed / under drift. Bounded.
+    xte_gain: float = 0.9
+    max_xte_correction_deg: float = 35.0
+    crab_feedforward: bool = True
+    max_crab_deg: float = 25.0
+
+
+class PathTrackMode(ControlMode):
+    """Follow ``state.waypoints`` as ONE continuous polyline via pure pursuit,
+    the opt-in alternative to WaypointMode's leg-by-leg tracking (#35).
+
+    Each tick it projects the boat onto the polyline (nearest point = along-track
+    progress + cross-track error), then aims the bow at a *lookahead point* that
+    slides a fixed arc-distance ahead along the line. The lookahead sweeps
+    smoothly around corners, so the boat hugs the drawn/planned shape without the
+    per-mark arrival hop that lets leg-tracking cut corners -- and fidelity no
+    longer depends on how many waypoints there are. Honours route_loop (closed
+    ring) and route_patrol (there-and-back). Steering intent goes to the shared
+    helm exactly like the other guided modes.
+    """
+
+    name = ControlModeName.PATH_TRACK
+
+    def __init__(self, config: PathTrackConfig | None = None) -> None:
+        self.config = config or PathTrackConfig()
+        self._cursor = 0.0   # along-track arc-length progress (metres)
+        self._step = 1       # +1 forward, -1 patrol-return
+        self._spoke = 0      # highest waypoint index whose speed we've adopted
+
+    def activate(self, state: NavigationState) -> None:
+        self._cursor = 0.0
+        self._step = 1
+        self._spoke = 0
+        state.route_complete = False
+
+    @staticmethod
+    def _to_xy(p: GeoPoint, ref: GeoPoint) -> tuple[float, float]:
+        """Local east/north metres of ``p`` relative to ``ref`` (equirectangular)."""
+        east = math.radians(p.lon - ref.lon) * EARTH_RADIUS_M * math.cos(math.radians(ref.lat))
+        north = math.radians(p.lat - ref.lat) * EARTH_RADIUS_M
+        return (east, north)
+
+    @staticmethod
+    def _nearest_on_seg(ax, ay, bx, by, px, py):
+        """Nearest point on segment a->b to p; returns (t in [0,1], fx, fy, dist2)."""
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 <= 1e-12 else _clamp(((px - ax) * dx + (py - ay) * dy) / L2, 0.0, 1.0)
+        fx, fy = ax + t * dx, ay + t * dy
+        return t, fx, fy, (px - fx) ** 2 + (py - fy) ** 2
+
+    def _point_at_arc(self, P, seglen, cum, s):
+        """Point (x, y) on the polyline at arc-length ``s`` from the start."""
+        s = _clamp(s, 0.0, cum[-1])
+        for i in range(len(seglen)):
+            if s <= cum[i + 1] or i == len(seglen) - 1:
+                seg = seglen[i]
+                t = 0.0 if seg <= 1e-9 else (s - cum[i]) / seg
+                ax, ay = P[i]
+                bx, by = P[i + 1]
+                return (ax + t * (bx - ax), ay + t * (by - ay))
+        return P[-1]
+
+    def update(self, state: NavigationState, dt: float) -> Setpoint:
+        pos = state.position
+        wps = state.waypoints
+        if pos is None or not wps:
+            return ManualSetpoint(0.0, 0.0)
+
+        # Degenerate 1-point route: seek the point.
+        if len(wps) == 1:
+            tgt = wps[0].point
+            d = haversine_m(pos, tgt)
+            state.distance_to_waypoint_m = d
+            state.bearing_to_dest = initial_bearing(pos, tgt)
+            if d <= self.config.end_radius_m:
+                state.route_complete = True
+                return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
+            return GuidedSetpoint(target_heading=state.bearing_to_dest, thrust=self.config.throttle)
+
+        # Build the polyline in local metres (ref = boat). Closed for a loop route.
+        loop = state.route_loop
+        P = [self._to_xy(w.point, pos) for w in wps]
+        if loop:
+            P = P + [P[0]]
+        n_seg = len(P) - 1
+        seglen = [math.hypot(P[i + 1][0] - P[i][0], P[i + 1][1] - P[i][1]) for i in range(n_seg)]
+        cum = [0.0]
+        for L in seglen:
+            cum.append(cum[-1] + L)
+        total = cum[-1]
+        if total <= 1e-6:
+            return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
+
+        # Project the boat (origin) onto the polyline, within a window ahead of the
+        # cursor so a self-crossing / loop route can't snap the cursor backward.
+        s_near, seg_i = self._project(P, seglen, cum, total, loop)
+        self._cursor = s_near
+
+        # Cross-track from the nearest segment's real endpoints (signed; + = starboard).
+        a_geo = wps[seg_i % len(wps)].point
+        b_geo = wps[(seg_i + 1) % len(wps)].point
+        xte = cross_track(a_geo, b_geo, pos)
+        state.cross_track_m = xte.distance_m
+
+        # End handling: loop never ends; patrol bounces; a plain route completes.
+        if not loop:
+            if state.route_patrol and n_seg >= 1:
+                if self._step > 0 and (total - s_near) <= self.config.end_radius_m:
+                    self._step = -1
+                elif self._step < 0 and s_near <= self.config.end_radius_m:
+                    self._step = 1
+            else:
+                ex, ey = P[-1]
+                if (total - s_near) <= self.config.end_radius_m and math.hypot(ex, ey) <= self.config.end_radius_m:
+                    state.route_complete = True
+                    return GuidedSetpoint(target_heading=state.heading_deg, thrust=0.0)
+
+        self._maybe_post_speed(state, cum, s_near)
+
+        # Lookahead point: slide La metres along the line in the traversal direction.
+        speed = knots_to_mps(state.sog_knots)
+        if speed < 0.1:   # near-stationary GPS -> estimate from the commanded thrust
+            speed = self.config.boat_speed_mps * self.config.throttle
+        la = _clamp(self.config.lookahead_m + self.config.lookahead_speed_k * speed,
+                    self.config.min_lookahead_m, self.config.max_lookahead_m)
+        s_look = s_near + self._step * la
+        if loop:
+            s_look %= total
+        else:
+            s_look = _clamp(s_look, 0.0, total)
+        lx, ly = self._point_at_arc(P, seglen, cum, s_look)
+
+        # Bearing from boat (origin) to the lookahead point (atan2(east, north)).
+        bearing = normalize_deg(math.degrees(math.atan2(lx, ly)))
+        state.bearing_to_dest = bearing
+        # UI progress hints.
+        state.active_waypoint = min(len(wps) - 1, max(0, seg_i + (1 if self._step > 0 else 0)))
+        state.distance_to_waypoint_m = max(0.0, (total - s_near) if self._step > 0 else s_near)
+
+        # Explicit cross-track trim (pure pursuit does most of it) + crab feed-forward.
+        correction = _clamp(self.config.xte_gain * xte.distance_m,
+                            -self.config.max_xte_correction_deg, self.config.max_xte_correction_deg)
+        crab = 0.0
+        if self.config.crab_feedforward and state.est_drift_settled:
+            crab = crab_offset_deg(
+                bearing, state.est_drift_east, state.est_drift_north,
+                self.config.throttle * self.config.boat_speed_mps, max_crab_deg=self.config.max_crab_deg,
+            )
+        heading = normalize_deg(bearing - correction + crab)
+        return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
+
+    def _project(self, P, seglen, cum, total, loop):
+        """Nearest point on the polyline to the boat (origin), constrained to a
+        forward window from the cursor so the along-track cursor advances
+        monotonically (robust to loops / self-crossings)."""
+        window = max(2.5 * self.config.max_lookahead_m, 20.0)
+        back = self.config.max_lookahead_m
+        best = None            # (dist2, s, seg_i)
+        fallback = None        # global nearest, if nothing lands in the window
+        for i in range(len(seglen)):
+            ax, ay = P[i]
+            bx, by = P[i + 1]
+            _t, _fx, _fy, d2 = self._nearest_on_seg(ax, ay, bx, by, 0.0, 0.0)
+            s = cum[i] + _t * seglen[i]
+            if fallback is None or d2 < fallback[0]:
+                fallback = (d2, s, i)
+            fwd = ((s - self._cursor) % total) if loop else (s - self._cursor)
+            in_window = (-back <= fwd <= window) if self._step > 0 else (-window <= fwd <= back)
+            if not in_window:
+                continue
+            if best is None or d2 < best[0]:
+                best = (d2, s, i)
+        chosen = best or fallback
+        return chosen[1], chosen[2]
+
+    def _maybe_post_speed(self, state: NavigationState, cum, s_near) -> None:
+        """Adopt a waypoint's per-mark speed as the cursor passes it (mirrors
+        WaypointMode's per-waypoint speed; forward traversal only)."""
+        if self._step <= 0:
+            return
+        n = len(state.waypoints)
+        while self._spoke < n and cum[self._spoke] <= s_near:
+            w = state.waypoints[self._spoke]
+            if w.throttle_pct is not None:
+                state.route_speed_request = ("throttle_pct", w.throttle_pct)
+            elif w.speed_kn is not None:
+                state.route_speed_request = ("speed_kn", w.speed_kn)
+            self._spoke += 1
 
 
 @dataclass

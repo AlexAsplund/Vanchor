@@ -135,6 +135,10 @@ class BoatSetup:
             wp.config.reverse_efficiency = b.reverse_efficiency
             wp.config.turn_rate_dps = b.max_turn_rate_deg
             wp.config.boat_speed_mps = b.max_speed_mps
+        # PathTrackMode (#35) shares the boat's cruise speed for lookahead scaling.
+        pt = rt.controller.modes.get(ControlModeName.PATH_TRACK)
+        if pt is not None and hasattr(pt, "config"):
+            pt.config.boat_speed_mps = b.max_speed_mps
 
         # Rebuild the live physics params so mass/thrust/geometry changes bite.
         self._rebuild_boat_physics()

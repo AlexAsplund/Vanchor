@@ -229,7 +229,7 @@
     // the index without a mark being reached). Decimated frames omit the
     // waypoints array; carry the last-known count across them.
     const count = Array.isArray(t.waypoints) ? t.waypoints.length : prevCount;
-    if (t.mode === "waypoint" && Number.isInteger(t.active_waypoint)) {
+    if (VA.isRouteMode(t.mode) && Number.isInteger(t.active_waypoint)) {
       if (prevActive !== null && count === prevCount &&
           t.active_waypoint !== prevActive && !complete) {
         play("nav.waypoint");

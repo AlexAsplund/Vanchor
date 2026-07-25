@@ -357,7 +357,7 @@
     drawWaypoints(t.waypoints, t.active_waypoint);
     // Stale route pins: dim committed pins + line when not actively routing or paused.
     const nav = t.nav || {};
-    const inactive = t.mode !== "waypoint" && !nav.paused;
+    const inactive = !VA.isRouteMode(t.mode) && !nav.paused;
     wpLayer.eachLayer((m) => {
       const el = m.getElement && m.getElement();
       if (el) el.classList.toggle("wp-pin-inactive", inactive);
