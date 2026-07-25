@@ -21,19 +21,30 @@ extract it once and apply it to *every* part.
 
 ## The extension kernel (`vanchor.ext`)
 
-One small module owns the shared machinery (today `_iter_entry_points` is copy-
-pasted in `hardware/drivers/__init__.py` and `connectors/__init__.py`):
+**Shipped (#96) and consumed by drivers + connectors.** One small leaf package
+(`src/vanchor/ext/`, imports nothing from app/runtime/controller) now owns the
+shared machinery that `_iter_entry_points` was copy-pasted for in
+`hardware/drivers/__init__.py` and `connectors/__init__.py`:
 
 - **`discover(group)`** — entry-point discovery across importlib versions; never
-  raises when zero packs are installed.
-- **`Registry`** — a typed name→factory map with API-version + duplicate checks.
-- **`Manifest`** — name, version, kind, targeted API version, declared
-  capabilities, author (hashable, so consent can key on it).
-- **`Capability`** — the narrow object a plug-in receives instead of `Runtime`.
+  raises when zero packs are installed. **Shipped + consumed:** both driver and
+  connector loaders call `discover(GROUP)`; their local `_iter_entry_points` is
+  gone.
+- **`Registry`** — a typed name→factory map with API-version + duplicate checks
+  (log-and-skip, never raises). **Shipped** as scaffolding; drivers/connectors
+  keep their bespoke registries for now — migrating them onto `Registry` is
+  follow-up.
+- **`Manifest`** — a frozen (hashable, so consent can key on it) dataclass:
+  name, version, kind, targeted API version, declared capabilities, author.
+  **Shipped.**
+- **`Capability`** — the narrow marker base a plug-in receives instead of
+  `Runtime`. **Shipped** (minimal; per-seam verbs land on subclasses).
 - **Lifecycle** — `on_load(kernel)`, `on_start`, `on_stop`, `on_config_change`.
+  *Planned.*
 
-Drivers and connectors become the first two *consumers* of the kernel rather than
-two bespoke implementations.
+Drivers and connectors are the first two *consumers* of the kernel (via
+`discover`) rather than two bespoke discovery implementations; full migration of
+their registries to `Registry` remains follow-up.
 
 ## The seams — a plug-in group for every part
 

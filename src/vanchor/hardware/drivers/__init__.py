@@ -25,6 +25,8 @@ import importlib
 import logging
 import pkgutil
 
+from ...ext import discover
+
 logger = logging.getLogger("vanchor.hardware.drivers")
 
 # Entry-point group a pip-installed driver pack registers under (roadmap #43).
@@ -33,36 +35,13 @@ DRIVER_ENTRY_POINT_GROUP = "vanchor.drivers"
 _loaded = False
 
 
-def _iter_entry_points(group: str):
-    """Yield entry points in ``group`` across importlib.metadata API versions.
-
-    Returns nothing (a quiet no-op) if metadata is unavailable — the common case
-    of zero installed packs must never raise."""
-    try:
-        from importlib.metadata import entry_points
-    except ImportError:  # pragma: no cover - importlib.metadata is stdlib on 3.11+
-        return
-    try:
-        eps = entry_points()
-    except Exception as exc:  # noqa: BLE001 - never let discovery crash startup
-        logger.debug("entry-point discovery unavailable: %s", exc)
-        return
-    # Python 3.12: EntryPoints.select(group=...); older: a dict-like .get(group).
-    try:
-        selected = eps.select(group=group) if hasattr(eps, "select") else eps.get(group, [])
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("entry-point discovery failed: %s", exc)
-        return
-    yield from selected
-
-
 def _load_pack_drivers() -> None:
     """Discover + register drivers from installed packs via entry points.
 
     Each entry point resolves to a callable (a registration hook); we call it so
     the pack registers its driver(s). A pack that fails to load or register is
     logged and skipped. No-op when no packs are installed."""
-    for ep in _iter_entry_points(DRIVER_ENTRY_POINT_GROUP):
+    for ep in discover(DRIVER_ENTRY_POINT_GROUP):
         try:
             hook = ep.load()
             if callable(hook):

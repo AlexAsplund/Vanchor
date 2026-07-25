@@ -31,6 +31,8 @@ import importlib
 import logging
 import pkgutil
 
+from ..ext import discover
+
 logger = logging.getLogger("vanchor.connectors")
 
 # Entry-point group a pip-installed connector pack registers under.
@@ -39,36 +41,10 @@ CONNECTOR_ENTRY_POINT_GROUP = "vanchor.connectors"
 _loaded = False
 
 
-def _iter_entry_points(group: str):
-    """Yield entry points in ``group`` across importlib.metadata API versions.
-
-    A quiet no-op when metadata is unavailable — zero installed packs (the common
-    case) must never raise."""
-    try:
-        from importlib.metadata import entry_points
-    except ImportError:  # pragma: no cover - importlib.metadata is stdlib on 3.11+
-        return
-    try:
-        eps = entry_points()
-    except Exception as exc:  # noqa: BLE001 - never let discovery crash startup
-        logger.debug("entry-point discovery unavailable: %s", exc)
-        return
-    try:
-        selected = (
-            eps.select(group=group)
-            if hasattr(eps, "select")
-            else eps.get(group, [])  # type: ignore[attr-defined]  # older importlib.metadata
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("entry-point discovery failed: %s", exc)
-        return
-    yield from selected
-
-
 def _load_pack_connectors() -> None:
     """Discover + register connectors from installed packs via entry points. A pack
     that fails to load or register is logged and skipped; no-op with no packs."""
-    for ep in _iter_entry_points(CONNECTOR_ENTRY_POINT_GROUP):
+    for ep in discover(CONNECTOR_ENTRY_POINT_GROUP):
         try:
             hook = ep.load()
             if callable(hook):

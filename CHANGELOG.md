@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Extension kernel — `vanchor.ext` (#96, part of #95).** Extracted the shared
+  plug-in machinery into a new leaf package: `discover(group)` (the one home for
+  entry-point discovery, moved verbatim from the two copy-pasted
+  `_iter_entry_points` helpers), plus scaffolding for future seams — a generic
+  typed `Registry` (log-and-skip on duplicate name / API-version mismatch), a
+  frozen hashable `Manifest`, and a narrow `Capability` marker base. Drivers and
+  connectors now consume `discover`; their bespoke registries are unchanged
+  (migration onto `Registry` is follow-up). Behaviour-preserving — the plug-in
+  groups, public `register_*` functions, and discovery behaviour are identical.
+
 - **Path tracking — continuous pure-pursuit route follower (#35).** An opt-in
   alternative to the leg-by-leg waypoint steering, selectable via a **Path
   tracking (follow the line)** switch in the route panel. It treats the whole

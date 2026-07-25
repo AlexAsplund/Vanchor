@@ -187,7 +187,7 @@ def test_entry_point_discovery_invokes_pack_hook(monkeypatch):
                 called["ok"] = True
             return hook
 
-    monkeypatch.setattr(drivers, "_iter_entry_points", lambda group: [_FakeEP()])
+    monkeypatch.setattr(drivers, "discover", lambda group: [_FakeEP()])
     try:
         drivers._load_pack_drivers()
         assert called.get("ok") is True
@@ -197,7 +197,7 @@ def test_entry_point_discovery_invokes_pack_hook(monkeypatch):
 
 
 def test_entry_point_discovery_noops_with_no_packs(monkeypatch):
-    monkeypatch.setattr(drivers, "_iter_entry_points", lambda group: [])
+    monkeypatch.setattr(drivers, "discover", lambda group: [])
     drivers._load_pack_drivers()  # must not raise
 
 
@@ -210,10 +210,10 @@ def test_entry_point_discovery_survives_a_broken_pack(monkeypatch):
         def load(self):
             raise RuntimeError("bad pack")
 
-    monkeypatch.setattr(drivers, "_iter_entry_points", lambda group: [_BoomEP()])
+    monkeypatch.setattr(drivers, "discover", lambda group: [_BoomEP()])
     drivers._load_pack_drivers()  # must not raise
 
 
 def test_real_entry_point_iteration_is_safe():
     # With no driver packs installed this must be a quiet no-op (no exception).
-    assert list(drivers._iter_entry_points("vanchor.drivers")) == [] or True
+    assert list(drivers.discover("vanchor.drivers")) == [] or True
