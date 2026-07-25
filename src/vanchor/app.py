@@ -83,9 +83,11 @@ from .runtime.boat_setup import BoatSetup  # noqa: E402
 from .runtime.demo import demo_route_waypoints, apply_demo_mode  # noqa: E402
 from .runtime.depth import DepthService  # noqa: E402
 from .runtime.devices import DeviceManager  # noqa: E402
+from .runtime.commands import CommandDispatcher  # noqa: E402
 from .runtime.hardware_glue import HardwareGlue  # noqa: E402
 from .runtime.nav_glue import NavGlue  # noqa: E402
 from .runtime.safety_runtime import SafetyRuntime  # noqa: E402
+from .runtime.sessions import SessionService  # noqa: E402
 from .runtime.telemetry import TelemetryBuilder  # noqa: E402
 
 logger = logging.getLogger("vanchor.app")
@@ -294,6 +296,16 @@ class Runtime:
         # nav-glue methods live in NavGlue; Runtime delegates via shims or
         # direct repoints.
         self._nav = NavGlue(self)
+        # Black-box / backup / replay cluster (issue #77): _build_blackbox,
+        # _install_blackbox_hook, blackbox_dumps, blackbox_path_for,
+        # create_backup, restore_backup, start_replay, stop_replay all live in
+        # SessionService; Runtime delegates.
+        self._sessions = SessionService(self)
+        # Command-audit / dispatch cluster (issue #77): record_command,
+        # command_audit, handle_command all live in CommandDispatcher; Runtime
+        # delegates (handle_command keeps a shim because it is the command
+        # entry point for every test and for the WS/REST server).
+        self._commands = CommandDispatcher(self)
 
         # --- navigator + controller (identical for sim or hardware) ------- #
         self.navigator = Navigator(
@@ -641,7 +653,7 @@ class Runtime:
         # on ANY alarm transition -- so incidents are captured even without the
         # opt-in debug recorder running. Wired at the governor boundary (below),
         # the one place the DESIRED and APPLIED commands are both visible.
-        self._build_blackbox(cfg)
+        self._sessions._build_blackbox(cfg)
 
         # --- External hardware watchdog heartbeat (#44) ------------------ #
         # A GPIO line the ~1 Hz supervisor must keep toggling or an external relay
@@ -656,70 +668,23 @@ class Runtime:
         )
 
     def _build_blackbox(self, cfg: AppConfig) -> None:
-        """Construct the black-box recorder and install its governor hook.
-
-        Sizes the ring to hold ``blackbox_window_s`` of low-rate history plus one
-        full post-trigger tail. A disabled recorder is a cheap no-op: no ring,
-        and the governor hook is not installed (zero hot-path cost)."""
-        from .obs.blackbox import BlackBox
-
-        obs = getattr(cfg, "obs", None)
-        if obs is None:  # pragma: no cover - defensive for partial configs
-            from .core.config import ObsConfig
-
-            obs = ObsConfig()
-        sample_hz = max(0.01, float(obs.blackbox_sample_hz))
-        tick_hz = max(0.01, float(cfg.control.tick_hz))
-        window_frames = int(math.ceil(max(0.0, obs.blackbox_window_s) * sample_hz))
-        post_frames = int(round(max(0.0, obs.blackbox_post_trigger_s) * tick_hz))
-        self.blackbox = BlackBox(
-            cfg.data_dir,
-            enabled=bool(obs.blackbox_enabled),
-            capacity=window_frames + post_frames + 8,
-            sample_period_s=1.0 / sample_hz,
-            post_trigger_frames=post_frames,
-            now_fn=self._now_fn,
-        )
-        self._install_blackbox_hook()
+        """Shim → SessionService (issue #77)."""
+        return self._sessions._build_blackbox(cfg)
 
     def _install_blackbox_hook(self) -> None:
-        """Wrap the safety governor's ``govern`` so every control tick feeds the
-        black box the DESIRED (pre-governor) and APPLIED (post-governor) command
-        plus the resulting alarms. The wrapper returns the governor's result
-        bit-for-bit and swallows any recorder error, so it can NEVER change or
-        break the governed command -- it only observes."""
-        bb = self.blackbox
-        if not bb.enabled:
-            return
-        gov = self.controller.safety
-        orig_govern = gov.govern
-        state = self.state
-        runtime = self
-
-        def govern(command, *args, **kwargs):
-            applied, status = orig_govern(command, *args, **kwargs)
-            bb.observe(
-                command,
-                applied,
-                status,
-                state,
-                controller_fault=state.controller_fault is not None,
-                link_failsafe=runtime._link_failsafe_engaged,
-            )
-            return applied, status
-
-        gov.govern = govern
+        """Shim → SessionService (issue #77)."""
+        return self._sessions._install_blackbox_hook()
 
     # ------------------------------------------------------------------ #
     # Black-box flight recorder (#20) -- read API for the UI
     # ------------------------------------------------------------------ #
     def blackbox_dumps(self) -> dict:
-        """List recent black-box dump files (newest first) + whether it's on."""
-        return {"enabled": self.blackbox.enabled, "dumps": self.blackbox.dumps()}
+        """Shim → SessionService (issue #77)."""
+        return self._sessions.blackbox_dumps()
 
     def blackbox_path_for(self, file_name: str) -> str | None:
-        """Resolve a dump file name to a safe on-disk path (or ``None``)."""
-        return self.blackbox.path_for(file_name)
+        """Shim → SessionService (issue #77)."""
+        return self._sessions.blackbox_path_for(file_name)
 
     # ------------------------------------------------------------------ #
     # Server-persisted safety geometry (#23)
@@ -811,87 +776,12 @@ class Runtime:
     # Versioned backup / restore of all persistent state
     # ------------------------------------------------------------------ #
     def create_backup(self, client: dict | None = None, *, created_at: str | None = None) -> bytes:
-        """Build a versioned backup ZIP of this runtime's ``data_dir`` (boats,
-        depth map, devices, trips) plus the UI's ``client`` localStorage slice.
-
-        ``created_at`` is an ISO8601 string the caller supplies (the endpoint
-        passes the request time); when omitted we use the injected clock to make
-        a UTC timestamp -- the backup module itself never calls ``datetime.now``.
-        Returns the raw ``.zip`` bytes."""
-        from .core import backup
-
-        if created_at is None:
-            created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self._now_fn()))
-        return backup.create_backup(
-            self.config.data_dir, client=client, created_at=created_at
-        )
+        """Shim → SessionService (issue #77)."""
+        return self._sessions.create_backup(client=client, created_at=created_at)
 
     def restore_backup(self, zip_bytes: bytes) -> dict:
-        """Restore a backup ZIP into ``data_dir`` and reload what it can LIVE.
-
-        Extracts the archive (overwriting the on-disk files), then refreshes the
-        in-memory state it can without a restart: re-loads the boat profiles +
-        the depth map from disk and re-applies the active profile, and reloads
-        the device config. Anything that can't be refreshed live sets
-        ``restart_required``. Returns the backup-module result dict plus
-        ``restart_required``. Raises :class:`ValueError` (-> 400) on a bad zip."""
-        from .core import backup
-
-        result = backup.restore_backup(self.config.data_dir, zip_bytes)
-        restart_required = False
-
-        # Boat profiles: rebuild the store from the restored boats.json and
-        # re-apply the active profile so the live physics follow it.
-        try:
-            from .core.boat_profiles import BoatProfileStore
-
-            self.boats = BoatProfileStore(self.config.data_dir)
-            active = self.boats.active()
-            if active is not None:
-                self._boat._apply_boat_specs(active["specs"])
-            # Per-boat gains (#31) live in a sidecar; reload + re-apply too.
-            self._boat._boat_gains = self._boat._load_boat_gains()
-            self._boat._apply_active_boat_gains()
-        except Exception:  # pragma: no cover - defensive
-            logger.exception("restore: reloading boat profiles failed")
-            restart_required = True
-
-        # Depth map: reload the restored soundings from disk.
-        try:
-            self.depth_map = DepthMap()
-            self.depth_map.load(self._depth_map_path, self._depth_chart_path)
-            self._depth_saved_n = len(self.depth_map.points)
-        except Exception:  # pragma: no cover - defensive
-            logger.exception("restore: reloading depth map failed")
-            restart_required = True
-
-        # Safety geometry (#23): rebuild the store from the restored safety.json
-        # and re-apply it to the live governor + refresh prefs.
-        try:
-            from .core.prefs import PrefsStore, SafetyGeometryStore
-
-            self.safety_geometry = SafetyGeometryStore(self.config.data_dir)
-            self._apply_safety_geometry()
-            self.prefs = PrefsStore(self.config.data_dir)
-        except Exception:  # pragma: no cover - defensive
-            logger.exception("restore: reloading safety geometry failed")
-            restart_required = True
-
-        # Device config: re-read the restored devices.json into the live config
-        # and rebuild the device set (no restart). reload_devices is async, so
-        # schedule it; if there's no running loop, defer to a restart.
-        apply_device_overrides(self.config)
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.reload_devices())
-        except RuntimeError:
-            # No event loop (e.g. a synchronous restore in a test) -> the new
-            # device config will take effect on the next start/restart.
-            restart_required = True
-
-        result["restart_required"] = restart_required
-        logger.info("backup restored (restart_required=%s)", restart_required)
-        return result
+        """Shim → SessionService (issue #77)."""
+        return self._sessions.restore_backup(zip_bytes)
 
     # ------------------------------------------------------------------ #
     # Device / hardware config (persisted, editable over the API)
@@ -1402,13 +1292,12 @@ class Runtime:
         return self.debug.stop()
 
     def start_replay(self, file_name: str) -> bool:
-        path = self.debug.path_for(file_name)
-        if path is None:
-            return False
-        return self.replay.load(path, time.time())
+        """Shim → SessionService (issue #77)."""
+        return self._sessions.start_replay(file_name)
 
     def stop_replay(self) -> None:
-        self.replay.stop()
+        """Shim → SessionService (issue #77)."""
+        return self._sessions.stop_replay()
 
     # ------------------------------------------------------------------ #
     # Command audit log (#26)
@@ -1416,177 +1305,19 @@ class Runtime:
     def record_command(
         self, ctype: object, source: str, outcome: str, detail: str | None = None
     ) -> None:
-        """Append one command to the bounded audit ring (#26).
-
-        ``source`` is "helm"|"observer"|"rest"; ``outcome`` is
-        "accepted"|"denied"|"error" (+ an optional short ``detail`` on error).
-        Called from the command entry points (WS handler + REST /api/command).
-        Pings (and typeless messages) are never recorded so the audit stays a
-        log of real commands. Uses the wall clock so the timestamp is displayable.
-        """
-        if ctype in (None, "", "ping"):
-            return
-        entry = {
-            "ts": self._now_fn(),
-            "type": str(ctype),
-            "source": source,
-            "outcome": outcome,
-        }
-        if detail:
-            entry["detail"] = str(detail)[:200]
-        self._command_audit.append(entry)
+        """Shim → CommandDispatcher (issue #77)."""
+        return self._commands.record_command(ctype, source, outcome, detail)
 
     def command_audit(self, n: int = 50) -> dict:
-        """Return the most recent ``n`` audited commands, oldest first / newest
-        last. ``n`` is clamped to [1, 200] (the ring size)."""
-        n = max(1, min(int(n), 200))
-        return {"commands": list(self._command_audit)[-n:]}
+        """Shim → CommandDispatcher (issue #77)."""
+        return self._commands.command_audit(n)
 
     def handle_command(self, command: dict) -> None:
-        ctype = command.get("type")
-        if self.debug.active and ctype not in (None,):
-            self.debug.write("command", command, time.time())
-        if ctype == "set_environment" and self.simulator is not None:
-            env = self.simulator.environment
-            for key in (
-                "current_speed",
-                "current_dir",
-                "wind_speed",
-                "wind_dir",
-                "gust_amplitude_mps",
-                "wind_variability",
-                "current_variability",
-            ):
-                if key in command:
-                    setattr(env, key, float(command[key]))
-            # Re-anchor the slow weather wander on the new base values.
-            self.simulator.set_weather_base()
-            self._save_environment()
-        elif ctype == "weather_preset" and self.simulator is not None:
-            self._apply_weather_preset(str(command.get("id", "")))
-        elif ctype == "sim_fault":
-            self.set_sim_fault(
-                str(command.get("name", "")),
-                bool(command.get("enabled", True)),
-                **{k: v for k, v in command.items()
-                   if k not in ("type", "name", "enabled")},
-            )
-        elif ctype == "teleport":
-            self._teleport(command)
-        elif ctype == "inject_nmea":
-            asyncio.ensure_future(self.bus.publish(events.NMEA_IN, str(command["sentence"])))
-        elif ctype == "set_gps_offset":
-            # On a SIMULATED GPS, "adjust my position" must MOVE the boat, not
-            # install an offset: the sim GPS has no bias to correct, so an
-            # offset would shift the PERCEIVED frame away from the sim truth —
-            # the depth sounder keeps sampling truth, and chart-relative
-            # behaviours (contour follow, charted depth, divergence) then run
-            # displaced by exactly the offset (field report: contour followed
-            # "at its original unadjusted position"). Real GPS sources keep the
-            # normal offset calibration — there the offset corrects a real
-            # bias, so perception and physics align.
-            if type(self.gps).__name__ == "SimGps" and self.simulator is not None:
-                self.navigator.clear_gps_offset()
-                self._teleport({
-                    "lat": float(command["true_lat"]),
-                    "lon": float(command["true_lon"]),
-                })
-                logger.info("gps offset on sim GPS -> teleported the sim boat instead")
-            else:
-                self.navigator.set_gps_offset(
-                    float(command["true_lat"]), float(command["true_lon"])
-                )
-        elif ctype == "clear_gps_offset":
-            self.navigator.clear_gps_offset()
-        elif ctype == "set_land_guard":
-            gov = self.controller.safety
-            enabled = command.get("enabled")
-            margin = command.get("margin_m")
-            if enabled is not None:
-                gov.config.land_guard_enabled = bool(enabled)
-            if margin is not None:
-                gov.config.land_guard_margin_m = max(1.0, min(200.0, float(margin)))
-            self.safety_geometry.set_land_guard(
-                None if enabled is None else bool(enabled),
-                None if margin is None else gov.config.land_guard_margin_m,
-            )
-            logger.info("land guard: enabled=%s margin=%.0fm",
-                        gov.config.land_guard_enabled,
-                        gov.config.land_guard_margin_m)
-        elif ctype == "anchor_alarm_set":
-            # Drop the ALARM anchor (passive watch circle; NO motor involvement).
-            # Explicit lat/lon wins (future map-tap placement); default = the
-            # boat's current position. Refused without a position.
-            lat, lon = command.get("lat"), command.get("lon")
-            if lat is not None and lon is not None:
-                point = GeoPoint(float(lat), float(lon))
-            else:
-                pos = self.state.position
-                if pos is None or pos.is_null():
-                    logger.warning("anchor_alarm_set ignored: no position fix")
-                    return
-                point = pos
-            radius = float(command.get(
-                "radius_m", self.config.safety.anchor_alarm_default_radius_m))
-            snap = self.anchor_alarm.set(point, radius, now=self._now_fn())
-            logger.info("anchor alarm ARMED: %.5f, %.5f r=%.0fm",
-                        point.lat, point.lon, snap["radius_m"])
-        elif ctype == "anchor_alarm_clear":
-            self.anchor_alarm.clear()
-            logger.info("anchor alarm cleared")
-        elif ctype == "anchor_alarm_recover":
-            self._anchor_alarm_recover()
-        elif ctype == "set_auto_apb":
-            enabled = bool(command.get("enabled", False))
-            self.config.safety.auto_follow_apb = enabled
-            self.safety_geometry.set_auto_follow_apb(enabled)
-            logger.info("auto Follow-APB %s", "enabled" if enabled else "disabled")
-        elif ctype == "load_route":
-            self._load_route(command)
-        elif ctype == "set_battery":
-            self._set_battery(command.get("soc_pct"))
-        elif ctype == "return_to_launch":
-            self.return_to_launch()
-        elif ctype == "trip_start":
-            self.trip_start(command.get("name"))
-        elif ctype == "trip_stop":
-            self.trip_stop()
-        elif ctype in ("set_nogo_zones", "set_min_depth", "set_fix_failsafe"):
-            # Safety geometry: update the live governor (controller) AND persist
-            # to the server-side store so it survives a restart (#23). The
-            # governor stays the authority; we mirror its resulting state (for
-            # min-depth/failsafe) and the raw command rings (for no-go zones,
-            # which the governor keeps only as prepared shapely polygons).
-            #
-            # Safety-floor lockout (#50): a runtime Settings edit may make the
-            # failsafes SAFER but never weaker -- clamp a disable / a lowered
-            # min-depth back to the startup floor BEFORE it reaches the governor,
-            # so the persisted mirror below also stores the floored value.
-            if ctype == "set_min_depth":
-                command = {
-                    **command,
-                    "min_depth_m": self.safety_floor.enforce_min_depth(
-                        command.get("min_depth_m", 0.0)
-                    ),
-                }
-            elif ctype == "set_fix_failsafe":
-                command = {
-                    **command,
-                    "enabled": self.safety_floor.enforce_fix_failsafe(
-                        command.get("enabled", False)
-                    ),
-                }
-            self.controller.handle_command(command)
-            if ctype == "set_nogo_zones":
-                self.safety_geometry.set_nogo_zones(command.get("zones", []))
-            elif ctype == "set_min_depth":
-                self.safety_geometry.set_min_depth(self.controller.safety.config.min_depth_m)
-            else:
-                self.safety_geometry.set_fix_failsafe(
-                    self.controller.safety.config.fix_failsafe_enabled
-                )
-        else:
-            self.controller.handle_command(command)
+        """Shim → CommandDispatcher (issue #77). THE command entry point for the
+        WS/REST server and the test suite -- kept as a shim with the exact
+        signature so every caller and every ``rt.handle_command`` monkeypatch
+        keeps working."""
+        return self._commands.handle_command(command)
 
     # ------------------------------------------------------------------ #
     # Sim fault injection (#37)
