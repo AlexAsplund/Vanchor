@@ -65,7 +65,7 @@ markdown file. [`docs/roadmap.md`](docs/roadmap.md) is only a pointer.
 
 Design detail for two big areas still lives in docs the issues link to:
 [`docs/simulator.md`](docs/simulator.md) (sim-vs-real gaps) and
-[`docs/extension-packs.md`](docs/extension-packs.md) (the pack system).
+[`docs/extensibility.md`](docs/extensibility.md) (the plug-in architecture + pack system).
 
 ## 6. Branching, PRs & merging (`main` is protected)
 

@@ -30,5 +30,5 @@ Two areas keep their design detail in dedicated docs (the issues link to them):
 
 - **Simulator fidelity** — the known sim-vs-real gaps live in
   [simulator.md](simulator.md).
-- **Extension packs** — the HACS-style sharing design lives in
-  [extension-packs.md](extension-packs.md).
+- **Extensibility / packs** — the plug-in architecture and HACS-style sharing
+  design live in [extensibility.md](extensibility.md).
