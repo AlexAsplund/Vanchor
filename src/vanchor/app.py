@@ -85,6 +85,7 @@ from .runtime.depth import DepthService  # noqa: E402
 from .runtime.devices import DeviceManager  # noqa: E402
 from .runtime.commands import CommandDispatcher  # noqa: E402
 from .runtime.hardware_glue import HardwareGlue  # noqa: E402
+from .runtime.hwscan import HardwareScan  # noqa: E402
 from .runtime.nav_glue import NavGlue  # noqa: E402
 from .runtime.safety_runtime import SafetyRuntime  # noqa: E402
 from .runtime.sessions import SessionService  # noqa: E402
@@ -251,6 +252,14 @@ class Runtime:
         # (reload_devices) when the device config changes — no process restart.
         self._environment = environment      # reused when devices are rebuilt live
         self._sim_task: "asyncio.Task | None" = None
+        # Hardware discovery/probe cluster (issue #79): source helpers, port
+        # ownership, hw_scan/hw_probe, driver context/menus, split-channel
+        # builder -- all live in HardwareScan; Runtime delegates.  Constructed
+        # BEFORE _devices so the _driver_context / _build_split_channel shims
+        # are ready when DeviceManager._construct_devices calls them at build
+        # time, and BEFORE _safety so the battery-driver build path that calls
+        # rt._driver_context() also resolves.
+        self._hwscan = HardwareScan(self)
         # Device management cluster (issue #70): device config, construction,
         # status, health, debug -- all live in DeviceManager; Runtime delegates.
         self._devices = DeviceManager(self)
@@ -642,11 +651,6 @@ class Runtime:
         # supervisor never launches an overlapping save (finding M3): the save
         # is offloaded off the event loop and must not stack up.
         self._depth_save_in_flight = False
-        # Lock for the hardware probe wizard: only one port may be probed at a
-        # time (opens a real serial port / I2C bus briefly). If another probe
-        # is already running the endpoint returns 409 immediately.
-        self._hw_probe_lock = asyncio.Lock()
-
         # --- Always-on black-box flight recorder (#20) ------------------- #
         # A bounded, low-rate ring of control-loop snapshots (desired vs applied
         # motor command + alarms) that dumps its pre-trigger history off the loop
@@ -803,17 +807,12 @@ class Runtime:
         return self._safety._battery_sources()
 
     def _compass_sources(self) -> tuple:
-        """Built-in compass sources + any registered driver sources (e.g.
-        ``hwt901b``). Registered drivers are discovered from the plugin registry,
-        so a new compass driver adds itself here without editing this file."""
-        from .hardware import registry
-        return self._SENSOR_SOURCES + tuple(registry.sources("compass"))
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan._compass_sources()
 
     def _gps_sources(self) -> tuple:
-        """Built-in GPS sources + any registered GPS driver sources (e.g.
-        ``ublox`` = the UBX M9N driver)."""
-        from .hardware import registry
-        return self._SENSOR_SOURCES + tuple(registry.sources("gps"))
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan._gps_sources()
 
     def list_serial_ports(self) -> list[dict]:
         """Shim → HardwareGlue (issue #73)."""
@@ -822,246 +821,25 @@ class Runtime:
     # -- Hardware setup wizard: scan / probe endpoints (adoption pack #2) ---- #
 
     def _ports_in_use(self) -> dict[str, str]:
-        """realpath(serial port) -> owning device kind, for every ACTIVE device
-        whose driver holds a serial port open.
-
-        Conservative: if in doubt, mark in use. I2C port strings (``i2c:...``)
-        are handled by :meth:`_i2c_addrs_in_use`; serial strings only here.
-        """
-        import os
-
-        hw = self.config.hardware
-        result: dict[str, str] = {}
-
-        def _add(port: str, kind: str) -> None:
-            if not port or port.startswith("i2c:"):
-                return
-            try:
-                result[os.path.realpath(port)] = kind
-            except OSError:
-                result[port] = kind
-
-        # GPS
-        if self.gps is not None and hw.source("gps") in ("serial", "ublox"):
-            _add(hw.gps_port, "gps")
-
-        # Compass
-        if self.compass is not None and hw.source("compass") in ("serial", "hwt901b"):
-            _add(hw.compass_port, "compass")
-
-        # Motor — derive from the link plan (conservative: mark if source touches serial)
-        try:
-            from .hardware.link_plan import plan_motor_links
-            plan = plan_motor_links(hw)
-            if plan.kind == "combined":
-                if plan.source in ("serial", "both") and plan.link:
-                    _add(plan.link.get("port", ""), "motor")
-            elif plan.kind == "split":
-                for _ch_dict in (plan.steering, plan.thrust):
-                    if _ch_dict and _ch_dict.get("source") in ("serial", "both"):
-                        _add(_ch_dict.get("port", ""), "motor")
-        except Exception:  # noqa: BLE001
-            # If plan_motor_links raises, be conservative
-            _p = getattr(hw, "motor_port", "") or ""
-            if _p and not _p.startswith("i2c:"):
-                _add(_p, "motor")
-
-        return result
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan._ports_in_use()
 
     def _i2c_addrs_in_use(self) -> set[tuple[int, int]]:
-        """(bus, addr) pairs currently owned by a running driver on an I2C port."""
-        hw = self.config.hardware
-        result: set[tuple[int, int]] = set()
-        ports_to_check: list[str] = []
-
-        try:
-            from .hardware.link_plan import plan_motor_links
-            plan = plan_motor_links(hw)
-            if plan.kind == "combined":
-                if plan.link:
-                    _p = plan.link.get("port", "")
-                    if _p and _p.startswith("i2c:"):
-                        ports_to_check.append(_p)
-            elif plan.kind == "split":
-                for _ch_dict in (plan.steering, plan.thrust):
-                    if _ch_dict:
-                        _p = _ch_dict.get("port", "") or ""
-                        if _p.startswith("i2c:"):
-                            ports_to_check.append(_p)
-        except Exception:  # noqa: BLE001
-            _p = getattr(hw, "motor_port", "") or ""
-            if _p.startswith("i2c:"):
-                ports_to_check = [_p]
-
-        for _port in ports_to_check:
-            _parts = _port.split(":")
-            try:
-                _bus_n = int(_parts[1])
-                _addr_n = int(_parts[2], 0) if len(_parts) > 2 else 0x42
-                result.add((_bus_n, _addr_n))
-            except (IndexError, ValueError):
-                pass
-
-        return result
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan._i2c_addrs_in_use()
 
     def hw_scan(self) -> dict:
-        """Enumerate candidate hardware endpoints WITHOUT opening any of them.
-
-        Returns serial ports (list_serial_ports with ownership annotation),
-        I2C buses, the statically known I2C device list, and capability flags.
-        In demo mode returns a graceful empty posture (no hardware scanning).
-        """
-        import glob
-        import importlib.util
-        import os
-        from .hardware.probe import hint_from_metadata
-
-        caps = {
-            "serial": importlib.util.find_spec("serial_asyncio") is not None,
-            "i2c": importlib.util.find_spec("smbus2") is not None,
-        }
-
-        # Known I2C devices (static)
-        _ina = getattr(self.config, "battery", None)
-        _ina_addr = getattr(_ina, "i2c_addr", 0x40) if _ina else 0x40
-        known_i2c = [
-            {"kind": "helm-pico", "addr": "0x42",
-             "label": "Vanchor helm PCB (motor tunnel)"},
-            {"kind": "ina226", "addr": f"0x{_ina_addr:02x}",
-             "label": "INA226 battery shunt"},
-        ]
-
-        # Demo mode: return sim posture without scanning real hardware
-        if getattr(self.config, "demo", None) and self.config.demo.enabled:
-            return {"ports": [], "i2c_buses": [], "known_i2c": known_i2c,
-                    "capabilities": caps}
-
-        in_use = self._ports_in_use()
-        i2c_owned = self._i2c_addrs_in_use()
-
-        # Serial ports: list_serial_ports() + ownership + metadata hint
-        ports = []
-        for _entry in self.list_serial_ports():
-            _path = _entry["path"]
-            _desc = _entry.get("description", "")
-            try:
-                _rp = os.path.realpath(_path)
-            except OSError:
-                _rp = _path
-            ports.append({
-                **_entry,
-                "in_use": in_use.get(_rp),
-                "hint": hint_from_metadata(_path, _desc),
-            })
-
-        # I2C buses
-        i2c_buses = []
-        for _dev in sorted(glob.glob("/dev/i2c-[0-9]*")):
-            try:
-                _bus_n = int(_dev.split("-")[-1])
-            except ValueError:
-                continue
-            _owned = any(_b == _bus_n for (_b, _) in i2c_owned)
-            i2c_buses.append({"bus": _bus_n, "path": _dev, "in_use": _owned})
-
-        return {"ports": ports, "i2c_buses": i2c_buses, "known_i2c": known_i2c,
-                "capabilities": caps}
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan.hw_scan()
 
     async def hw_probe(self, payload: dict) -> dict:
-        """Briefly open ONE candidate endpoint, identify it, return a live sample.
+        """Shim → HardwareScan (issue #79)."""
+        return await self._hwscan.hw_probe(payload)
 
-        Serialised by self._hw_probe_lock. Refuses endpoints owned by a running
-        driver (409) and concurrent probe requests (409).
-
-        SAFETY: Serial probing is passive (zero writes) unless active_ubx_ident
-        is requested AND the passive stage classified the port as a GNSS
-        candidate. The motor probe writes MOTOR_INFO_CMD (INFO+CRC, read-only
-        identify) as the sole sanctioned motor write, then listens for the
-        firmware's INFO response and unsolicited A/E broadcast. See
-        hardware/probe.py docstring.
-        """
-        from .hardware import probe as probe_mod
-
-        if self._hw_probe_lock.locked():
-            return {"ok": False, "error": "another probe is already running"}
-
-        async with self._hw_probe_lock:
-            target = payload.get("target")
-            if target not in ("serial", "i2c"):
-                raise ValueError(f"unknown target {target!r}; must be 'serial' or 'i2c'")
-
-            if target == "serial":
-                return await self._hw_probe_serial(payload, probe_mod)
-            return await self._hw_probe_i2c(payload, probe_mod)
-
-    async def _hw_probe_serial(self, payload: dict, probe_mod) -> dict:
-        """Shim → HardwareGlue (issue #73)."""
-        return await self._hw._hw_probe_serial(payload, probe_mod)
-
-    async def _hw_probe_i2c(self, payload: dict, probe_mod) -> dict:
-        """I2C probe — called from hw_probe under the lock."""
-        _bus_raw = payload.get("bus")
-        _addr_raw = payload.get("addr")
-        _kind = str(payload.get("kind", "auto"))
-
-        if _bus_raw is None:
-            raise ValueError("'bus' is required for i2c target")
-        try:
-            _bus = int(_bus_raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid bus {_bus_raw!r}") from exc
-        if _bus < 0:
-            raise ValueError(f"bus must be >= 0, got {_bus}")
-
-        if _addr_raw is None:
-            raise ValueError("'addr' is required for i2c target")
-        try:
-            _addr = int(str(_addr_raw), 0)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"invalid addr {_addr_raw!r}") from exc
-        if not (0x03 <= _addr <= 0x77):
-            raise ValueError(f"i2c addr 0x{_addr:02X} out of range 0x03..0x77")
-
-        if _kind not in ("auto", "helm-pico", "ina226"):
-            raise ValueError(f"unknown i2c kind {_kind!r}")
-
-        # Ownership check
-        _owned = self._i2c_addrs_in_use()
-        if (_bus, _addr) in _owned:
-            return {
-                "ok": False, "conflict": True,
-                "error": (
-                    f"i2c:{_bus}:0x{_addr:02X} is in use by the running motor driver"
-                    " — pick another or change Devices config first"
-                ),
-            }
-
-        _raw = await asyncio.to_thread(probe_mod.probe_i2c, _bus, _addr, _kind)
-
-        # Build response inline
-        _detected = _raw.get("detected", "unknown")
-        _resp: dict = {
-            "ok": True, "target": "i2c",
-            "bus": _bus, "addr": f"0x{_addr:02x}",
-            "detected": _detected, "sample": _raw.get("sample", {}),
-        }
-        if _detected == "helm-pico":
-            _resp["suggest"] = {
-                "kind": "motor", "source": "serial",
-                "fields": {"motor_source": "serial",
-                           "motor_port": f"i2c:{_bus}:0x{_addr:02x}"},
-            }
-        elif _detected == "ina226":
-            _fields: dict = {"battery_source": "ina226"}
-            _sug: dict = {"kind": "battery", "source": "ina226", "fields": _fields}
-            if _bus != 1 or _addr != 0x40:
-                _sug["note"] = (
-                    "set battery.i2c_bus/i2c_addr in vanchor.yaml if not 1/0x40"
-                )
-            _resp["suggest"] = _sug
-        else:
-            _resp["suggest"] = None
-        return _resp
+    @property
+    def _hw_probe_lock(self):
+        """Shim → HardwareScan (issue #79); kept for test back-compat."""
+        return self._hwscan._hw_probe_lock
 
     # -- fusion calibration (still-capture system-ID; see nav.calibration) --- #
     def fusion_calibration(self) -> dict:
@@ -1136,15 +914,8 @@ class Runtime:
         return self._devices._device_menus()
 
     def _driver_menus(self) -> dict:
-        """Per-source device-menu SCHEMAS from registered drivers, with any saved
-        settings overlaid -- so the UI can render a device's menu the moment its
-        source is selected, before any instance exists. Keyed by source name."""
-        out: dict = {}
-        saved_all = self.config.hardware.device_settings or {}
-        for kind in ("compass",):  # device kinds with pluggable driver menus
-            for src, schema in registry.menus(kind).items():
-                out[src] = _overlay_menu_values(schema, saved_all.get(kind, {}))
-        return out
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan._driver_menus()
 
     def _device_by_kind(self, kind: str):
         """Delegated to DeviceManager (issue #70)."""
@@ -1174,97 +945,16 @@ class Runtime:
         sim_state: "_SimChannelState | None",
         cfg: AppConfig,
     ):
-        """Build one split motor channel; returns ``None`` on failure (Constraint 4).
-
-        ``name`` is "thrust" or "steering"; ``link`` is the resolved channel
-        link dict from :func:`~vanchor.hardware.link_plan.plan_motor_links`
-        (``None`` or ``source=="none"`` -> not connected).  A build exception is
-        caught, logged, and surfaced as ``None`` so the other channel can still
-        start up.
-        """
-        if link is None or link["source"] == "none":
-            return None
-        try:
-            src = link["source"]
-            if src == "sim":
-                if sim_motor is None:
-                    logger.warning(
-                        "split %s channel needs a sim motor but none was created; "
-                        "add a sim-capable device to the config", name)
-                    return None
-                if sim_state is None:
-                    return None  # should not happen; guard anyway
-                if name == "thrust":
-                    return _SimThrustChannel(sim_motor, sim_state)
-                return _SimSteeringChannel(sim_motor, sim_state)
-            elif src == "both":
-                # tee-per-channel (drive sim boat AND a physical board on the same
-                # axis) is out of scope for Task 3. A combined "both" config uses
-                # _TeeMotor in _construct_devices and never reaches this path; a
-                # genuinely split "both" config downgrades to sim-only here.
-                logger.warning(
-                    "split %s channel: source 'both' (tee-per-channel) is not yet "
-                    "implemented; downgrading to sim-only", name)
-                if sim_motor is None:
-                    logger.warning(
-                        "split %s channel needs a sim motor but none was created; "
-                        "add a sim-capable device to the config", name)
-                    return None
-                if sim_state is None:
-                    return None  # should not happen; guard anyway
-                if name == "thrust":
-                    return _SimThrustChannel(sim_motor, sim_state)
-                return _SimSteeringChannel(sim_motor, sim_state)
-            elif src == "serial":
-                from .hardware.serial_channels import (
-                    SerialSteeringChannel,
-                    SerialThrustChannel,
-                )
-                from .hardware.i2c_link import make_motor_transport
-                transport = make_motor_transport(
-                    link["port"],
-                    baudrate=link["baud"],
-                    bytesize=link["bytesize"],
-                    parity=link["parity"],
-                    stopbits=link["stopbits"],
-                )
-                if name == "thrust":
-                    return SerialThrustChannel(transport)
-                # v2.1: the channel speaks DEGREES on the wire; the one scale
-                # constant (max_steer_angle_deg) converts the normalized command.
-                return SerialSteeringChannel(
-                    transport, full_scale_deg=cfg.boat.max_steer_angle_deg)
-            else:
-                logger.warning(
-                    "unknown source %r for split %s channel; skipping", src, name)
-                return None
-        except Exception as exc:  # noqa: BLE001 — Constraint 4: never crash startup
-            logger.warning(
-                "split %s channel could not be built (%s); running without it", name, exc)
-            return None
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan._build_split_channel(name, link, sim_motor, sim_state, cfg)
 
     def _construct_devices(self, cfg: AppConfig) -> dict:
         """Delegated to DeviceManager (issue #70)."""
         return self._devices._construct_devices(cfg)
 
     def _driver_context(self, kind: str, source: str, config):
-        """Build the NARROW, versioned capability object (#43) a pluggable driver
-        is constructed with — publish a reading, report health, read its own
-        config, a logger/clock, and coarse boat motion. Deliberately carries NO
-        reference to the runtime, the motor, or the safety governor, so a driver
-        (or a community pack) can never reach STOP/the deadman/the failsafes
-        through it (see docs/extension-packs.md — the safety floor is never a pack
-        concern)."""
-        def motion():
-            st = getattr(self, "state", None)
-            if st is None or st.fix is None:
-                return None
-            return (st.fix.cog_deg, st.sog_knots * 0.514444)  # knots -> m/s
-
-        return registry.DriverContext(
-            kind=kind, source=source, config=config,
-            _bus=self.bus, _now=self._now_fn, _motion=motion,
-        )
+        """Shim → HardwareScan (issue #79)."""
+        return self._hwscan._driver_context(kind, source, config)
 
     def _build_battery_monitor(self, cfg: AppConfig, simulator):
         """Shim → SafetyRuntime (issue #76)."""
