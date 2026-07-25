@@ -146,6 +146,21 @@ the exact shape matters. The passed-perpendicular gate deliberately keeps the
 can't wedge the route — the abeam pass still advances the leg. Front end sends it
 via the **Trace tightly** checkbox (auto-ticked when a painted route loads).
 
+**Path tracking (`PathTrackMode`, `route_follow`).** The opt-in **pure-pursuit**
+alternative to `WaypointMode` (#35), selected by the goto `follow:"path"` flag
+(`state.route_follow` = `"leg"` | `"path"`, default `"leg"`; in the route
+snapshot). Instead of aiming at the active mark, it treats `state.waypoints` as
+one polyline: each tick it projects the boat onto the line (nearest point =
+along-track cursor + cross-track), then steers the bow at a **lookahead point**
+sliding a few metres ahead along the line (lookahead scales with speed). The
+lookahead sweeps smoothly around corners, so it hugs the shape without the
+per-mark arrival hop that lets leg-tracking cut corners — and fidelity is
+independent of waypoint count. Honours `route_loop` (closed ring) / `route_patrol`
+(there-and-back) and posts per-waypoint speed as the cursor passes each mark; it
+shares the waypoint config's throttle + boat speed. Same helm/`GuidedSetpoint`
+interface as every guided mode. Front end: the **Path tracking** checkbox
+(`follow:"path"`), auto-ticked for painted and along-shoreline routes.
+
 **Work Area mode (`WorkAreaMode`).** Visit each spot, HOLD position there, then
 advance. The spots are `state.waypoints`; `active_waypoint` is the current spot.
 A two-phase machine: TRAVEL reuses the waypoint leg (cross-track + fwd/reverse);

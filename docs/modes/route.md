@@ -94,6 +94,14 @@ restart at waypoint 1.
   it whenever the exact drawn shape matters — e.g. the line steers around an
   obstacle. The boat still can't stall on it: passing a mark abeam advances the
   leg even when noise or drift holds it just outside the tighter circle.
+- **Path tracking (follow the line)** — checkbox in the route panel. Switches the
+  route follower from leg-by-leg steering to a **continuous pure-pursuit** tracker
+  that treats the whole route as one line: it locks onto the nearest point and
+  aims at a lookahead point sliding along the line, so it hugs the shape without
+  cutting corners and doesn't depend on how many waypoints there are. *Default
+  off; auto-enabled for **painted** and **along-shoreline** routes* (sparse
+  waypoints with long legs, where leg-tracking cuts corners most). Loop and patrol
+  still work; turn it off to fall back to leg tracking (+ trace-tight).
 - **Loop** — set by the **Loop around island** planner (not a manual checkbox).
   At the end the route wraps to waypoint 1 and circles continuously. A **↻ loop**
   badge lights. Clearing or starting a normal route drops the loop flag.

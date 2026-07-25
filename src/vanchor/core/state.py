@@ -146,6 +146,11 @@ class NavigationState:
     # Set for hand-drawn "paint" routes (and any route where the exact traced shape
     # matters -- e.g. steering around an obstacle). Via the goto/load_route flag.
     route_trace_tight: bool = False
+    # Route-following strategy: "leg" = WaypointMode (leg-by-leg, cross-track
+    # corrected) or "path" = PathTrackMode (continuous pure-pursuit that tracks the
+    # whole route as one polyline and never cuts corners). Set from the goto
+    # "follow" flag; the default "leg" keeps existing behaviour unchanged.
+    route_follow: str = "leg"
 
     # --- Work Area mode: visit spots, hold at each, then advance. -------- #
     # The spots are state.waypoints; active_waypoint is the current spot. While

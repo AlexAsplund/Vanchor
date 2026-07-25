@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Path tracking — continuous pure-pursuit route follower (#35).** An opt-in
+  alternative to the leg-by-leg waypoint steering, selectable via a **Path
+  tracking (follow the line)** switch in the route panel. It treats the whole
+  route as one line and steers toward a lookahead point that slides along it, so
+  it hugs the drawn/planned shape without cutting corners and independent of
+  waypoint count (measured in the Fossen sim: hugs a 90° corner to ~0.5 m vs
+  ~0.9 m for leg-tracking, and tracks a shoreline S-curve to <0.6 m). Honours
+  loop / patrol / on-arrival. **Auto-enabled for painted and along-shoreline
+  routes** — the two modes where it helps most — and off by default elsewhere.
+  (`PathTrackMode`, `state.route_follow`, goto `follow:"path"`.)
+
 - **Steering-wheel cruise lock (hold-to-lock).** In Manual, hold the throttle
   knob roughly still for ~1 s at a non-zero speed to **lock** it — a ring fills
   clockwise around the rim, then goes solid amber and the hub reads **CRUISE n%**

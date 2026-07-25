@@ -210,6 +210,7 @@ def frontend_checks():
                 $('paint-finish').click();
                 out.pending = VA.map.pending().length;
                 out.tight = $('wp-tight').checked;
+                out.path = $('wp-pathtrack').checked;
                 out.barHidden = $('paint-bar').classList.contains('hidden');
                 $('wp-clear').click();   // tidy up the pending route
                 return out;
@@ -226,6 +227,7 @@ def frontend_checks():
         check(f"undo removes last stroke ({res['afterS2']} -> {res['afterUndo']} pts)", (not res["undoWasDisabled"]) and res["afterUndo"] == res["afterS1"])
         check(f"Finished builds waypoints ({res['pending']})", 3 <= res["pending"] <= 80)
         check("trace-tight auto-enabled for paint", res["tight"])
+        check("path-tracking auto-enabled for paint", res["path"])
         check("paint toolbar hides after finish", res["barHidden"])
 
         check("no console errors", not errs)

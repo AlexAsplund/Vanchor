@@ -53,6 +53,8 @@ from .modes import (
     ManualMode,
     OrbitConfig,
     OrbitMode,
+    PathTrackConfig,
+    PathTrackMode,
     TrollingConfig,
     TrollingMode,
     WaypointConfig,
@@ -70,6 +72,7 @@ _CRUISING_MODES = frozenset(
     {
         ControlModeName.HEADING_HOLD,
         ControlModeName.WAYPOINT,
+        ControlModeName.PATH_TRACK,
         ControlModeName.FOLLOW_APB,
         ControlModeName.CONTOUR_FOLLOW,
         ControlModeName.ORBIT,
@@ -424,11 +427,15 @@ class Controller:
         # Share one WaypointConfig between waypoint + work-area travel so boat-spec
         # tuning (app._apply_boat_specs) applies to both.
         wp_cfg = waypoint_config or WaypointConfig()
+        # PathTrackMode (the pure-pursuit alternative, #35) shares the same throttle
+        # and boat-speed the waypoint config carries, kept in sync by boat_setup.
+        self._path_cfg = PathTrackConfig(throttle=wp_cfg.throttle, boat_speed_mps=wp_cfg.boat_speed_mps)
         self.modes: dict[ControlModeName, ControlMode] = {
             ControlModeName.MANUAL: self.manual,
             ControlModeName.ANCHOR_HOLD: AnchorHoldMode(anchor_config),
             ControlModeName.HEADING_HOLD: HeadingHoldMode(),
             ControlModeName.WAYPOINT: WaypointMode(wp_cfg),
+            ControlModeName.PATH_TRACK: PathTrackMode(self._path_cfg),
             ControlModeName.WORK_AREA: WorkAreaMode(
                 WorkAreaConfig(), waypoint_config=wp_cfg, anchor_config=anchor_config
             ),
@@ -534,9 +541,10 @@ class Controller:
         # Breadcrumb the boat's path if a track recording is in progress.
         self.track.maybe_record(self.state.position)
 
-        # Fire the route's on-arrival action once, after it completes.
+        # Fire the route's on-arrival action once, after it completes (either
+        # route follower -- leg-based WAYPOINT or pure-pursuit PATH_TRACK).
         if (
-            self.state.mode == ControlModeName.WAYPOINT
+            self.state.mode in (ControlModeName.WAYPOINT, ControlModeName.PATH_TRACK)
             and self.state.route_complete
             and self.state.route_on_arrival in ("anchor", "stop")
         ):
@@ -772,9 +780,9 @@ class Controller:
                     for i, w in enumerate(wps)
                 ]
                 if "throttle" in command:
-                    cast(
-                        WaypointMode, self.modes[ControlModeName.WAYPOINT]
-                    ).config.throttle = float(command["throttle"])
+                    thr = float(command["throttle"])
+                    cast(WaypointMode, self.modes[ControlModeName.WAYPOINT]).config.throttle = thr
+                    self._path_cfg.throttle = thr   # keep the path-tracker in sync
                 # "active" present => a LIVE EDIT of the running route (the user
                 # dragged/inserted/deleted/reordered a committed waypoint and the UI
                 # re-sent it). Resume from the given index (clamped) instead of
@@ -791,12 +799,26 @@ class Controller:
                     self.state.route_patrol = bool(command.get("patrol", False))
                     # Trace tightly: hug corners (small arrival radius) -- paint routes.
                     self.state.route_trace_tight = bool(command.get("trace_tight", False))
-                    self.set_mode(ControlModeName.WAYPOINT)
+                    # Follow strategy: "path" = pure-pursuit PathTrackMode (#35), else
+                    # leg-by-leg WaypointMode. Default keeps existing behaviour.
+                    self.state.route_follow = "path" if command.get("follow") == "path" else "leg"
+                    self.set_mode(
+                        ControlModeName.PATH_TRACK
+                        if self.state.route_follow == "path"
+                        else ControlModeName.WAYPOINT
+                    )
                 else:
                     n = len(self.state.waypoints)
                     self.state.active_waypoint = max(0, min(int(resume), n - 1)) if n else 0
-                    if self.state.mode != ControlModeName.WAYPOINT:
-                        self.set_mode(ControlModeName.WAYPOINT)
+                    # Live edit: stay in whichever follow mode the route is running
+                    # (don't re-activate PathTrackMode -- that would reset its cursor).
+                    target = (
+                        ControlModeName.PATH_TRACK
+                        if self.state.route_follow == "path"
+                        else ControlModeName.WAYPOINT
+                    )
+                    if self.state.mode != target:
+                        self.set_mode(target)
             elif ctype == "load_route":
                 # Waypoints already parsed (from GPX) and placed on the state by the
                 # runtime; just (re)start waypoint navigation.
@@ -804,11 +826,16 @@ class Controller:
                 self.state.route_loop = bool(command.get("loop", False))
                 self.state.route_patrol = bool(command.get("patrol", False))
                 self.state.route_trace_tight = bool(command.get("trace_tight", False))
+                self.state.route_follow = "path" if command.get("follow") == "path" else "leg"
                 if "throttle" in command:
-                    cast(
-                        WaypointMode, self.modes[ControlModeName.WAYPOINT]
-                    ).config.throttle = float(command["throttle"])
-                self.set_mode(ControlModeName.WAYPOINT)
+                    thr = float(command["throttle"])
+                    cast(WaypointMode, self.modes[ControlModeName.WAYPOINT]).config.throttle = thr
+                    self._path_cfg.throttle = thr
+                self.set_mode(
+                    ControlModeName.PATH_TRACK
+                    if self.state.route_follow == "path"
+                    else ControlModeName.WAYPOINT
+                )
             elif ctype == "work_area":
                 # Work Area: spots = waypoints (each with optional hold heading); visit
                 # each, hold position, advance on the "next spot" button and/or a
@@ -993,6 +1020,7 @@ class Controller:
             "route_loop": self.state.route_loop,
             "route_patrol": self.state.route_patrol,
             "route_trace_tight": self.state.route_trace_tight,
+            "route_follow": self.state.route_follow,
             "target_heading": self.state.target_heading,
             "anchor": self.state.anchor,
             "anchor_radius_m": self.state.anchor_radius_m,
@@ -1021,6 +1049,7 @@ class Controller:
         self.state.route_loop = snap.get("route_loop", False)
         self.state.route_patrol = snap.get("route_patrol", False)
         self.state.route_trace_tight = snap.get("route_trace_tight", False)
+        self.state.route_follow = snap.get("route_follow", "leg")
         self.state.target_heading = snap["target_heading"]
         self.state.anchor = snap["anchor"]
         self.state.anchor_radius_m = snap["anchor_radius_m"]
