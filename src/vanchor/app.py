@@ -85,6 +85,7 @@ from .runtime.depth import DepthService  # noqa: E402
 from .runtime.devices import DeviceManager  # noqa: E402
 from .runtime.hardware_glue import HardwareGlue  # noqa: E402
 from .runtime.nav_glue import NavGlue  # noqa: E402
+from .runtime.safety_runtime import SafetyRuntime  # noqa: E402
 from .runtime.telemetry import TelemetryBuilder  # noqa: E402
 
 logger = logging.getLogger("vanchor.app")
@@ -251,6 +252,13 @@ class Runtime:
         # Device management cluster (issue #70): device config, construction,
         # status, health, debug -- all live in DeviceManager; Runtime delegates.
         self._devices = DeviceManager(self)
+        # Failsafe + power + supervisor cluster (issue #76): battery source
+        # discovery/monitor build, sim SoC setter, the link-loss deadman, push
+        # alerts, RTL recommend + auto-RTL, the battery ladder, and the 1 Hz
+        # supervisor loop all live in SafetyRuntime; Runtime delegates. Built
+        # BEFORE _construct_devices so DeviceManager's battery-monitor build can
+        # reach _build_battery_monitor / _battery_sources through the shims.
+        self._safety = SafetyRuntime(self)
         # Connector + serial hardware-wiring cluster (issue #73): serial port
         # enumeration, hardware probing, serial device builders, and the
         # connector framework all live in HardwareGlue; Runtime delegates.
@@ -901,11 +909,8 @@ class Runtime:
     _BATTERY_SOURCES = ("sim", "none")
 
     def _battery_sources(self) -> tuple:
-        """Built-in battery sources + any registered driver sources (e.g.
-        ``ina226``), discovered from the registry so a pack driver needs no edit
-        here."""
-        from .hardware import registry
-        return self._BATTERY_SOURCES + tuple(registry.sources("battery"))
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety._battery_sources()
 
     def _compass_sources(self) -> tuple:
         """Built-in compass sources + any registered driver sources (e.g.
@@ -1372,41 +1377,8 @@ class Runtime:
         )
 
     def _build_battery_monitor(self, cfg: AppConfig, simulator):
-        """Build the battery monitor (#42) — the reference registry-driven 4th
-        device kind. ``sim`` presents the simulator's integrated pack (the
-        baseline, identical telemetry to before); any other source is a pluggable
-        driver built through the versioned capability API (#43). A driver that
-        can't be built (missing lib, no hardware) is skipped with a warning — the
-        rest of the boat still runs — mirroring the compass-driver resilience.
-
-        Default: ``sim`` when a simulated boat exists (unchanged behaviour), else
-        ``none`` (a real battery monitor is not implied by enabling serial GPS/
-        compass/motor)."""
-        source = cfg.hardware.battery_source or ("sim" if simulator is not None else "none")
-        if source in ("none", None):
-            return None
-        if source == "sim":
-            if simulator is None:
-                return None
-            from .hardware.drivers.battery import SimBatteryMonitor
-            return SimBatteryMonitor(simulator.battery)
-        if registry.uses_context("battery", source):
-            try:
-                ctx = self._driver_context("battery", source, cfg.battery)
-                return registry.build_with_context("battery", source, ctx)
-            except Exception as exc:  # noqa: BLE001 - a bad driver must not crash startup
-                logger.warning(
-                    "battery source %r could not be built (%s); running without a "
-                    "battery monitor. Change it in Settings -> Devices.", source, exc)
-                return None
-        if registry.has("battery", source):  # legacy (runtime, cfg) driver
-            try:
-                return registry.build_device("battery", source, self, cfg)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("battery source %r could not be built (%s).", source, exc)
-                return None
-        logger.warning("unknown battery source %r; running without a battery monitor.", source)
-        return None
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety._build_battery_monitor(cfg, simulator)
 
     async def reload_devices(self) -> dict:
         """Delegated to DeviceManager (issue #70)."""
@@ -1681,13 +1653,8 @@ class Runtime:
         guard._pending_point = None
 
     def _set_battery(self, soc_pct: object) -> None:
-        """Set/reset the battery state-of-charge (#60). Sim-only: on real
-        hardware the SOC comes from a battery monitor over the HAL."""
-        if soc_pct is None or self.simulator is None:
-            logger.info("set_battery ignored (no value or no sim battery)")
-            return
-        self.simulator.battery.set_soc(float(soc_pct))
-        logger.info("battery SOC set to %.0f%%", float(soc_pct))
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety._set_battery(soc_pct)
 
     # ------------------------------------------------------------------ #
     # Passive anchor alarm recover (adoption #10)
@@ -1776,54 +1743,12 @@ class Runtime:
         self._last_client_seen = self._mono_fn()
 
     def _underway(self) -> bool:
-        """True when the boat is actively making way and a lost link must be
-        caught -- i.e. NOT idle. Every guided/cruising mode counts, plus MANUAL
-        while the operator is actually commanding thrust (driving by hand): a
-        client loss there must not leave the boat motoring on forever (#64).
-        Station-keeping anchor-hold is excluded (it is already holding)."""
-        if self.state.mode in _UNDERWAY_MODES:
-            return True
-        if self.state.mode == ControlModeName.MANUAL:
-            return abs(self.state.motor_command.thrust) > _MANUAL_UNDERWAY_THRUST_EPS
-        return False
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety._underway()
 
     def evaluate_link_failsafe(self, now: float | None = None) -> bool:
-        """Engage the lost-link failsafe if no UI client has been seen for the
-        timeout while underway. In a guided mode this holds position
-        (anchor-hold); driving MANUALLY it STOPS (zero thrust) -- there is no
-        target to hold to, so the safe action is to cut the motor. Returns True
-        if it engaged on this call. Idempotent and clock-injectable (pass the
-        MONOTONIC ``now`` in tests)."""
-        if now is None:
-            now = self._mono_fn()
-        timeout = self.config.safety.link_loss_timeout_s
-        connected = self._ui_clients > 0
-        if connected or self._last_client_seen is None or self._link_failsafe_engaged:
-            return False
-        if not self._underway():
-            return False
-        if now - self._last_client_seen < timeout:
-            return False
-        if self.state.mode == ControlModeName.MANUAL:
-            # Driving by hand with the link gone -> cut the motor (STOP). This
-            # deadman is part of the safety floor and is NOT configurable.
-            logger.warning("link lost %.0fs while driving manually; STOP (zero thrust)", timeout)
-            self.controller.handle_command({"type": "stop"})
-            self._link_failsafe_action = "stop"
-        elif self.config.safety.link_loss_continue_mission:
-            # Unsupervised missions (the default: a locked phone must not park
-            # an active route): keep flying the guided mode; geofence/depth/
-            # battery failsafes still apply. Logged + latched (fires once).
-            logger.warning("link lost %.0fs while underway; continuing mission "
-                           "(safety.link_loss_continue_mission)", timeout)
-            self._link_failsafe_action = "continue"
-        else:
-            # Guided mode with continue-mission off -> hold position here.
-            logger.warning("link lost %.0fs while underway; engaging hold-position", timeout)
-            self.controller.handle_command({"type": "anchor_hold"})
-            self._link_failsafe_action = "hold"
-        self._link_failsafe_engaged = True
-        return True
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety.evaluate_link_failsafe(now)
 
     def evaluate_auto_apb(self, now: float | None = None) -> bool:
         """Repoint → NavGlue (issue #75)."""
@@ -1834,120 +1759,8 @@ class Runtime:
         return self._nav.evaluate_anchor_alarm()
 
     def evaluate_push_alerts(self) -> None:
-        """Edge-triggered Web Push dispatch (adoption #7). Mirrors the client-side
-        banner conditions in static/alerts.js, but server-side so an alarm
-        reaches the phone with NO client connected. Observe-only: reads state,
-        never commands. Each send is enqueued to the push worker thread.
-
-        Every edge is also recorded into the server-side alert log (Task 1
-        D8/A14) so the alert-history panel survives a page reload."""
-        prev = self._push_prev
-
-        # Boat position for alert-log entries ("Show on map"); None when no fix.
-        _pos = self.state.position
-        _lat = _pos.lat if (_pos is not None and not _pos.is_null()) else None
-        _lon = _pos.lon if (_pos is not None and not _pos.is_null()) else None
-
-        # ---- anchor drag ----
-        drag = bool(self.controller.safety_status.drag_alarm)
-        if drag and not prev.get("drag"):
-            dist = self.state.distance_to_anchor_m
-            body = (f"Boat {dist:.0f} m from anchor" if self.state.anchor is not None
-                    else "Boat has dragged from anchor")
-            self.push.notify("anchor_drag", "Anchor drag alarm", body)
-            self.alert_log.record("alarm", f"Anchor drag alarm — {body}",
-                                  kind="drag", lat=_lat, lon=_lon)
-        prev["drag"] = drag
-
-        # ---- passive anchor alarm breach (via on_breach hook) ----
-        # The on_breach hook (appended in __init__) fires the push immediately
-        # on False->True; also track firing here for consistent edge state.
-        aalarm = bool(self.anchor_alarm.firing)
-        prev["anchor_alarm"] = aalarm  # track but don't double-fire; hook does it
-
-        # ---- battery RTL recommend ----
-        battery_rtl = bool(self.state.rtl_recommended)
-        if battery_rtl and not prev.get("battery_rtl"):
-            self.push.notify("battery", "Battery low", "Return to launch recommended")
-            self.alert_log.record("warn", "Battery low — return to launch recommended",
-                                  kind="battery", lat=_lat, lon=_lon)
-        prev["battery_rtl"] = battery_rtl
-
-        # ---- battery SoC ladder (UI convention: warn <25%, crit <10%) ----
-        # Independent of the RTL estimate (Task 1 A5); edge-triggered so each
-        # threshold crossing records/pushes exactly once, not once per tick.
-        soc_val = self.battery_snapshot().get("soc_pct")
-        if soc_val is not None:
-            soc_f = float(soc_val)
-            batt_crit = soc_f < 10.0
-            batt_low = soc_f < 25.0
-            if batt_crit and not prev.get("batt_crit"):
-                self.push.notify("battery", "Battery critical",
-                                 f"Battery at {soc_f:.0f}%")
-                self.alert_log.record("alarm", f"Battery critical — {soc_f:.0f}%",
-                                      kind="battery", lat=_lat, lon=_lon)
-            elif batt_low and not batt_crit and not prev.get("batt_low"):
-                self.push.notify("battery", "Battery low",
-                                 f"Battery at {soc_f:.0f}%")
-                self.alert_log.record("warn", f"Battery low — {soc_f:.0f}%",
-                                      kind="battery", lat=_lat, lon=_lon)
-            prev["batt_crit"] = batt_crit
-            prev["batt_low"] = batt_low
-
-        # ---- link loss failsafe ----
-        link = bool(self._link_failsafe_engaged)
-        if link and not prev.get("link"):
-            action = self._link_failsafe_action
-            if action == "stop":
-                body = "Motor stopped (link-loss failsafe)"
-            elif action == "continue":
-                body = "Continuing mission unsupervised"
-            else:
-                body = "Holding position (failsafe)"
-            self.push.notify("link", "Connection lost", body)
-            self.alert_log.record("alarm", f"Connection lost — {body}",
-                                  kind="link", lat=_lat, lon=_lon)
-        prev["link"] = link
-
-        # ---- shallow stop ----
-        shallow = bool(self.controller.safety_status.shallow_stop)
-        if shallow and not prev.get("shallow"):
-            min_d = self.controller.safety.config.min_depth_m
-            self.push.notify("depth", "Shallow water",
-                             f"Auto-stopped: depth below {min_d:.1f} m")
-            self.alert_log.record("alarm",
-                                  f"Shallow — auto-stopped (depth below {min_d:.1f} m)",
-                                  kind="shallow", lat=_lat, lon=_lon)
-        prev["shallow"] = shallow
-
-        # ---- depth divergence ----
-        diverge = bool(self.state.depth_divergence_alert)
-        if diverge and not prev.get("diverge"):
-            self.push.notify("depth", "Depth warning",
-                             "Sounder disagrees with chart — possible uncharted shoal")
-            self.alert_log.record("warn",
-                                  "Depth warning — sounder disagrees with chart",
-                                  kind="depth", lat=_lat, lon=_lon)
-        prev["diverge"] = diverge
-
-        # ---- GPS fix lost ----
-        fix_lost = bool(self.controller.safety_status.fix_lost)
-        if fix_lost and not prev.get("fix_lost"):
-            self.push.notify("link", "GPS fix lost", "Thrust cut until fix returns")
-            self.alert_log.record("alarm", "GPS fix lost — thrust cut until fix returns",
-                                  kind="gps", lat=_lat, lon=_lon)
-        prev["fix_lost"] = fix_lost
-
-        # ---- battery ladder step (cap decrease) ----
-        cap = self.controller.safety.thrust_cap
-        if cap < self._push_prev_cap - 1e-9:
-            soc = self.battery_snapshot().get("soc_pct")
-            self.push.notify(
-                "battery", "Battery low",
-                f"Thrust limited to {cap:.0%}"
-                + (f" at {soc:.0f}% charge" if soc is not None else ""),
-            )
-        self._push_prev_cap = cap
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety.evaluate_push_alerts()
 
     def refresh_land_guard_water(self) -> bool:
         """Keep the safety governor supplied with the water chart around the
@@ -1988,134 +1801,27 @@ class Runtime:
         return True
 
     def evaluate_rtl_recommend(self) -> bool:
-        """Set ``state.rtl_recommended`` when the battery range has dropped to
-        within ``rtl_margin_m`` of the distance home (so the boat can *just* make
-        it back). If ``auto_rtl`` is set, engage RTL. Returns the new flag."""
-        launch = self.state.launch
-        pos = self.state.position
-        if launch is None or pos is None or pos.is_null():
-            self.state.rtl_recommended = False
-            return False
-        range_m = self.battery_snapshot().get("range_m", 0.0)
-        if range_m <= 0.0:
-            # No usable range estimate (boat not making way). A zero estimate
-            # with a critically low pack must still recommend -- "unknown" is
-            # not "infinite". (Task 1 A5: rtl_recommended stayed False at
-            # range_m: 0 even with the pack nearly flat.)
-            soc = self.battery_snapshot().get("soc_pct")
-            if soc is not None and float(soc) <= 10.0:
-                self.state.rtl_recommended = True
-                return True
-            self.state.rtl_recommended = False
-            return False
-        from .core.geo import haversine_m
-
-        dist_home = haversine_m(pos, launch)
-        recommend = range_m <= dist_home + self.config.safety.rtl_margin_m
-        self.state.rtl_recommended = recommend
-        if recommend and self.config.safety.auto_rtl and self.state.mode != ControlModeName.WAYPOINT:
-            logger.warning("auto_rtl: battery range near distance-home; engaging RTL")
-            self._schedule_auto_rtl()
-        return recommend
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety.evaluate_rtl_recommend()
 
     def _schedule_auto_rtl(self) -> None:
-        """Engage auto-RTL WITHOUT blocking the event loop.
-
-        ``return_to_launch`` -> ``plan_route`` is synchronous and CPU/IO-heavy
-        (Overpass fetch, up to two 60 s timeouts) and documented as executor-only.
-        Calling it inline from the periodic telemetry tick would stall every
-        async loop, so run it in the default executor. A single in-flight guard
-        stops the evaluator (called every telemetry tick) from launching a pile
-        of duplicate concurrent RTL plans."""
-        if self._rtl_in_flight:
-            return
-        self._rtl_in_flight = True
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop (e.g. a unit test off the live path) -> preserve
-            # the old inline behaviour rather than silently doing nothing.
-            try:
-                self.return_to_launch()
-            finally:
-                self._rtl_in_flight = False
-            return
-        asyncio.ensure_future(self._run_auto_rtl(loop))
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety._schedule_auto_rtl()
 
     async def _run_auto_rtl(self, loop) -> None:
-        """Run the heavy RTL plan+engage in an executor; always clear the
-        in-flight flag so a failure can't wedge future auto-RTL attempts."""
-        try:
-            result = await loop.run_in_executor(None, self.return_to_launch)
-            if isinstance(result, dict) and not result.get("ok", True):
-                logger.warning("auto_rtl planning failed: %s", result.get("message"))
-        except Exception:
-            logger.exception("auto_rtl planning failed")
-        finally:
-            self._rtl_in_flight = False
+        """Shim → SafetyRuntime (issue #76)."""
+        return await self._safety._run_auto_rtl(loop)
 
     # ------------------------------------------------------------------ #
     # Low-battery thrust-derating ladder (#49)
     # ------------------------------------------------------------------ #
     def evaluate_battery_ladder(self) -> float:
-        """Push a soft thrust cap into the governor from the battery SoC, and hand
-        off to the existing RTL at the lowest stage. Returns the applied cap
-        (1.0 = no derate).
-
-        The cap is a magnitude-only ceiling, so STOP and every failsafe still take
-        precedence and are never blocked. Only runs when there is a real battery
-        reading (a simulated pack or a battery monitor); with no battery source
-        the cap is left at 1.0 so a boat with no gauge is never spuriously derated
-        by the zeros fallback in :meth:`battery_snapshot`."""
-        ladder = self._battery_ladder
-        gov = self.controller.safety
-        if not ladder.enabled or (
-            getattr(self, "battery_monitor", None) is None and self.simulator is None
-        ):
-            gov.set_thrust_cap(1.0)
-            return 1.0
-        soc = self.battery_snapshot().get("soc_pct")
-        if soc is None:
-            gov.set_thrust_cap(1.0)
-            return 1.0
-        soc = float(soc)
-        cap = ladder.cap_for(soc)
-        gov.set_thrust_cap(cap)
-        if ladder.at_rtl(soc):
-            self._battery_rtl_handoff(soc)
-        else:
-            # Recovered above the RTL stage (e.g. a battery swap) -> re-arm.
-            self._battery_rtl_engaged = False
-        return cap
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety.evaluate_battery_ladder()
 
     def _battery_rtl_handoff(self, soc_pct: float) -> None:
-        """At the lowest ladder stage, hand off to the EXISTING RTL/failsafe once.
-
-        Idempotent via a one-shot flag (cleared when SoC recovers above the
-        stage), and guarded so it only fires when a launch point exists to return
-        to. The progressive derate above this stage still holds regardless."""
-        if self._battery_rtl_engaged:
-            return
-        self._battery_rtl_engaged = True
-        # Recommend-only unless the operator opted into autonomous RTL (#7): with
-        # auto_rtl off the boat must NOT self-drive -- mirror evaluate_rtl_recommend
-        # and only raise the low-battery RTL recommendation for the UI/alarm. The
-        # progressive derate cap already applied above still stands.
-        if not self.config.safety.auto_rtl:
-            self.state.rtl_recommended = True
-            logger.warning(
-                "battery critically low (%.0f%%); recommending Return-to-Launch "
-                "(auto_rtl off -- not self-driving)", soc_pct)
-            return
-        if self.state.launch is None:
-            logger.warning(
-                "battery critically low (%.0f%%) but no launch point recorded; "
-                "holding the lowest derate cap (no RTL target)", soc_pct)
-            return
-        logger.warning(
-            "battery critically low (%.0f%%); handing off to Return-to-Launch",
-            soc_pct)
-        self._schedule_auto_rtl()
+        """Shim → SafetyRuntime (issue #76)."""
+        return self._safety._battery_rtl_handoff(soc_pct)
 
     # ------------------------------------------------------------------ #
     # Periodic safety supervisor (1 Hz) + depth accumulation
@@ -2186,50 +1892,16 @@ class Runtime:
             logger.exception("demo scenario failed to engage")
 
     async def _run_supervisor_client(self) -> None:
-        """Poll the host-side supervisor's /v1/status and cache it in _supervisor_status.
-
-        Exception-proof: logged errors back off and retry; task only exits on
-        CancelledError at shutdown. Never mutates any safety-critical state."""
-        if self.supervisor_link is None:
-            return
-        cfg = self.config.supervisor
-        while True:
-            try:
-                status = await asyncio.to_thread(self.supervisor_link.status)
-                self._supervisor_status = status
-                self._supervisor_status_at = self._mono_fn()
-                if status is None:
-                    await asyncio.sleep(cfg.unavailable_backoff_s)
-                elif status.get("job") is not None:
-                    # A job is running — poll fast so the UI stays responsive.
-                    await asyncio.sleep(1.0)
-                else:
-                    await asyncio.sleep(cfg.poll_interval_s)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                logger.exception("supervisor client poll error -- will retry")
-                await asyncio.sleep(cfg.poll_interval_s)
+        """Shim → SafetyRuntime (issue #76)."""
+        return await self._safety._run_supervisor_client()
 
     def _supervisor_snapshot(self) -> dict:
         """Shim → TelemetryBuilder (issue #74)."""
         return self._telemetry._supervisor_snapshot()
 
     async def _run_supervisor(self, period_s: float = 1.0) -> None:
-        """~1 Hz task driving the periodic safety evaluations + depth persistence.
-
-        Exception-proof: the whole body is guarded so a raise (from a step or a
-        save) only logs and continues -- the task NEVER exits on its own; it ends
-        only on cancellation at shutdown."""
-        while True:
-            try:
-                await asyncio.sleep(period_s)
-                self._supervise_once()
-                await self._depth._maybe_persist_depth()
-            except asyncio.CancelledError:
-                raise  # shutdown -> let the cancellation propagate
-            except Exception:  # noqa: BLE001 - supervisor must never die
-                logger.exception("supervisor loop error -- will continue")
+        """Shim → SafetyRuntime (issue #76)."""
+        return await self._safety._run_supervisor(period_s)
 
     def record_depth_sounding(self) -> None:
         """Shim → DepthService (issue #71)."""
