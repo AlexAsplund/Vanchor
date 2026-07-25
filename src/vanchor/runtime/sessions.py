@@ -144,7 +144,6 @@ class SessionService:
         # re-apply the active profile so the live physics follow it.
         try:
             from ..core.boat_profiles import BoatProfileStore
-            from ..core.config import apply_device_overrides
 
             rt.boats = BoatProfileStore(rt.config.data_dir)
             active = rt.boats.active()
