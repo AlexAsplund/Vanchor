@@ -84,6 +84,7 @@ from .runtime.demo import demo_route_waypoints, apply_demo_mode  # noqa: E402
 from .runtime.depth import DepthService  # noqa: E402
 from .runtime.devices import DeviceManager  # noqa: E402
 from .runtime.hardware_glue import HardwareGlue  # noqa: E402
+from .runtime.nav_glue import NavGlue  # noqa: E402
 from .runtime.telemetry import TelemetryBuilder  # noqa: E402
 
 logger = logging.getLogger("vanchor.app")
@@ -281,6 +282,10 @@ class Runtime:
         # _supervisor_snapshot, _health_snapshot, telemetry -- all live in
         # TelemetryBuilder; Runtime delegates.
         self._telemetry = TelemetryBuilder(self)
+        # Routing + anchor-alarm + fusion-cal cluster (issue #75): the 11
+        # nav-glue methods live in NavGlue; Runtime delegates via shims or
+        # direct repoints.
+        self._nav = NavGlue(self)
 
         # --- navigator + controller (identical for sim or hardware) ------- #
         self.navigator = Navigator(
@@ -1165,22 +1170,8 @@ class Runtime:
 
     # -- fusion calibration (still-capture system-ID; see nav.calibration) --- #
     def fusion_calibration(self) -> dict:
-        """Saved calibration + live capture status (for GET)."""
-        from .nav.calibration import interference_recommendations
-        capturing, samples, seconds = self.navigator.capture_status()
-        cal = self._fusion_cal
-        score = cal.motor_interference_score if cal else None
-        return {
-            "calibration": cal.to_dict() if cal else None,
-            "capturing": capturing,
-            "capture_samples": samples,
-            "capture_seconds": seconds,
-            "enabled": self.navigator.fusion is not None,
-            "recommendations": interference_recommendations(score),
-            # experimental motor-interference remedy state
-            "interference_comp_enabled": bool(cal.interference_comp_enabled) if cal else False,
-            "has_interference_model": bool(cal and cal.motor_interference_slope is not None),
-        }
+        """Shim → NavGlue (issue #75)."""
+        return self._nav.fusion_calibration()
 
     def set_interference_compensation(self, enabled: bool) -> dict:
         """EXPERIMENTAL: toggle the real-time motor-interference heading remedy
@@ -1218,22 +1209,12 @@ class Runtime:
         return out
 
     def save_fusion_calibration(self, data: dict) -> dict:
-        from .nav.calibration import FusionCalibration, save_calibration
-        # Merge into the existing calibration so each capture mode updates only
-        # what it measured (still -> gains, align -> offset, ...).
-        incoming = FusionCalibration.from_dict(data)
-        merged = (self._fusion_cal or FusionCalibration()).merged_with(incoming)
-        save_calibration(self.config.data_dir, merged)
-        self._fusion_cal = merged
-        self.navigator.apply_calibration(merged)
-        return {"ok": True}
+        """Shim → NavGlue (issue #75)."""
+        return self._nav.save_fusion_calibration(data)
 
     def reset_fusion_calibration(self) -> dict:
-        from .nav.calibration import FusionCalibration, clear_calibration
-        clear_calibration(self.config.data_dir)
-        self._fusion_cal = None
-        self.navigator.apply_calibration(FusionCalibration())
-        return {"ok": True}
+        """Shim → NavGlue (issue #75)."""
+        return self._nav.reset_fusion_calibration()
 
     def device_config(self) -> dict:
         """Delegated to DeviceManager (issue #70)."""
@@ -1712,31 +1693,8 @@ class Runtime:
     # Passive anchor alarm recover (adoption #10)
     # ------------------------------------------------------------------ #
     def _anchor_alarm_recover(self) -> dict:
-        """One-tap recover (adoption #10): engage the NORMAL anchor_hold at
-        the alarm anchor point via the standard command path — device gating,
-        governor, every failsafe apply unchanged. Disarms the passive alarm
-        only if the hold actually engaged (the governor's drag alarm then
-        covers the hold); if the controller refused (e.g. motor not
-        connected), the passive watch stays armed."""
-        st = self.anchor_alarm.store
-        if not st.armed or st.lat is None or st.lon is None:
-            logger.warning("anchor_alarm_recover ignored: alarm not armed")
-            return {"ok": False, "message": "alarm not armed"}
-        self.controller.handle_command({
-            "type": "anchor_hold",
-            "anchor": {"lat": st.lat, "lon": st.lon},
-        })
-        engaged = self.state.mode in (
-            ControlModeName.ANCHOR_HOLD,
-            ControlModeName.ANCHOR_ML,
-            ControlModeName.ANCHOR_LEIF,
-        )
-        if engaged:
-            self.anchor_alarm.clear()
-            logger.info("anchor alarm recover: anchor_hold engaged at alarm point")
-            return {"ok": True}
-        logger.warning("anchor alarm recover: anchor_hold refused; alarm stays armed")
-        return {"ok": False, "message": "anchor_hold refused (device gating?)"}
+        """Repoint → NavGlue (issue #75)."""
+        return self._nav._anchor_alarm_recover()
 
     # ------------------------------------------------------------------ #
     # Return-to-Launch (#61)
@@ -1868,45 +1826,12 @@ class Runtime:
         return True
 
     def evaluate_auto_apb(self, now: float | None = None) -> bool:
-        """Auto-engage Follow-APB when an external autopilot's APB feed is live
-        (opt-in, ``safety.auto_follow_apb``). Engages ONLY from idle MANUAL --
-        never hijacks an anchor hold / route / a hand on the throttle. Latched:
-        leaving the mode by hand isn't overridden until the feed has been
-        silent for >10 s and returns. Returns True when it engaged."""
-        if not self.config.safety.auto_follow_apb:
-            self._auto_apb_latched = False
-            return False
-        if now is None:
-            now = self._mono_fn()
-        st = self.state
-        fresh = (st.apb_received_mono is not None
-                 and now - st.apb_received_mono < 10.0)
-        if not fresh:
-            self._auto_apb_latched = False       # feed gone -> re-arm
-            return False
-        if st.mode == ControlModeName.FOLLOW_APB:
-            self._auto_apb_latched = True        # (covers manual engagement too)
-            return False
-        if self._auto_apb_latched:
-            return False                          # user left the mode on purpose
-        if st.mode != ControlModeName.MANUAL or abs(st.motor_command.thrust) > 0.05:
-            return False
-        logger.warning("APB feed detected -- auto-engaging Follow-APB "
-                       "(safety.auto_follow_apb)")
-        self.controller.handle_command({"type": "follow_apb"})
-        self._auto_apb_latched = True
-        return True
+        """Repoint → NavGlue (issue #75)."""
+        return self._nav.evaluate_auto_apb(now)
 
     def evaluate_anchor_alarm(self) -> dict:
-        """1 Hz passive anchor-alarm step (adoption #10). Reads position +
-        fix age off the shared state; NEVER issues motor commands or mode
-        changes — breach only latches telemetry + fires the breach hooks."""
-        st = self.state
-        age = (
-            (self._mono_fn() - st.fix_received_mono)
-            if st.fix_received_mono is not None else None
-        )
-        return self.anchor_alarm.evaluate(st.position, age)
+        """Repoint → NavGlue (issue #75)."""
+        return self._nav.evaluate_anchor_alarm()
 
     def evaluate_push_alerts(self) -> None:
         """Edge-triggered Web Push dispatch (adoption #7). Mirrors the client-side
@@ -2319,28 +2244,8 @@ class Runtime:
         return await self._depth._maybe_persist_depth()
 
     def _load_route(self, command: dict) -> None:
-        from .nav.routes import parse_gpx
-
-        try:
-            if "gpx" in command:
-                text = str(command["gpx"])
-            elif "path" in command:
-                with open(command["path"], "r", encoding="utf-8") as fh:
-                    text = fh.read()
-            else:
-                logger.warning("load_route requires 'gpx' or 'path'")
-                return
-            waypoints = parse_gpx(text)
-        except (ValueError, OSError) as exc:
-            logger.warning("load_route failed: %s", exc)
-            return
-        self.state.waypoints = waypoints
-        self.controller.handle_command(
-            {"type": "load_route", "throttle": command.get("throttle")}
-            if command.get("throttle") is not None
-            else {"type": "load_route"}
-        )
-        logger.info("loaded route with %d waypoints", len(waypoints))
+        """Repoint → NavGlue (issue #75)."""
+        return self._nav._load_route(command)
 
     # ------------------------------------------------------------------ #
     # Smart "Take me here" water routing (task #43)
@@ -2349,89 +2254,12 @@ class Runtime:
         self, dest_lat: float, dest_lon: float, mode: str = "fastest",
         offset_m: float = 25.0, depth_aware: bool = True,
     ) -> dict:
-        """Plan a water-only route from the boat's current position.
-
-        Synchronous and CPU/IO-heavy (Overpass fetch + shapely/networkx); the UI
-        endpoint calls it in an executor. Returns the API contract dict. Does NOT
-        start navigation.
-
-        When ``depth_aware`` is set (default) and a ``min_depth_m`` safety
-        threshold is configured, imported depth data (contours + soundings) is
-        turned into a shallow no-go mask so the route proactively goes AROUND
-        shoals instead of relying on the reactive shallow-stop. Falls back
-        transparently to plain routing when there is no depth data.
-        """
-        from .nav import routing, water
-
-        # Fresh plan: clear any stale cancel request so a normal plan runs.
-        self._route_plan_cancelled = False
-        pos = self.state.position
-        if pos is not None and not pos.is_null():
-            start_lat, start_lon = pos.lat, pos.lon
-        else:
-            start_lat, start_lon = self.config.sim.start_lat, self.config.sim.start_lon
-
-        cache = water.WaterCache(self.config.data_dir)
-        bbox = water.bbox_around(start_lat, start_lon, dest_lat, dest_lon)
-        water_ll = cache.find_covering(bbox)
-        if water_ll is None:
-            try:
-                elements = water.fetch_overpass(*bbox)
-            except Exception as exc:  # network / endpoint failure
-                logger.warning("water fetch failed: %s", exc)
-                return {
-                    "ok": False,
-                    "waypoints": [],
-                    "message": "No offline chart for this area; connect once to download it.",
-                }
-            water_ll = water.assemble_water(elements)
-            if water_ll.is_empty:
-                return {
-                    "ok": False,
-                    "waypoints": [],
-                    "message": "No mapped water found around the route.",
-                }
-            try:
-                cache.store(bbox, water_ll)
-            except OSError as exc:  # pragma: no cover - disk failure
-                logger.warning("water cache store failed: %s", exc)
-
-        # Depth-aware routing: build a shallow no-go mask from imported depth
-        # (contours + soundings) so routes avoid shoals by default. Cheap and
-        # bounded (bbox-windowed, capped); yields None when no depth data exists,
-        # in which case routing is byte-identical to before.
-        avoid_shallow_ll = None
-        min_depth_m = self.config.safety.min_depth_m
-        if depth_aware and min_depth_m and min_depth_m > 0.0:
-            try:
-                # bbox is (south, west, north, east); depth windowing wants
-                # (west, south, east, north).
-                s, w, n, e = bbox
-                avoid_shallow_ll = self.depth_map.shallow_polygons((w, s, e, n), min_depth_m)
-            except Exception as exc:  # pragma: no cover - defensive; never block a plan
-                logger.warning("shallow mask build failed: %s", exc)
-                avoid_shallow_ll = None
-
-        result = routing.plan_route(
-            start_lat=start_lat,
-            start_lon=start_lon,
-            dest_lat=dest_lat,
-            dest_lon=dest_lon,
-            water_ll=water_ll,
-            mode=mode,
-            shoreline_offset_m=offset_m,
-            cancelled=lambda: self._route_plan_cancelled,
-            avoid_shallow_ll=avoid_shallow_ll,
-        )
-        return {
-            "ok": result.ok,
-            "waypoints": result.waypoints,
-            "message": result.message,
-        }
+        """Shim → NavGlue (issue #75)."""
+        return self._nav.plan_route(dest_lat, dest_lon, mode, offset_m, depth_aware)
 
     def cancel_route_plan(self) -> None:
-        """Request that an in-progress route plan abort ASAP (#54)."""
-        self._route_plan_cancelled = True
+        """Shim → NavGlue (issue #75)."""
+        return self._nav.cancel_route_plan()
 
     # ------------------------------------------------------------------ #
     # "Around island" loop route (#77)
@@ -2439,64 +2267,8 @@ class Runtime:
     def plan_island_loop(
         self, click_lat: float, click_lon: float, offset_m: float = 20.0
     ) -> dict:
-        """Plan a closed loop route encircling the island under ``(lat, lon)``.
-
-        Uses the same offline water chart/cache as :meth:`plan_route` (fetches
-        once if not cached). The boat's current position (or the sim start)
-        decides which water body is the basin. Does NOT start navigation -- it
-        returns waypoints for the route editor. Synchronous + CPU/IO-heavy; the
-        UI endpoint calls it in an executor. Returns
-        ``{ok, waypoints, loop, message}``.
-        """
-        from .nav import routing, water
-
-        pos = self.state.position
-        if pos is not None and not pos.is_null():
-            boat_lat, boat_lon = pos.lat, pos.lon
-        else:
-            boat_lat, boat_lon = self.config.sim.start_lat, self.config.sim.start_lon
-
-        cache = water.WaterCache(self.config.data_dir)
-        bbox = water.bbox_around(boat_lat, boat_lon, click_lat, click_lon)
-        water_ll = cache.find_covering(bbox)
-        if water_ll is None:
-            try:
-                elements = water.fetch_overpass(*bbox)
-            except Exception as exc:  # network / endpoint failure
-                logger.warning("water fetch failed: %s", exc)
-                return {
-                    "ok": False,
-                    "waypoints": [],
-                    "loop": True,
-                    "message": "No offline chart for this area; connect once to download it.",
-                }
-            water_ll = water.assemble_water(elements)
-            if water_ll.is_empty:
-                return {
-                    "ok": False,
-                    "waypoints": [],
-                    "loop": True,
-                    "message": "No mapped water found around the island.",
-                }
-            try:
-                cache.store(bbox, water_ll)
-            except OSError as exc:  # pragma: no cover - disk failure
-                logger.warning("water cache store failed: %s", exc)
-
-        result = routing.plan_island_loop(
-            click_lat,
-            click_lon,
-            water_ll,
-            boat_lat=boat_lat,
-            boat_lon=boat_lon,
-            offset_m=offset_m,
-        )
-        return {
-            "ok": result.ok,
-            "waypoints": result.waypoints,
-            "loop": result.loop,
-            "message": result.message,
-        }
+        """Shim → NavGlue (issue #75)."""
+        return self._nav.plan_island_loop(click_lat, click_lon, offset_m)
 
     # ------------------------------------------------------------------ #
     # Area survey "map mode" route (#47)
@@ -2504,42 +2276,8 @@ class Runtime:
     def plan_survey(
         self, polygon_latlon: list, spacing_m: float, angle_deg: float | None = None
     ) -> dict:
-        """Plan a boustrophedon coverage route over a closed area polygon.
-
-        Pure CPU work (shapely); the UI endpoint calls it in an executor. Does
-        NOT start navigation -- it returns waypoints for the route editor.
-        """
-        from .nav import survey, water as water_mod
-
-        # Fetch the cached water polygon covering the drawn area so the survey
-        # is clipped to water and connecting legs stay off land. No cached
-        # water for the area -> plan against the polygon alone (survey.py still
-        # repairs legs that exit the drawn polygon itself).
-        water_geom = None
-        try:
-            lats = [float(p[0]) for p in polygon_latlon]
-            lons = [float(p[1]) for p in polygon_latlon]
-            if lats and lons:
-                cache = water_mod.WaterCache(self.config.data_dir)
-                bbox = water_mod.bbox_around(min(lats), min(lons), max(lats), max(lons))
-                geom = cache.find_covering(bbox)
-                if geom is not None and not geom.is_empty:
-                    water_geom = geom
-        except Exception as exc:  # noqa: BLE001 - clipping is best-effort
-            logger.warning("survey water lookup failed (planning unclipped): %s", exc)
-
-        try:
-            result = survey.plan_survey(
-                polygon_latlon, float(spacing_m), angle_deg, water=water_geom
-            )
-        except (ValueError, TypeError) as exc:
-            logger.warning("survey plan failed: %s", exc)
-            return {"ok": False, "waypoints": [], "message": f"Bad survey request: {exc}"}
-        return {
-            "ok": result.ok,
-            "waypoints": result.waypoints,
-            "message": result.message,
-        }
+        """Shim → NavGlue (issue #75)."""
+        return self._nav.plan_survey(polygon_latlon, spacing_m, angle_deg)
 
     def plan_work_spots(self, polygon_latlon: list, spacing_m: float) -> dict:
         """Generate Work Area spots: an even serpentine grid over a drawn area,
