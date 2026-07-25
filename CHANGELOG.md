@@ -4,6 +4,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Steering-wheel cruise lock (hold-to-lock).** In Manual, hold the throttle
+  knob roughly still for ~1 s at a non-zero speed to **lock** it — a ring fills
+  clockwise around the rim, then goes solid amber and the hub reads **CRUISE n%**
+  — so releasing keeps that speed instead of snapping to 0. Grabbing the knob
+  again re-arms the deadman (the lock clears on touch) so you can drag a cruise
+  back down to stop; releasing without re-holding snaps thrust back to 0, and the
+  knob now **springs back** to the neutral rest position. Complements the existing
+  HOLD toggle. (`steerwheel.js`.)
 - **Paint a route (free-hand).** A new way to build a route in Route mode: tap
   **🖌 Paint a route** and drag on the map to draw a continuous line, then tap
   **Finished** to turn it into waypoints. The simplification is turn-aware —

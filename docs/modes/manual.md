@@ -16,15 +16,27 @@ maneuvering, nudging the boat off a snag, or any time you simply want the motor
 to do precisely what you tell it. It's also the safe "everything off" resting
 state between guided runs.
 
-**How to use it** — Tap **🕹 Manual** on the mode rail. The panel has two
-sliders:
+**How to use it** — Tap **🕹 Manual** on the mode rail. You drive with the
+on-screen **steering wheel** (drag around the dial for direction, outward for
+power — one thumb sets both) or the thrust slider. The two inputs:
 
 - **Thrust** (−1 … +1, default 0) — reverse through forward.
 - **Steering** (−1 … +1, default 0) — port through starboard.
 
-Drag either slider to drive; release returns it to where you left it (it does
-not auto-centre). To stop, pull thrust to 0, or tap the red **■ Stop** button —
-which snaps thrust and steering to 0 and stays in Manual.
+Drag to drive. On the **steering wheel**, thrust **snaps back to 0 the moment you
+release** (a deadman) so the boat can't run away on a dropped finger. To keep a
+speed hands-free there are two ways:
+
+- **Hold-to-lock (cruise):** hold the knob roughly still for ~1 second at a
+  non-zero speed. A ring fills around the rim, then locks solid amber and the hub
+  reads **CRUISE n%** — releasing now keeps that speed. **Grab the knob again** to
+  pick the throttle back up (the lock clears on touch); release then snaps back to
+  0, or hold still to re-lock. Dragging back to the centre also stops.
+- **HOLD toggle:** flip **HOLD** on to keep the last thrust on every release
+  (trolling), off to snap to 0.
+
+To stop at any time, drag thrust to 0 or tap the red **■ Stop** button — which
+snaps thrust and steering to 0 and stays in Manual.
 
 **Settings** — None beyond the two live sliders. Manual ignores Cruise Control
 and the % throttle override (those only act on guided modes), so the thrust

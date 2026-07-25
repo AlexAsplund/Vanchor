@@ -258,6 +258,77 @@ def test_stop_integrity(live_server: _ServerHandle, pw_browser):
         page.close()
 
 
+def test_wheel_dwell_lock(live_server: _ServerHandle, pw_browser):
+    """Manual steering wheel: holding the throttle knob still LOCKS the speed
+    (cruise) so releasing keeps thrust instead of snapping to 0, with a visual
+    ring around the rim. Dragging the knob back to centre clears the lock.
+    """
+    base = live_server.base
+    page = pw_browser.new_page(viewport={"width": 1200, "height": 860})
+    page.add_init_script(_FIRSTRUN_INIT)
+    page.set_default_timeout(8000)
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    try:
+        page.goto(base + "/", wait_until="domcontentloaded", timeout=20_000)
+        page.wait_for_timeout(1500)
+        _api_post(base, "/api/command", {"type": "manual", "thrust": 0, "steering": 0})
+        page.click('.mode-btn[data-mode="manual"]')          # reveal the wheel
+        page.wait_for_selector("#steer-wheel svg", state="visible")
+
+        # Map wheel viewBox points to screen: the knob at rest (thrust 0) and a
+        # target at ~60% thrust straight up. Real pointer events (page.mouse) so
+        # the wheel's setPointerCapture works.
+        pts = page.evaluate(
+            """() => { const svg=document.querySelector('#steer-wheel svg'); const m=svg.getScreenCTM();
+                const map=(vx,vy)=>{const p=svg.createSVGPoint();p.x=vx;p.y=vy;const s=p.matrixTransform(m);return{x:s.x,y:s.y};};
+                return {zero: map(135,99), target: map(135,46.2)}; }"""
+        )
+        z, t = pts["zero"], pts["target"]
+
+        page.mouse.move(z["x"], z["y"])
+        page.mouse.down()
+        page.mouse.move(t["x"], t["y"], steps=6)             # engage ~60% thrust
+        engaged = page.evaluate("()=>VA.manualCtl.state.thrust")
+        assert engaged > 0.4, f"thrust not engaged: {engaged}"
+
+        # Hold still past the dwell (~1.1 s) -> lock. Ring goes solid amber, hub
+        # reads CRUISE.
+        page.wait_for_timeout(1500)
+        locked = page.evaluate(
+            """()=>({stroke:document.querySelector('#sw-lockring').getAttribute('stroke'),
+                op:parseFloat(document.querySelector('#sw-lockring').getAttribute('opacity')),
+                dm:document.querySelector('#sw-deadman').textContent})"""
+        )
+        assert locked["dm"].startswith("CRUISE"), f"not locked: {locked}"
+        assert locked["stroke"].lower() == "#ffb020" and locked["op"] > 0.5, locked
+
+        # Release: thrust is KEPT (cruise), not snapped to 0.
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        after = page.evaluate("()=>VA.manualCtl.state.thrust")
+        assert abs(after - engaged) < 0.02, f"lock didn't hold thrust: {after} vs {engaged}"
+
+        # Grab the knob again and release WITHOUT holding: grabbing re-arms the
+        # deadman (clears the lock), so it snaps back to 0. This is what lets you
+        # stop a locked cruise. Knob is at the ~60% position now.
+        page.mouse.move(t["x"], t["y"])
+        page.mouse.down()
+        page.wait_for_timeout(100)                       # a touch, no dwell
+        cleared_on_grab = page.evaluate("()=>document.querySelector('#sw-deadman').textContent")
+        assert not cleared_on_grab.startswith("CRUISE"), f"grab didn't re-arm: {cleared_on_grab!r}"
+        page.mouse.up()
+        page.wait_for_timeout(400)                       # let the snap-back settle
+        stopped = page.evaluate("()=>VA.manualCtl.state.thrust")
+        dm = page.evaluate("()=>document.querySelector('#sw-deadman').textContent")
+        assert stopped == 0, f"thrust not zero after re-grab + release: {stopped}"
+        assert not dm.startswith("CRUISE"), f"lock not cleared: {dm!r}"
+        assert not errors, f"Page JS errors: {errors[:3]}"
+    finally:
+        _api_post(base, "/api/command", {"type": "stop"})
+        page.close()
+
+
 # ---------------------------------------------------------------------------
 # Test 2: Reconnect / staleness-overlay
 # ---------------------------------------------------------------------------
