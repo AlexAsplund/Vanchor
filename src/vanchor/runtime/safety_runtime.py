@@ -114,9 +114,7 @@ class SafetyRuntime:
         while the operator is actually commanding thrust (driving by hand): a
         client loss there must not leave the boat motoring on forever (#64).
         Station-keeping anchor-hold is excluded (it is already holding)."""
-        # Imported lazily from app to avoid an import cycle (app imports this
-        # module); these are module-level constants -- the values are identical.
-        from ..app import _MANUAL_UNDERWAY_THRUST_EPS, _UNDERWAY_MODES
+        from .constants import _MANUAL_UNDERWAY_THRUST_EPS, _UNDERWAY_MODES
         rt = self._rt
         if rt.state.mode in _UNDERWAY_MODES:
             return True

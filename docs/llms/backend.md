@@ -7,11 +7,34 @@
 Covers everything Python except the physics simulator (that's
 [simulation.md](simulation.md)). Read [architecture.md](architecture.md) first.
 
-## The runtime (`app.py`)
+## The runtime (`runtime/` package)
 
-`Runtime` constructs the sim-or-hardware devices, the `Navigator`, the
-`Controller`, and the periodic `asyncio` loops; `main()` parses CLI/YAML and
-starts uvicorn with the FastAPI app from `ui/server.py`. Key methods:
+The runtime lives in the **`src/vanchor/runtime/` package**, not a monolithic
+`app.py` (that decomposition finished in issue #80 / epic #68). Layout:
+
+- `runtime/runtime.py` — the **`Runtime` facade**: it constructs the
+  sim-or-hardware devices, the `Navigator`, the `Controller`, and the periodic
+  `asyncio` loops, and owns the core control loop + lifecycle. Most method bodies
+  live in the collaborator modules below; `Runtime` wires them together and holds
+  the shared state they read/write through a back-reference.
+- `runtime/cli.py` — `main()`: parses CLI/YAML and starts uvicorn with the
+  FastAPI app from `ui/server.py`. The `vanchor` console script points at
+  `vanchor.app:main`, which re-exports this.
+- `runtime/constants.py` — shared module-level constants (`_UNDERWAY_MODES`,
+  `_MANUAL_UNDERWAY_THRUST_EPS`, `_ENV_PERSIST_KEYS`).
+- **Collaborators** (each a cluster of extracted `Runtime` behaviour):
+  `devices`, `depth`, `boat_setup`, `hardware_glue`, `telemetry`, `nav_glue`,
+  `safety_runtime`, `sessions`, `commands`, `hwscan`, `channels`, `builders`,
+  `demo`. They import from `..core` / `..nav` / `..sim` / `..hardware` and from
+  each other, but **never** from `..app` (that would be a cycle).
+
+**`vanchor.app` is now a thin back-compat facade** — it re-exports `Runtime`,
+`main`, `apply_demo_mode`, `demo_route_waypoints`, `_TeeMotor`, the failsafe
+constants, etc., so every historical `from vanchor.app import <name>` still works.
+New code should import from the real homes (`vanchor.runtime.runtime`,
+`vanchor.runtime.cli`).
+
+Key `Runtime` methods:
 
 - `handle_command(cmd)` — runtime/sim commands (teleport, environment, battery,
   routes, trips); delegates steering commands to the controller.
@@ -277,7 +300,7 @@ Z); a **`hardness`** property → hardness; **LineString** → contours (depth f
 property); **Polygon** with `composition_pct` → composition. `parse_depth_soundings`
 is a back-compat wrapper returning just `soundings`.
 
-### `Runtime` depth methods (`app.py`)
+### `Runtime` depth methods (`runtime/depth.py`)
 
 - `import_depth_map(filename, data, replace=False)` — parse → `replace` swaps the
   whole chart else merge all four layers (caps `points`/`hardness` at
@@ -345,7 +368,7 @@ is run through `_migrate(manifest, zf)`.
 set / names / shapes, **bump `SCHEMA_VERSION`** and add a step keyed on the
 *source* version inside `_migrate` (chain `v1→v2→…`), each returning the upgraded
 manifest. The wiring lives in `Runtime.create_backup` / `Runtime.restore_backup`
-(`app.py`): restore extracts, then reloads what it can **live** (boat profiles +
+(`runtime/sessions.py`): restore extracts, then reloads what it can **live** (boat profiles +
 depth map from disk), setting `restart_required` for whatever it can't refresh —
 notably restored **device config**, which (like editing it) only applies on the
 next restart (`reload_devices()` is not auto-invoked). Endpoints: `POST /api/backup` (zip download) and
@@ -360,7 +383,7 @@ mirror `sim/devices.py` so nothing above the device layer changes between sim an
 hardware.
 
 **Adding a new hardware driver** (e.g. an AHRS compass like the HWT901B) does NOT
-touch `app.py`: `registry.py` + the `drivers/` package are a self-registering
+touch the runtime facade: `registry.py` + the `drivers/` package are a self-registering
 plugin system — drop a module that calls `register_driver(kind, source, build)`
 and it becomes a selectable `*_source`. The runtime builds/validates/lists from
 the registry, and a driver may expose a `device_menu()` (settings + actions the

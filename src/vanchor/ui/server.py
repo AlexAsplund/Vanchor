@@ -28,7 +28,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request as _Request
 
 if TYPE_CHECKING:
-    from ..app import Runtime
+    from ..runtime.runtime import Runtime
 
 logger = logging.getLogger("vanchor.ui")
 STATIC_DIR = Path(__file__).parent / "static"
