@@ -35,6 +35,43 @@
   // {r} = retina suffix; maxNativeZoom upscales beyond the tiles' native max.
   const OSM = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
   const CARTO = '© <a href="https://carto.com/attributions">CARTO</a>';
+  const USGS = '© <a href="https://www.usgs.gov/">USGS 3DEP</a>';
+
+  // USGS 3DEP topobathymetric elevation (WMS 1.3.0). Where inland-water
+  // topobathy lidar exists, the DEM includes lake/river/reservoir bottoms, so
+  // the tinted-hillshade render reads as a depth-shaded chart of the water body.
+  // This is the permanent BASE layer; the live sonar depth grid (map-depth.js)
+  // layers on top of it. See feat/usgs-inland-bathymetry-basemap.
+  const USGS_3DEP_WMS = "https://elevation.nationalmap.gov/arcgis/services/3DEPElevation/ImageServer/WMSServer";
+  // In this WMS each server-side render is its own named LAYER; the only valid
+  // STYLE for every layer is "default". So the tinted-hillshade render goes in
+  // LAYERS and STYLES stays "default" (NOT the other way round).
+  const USGS_3DEP_LAYER = "3DEPElevation:Hillshade Elevation Tinted";
+  const USGS_3DEP_STYLE = "default";
+
+  // Web-Mercator (EPSG:3857) tile -> WMS 1.3.0 GetMap URL for that single 256px
+  // tile. Used by the offline downloader to pre-cache a WMS basemap through the
+  // same {z,x,y} enumeration the XYZ sources use. The half-extent of the 3857
+  // world in metres; tiles subdivide [-R, R] on both axes.
+  const MERC_R = 20037508.342789244;
+  function wmsTileUrl(endpoint, params, z, x, y) {
+    const span = (2 * MERC_R) / Math.pow(2, z);   // tile edge length in metres
+    const minX = -MERC_R + x * span;
+    const maxX = minX + span;
+    const maxY = MERC_R - y * span;               // y grows southward
+    const minY = maxY - span;
+    // WMS 1.3.0 + EPSG:3857 uses easting,northing axis order: minX,minY,maxX,maxY.
+    const q = {
+      SERVICE: "WMS", REQUEST: "GetMap", VERSION: params.version || "1.3.0",
+      LAYERS: params.layers || "", STYLES: params.styles || "",
+      CRS: "EPSG:3857", BBOX: [minX, minY, maxX, maxY].join(","),
+      WIDTH: 256, HEIGHT: 256, FORMAT: params.format || "image/png",
+      TRANSPARENT: params.transparent ? "TRUE" : "FALSE",
+    };
+    const qs = Object.keys(q).map((k) => k + "=" + encodeURIComponent(q[k])).join("&");
+    return endpoint + (endpoint.indexOf("?") >= 0 ? "&" : "?") + qs;
+  }
+
   const base = {
     "Dark": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
@@ -57,6 +94,23 @@
       { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
     "Topo": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
       { maxZoom: 17, attribution: OSM + ", © OpenTopoMap" }),
+    // USGS Bathymetry: 3DEP topobathy DEM as a tiled WMS. maxNativeZoom 16 —
+    // the DEM is ~1 m/px at best, so upscale past 16 rather than fetch empty
+    // deeper tiles. Renders the tinted-hillshade style server-side. We override
+    // getTileUrl to use the shared wmsTileUrl builder so the LIVE tile url is
+    // byte-identical to the one the offline downloader pre-caches (one cache
+    // key), instead of relying on Leaflet's own WMS param serialisation.
+    "USGS Bathymetry": (function () {
+      const wmsParams = {
+        layers: USGS_3DEP_LAYER, styles: USGS_3DEP_STYLE,
+        format: "image/png", transparent: false, version: "1.3.0",
+      };
+      const layer = L.tileLayer("", { maxZoom: 22, maxNativeZoom: 16, attribution: USGS });
+      layer.getTileUrl = function (coords) {
+        return wmsTileUrl(USGS_3DEP_WMS, wmsParams, coords.z, coords.x, coords.y);
+      };
+      return layer;
+    })(),
   };
   base.Dark.addTo(map);
 
@@ -250,6 +304,12 @@
   // Expose the base layers + their template URLs so the offline-map downloader
   // (#52) can wire an IndexedDB tile cache into createTile and enumerate tiles.
   VA._baseLayers = base;
+  // A template is either a URL string with {z}/{x}/{y} placeholders (offline.js
+  // substitutes them) OR a function (z,x,y) => absoluteUrl for sources whose
+  // tile URL isn't a simple XYZ path (e.g. a bbox-based WMS GetMap). Both the
+  // live cache patch (via getTileUrl) and the offline downloader (via this
+  // template) resolve to the SAME url string, so a tile fetched live and a tile
+  // pre-cached share one cache key.
   VA._baseTemplates = {
     Dark: "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
     "Vanchor Teal": "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
@@ -257,8 +317,21 @@
     Satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     Light: "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
     Topo: "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+    // WMS 1.3.0 GetMap for a single XYZ tile (EPSG:3857, 256px). CRS axis order
+    // for 3857 is easting,northing so BBOX = minX,minY,maxX,maxY. Matches what
+    // Leaflet's L.TileLayer.WMS emits for the same tile, so the offline-cached
+    // url equals the live-panned url (one cache key).
+    "USGS Bathymetry": (z, x, y) => wmsTileUrl(USGS_3DEP_WMS, {
+      layers: USGS_3DEP_LAYER, styles: USGS_3DEP_STYLE,
+      format: "image/png", transparent: false, version: "1.3.0",
+    }, z, x, y),
   };
-  VA._baseNativeMax = { Dark: 20, "Vanchor Teal": 20, Nautical: 20, Satellite: 17, Light: 20, Topo: 17 };
+  VA._baseNativeMax = { Dark: 20, "Vanchor Teal": 20, Nautical: 20, Satellite: 17, Light: 20, Topo: 17, "USGS Bathymetry": 16 };
+
+  // Expose the WMS tile-url builder + the 3DEP endpoint config so the offline
+  // downloader, the live layer, and the unit tests all resolve to one url.
+  VA._wmsTileUrl = wmsTileUrl;
+  VA._usgs3dep = { endpoint: USGS_3DEP_WMS, layer: USGS_3DEP_LAYER, style: USGS_3DEP_STYLE };
 
   // Tile-cache integration point. offline.js installs VA.tileCache.get(url) ->
   // Promise<Blob|null> and VA.tileCache.put(url, blob). We patch createTile on
