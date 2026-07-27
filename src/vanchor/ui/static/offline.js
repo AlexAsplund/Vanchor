@@ -128,13 +128,24 @@
     return total;
   }
 
-  // Build a real tile URL from a template + the {s} subdomain rotation.
+  // Build a real tile URL from a template + the {s} subdomain rotation. A
+  // template is either a {z}/{x}/{y} URL string OR a function (z,x,y) => url
+  // (used by bbox-based WMS sources, e.g. the USGS 3DEP bathymetry basemap);
+  // the function returns the exact url the live cache patch also fetches, so
+  // pre-cached and live tiles share one cache key.
   const SUBS = ["a", "b", "c"];
   function tileUrl(template, z, x, y) {
+    if (typeof template === "function") return template(z, x, y);
     return template
       .replace("{s}", SUBS[(x + y) % SUBS.length])
       .replace("{z}", z).replace("{x}", x).replace("{y}", y).replace("{r}", "");
   }
+
+  // Expose the pure tile-maths so unit tests can exercise the real enumeration
+  // and (string OR function) template resolution without a DOM. This block runs
+  // before the DOM early-return below, so it is set even on a page that has no
+  // offline-download card.
+  VA._offline = { enumerateTiles, countTiles, tileUrl };
 
   // ---- DOM ----------------------------------------------------------------
   const card = $("offline-card");
