@@ -962,29 +962,57 @@ class PathTrackMode(ControlMode):
         heading = normalize_deg(bearing - correction + crab)
         return GuidedSetpoint(target_heading=heading, thrust=self.config.throttle)
 
+    def _seg_index(self, cum, s):
+        for i in range(len(cum) - 1):
+            if s <= cum[i + 1]:
+                return i
+        return max(0, len(cum) - 2)
+
     def _project(self, P, seglen, cum, total, loop):
-        """Nearest point on the polyline to the boat (origin), constrained to a
-        forward window from the cursor so the along-track cursor advances
-        monotonically (robust to loops / self-crossings)."""
-        window = max(2.5 * self.config.max_lookahead_m, 20.0)
-        back = self.config.max_lookahead_m
-        best = None            # (dist2, s, seg_i)
-        fallback = None        # global nearest, if nothing lands in the window
+        """Along-track cursor = the nearest point on the polyline WITHIN the arc
+        window ahead of the cursor. Restricting to the window — and clamping each
+        segment TO the window (so a long first segment still contributes its near
+        end) — makes the boat acquire the route from its START and follow it in
+        order. It must NOT snap to the globally-nearest point: for a route the boat
+        begins far from (e.g. a shoreline route hugging the far bank, first mark
+        hundreds of metres away) that would cut straight across the middle instead
+        of driving to the first mark and tracking the line."""
+        cursor = self._cursor
+        win = max(2.5 * self.config.max_lookahead_m, 20.0)
+        if self._step >= 0:
+            lo, hi = cursor, cursor + win
+        else:
+            lo, hi = cursor - win, cursor
+        # Loop: also test each segment shifted by +/- one lap so the window wraps.
+        shifts = (0.0, total, -total) if loop else (0.0,)
+        best = None   # (dist2, s, seg_i)
         for i in range(len(seglen)):
+            seg = seglen[i]
+            if seg <= 1e-9:
+                continue
+            s0 = cum[i]
             ax, ay = P[i]
             bx, by = P[i + 1]
-            _t, _fx, _fy, d2 = self._nearest_on_seg(ax, ay, bx, by, 0.0, 0.0)
-            s = cum[i] + _t * seglen[i]
-            if fallback is None or d2 < fallback[0]:
-                fallback = (d2, s, i)
-            fwd = ((s - self._cursor) % total) if loop else (s - self._cursor)
-            in_window = (-back <= fwd <= window) if self._step > 0 else (-window <= fwd <= back)
-            if not in_window:
-                continue
-            if best is None or d2 < best[0]:
-                best = (d2, s, i)
-        chosen = best or fallback
-        return chosen[1], chosen[2]
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            t_un = 0.0 if L2 <= 1e-12 else -(ax * dx + ay * dy) / L2   # proj of origin (0,0)
+            for sh in shifts:
+                a = max(s0 + sh, lo)
+                b = min(s0 + sh + seg, hi)
+                if a > b:
+                    continue                       # this lap of the segment misses the window
+                ta = (a - sh - s0) / seg
+                tb = (b - sh - s0) / seg
+                t = _clamp(t_un, ta, tb)
+                fx, fy = ax + t * dx, ay + t * dy
+                d2 = fx * fx + fy * fy
+                s = s0 + t * seg
+                if best is None or d2 < best[0]:
+                    best = (d2, s, i)
+        if best is None:                            # degenerate -> hold the cursor
+            s = cursor % total if loop else _clamp(cursor, 0.0, total)
+            return s, self._seg_index(cum, s)
+        return best[1], best[2]
 
     def _maybe_post_speed(self, state: NavigationState, cum, s_near) -> None:
         """Adopt a waypoint's per-mark speed as the cursor passes it (mirrors
