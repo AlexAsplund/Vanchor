@@ -155,3 +155,47 @@ def test_path_track_patrol_runs():
     st = _run([(0, 0), (150, 0)], patrol=True)
     assert st.mode == ControlModeName.PATH_TRACK
     assert st.route_complete is False   # patrol reverses at each end, never done
+
+
+def test_path_track_acquires_route_start_when_boat_is_off_the_line():
+    """Regression: a route whose first mark is far from the boat (e.g. an
+    along-shoreline route that starts at the bank) must be ACQUIRED from its
+    start — drive to WP1, then follow — not snap to the globally-nearest point,
+    which would cut straight across. The boat begins 60 m off the route start."""
+    a = GeoPoint(_LAT, _LON)
+    # WP1 is 60 m north of the boat (which is heading east), then an S-hug north.
+    pts = [_off(a, e, n) for e, n in [(0, 60), (25, 95), (0, 130), (25, 165), (0, 200)]]
+    h = Harness(start=a, model="fossen")
+    h.sim.truth().heading_deg = 90.0
+    h.command({
+        "type": "goto", "throttle": 0.6, "follow": "path",
+        "waypoints": [{"name": f"W{i}", "lat": p.lat, "lon": p.lon} for i, p in enumerate(pts)],
+    })
+    dt = h.physics_dt
+    ng = nc = nt = 0.0
+    t = 0.0
+    wp1_min = 1e9
+    xte_on_line = 0.0
+    reached = False
+    while t < 260.0:
+        h.sim.step(dt)
+        if t >= ng:
+            h.nav.handle_sentence(h.gps.sample(h.sim.truth())); ng += 1.0 / h.gps_hz
+        if t >= nc:
+            h.nav.handle_sentence(h.compass.sample(h.sim.truth())); nc += 1.0 / h.compass_hz
+        if t >= nt:
+            h.controller.control_tick(1.0 / h.control_hz); nt += 1.0 / h.control_hz
+        pos = h.sim.truth().point
+        d1 = haversine_m(pos, pts[0])
+        wp1_min = min(wp1_min, d1)
+        if d1 < 3.0:
+            reached = True
+        if reached and not h.state.route_complete:
+            near = min(abs(cross_track(pts[i], pts[i + 1], pos).distance_m) for i in range(len(pts) - 1))
+            xte_on_line = max(xte_on_line, near)
+        if h.state.route_complete:
+            break
+        t += dt
+    assert wp1_min < 3.0, f"never reached the route start (WP1): closest {wp1_min:.1f} m"
+    assert h.state.route_complete, "route did not complete after acquiring the start"
+    assert xte_on_line < 8.0, f"cut across / poor tracking once on the line: max xte {xte_on_line:.1f} m"
