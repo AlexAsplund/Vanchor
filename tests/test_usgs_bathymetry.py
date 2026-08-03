@@ -56,7 +56,7 @@ def test_node_check_offline():
 
 def test_basemap_registered():
     txt = _txt(MAP_CORE)
-    assert '"USGS Bathymetry"' in txt
+    assert '"USGS Topobathy (US)"' in txt
 
 
 def test_layer_style_not_swapped():

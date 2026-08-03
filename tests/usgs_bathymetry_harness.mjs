@@ -177,11 +177,11 @@ const wmsUrl = VA._wmsTileUrl(
 );
 
 // The live basemap layer's getTileUrl (the override) for the same tile.
-const liveLayer = VA._baseLayers["USGS Bathymetry"];
+const liveLayer = VA._baseLayers["USGS Topobathy (US)"];
 const liveUrl = liveLayer.getTileUrl({ z: 12, x: 1160, y: 1512 });
 
 // The offline template (function form) for the same tile.
-const tmpl = VA._baseTemplates["USGS Bathymetry"];
+const tmpl = VA._baseTemplates["USGS Topobathy (US)"];
 const offlineTmplUrl = typeof tmpl === "function" ? tmpl(12, 1160, 1512) : null;
 
 // The offline tileUrl() resolver over both a string and the function template.
@@ -202,9 +202,9 @@ const report = {
   stringResolved,
   fnResolved,
   templateIsFunction: typeof tmpl === "function",
-  baseNativeMax: VA._baseNativeMax["USGS Bathymetry"],
+  baseNativeMax: VA._baseNativeMax["USGS Topobathy (US)"],
   usgs3dep: VA._usgs3dep,
-  hasBasemap: Boolean(VA._baseLayers["USGS Bathymetry"]),
+  hasBasemap: Boolean(VA._baseLayers["USGS Topobathy (US)"]),
   enumerated,
   counted,
 };

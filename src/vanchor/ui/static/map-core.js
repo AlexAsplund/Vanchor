@@ -94,13 +94,14 @@
       { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
     "Topo": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
       { maxZoom: 17, attribution: OSM + ", © OpenTopoMap" }),
-    // USGS Bathymetry: 3DEP topobathy DEM as a tiled WMS. maxNativeZoom 16 —
+    // USGS Topobathy (US): 3DEP topobathy DEM as a tiled WMS. maxNativeZoom 16 —
     // the DEM is ~1 m/px at best, so upscale past 16 rather than fetch empty
     // deeper tiles. Renders the tinted-hillshade style server-side. We override
     // getTileUrl to use the shared wmsTileUrl builder so the LIVE tile url is
     // byte-identical to the one the offline downloader pre-caches (one cache
     // key), instead of relying on Leaflet's own WMS param serialisation.
-    "USGS Bathymetry": (function () {
+    // 3DEP coverage is US-only, hence the "(US)" label.
+    "USGS Topobathy (US)": (function () {
       const wmsParams = {
         layers: USGS_3DEP_LAYER, styles: USGS_3DEP_STYLE,
         format: "image/png", transparent: false, version: "1.3.0",
@@ -321,12 +322,12 @@
     // for 3857 is easting,northing so BBOX = minX,minY,maxX,maxY. Matches what
     // Leaflet's L.TileLayer.WMS emits for the same tile, so the offline-cached
     // url equals the live-panned url (one cache key).
-    "USGS Bathymetry": (z, x, y) => wmsTileUrl(USGS_3DEP_WMS, {
+    "USGS Topobathy (US)": (z, x, y) => wmsTileUrl(USGS_3DEP_WMS, {
       layers: USGS_3DEP_LAYER, styles: USGS_3DEP_STYLE,
       format: "image/png", transparent: false, version: "1.3.0",
     }, z, x, y),
   };
-  VA._baseNativeMax = { Dark: 20, "Vanchor Teal": 20, Nautical: 20, Satellite: 17, Light: 20, Topo: 17, "USGS Bathymetry": 16 };
+  VA._baseNativeMax = { Dark: 20, "Vanchor Teal": 20, Nautical: 20, Satellite: 17, Light: 20, Topo: 17, "USGS Topobathy (US)": 16 };
 
   // Expose the WMS tile-url builder + the 3DEP endpoint config so the offline
   // downloader, the live layer, and the unit tests all resolve to one url.

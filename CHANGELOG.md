@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **USGS Topobathy (US) basemap with offline pre-caching (#111).** A new
+  basemap, **USGS Topobathy (US)**, backed by the USGS 3DEP topobathymetric
+  elevation service (WMS 1.3.0, tinted-hillshade). Where inland-water topobathy
+  lidar exists, the DEM includes lake/river/reservoir bottoms, so the map hints
+  at underwater terrain under the usual overlays. Tiles are served as a WMS
+  through a shared tile-url builder so the live-panned url is byte-identical to
+  the one the offline downloader pre-caches (one cache key). 3DEP is US-only,
+  hence the **(US)** label. (`map-core.js`, `offline.js`.)
+
 - **Extension kernel — `vanchor.ext` (#96, part of #95).** Extracted the shared
   plug-in machinery into a new leaf package: `discover(group)` (the one home for
   entry-point discovery, moved verbatim from the two copy-pasted
