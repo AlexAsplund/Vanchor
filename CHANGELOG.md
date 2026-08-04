@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Gzipped depth-chart imports.** `POST /api/depth/import` (and
+  `Runtime.import_depth_map`) now accept a **gzip-compressed** upload,
+  transparently decompressed. Detection is by the gzip **magic bytes**
+  (`1f 8b`) at the front of the stream, not the file extension, so a renamed
+  or double-extension (`.geojsonl.gz`) or generically-named body is handled by
+  content. The large-chart path stays memory-bounded — the spilled file is
+  gunzipped lazily and streamed feature-by-feature. A cmapper `.geojsonl`
+  compresses ~10× (a 300 MB export → ~50 MB upload). (`sniff_depth_head`,
+  `open_depth_text` in `nav/depth.py`.)
+
 - **USGS Topobathy (US) basemap with offline pre-caching (#111).** A new
   basemap, **USGS Topobathy (US)**, backed by the USGS 3DEP topobathymetric
   elevation service (WMS 1.3.0, tinted-hillshade). Where inland-water topobathy

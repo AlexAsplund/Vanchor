@@ -1,12 +1,14 @@
 """Depth-map import: parsing open formats (CSV/XYZ/GeoJSON) + the upload endpoint."""
 
+import gzip
 import json
 
 import pytest
 
 from vanchor.app import Runtime
 from vanchor.core.config import load
-from vanchor.nav.depth import parse_depth_features, parse_depth_soundings
+from vanchor.nav.depth import (open_depth_text, parse_depth_features,
+                               parse_depth_soundings, sniff_depth_head)
 
 
 def test_parse_csv_with_header():
@@ -181,6 +183,74 @@ def test_import_jsonl_end_to_end(tmp_path):
     assert r["contours"] == 1
     assert r["composition"] == 1
     assert rt.depth_composition()["count"] == 1
+
+
+# --- gzip transport ----------------------------------------------------------
+# Uploads may be gzipped (a cmapper .geojsonl compresses ~10x). Detection is by
+# the gzip magic bytes, NOT the filename -- so a gzipped body imports the same
+# whether it is named .gz, .geojsonl, or something generic.
+
+def test_sniff_head_sees_through_gzip():
+    """The format sniff must see the DECOMPRESSED leading byte, not ``1f``."""
+    assert sniff_depth_head(gzip.compress(b'{"type": "Feature"}')) == b"{"
+    assert sniff_depth_head(gzip.compress(b"lat,lon,depth\n")) == b"l"
+    assert sniff_depth_head(b'{"type": "Feature"}') == b"{"      # plain still works
+    assert sniff_depth_head(gzip.compress(b"")[:3]) == b""       # truncated -> empty, no raise
+
+
+def test_parse_gzipped_csv():
+    raw = b"lat,lon,depth\n59.66,13.32,12.5\n59.67,13.33,8.0\n"
+    assert parse_depth_soundings("d.csv.gz", gzip.compress(raw)) == [
+        (59.66, 13.32, 12.5), (59.67, 13.33, 8.0)]
+
+
+def test_parse_gzipped_geojson_matches_plain():
+    gj = json.dumps({"type": "FeatureCollection", "features": [
+        {"geometry": {"type": "LineString", "coordinates": [[18.0, 59.0], [18.0, 59.01]]},
+         "properties": {"depth_m": 15.0, "kind": "contour"}},
+    ]}).encode()
+    parsed = parse_depth_features("c.geojson.gz", gzip.compress(gj))
+    assert len(list(parsed["contours"])) == 1
+
+
+def test_parse_corrupt_gzip_is_skipped_not_raised():
+    """A truncated/garbage gzip body parses to the empty shape, never raises."""
+    result = parse_depth_features("d.geojson.gz", b"\x1f\x8b\x08corrupt-not-really-gzip")
+    assert result["soundings"] == [] and len(result["contours"]) == 0
+
+
+def test_open_depth_text_gunzips_by_header(tmp_path):
+    """A spilled file is read as text with transparent gunzip, header-detected."""
+    plain = tmp_path / "a.jsonl"        # named .jsonl but NOT gzipped
+    plain.write_bytes(b'{"hi": 1}\n')
+    with open_depth_text(str(plain)) as fh:
+        assert fh.read() == '{"hi": 1}\n'
+    gz = tmp_path / "b.jsonl"           # named .jsonl but IS gzipped -> still read
+    gz.write_bytes(gzip.compress(b'{"hi": 2}\n'))
+    with open_depth_text(str(gz)) as fh:
+        assert fh.read() == '{"hi": 2}\n'
+
+
+def test_import_gzipped_jsonl_end_to_end_by_content(tmp_path):
+    """The full streaming import path on a gzipped JSONL upload named generically
+    (``.bin``): classification + gunzip both come from the header, not the name."""
+    rt = _rt(tmp_path)
+    r = rt.import_depth_map("upload.bin", gzip.compress(_JSONL_SUBSET.encode()))
+    assert r["ok"]
+    assert r["imported"] == 2 and r["hardness"] == 2
+    assert r["contours"] == 1 and r["composition"] == 1
+
+
+def test_import_gzipped_matches_uncompressed(tmp_path):
+    # replace=True so each import is independent of the other's persisted state
+    # (both share this data dir; a merge would double the sounding total).
+    plain = _rt(tmp_path).import_depth_map("all.geojsonl", _JSONL_SUBSET.encode(),
+                                           replace=True)
+    gzipped = _rt(tmp_path).import_depth_map("all.geojsonl.gz",
+                                             gzip.compress(_JSONL_SUBSET.encode()),
+                                             replace=True)
+    keys = ("imported", "hardness", "contours", "composition", "total")
+    assert {k: plain[k] for k in keys} == {k: gzipped[k] for k in keys}
 
 
 def test_parse_malformed_geojson_returns_full_shape():

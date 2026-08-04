@@ -296,8 +296,10 @@ class DepthService:
 
     def import_depth_map(self, filename: str, data: bytes, replace: bool = False) -> dict:
         """Import soundings from an uploaded open-format depth file (CSV/XYZ or
-        GeoJSON). ``replace`` swaps the whole chart; otherwise the soundings are
-        merged in. Persists to ``depthmap.json`` so the import survives restarts.
+        GeoJSON, optionally gzip-compressed -- detected by the magic bytes, not
+        the extension). ``replace`` swaps the whole chart; otherwise the
+        soundings are merged in. Persists to ``depthmap.json`` so the import
+        survives restarts.
 
         Memory: a large GeoJSON/JSONL CHART upload is spilled to a temp file, the
         in-RAM HTTP body is freed, and the file is parsed with the BOUNDED
@@ -310,12 +312,15 @@ class DepthService:
         never holds the body in RAM) is the fully-bounded route -- see
         ``DepthMap._migrate_json_chart``. Small CSV/XYZ soundings stay on the
         in-memory path (they're tiny)."""
-        from ..nav.depth import (ColumnarFeatures, parse_depth_features,
+        from ..nav.depth import (ColumnarFeatures, open_depth_text,
+                                 parse_depth_features, sniff_depth_head,
                                  stream_parse_depth_features)
 
         rt = self._rt
         name = (filename or "").lower()
-        head = data[:64].lstrip()[:1] if data else b""   # peek a prefix, not the whole body
+        # Classify by the DECOMPRESSED leading byte so a gzipped upload is routed
+        # by its real content, not a (possibly generic or double) extension.
+        head = sniff_depth_head(data) if data else b""
         is_geojson = name.endswith((".geojson", ".json", ".geojsonl", ".ndjson", ".jsonl")) \
             or head in (b"{", b"[")
         try:
@@ -331,7 +336,10 @@ class DepthService:
                     tmp.flush()
                     tmp.close()
                     del data                    # free the HTTP body ASAP
-                    with open(tmp_name, "r", encoding="utf-8", errors="replace") as fh:
+                    # ``open_depth_text`` gunzips lazily when the spilled file
+                    # starts with the gzip magic bytes, so the streaming parse
+                    # stays bounded on a gzipped chart too.
+                    with open_depth_text(tmp_name) as fh:
                         parsed = stream_parse_depth_features(fh)
                 finally:
                     try:

@@ -7,11 +7,13 @@ surface from these points is a future enhancement.)
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import math
 import os
 import re
+import zlib
 from array import array as _pyarray
 
 import numpy as np
@@ -1045,6 +1047,45 @@ _DEPTH_NAMES = {"depth", "depth_m", "z", "d", "depthm", "depthmeters"}
 _SPLIT = re.compile(r"[,\t; ]+")
 
 
+# --- gzip transport ---------------------------------------------------------
+# Depth uploads may arrive gzipped (a cmapper .geojsonl compresses ~10x). We
+# detect it from the two magic bytes at the FRONT OF THE STREAM, never the file
+# extension -- a header sniff is authoritative where a ``.gz``/``.geojsonl``
+# name is not (renamed files, generic ``upload`` names, double extensions).
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _looks_gzip(data: bytes) -> bool:
+    """True if ``data`` starts with the gzip magic bytes (``1f 8b``)."""
+    return len(data) >= 2 and data[:2] == _GZIP_MAGIC
+
+
+def sniff_depth_head(data: bytes, n: int = 64) -> bytes:
+    """The first non-whitespace byte of the *decompressed* payload.
+
+    Used to classify geojson (``{``/``[``) vs CSV/XYZ from CONTENT, not the
+    filename. For a gzip stream only the first ~``n`` output bytes are inflated
+    (bounded: ``zlib`` stops once ``n`` bytes are produced, so a 30 MB blob is
+    not decompressed to sniff a prefix). Undecodable/short input -> ``b""``."""
+    if _looks_gzip(data):
+        try:
+            data = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(bytes(data), n)
+        except zlib.error:
+            return b""
+    return data[:n].lstrip()[:1]
+
+
+def open_depth_text(path: str):
+    """Open a spilled upload as a UTF-8 text stream, transparently gunzipping
+    when the file begins with the gzip magic bytes (header-sniffed, not by
+    extension). The returned stream decompresses lazily, so the bounded
+    streaming reader stays bounded on a gzipped chart too."""
+    with open(path, "rb") as fh:
+        magic = fh.read(2)
+    opener = gzip.open if magic == _GZIP_MAGIC else open
+    return opener(path, "rt", encoding="utf-8", errors="replace")
+
+
 def parse_depth_soundings(filename: str, data: bytes) -> list[tuple[float, float, float]]:
     """Parse an imported depth file into ``(lat, lon, depth_m)`` soundings.
 
@@ -1064,8 +1105,14 @@ def parse_depth_features(filename: str, data: bytes) -> dict:
     ``(lat, lon, index)`` from a ``hardness`` property on GeoJSON points
     (bottom-hardness, raw 0..127); ``contours`` are ``{d, pts}`` (depth
     + ``[[lat, lon], ...]`` polyline) from LineString features. Unparseable
-    rows are skipped.
+    rows are skipped. A gzipped body (detected by the magic bytes, not the
+    extension) is transparently decompressed first.
     """
+    if _looks_gzip(data):
+        try:
+            data = gzip.decompress(bytes(data))
+        except (OSError, EOFError, zlib.error):
+            data = b""                      # corrupt gzip -> parse as empty (skipped)
     text = data.decode("utf-8", errors="replace")
     name = (filename or "").lower()
     # ``.geojsonl``/``.ndjson``/``.jsonl`` are newline-delimited GeoJSON (one

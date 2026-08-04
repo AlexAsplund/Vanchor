@@ -315,6 +315,12 @@ Z); a **`hardness`** property → hardness; **LineString** → contours (depth f
 property); **Polygon** with `composition_pct` → composition. `parse_depth_soundings`
 is a back-compat wrapper returning just `soundings`.
 
+A **gzipped** body is decompressed transparently — detected by the gzip magic
+bytes (`1f 8b`), **not** the file extension (`sniff_depth_head` classifies from
+the decompressed leading byte; `open_depth_text` gunzips the spilled file
+lazily, so the bounded streaming import stays bounded on a gzipped chart too).
+A `.geojsonl` compresses ~10× (a 300 MB cmapper export → ~50 MB upload).
+
 ### `Runtime` depth methods (`runtime/depth.py`)
 
 - `import_depth_map(filename, data, replace=False)` — parse → `replace` swaps the
