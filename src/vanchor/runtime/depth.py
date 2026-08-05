@@ -43,6 +43,7 @@ class DepthService:
         self._tile_lru: "OrderedDict[tuple, bytes]" = OrderedDict()
         self._tile_lru_lock = threading.Lock()
         self._transparent_tile: bytes | None = None
+        self._water_memo: dict | None = None   # cached water rings for the tile clip (#128)
 
     # ------------------------------------------------------------------ #
     # Live sounding + divergence
@@ -433,6 +434,8 @@ class DepthService:
             dm = self._rt.depth_map
             sig = (f"mem-{len(getattr(dm, 'composition', ()) or ())}"
                    f"-{len(getattr(dm, 'contours', ()) or ())}")
+        # Fold in the renderer version so a render-output change rolls the cache.
+        sig = f"{sig}-r{depth_tiles.RENDERER_VERSION}"
         return hashlib.sha1(sig.encode()).hexdigest()[:12]
 
     def _pinned_version(self) -> str | None:
@@ -480,6 +483,7 @@ class DepthService:
             logger.warning("could not clear tile cache: %s", exc)
         with self._tile_lru_lock:
             self._tile_lru.clear()
+        self._water_memo = None                  # re-read water on the next render (#128)
         return {"ok": True, "message": "Cleared the server tile cache."}
 
     def _gc_stale_tiles(self) -> None:
@@ -556,14 +560,57 @@ class DepthService:
         self._tile_lru_put(key, png)
         return png
 
+    def _water_rings_for(self, bbox):
+        """Water-polygon rings (lon/lat) for the shoreline clip (#128), covering
+        the (west, south, east, north) ``bbox`` -- CACHE-ONLY (never fetches from
+        Overpass on the render path). The covering polygon can be region-wide
+        (~1M vertices), so it's clipped to the chart's data bbox ONCE and the
+        reduced rings memoised -- one lake entry then serves a whole pan /
+        pre-generate. Returns a list of ``(exterior, holes)``, or None (no water
+        cached, or shapely unavailable -> render unclipped)."""
+        w, s, e, n = bbox
+        m = self._water_memo
+        if m and m["w"] <= w and m["s"] <= s and m["e"] >= e and m["n"] >= n:
+            return m["rings"]
+        try:
+            from shapely.geometry import box as _box
+
+            from ..nav import water as water_mod
+            geom = water_mod.WaterCache(self._rt.config.data_dir).find_covering((s, w, n, e))
+            if geom is None or geom.is_empty:
+                return None
+            rw, rs, re_, rn = self._chart_bbox() or (w, s, e, n)
+            pad = 0.02      # a touch beyond the data so the shoreline just outside still clips
+            region = (rw - pad, rs - pad, re_ + pad, rn + pad)
+            clipped = geom.intersection(_box(*region))
+            if clipped.is_empty:
+                return None
+            rings = []
+            for poly in (getattr(clipped, "geoms", None) or [clipped]):
+                ext = getattr(poly, "exterior", None)
+                if ext is None:
+                    continue
+                rings.append((list(ext.coords), [list(r.coords) for r in poly.interiors]))
+        except Exception as exc:  # shapely missing / corrupt cache -> unclipped
+            logger.debug("water clip unavailable: %s", exc)
+            return None
+        self._water_memo = {"w": region[0], "s": region[1], "e": region[2], "n": region[3],
+                            "rings": rings}
+        return rings
+
+    def _render_composition_clipped(self, feats, z, x, y):
+        water = self._water_rings_for(depth_tiles.padded_query_bbox(z, x, y))
+        return depth_tiles.render_composition_tile(feats, z, x, y, water=water)
+
     def composition_tile(self, z: int, x: int, y: int) -> bytes:
-        """A bottom-composition raster-tile PNG for slippy tile ``z/x/y`` (#117)."""
+        """A bottom-composition raster-tile PNG for slippy tile ``z/x/y`` (#117),
+        clipped to the water mask when it's cached locally (#128)."""
         if not getattr(self._rt.depth_map, "composition", None):
             return self._transparent()
         return self._layer_tile(
             "composition", z, x, y,
             lambda bbox: self._rt.depth_map.composition_in(bbox, limit=200000),
-            depth_tiles.render_composition_tile)
+            self._render_composition_clipped)
 
     def contours_tile(self, z: int, x: int, y: int) -> bytes:
         """A depth-contour (isobath) raster-tile PNG for slippy tile ``z/x/y`` (#118)."""

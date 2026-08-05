@@ -326,10 +326,16 @@ renderer + XYZ tile math (`tile_bounds`, `padded_query_bbox`,
 `render_composition_tile`, `render_contours_tile`, `transparent_tile`) — no
 runtime coupling, so it's unit-testable headless. Two tiled layers share the
 machinery: **composition (#117)** — opaque YlOrBr fills (client `L.TileLayer`
-applies 0.6 opacity so overlaps never double-darken), Gaussian edge-blend; and
+applies 0.6 opacity so overlaps never double-darken), Gaussian edge-blend, and
+**clipped to the water mask** (#128) so the fill can't bleed onto land; and
 **contours (#118)** — thin dark isobath lines, no blur, that read cleanly over
 the fill (the cmapper chart look). Both use a render margin so features are
-continuous across tile seams. `DepthService.{composition,contours}_tile(z, x, y)`
+continuous across tile seams. The water clip reads the polygon **cache-only**
+(`WaterCache.find_covering` — never Overpass on the render path), clips the
+(possibly region-wide) polygon to the chart bbox once and memoises the reduced
+rings (`_water_rings_for`), so per-tile masking stays cheap; no cached water ->
+rendered unclipped. `depth_tiles.RENDERER_VERSION` folds into the cache version
+so a render-output change (like this clip) rolls old tiles. `DepthService.{composition,contours}_tile(z, x, y)`
 wrap `_layer_tile()` with a **RAM-LRU → write-once disk** cache under
 `<data_dir>/tiles/<layer>/<version>/`: each non-empty tile is rendered + written
 **once** (SD-friendly), empty tiles are a shared transparent PNG kept in RAM only.
