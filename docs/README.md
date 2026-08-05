@@ -67,6 +67,9 @@ The interfaces the front end and integrations build against.
   extension kernel, a seam for every subsystem, the capability a plug-in gets, the
   safety floor, and HACS-style pack distribution. (Drivers + connectors live
   today; the rest is design.)
+- **[depth-tiles.md](depth-tiles.md)** — design for server-rendered raster
+  **tiles** for the static depth overlays (composition + contours): Pillow
+  renderer, SD-friendly write-once cache, invalidation, GUI. (Design only.)
 
 ## Reference
 

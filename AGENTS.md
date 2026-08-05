@@ -63,9 +63,11 @@ markdown file. [`docs/roadmap.md`](docs/roadmap.md) is only a pointer.
 - **When it ships:** close the issue and add a dated [`CHANGELOG`](CHANGELOG.md)
   entry. Don't reintroduce a roadmap list in the docs.
 
-Design detail for two big areas still lives in docs the issues link to:
-[`docs/simulator.md`](docs/simulator.md) (sim-vs-real gaps) and
-[`docs/extensibility.md`](docs/extensibility.md) (the plug-in architecture + pack system).
+Design detail for the bigger areas lives in docs the issues link to:
+[`docs/simulator.md`](docs/simulator.md) (sim-vs-real gaps),
+[`docs/extensibility.md`](docs/extensibility.md) (the plug-in architecture + pack
+system), and [`docs/depth-tiles.md`](docs/depth-tiles.md) (the raster-tile cache
+for the static depth overlays).
 
 ## 6. Branching, PRs & merging (`main` is protected)
 
