@@ -210,7 +210,13 @@ module (Catches, heatmap, no-go).
   contours** to tiles (#118): a contour `L.TileLayer` (thin dark isobaths, in the
   `contourTiles` pane above composition) via `applyContourMode`; tile mode renders
   imported isobaths only (the marching-squares grid fallback is vector-only, and the
-  grid poll stops for tiled contours).
+  grid poll stops for tiled contours). **Offline (#120):** the depth tile layers are
+  run through the shared `VA._patchTileCache` (extracted from the basemap caching in
+  `map-core.js`), so viewed tiles are stored in the same IndexedDB `VA.tileCache` and
+  served offline (one cache key — same `?v=` URL live + pre-cached); the offline-map
+  download card has an **"Depth chart tiles"** checkbox that also pre-caches the
+  composition/contour tiles for the selected area, and "Clear tile cache" wipes them
+  too (URL-keyed).
 
 ### `CanvasOverlayMixin` — two load-bearing invariants (do not regress)
 

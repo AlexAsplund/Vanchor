@@ -68,6 +68,10 @@
           <label for="offline-cap">Max tiles</label>
           <input type="number" id="offline-cap" min="1000" max="500000" step="1000" value="50000" />
         </div>
+        <div class="row">
+          <label for="offline-include-depth" title="Also cache the server-rendered depth composition + contour tiles for this area">Depth chart tiles</label>
+          <input type="checkbox" id="offline-include-depth" />
+        </div>
         <div id="offline-est" class="hint"></div>
         <div class="btn-row">
           <button id="offline-download" class="btn-primary" disabled>⬇ Download tiles</button>

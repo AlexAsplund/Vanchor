@@ -364,8 +364,11 @@
     }
     return obj;
   }
-  Object.keys(base).forEach((name) => {
-    const layer = base[name];
+  // Patch ONE tile layer's createTile to consult VA.tileCache first (and store
+  // fetched tiles). Exposed as VA._patchTileCache so other layers -- the depth
+  // composition/contour raster tiles (#120) -- share the same offline cache +
+  // one-cache-key invariant as the basemaps.
+  function patchTileLayerForCache(layer) {
     const origCreate = layer.createTile;
     layer.createTile = function (coords, done) {
       const img = document.createElement("img");
@@ -417,7 +420,9 @@
       });
       return img;
     };
-  });
+  }
+  Object.keys(base).forEach((name) => patchTileLayerForCache(base[name]));
+  VA._patchTileCache = patchTileLayerForCache;
 
   // ---- follow / zoom state -----------------------------------------------
   // The boat-follow pan lives in map-boat.js (it already resolves the boat

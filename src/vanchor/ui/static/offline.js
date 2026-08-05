@@ -316,13 +316,63 @@
     }
     await Promise.all(Array.from({ length: Math.min(CONC, tiles.length) }, worker));
 
+    // (#120) Optionally also cache the server-rendered depth chart tiles for the
+    // same area, so composition + contours are available offline. Same URL (with
+    // ?v=version) the live layer requests -> one cache key.
+    let depthStored = 0;
+    const includeDepth = $("offline-include-depth");
+    if (!cancelled && includeDepth && includeDepth.checked) {
+      depthStored = await downloadDepthTiles(tiles);
+      stored += depthStored;
+    }
+
     downloading = false;
     if (cancelBtn) cancelBtn.classList.add("hidden");
     if (dlBtn) dlBtn.disabled = false;
     if (cancelled) setStatus("Cancelled at " + done + " / " + tiles.length + ".", "");
-    else setStatus("Done — " + stored + " new tiles cached" + (failed ? ", " + failed + " failed" : "") + ".", "ok");
+    else setStatus("Done — " + stored + " new tiles cached"
+      + (depthStored ? " (incl. " + depthStored + " depth)" : "")
+      + (failed ? ", " + failed + " failed" : "") + ".", "ok");
     VA.logLine("offline tiles: " + stored + " stored, " + failed + " failed, " + name);
     updateUsed();
+  }
+
+  // Cache the depth composition + contour tiles for the enumerated tile coords
+  // (skipping zooms below the server's min render zoom). Returns tiles stored.
+  async function downloadDepthTiles(tiles) {
+    let info = null;
+    try { info = await VA.getJSON("/api/depth/tiles/info"); } catch (e) { return 0; }
+    if (!info || (!info.has_composition && !info.has_contours)) return 0;
+    const v = encodeURIComponent(info.version || "0");
+    const minZ = info.min_zoom || 9;
+    const layers = [];
+    if (info.has_composition) layers.push("composition");
+    if (info.has_contours) layers.push("contours");
+    const urls = [];
+    for (const t of tiles) {
+      if (t.z < minZ) continue;                 // server returns transparent below this
+      for (const layer of layers) {
+        urls.push("/api/depth/tiles/" + layer + "/" + t.z + "/" + t.x + "/" + t.y + ".png?v=" + v);
+      }
+    }
+    let stored = 0, done2 = 0;
+    let i = 0;
+    async function w() {
+      while (i < urls.length && !cancelled) {
+        const url = urls[i++];
+        try {
+          if (!(await tileCache.get(url))) {
+            const r = await fetch(url);
+            if (r.ok) { await tileCache.put(url, await r.blob()); stored++; }
+          }
+        } catch (e) { /* skip */ }
+        if ((++done2 % 10) === 0 || done2 === urls.length) {
+          setStatus("Depth tiles… " + done2 + " / " + urls.length + " (" + stored + " new)", "busy");
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(6, urls.length) }, w));
+    return stored;
   }
   if (dlBtn) dlBtn.addEventListener("click", download);
   if (cancelBtn) cancelBtn.addEventListener("click", () => { cancelled = true; });
