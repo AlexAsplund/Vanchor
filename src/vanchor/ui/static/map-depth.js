@@ -1260,6 +1260,8 @@
     try { localStorage.setItem("va-composition-tiles", compositionUseTiles ? "1" : "0"); } catch (e) { /* private mode */ }
     const cb = document.getElementById("composition-tiles");
     if (cb) cb.checked = compositionUseTiles;
+    const controls = document.getElementById("composition-tiles-controls");
+    if (controls) controls.classList.toggle("hidden", !compositionUseTiles);  // #119
     applyCompositionMode();   // composition: swap vector <-> tiles
     applyContourMode();       // contours ride the same toggle (#118)
   }
@@ -1728,6 +1730,9 @@
           const cnt = document.getElementById("depth-count");
           if (cnt && Number.isFinite(r.total)) cnt.textContent = r.total;
           if (typeof fetchDepthGrid === "function") fetchDepthGrid();   // refresh the overlay now
+          // A re-import bumps the tile version -> remount the tile layers so the
+          // client picks up the fresh tiles (new ?v=), not the stale cache. (#119)
+          if (compositionUseTiles) { applyCompositionMode(); applyContourMode(); }
         }
       } catch (e) {
         setStatus("Import failed: " + e, "err");
@@ -1742,12 +1747,34 @@
     wireDepthImport();
   }
 
-  // Wire the "fast tiles (beta)" checkbox in the composition legend (#117).
+  // Wire the "fast tiles (beta)" checkbox + its cache controls (#117/#119).
   function wireCompositionTiles() {
     const cb = document.getElementById("composition-tiles");
     if (!cb) return;
+    const controls = document.getElementById("composition-tiles-controls");
+    const modeSel = document.getElementById("composition-tiles-mode");
+    const clearBtn = document.getElementById("composition-tiles-clear");
     cb.checked = compositionUseTiles;
-    cb.addEventListener("change", () => setCompositionTiles(cb.checked));
+    if (controls) controls.classList.toggle("hidden", !compositionUseTiles);
+    cb.addEventListener("change", () => setCompositionTiles(cb.checked));   // toggles controls too
+    // Reflect the server's current mode (auto/static) into the select.
+    if (modeSel) {
+      VA.getJSON("/api/depth/tiles/info").then((i) => {
+        if (i && i.mode) modeSel.value = i.mode;
+      }).catch(() => {});
+      modeSel.addEventListener("change", async () => {
+        try { await fetch("/api/depth/tiles/mode?mode=" + encodeURIComponent(modeSel.value), { method: "POST" }); } catch (e) { /* keep UI */ }
+        if (compositionUseTiles) { applyCompositionMode(); applyContourMode(); }   // version may change
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener("click", async () => {
+        clearBtn.disabled = true;
+        try { await fetch("/api/depth/tiles/clear", { method: "POST" }); } catch (e) { /* ignore */ }
+        clearBtn.disabled = false;
+        if (compositionUseTiles) { applyCompositionMode(); applyContourMode(); }   // re-render on demand
+      });
+    }
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", wireCompositionTiles);

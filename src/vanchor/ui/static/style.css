@@ -546,6 +546,17 @@ body.hud-fade-text .catch-fab::after {
   margin-top: 4px; font-size: 11px; color: var(--muted); cursor: pointer;
 }
 .comp-tiles-toggle input { margin: 0; cursor: pointer; }
+/* #119: tile-cache controls (auto/static + clear), under the fast-tiles toggle. */
+.comp-tiles-controls {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 3px; font-size: 11px; color: var(--muted);
+}
+.comp-tiles-controls select,
+.comp-tiles-controls button {
+  font-size: 11px; color: var(--fg); background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 4px;
+  padding: 1px 5px; cursor: pointer;
+}
 
 /* ============================ SAFETY BANNER ============================ */
 /* #banner retired — #safety-banners is the ONLY alarm surface. */
