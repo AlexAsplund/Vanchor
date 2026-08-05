@@ -922,6 +922,25 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             _malloc_trim_if_glibc()
         return result
 
+    @app.get("/api/depth/tiles/info")
+    async def depth_tiles_info() -> dict:
+        """Metadata for the composition raster-tile layer (#117): whether any
+        composition is loaded, the cache-busting ``version`` (send as ``?v=``),
+        the tile size, and the server's minimum render zoom."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, runtime.composition_tiles_info)
+
+    @app.get("/api/depth/tiles/composition/{z}/{x}/{y}.png")
+    async def depth_tile_composition(z: int, x: int, y: int) -> Response:
+        """A server-rendered composition raster tile (#117). Static per chart, so
+        the client sends ``?v=<version>`` and the tile caches long. Empty tiles
+        come back as a transparent PNG."""
+        loop = asyncio.get_event_loop()
+        png = await loop.run_in_executor(
+            None, lambda: runtime.composition_tile(z, x, y))
+        return Response(content=png, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
     @app.get("/api/depth/water")
     async def depth_water(
         west: float, south: float, east: float, north: float,

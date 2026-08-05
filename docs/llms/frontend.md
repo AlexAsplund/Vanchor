@@ -200,7 +200,13 @@ module (Catches, heatmap, no-go).
   **region-cached** (`compositionBBox`): while the viewport stays inside the last
   fully-loaded extent the ~5 MB payload is **not** refetched — only redrawn — so
   panning within a lake is cheap. A truncated (`?limit=`-capped) fetch is partial,
-  so it's never cached (always refetched as the view changes).
+  so it's never cached (always refetched as the view changes). **Opt-in raster-tile
+  mode (#117):** the "fast tiles (beta)" toggle (`VA.setCompositionTiles`, persisted
+  in `localStorage`) swaps the vector overlay for an `L.TileLayer` of server-rendered
+  PNGs (`/api/depth/tiles/composition/{z}/{x}/{y}.png?v=<version>`, opacity 0.6, in
+  the `composition` pane). Tiles render at any zoom (no 8000-poly truncation) and the
+  browser caches them; the vector path stays the default/fallback. `applyCompositionMode`
+  keeps exactly one of the two mounted.
 
 ### `CanvasOverlayMixin` — two load-bearing invariants (do not regress)
 

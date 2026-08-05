@@ -321,6 +321,22 @@ the decompressed leading byte; `open_depth_text` gunzips the spilled file
 lazily, so the bounded streaming import stays bounded on a gzipped chart too).
 A `.geojsonl` compresses ~10× (a 300 MB cmapper export → ~50 MB upload).
 
+**Composition raster tiles (#117).** `nav/depth_tiles.py` is a pure Pillow
+renderer + XYZ tile math (`tile_bounds`, `padded_query_bbox`,
+`render_composition_tile`, `transparent_tile`) — no runtime coupling, so it's
+unit-testable headless. `DepthService.composition_tile(z, x, y)` wraps it with a
+**RAM-LRU → write-once disk** cache under `<data_dir>/tiles/composition/<version>/`:
+each non-empty tile is rendered + written **once** (SD-friendly), empty tiles
+return a shared transparent PNG cached in RAM only (never written). `version` is
+a short hash of the persisted `.npz` (mtime+size), so a re-import re-renders.
+Fills are drawn **opaque** (the client `L.TileLayer` applies 0.6 opacity, so
+overlapping polys never double-darken), edges blended with a Gaussian blur, and a
+render margin pulls in neighbour-tile polygons so there's no tile seam. Endpoints:
+`GET /api/depth/tiles/info` (`{has_composition, version, tile_size, min_zoom}`)
+and `GET /api/depth/tiles/composition/{z}/{x}/{y}.png`. Opt-in on the client via
+the "fast tiles (beta)" toggle; the live-vector overlay is the default/fallback.
+Design + roadmap: [`../depth-tiles.md`](../depth-tiles.md) (epic #116).
+
 ### `Runtime` depth methods (`runtime/depth.py`)
 
 - `import_depth_map(filename, data, replace=False)` — parse → `replace` swaps the

@@ -1446,6 +1446,14 @@ class Runtime:
         """Shim → DepthService (issue #71)."""
         return self._depth.depth_composition(bbox, limit)
 
+    def composition_tile(self, z: int, x: int, y: int) -> bytes:
+        """Shim → DepthService: a composition raster-tile PNG (#117)."""
+        return self._depth.composition_tile(z, x, y)
+
+    def composition_tiles_info(self) -> dict:
+        """Shim → DepthService: composition tile-layer metadata (#117)."""
+        return self._depth.composition_tiles_info()
+
     def water_polygon(self, bbox) -> dict:
         """OSM water polygon(s) for a (west, south, east, north) bbox, used to
         CLIP the depth overlays to water (don't draw composition over land). Uses
