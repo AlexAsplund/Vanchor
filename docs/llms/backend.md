@@ -341,10 +341,14 @@ re-import bumps the auto version and **GCs** the previous version's tile dirs
 `/tiles/composition/{z}/{x}/{y}.png`, `/tiles/contours/{z}/{x}/{y}.png`,
 `POST /tiles/mode?mode=auto|static` (`set_tiles_mode` — static writes a `pinned`
 file with the current version so tiles never re-key), `POST /tiles/clear`
-(`clear_tiles` — wipe the whole `tiles/` dir + RAM LRU, reset to auto). Opt-in on
-the client via the "fast tiles (beta)" toggle (drives both layers) with
-auto/static + clear-cache controls; the live-vector overlays are the
-default/fallback. Design + roadmap: [`../depth-tiles.md`](../depth-tiles.md) (epic #116).
+(`clear_tiles` — wipe the whole `tiles/` dir + RAM LRU, reset to auto), and
+`POST /tiles/pregenerate?zmax=` (#121 — `pregenerate_tiles`: batch-render + persist
+every tile over the chart's data bbox from the min zoom up to `zmax`, capped at
+`_TILE_PREGEN_MAX`, so the cache is warm/offline-ready without lazy first-pan
+misses; empties are still skipped). Opt-in on the client via the "fast tiles (beta)"
+toggle (drives both layers) with auto/static + clear + pre-generate controls; the
+live-vector overlays are the default/fallback. Design + roadmap:
+[`../depth-tiles.md`](../depth-tiles.md) (epic #116).
 
 ### `Runtime` depth methods (`runtime/depth.py`)
 

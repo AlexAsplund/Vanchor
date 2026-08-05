@@ -1777,6 +1777,21 @@
         if (compositionUseTiles) { applyCompositionMode(); applyContourMode(); }   // re-render on demand
       });
     }
+    const pregenBtn = document.getElementById("composition-tiles-pregen");
+    if (pregenBtn) {
+      pregenBtn.addEventListener("click", async () => {
+        pregenBtn.disabled = true;
+        const zmax = Math.min(18, Math.max(9, Math.round(map.getZoom())));   // up to the current zoom
+        compHint("pre-generating tiles…");
+        try {
+          const r = await (await fetch("/api/depth/tiles/pregenerate?zmax=" + zmax, { method: "POST" })).json();
+          compHint(r && r.ok ? ("cached " + (r.rendered || 0) + " tiles ≤ z" + (r.zmax || zmax))
+                             : ((r && r.error) || "pre-generate failed"));
+        } catch (e) { compHint("pre-generate failed"); }
+        pregenBtn.disabled = false;
+        if (compositionUseTiles) { applyCompositionMode(); applyContourMode(); }
+      });
+    }
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", wireCompositionTiles);

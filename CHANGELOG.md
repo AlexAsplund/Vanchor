@@ -4,6 +4,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Pre-generate depth tiles (#121, part of #116).** A **pre-generate** button
+  (in the "fast tiles" controls) batch-renders and persists the whole chart's
+  tile pyramid over its data bbox — from the min zoom up to the current zoom — in
+  one bounded burst, so the cache is warm and offline-ready without lazy first-pan
+  misses (empty tiles are still skipped, so writes stay bounded). Endpoint:
+  `POST /api/depth/tiles/pregenerate?zmax=`. On the Värmland chart this cached
+  ~3,300 tiles (composition + contours, z9–14) in ~2 min.
+
 - **Depth tiles work offline (#120, part of #116).** The composition + contour
   raster-tile layers now run through the same IndexedDB tile cache as the
   basemaps (a shared `VA._patchTileCache`), so tiles you've viewed are stored and

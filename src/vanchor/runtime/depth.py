@@ -32,6 +32,7 @@ logger = logging.getLogger("vanchor.app")
 # serves hot tiles with no disk read and bounds RAM.
 _TILE_LRU_MAX = 256          # ~a few MB of PNG bytes
 _TILE_MIN_ZOOM = 9           # below this a tile spans too much data to render
+_TILE_PREGEN_MAX = 40000     # safety cap on tiles rendered by one pre-generate
 
 
 class DepthService:
@@ -572,6 +573,47 @@ class DepthService:
             "contours", z, x, y,
             lambda bbox: self._rt.depth_map.contours_in(bbox, limit=200000),
             depth_tiles.render_contours_tile)
+
+    def _chart_bbox(self) -> tuple[float, float, float, float] | None:
+        """The (west, south, east, north) covering both tiled layers, or None."""
+        dm = self._rt.depth_map
+        boxes = []
+        for layer in (getattr(dm, "composition", None), getattr(dm, "contours", None)):
+            coords = getattr(layer, "coords", None)
+            if coords is not None and getattr(coords, "shape", (0,))[0]:
+                boxes.append((float(coords[:, 1].min()), float(coords[:, 0].min()),
+                              float(coords[:, 1].max()), float(coords[:, 0].max())))
+        if not boxes:
+            return None
+        return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+    def pregenerate_tiles(self, zmax: int = 16) -> dict:
+        """Eagerly render + persist every composition/contour tile over the
+        chart's data bbox from the min zoom up to ``zmax`` (write-once) -- one
+        bounded burst instead of lazy misses on first pan. Capped for safety."""
+        dm = self._rt.depth_map
+        bbox = self._chart_bbox()
+        if bbox is None:
+            return {"ok": True, "rendered": 0, "message": "No chart loaded."}
+        zmax = max(_TILE_MIN_ZOOM, min(int(zmax), 18))
+        layers = []
+        if getattr(dm, "composition", None):
+            layers.append(self.composition_tile)
+        if getattr(dm, "contours", None):
+            layers.append(self.contours_tile)
+        total = depth_tiles.count_tiles_covering(bbox, _TILE_MIN_ZOOM, zmax) * max(1, len(layers))
+        if total > _TILE_PREGEN_MAX:
+            return {"ok": False, "tiles": total,
+                    "error": f"too many tiles ({total:,}) — lower the max zoom."}
+        rendered = 0
+        for z in range(_TILE_MIN_ZOOM, zmax + 1):
+            for (x, y) in depth_tiles.tiles_covering(bbox, z):
+                for fn in layers:
+                    fn(z, x, y)      # renders + write-once caches (empties skipped)
+                    rendered += 1
+        logger.info("pre-generated %d depth tiles up to z%d", rendered, zmax)
+        return {"ok": True, "rendered": rendered, "zmax": zmax, "tiles": total}
 
     def _tile_lru_get(self, key: tuple) -> bytes | None:
         with self._tile_lru_lock:

@@ -964,6 +964,13 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, runtime.clear_tiles)
 
+    @app.post("/api/depth/tiles/pregenerate")
+    async def depth_tiles_pregenerate(zmax: int = 16) -> dict:
+        """Batch-render + persist the chart's tile pyramid up to ``zmax`` (#121)
+        so the cache is warm (and offline-ready) without lazy first-pan misses."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: runtime.pregenerate_tiles(zmax))
+
     @app.get("/api/depth/water")
     async def depth_water(
         west: float, south: float, east: float, north: float,
