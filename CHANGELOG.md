@@ -4,6 +4,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Depth tiles work offline (#120, part of #116).** The composition + contour
+  raster-tile layers now run through the same IndexedDB tile cache as the
+  basemaps (a shared `VA._patchTileCache`), so tiles you've viewed are stored and
+  served offline — one cache key (the same `?v=` URL live and pre-cached). The
+  offline-map download card gained a **"Depth chart tiles"** checkbox that also
+  pre-caches the depth tiles for the selected area, and the existing "Clear tile
+  cache" wipes them too.
+
 - **Depth-tile cache control + invalidation (#119, part of #116).** A re-import
   now bumps the tile `version` **and** garbage-collects the previous chart's tile
   directories (SD hygiene), and the client remounts the tile layers so it picks

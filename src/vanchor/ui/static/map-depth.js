@@ -1197,6 +1197,7 @@
       { pane: "composition", opacity: 0.6, tileSize: info.tile_size || 256,
         minZoom: info.min_zoom || 9, maxNativeZoom: 18, updateWhenZooming: false,
         className: "leaflet-depth-composition-tiles" });
+    if (VA._patchTileCache) VA._patchTileCache(compositionTileLayer);   // offline cache (#120)
     compositionTileLayer.addTo(map);
     compHint("");
   }
@@ -1246,6 +1247,7 @@
       { pane: "contourTiles", opacity: 0.9, tileSize: info.tile_size || 256,
         minZoom: info.min_zoom || 9, maxNativeZoom: 18, updateWhenZooming: false,
         className: "leaflet-depth-contours-tiles" });
+    if (VA._patchTileCache) VA._patchTileCache(contourTileLayer);       // offline cache (#120)
     contourTileLayer.addTo(map);
     contourHint("");
   }
