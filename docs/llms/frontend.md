@@ -206,7 +206,11 @@ module (Catches, heatmap, no-go).
   PNGs (`/api/depth/tiles/composition/{z}/{x}/{y}.png?v=<version>`, opacity 0.6, in
   the `composition` pane). Tiles render at any zoom (no 8000-poly truncation) and the
   browser caches them; the vector path stays the default/fallback. `applyCompositionMode`
-  keeps exactly one of the two mounted.
+  keeps exactly one of the two mounted. The **same toggle** also swaps the **depth
+  contours** to tiles (#118): a contour `L.TileLayer` (thin dark isobaths, in the
+  `contourTiles` pane above composition) via `applyContourMode`; tile mode renders
+  imported isobaths only (the marching-squares grid fallback is vector-only, and the
+  grid poll stops for tiled contours).
 
 ### `CanvasOverlayMixin` — two load-bearing invariants (do not regress)
 

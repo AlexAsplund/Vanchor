@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Depth-contour raster tiles (#118, part of #116).** The **"fast tiles (beta)"**
+  toggle now also renders the depth contours as server-side tiles, stacked above
+  the composition tiles: thin dark isobath lines (the nautical "composition +
+  contours" chart look) via `GET /api/depth/tiles/contours/{z}/{x}/{y}.png`. Like
+  composition tiles they render at any zoom, are cached RAM-LRU → write-once on
+  disk under their own `<data_dir>/tiles/contours/<version>/`, and share the chart
+  `version`. `/api/depth/tiles/info` now reports `has_contours`. The live-vector
+  contour overlay (including its marching-squares fallback) remains the default.
+
 - **Composition raster tiles — keystone (#117, part of #116).** The static
   bottom-composition overlay can now render as **server-side raster tiles**
   instead of live vector polygons: a Pillow renderer (`nav/depth_tiles.py`)

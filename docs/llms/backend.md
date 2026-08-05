@@ -321,21 +321,25 @@ the decompressed leading byte; `open_depth_text` gunzips the spilled file
 lazily, so the bounded streaming import stays bounded on a gzipped chart too).
 A `.geojsonl` compresses ~10× (a 300 MB cmapper export → ~50 MB upload).
 
-**Composition raster tiles (#117).** `nav/depth_tiles.py` is a pure Pillow
+**Static-chart raster tiles (#116).** `nav/depth_tiles.py` is a pure Pillow
 renderer + XYZ tile math (`tile_bounds`, `padded_query_bbox`,
-`render_composition_tile`, `transparent_tile`) — no runtime coupling, so it's
-unit-testable headless. `DepthService.composition_tile(z, x, y)` wraps it with a
-**RAM-LRU → write-once disk** cache under `<data_dir>/tiles/composition/<version>/`:
-each non-empty tile is rendered + written **once** (SD-friendly), empty tiles
-return a shared transparent PNG cached in RAM only (never written). `version` is
-a short hash of the persisted `.npz` (mtime+size), so a re-import re-renders.
-Fills are drawn **opaque** (the client `L.TileLayer` applies 0.6 opacity, so
-overlapping polys never double-darken), edges blended with a Gaussian blur, and a
-render margin pulls in neighbour-tile polygons so there's no tile seam. Endpoints:
-`GET /api/depth/tiles/info` (`{has_composition, version, tile_size, min_zoom}`)
-and `GET /api/depth/tiles/composition/{z}/{x}/{y}.png`. Opt-in on the client via
-the "fast tiles (beta)" toggle; the live-vector overlay is the default/fallback.
-Design + roadmap: [`../depth-tiles.md`](../depth-tiles.md) (epic #116).
+`render_composition_tile`, `render_contours_tile`, `transparent_tile`) — no
+runtime coupling, so it's unit-testable headless. Two tiled layers share the
+machinery: **composition (#117)** — opaque YlOrBr fills (client `L.TileLayer`
+applies 0.6 opacity so overlaps never double-darken), Gaussian edge-blend; and
+**contours (#118)** — thin dark isobath lines, no blur, that read cleanly over
+the fill (the cmapper chart look). Both use a render margin so features are
+continuous across tile seams. `DepthService.{composition,contours}_tile(z, x, y)`
+wrap `_layer_tile()` with a **RAM-LRU → write-once disk** cache under
+`<data_dir>/tiles/<layer>/<version>/`: each non-empty tile is rendered + written
+**once** (SD-friendly), empty tiles are a shared transparent PNG kept in RAM only.
+`version` is a short hash of the persisted `.npz` (mtime+size, shared by both
+layers), so a re-import re-renders. Endpoints: `GET /api/depth/tiles/info`
+(`{has_composition, has_contours, version, tile_size, min_zoom}`),
+`/tiles/composition/{z}/{x}/{y}.png`, `/tiles/contours/{z}/{x}/{y}.png`. Opt-in on
+the client via the "fast tiles (beta)" toggle (drives both layers); the
+live-vector overlays are the default/fallback. Design + roadmap:
+[`../depth-tiles.md`](../depth-tiles.md) (epic #116).
 
 ### `Runtime` depth methods (`runtime/depth.py`)
 

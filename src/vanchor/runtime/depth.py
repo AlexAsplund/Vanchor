@@ -401,14 +401,21 @@ class DepthService:
                 "contours": len(cont), "composition": len(comp), "total": len(dm.points)}
 
     # ------------------------------------------------------------------ #
-    # Composition raster tiles (#117) -- server-rendered, write-once cached
+    # Static-chart raster tiles (#116) -- server-rendered, write-once cached.
+    # Composition (#117) + contours (#118) share the cache + version machinery.
     # ------------------------------------------------------------------ #
 
-    def _composition_version(self) -> str:
-        """Short cache-busting token for the current composition chart. Changes
-        only when a new chart is imported -- derived from the persisted ``.npz``
-        (mtime + size), so tiles are re-rendered after a real re-import, not on
-        every request. Doubles as the on-disk cache subdir + the client ``?v=``."""
+    def _transparent(self) -> bytes:
+        if self._transparent_tile is None:
+            self._transparent_tile = depth_tiles.transparent_tile()
+        return self._transparent_tile
+
+    def _chart_tiles_version(self) -> str:
+        """Short cache-busting token for the current chart. Changes only when a
+        new chart is imported -- derived from the persisted ``.npz`` (mtime +
+        size), so tiles re-render after a real re-import, not on every request.
+        Shared by both tiled layers (they come from the same ``.npz``); doubles
+        as the on-disk cache subdir + the client ``?v=``."""
         from ..nav.depth import DepthMap
 
         npz = DepthMap._npz_path(self._rt._depth_chart_path)
@@ -416,41 +423,40 @@ class DepthService:
             st = os.stat(npz)
             sig = f"{st.st_mtime_ns}-{st.st_size}"
         except OSError:
-            # No persisted chart on disk: key off the in-memory layer size.
-            sig = f"mem-{len(getattr(self._rt.depth_map, 'composition', ()) or ())}"
+            dm = self._rt.depth_map
+            sig = (f"mem-{len(getattr(dm, 'composition', ()) or ())}"
+                   f"-{len(getattr(dm, 'contours', ()) or ())}")
         return hashlib.sha1(sig.encode()).hexdigest()[:12]
 
-    def composition_tiles_info(self) -> dict:
-        """Metadata the client needs to mount the tile layer: whether any
-        composition exists, the cache-busting version, tile size, and the
-        server's minimum render zoom."""
-        has = bool(getattr(self._rt.depth_map, "composition", None))
-        return {"ok": True, "has_composition": has,
-                "version": self._composition_version(),
+    def tiles_info(self) -> dict:
+        """Metadata the client needs to mount the tile layers: which static
+        layers exist, the cache-busting version, tile size, min render zoom."""
+        dm = self._rt.depth_map
+        return {"ok": True,
+                "has_composition": bool(getattr(dm, "composition", None)),
+                "has_contours": bool(getattr(dm, "contours", None)),
+                "version": self._chart_tiles_version(),
                 "tile_size": depth_tiles.TILE_PX, "min_zoom": _TILE_MIN_ZOOM}
 
-    def composition_tile(self, z: int, x: int, y: int) -> bytes:
-        """A composition raster-tile PNG for slippy tile ``z/x/y``.
-
-        RAM-LRU -> disk (write-once) -> render. Empty tiles return a shared
-        transparent PNG cached in RAM only (never written, to spare SD writes).
-        Out-of-range or too-far-out (< min zoom) tiles are transparent."""
+    def _layer_tile(self, layer: str, z: int, x: int, y: int,
+                    features_fn, render_fn) -> bytes:
+        """Shared tile path for a static layer: RAM-LRU -> disk (write-once) ->
+        render. Empty tiles return a shared transparent PNG cached in RAM only
+        (never written, to spare SD writes). Out-of-range / too-far-out (< min
+        zoom) tiles are transparent."""
         rt = self._rt
-        if self._transparent_tile is None:
-            self._transparent_tile = depth_tiles.transparent_tile()
+        transparent = self._transparent()
         n = (1 << z) if 0 <= z <= 24 else 0
         if z < _TILE_MIN_ZOOM or n == 0 or not (0 <= x < n and 0 <= y < n):
-            return self._transparent_tile
-        if not getattr(rt.depth_map, "composition", None):
-            return self._transparent_tile
+            return transparent
 
-        version = self._composition_version()
-        key = (version, z, x, y)
+        version = self._chart_tiles_version()
+        key = (layer, version, z, x, y)
         hit = self._tile_lru_get(key)
         if hit is not None:
             return hit
 
-        path = os.path.join(rt.config.data_dir, "tiles", "composition",
+        path = os.path.join(rt.config.data_dir, "tiles", layer,
                             version, str(z), str(x), f"{y}.png")
         try:
             with open(path, "rb") as fh:
@@ -460,15 +466,32 @@ class DepthService:
         except OSError:
             pass   # not cached on disk yet -> render below
 
-        bbox = depth_tiles.padded_query_bbox(z, x, y)
-        feats = rt.depth_map.composition_in(bbox, limit=200000)
-        png = depth_tiles.render_composition_tile(feats, z, x, y)
+        feats = features_fn(depth_tiles.padded_query_bbox(z, x, y))
+        png = render_fn(feats, z, x, y)
         if png is None:                       # empty tile: RAM-cache, no SD write
-            self._tile_lru_put(key, self._transparent_tile)
-            return self._transparent_tile
+            self._tile_lru_put(key, transparent)
+            return transparent
         self._write_tile_atomic(path, png)    # write-once
         self._tile_lru_put(key, png)
         return png
+
+    def composition_tile(self, z: int, x: int, y: int) -> bytes:
+        """A bottom-composition raster-tile PNG for slippy tile ``z/x/y`` (#117)."""
+        if not getattr(self._rt.depth_map, "composition", None):
+            return self._transparent()
+        return self._layer_tile(
+            "composition", z, x, y,
+            lambda bbox: self._rt.depth_map.composition_in(bbox, limit=200000),
+            depth_tiles.render_composition_tile)
+
+    def contours_tile(self, z: int, x: int, y: int) -> bytes:
+        """A depth-contour (isobath) raster-tile PNG for slippy tile ``z/x/y`` (#118)."""
+        if not getattr(self._rt.depth_map, "contours", None):
+            return self._transparent()
+        return self._layer_tile(
+            "contours", z, x, y,
+            lambda bbox: self._rt.depth_map.contours_in(bbox, limit=200000),
+            depth_tiles.render_contours_tile)
 
     def _tile_lru_get(self, key: tuple) -> bytes | None:
         with self._tile_lru_lock:

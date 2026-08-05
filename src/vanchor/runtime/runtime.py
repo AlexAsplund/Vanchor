@@ -1450,9 +1450,13 @@ class Runtime:
         """Shim → DepthService: a composition raster-tile PNG (#117)."""
         return self._depth.composition_tile(z, x, y)
 
-    def composition_tiles_info(self) -> dict:
-        """Shim → DepthService: composition tile-layer metadata (#117)."""
-        return self._depth.composition_tiles_info()
+    def contours_tile(self, z: int, x: int, y: int) -> bytes:
+        """Shim → DepthService: a depth-contour raster-tile PNG (#118)."""
+        return self._depth.contours_tile(z, x, y)
+
+    def tiles_info(self) -> dict:
+        """Shim → DepthService: static-chart tile-layer metadata (#116)."""
+        return self._depth.tiles_info()
 
     def water_polygon(self, bbox) -> dict:
         """OSM water polygon(s) for a (west, south, east, north) bbox, used to
