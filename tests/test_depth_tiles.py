@@ -71,6 +71,22 @@ def test_render_empty_features_is_none():
         [{"pct": 50, "ring": [[59.0, 18.0], [59.0, 18.001]]}], 13, 4400, 2400) is None
 
 
+def test_composition_water_clip_masks_land():
+    """#128: with a water polygon, fill outside the water is masked to transparent."""
+    z, lat, lon = 13, 59.0, 18.0
+    x, y = _deg2tile(lat, lon, z)
+    w, s, e, n = depth_tiles.tile_bounds(z, x, y)
+    feats = [{"pct": 75.0, "ring": [[s, w], [s, e], [n, e], [n, w]]}]   # fills the tile
+    mid = (w + e) / 2.0
+    water = [([(w, s), (mid, s), (mid, n), (w, n)], [])]                # LEFT half only (lon,lat)
+    png = depth_tiles.render_composition_tile(feats, z, x, y, blur_px=0, water=water)
+    img = Image.open(io.BytesIO(png))
+    alpha = img.split()[3]
+    left = alpha.getpixel((img.width // 4, img.height // 2))            # water -> kept
+    right = alpha.getpixel((img.width * 3 // 4, img.height // 2))       # land  -> masked
+    assert left > 0 and right == 0
+
+
 def test_transparent_tile_is_fully_transparent():
     img = Image.open(io.BytesIO(depth_tiles.transparent_tile()))
     assert img.size == (256, 256)
@@ -306,6 +322,25 @@ def test_pregenerate_caps_excessive_tiles(tmp_path):
     finally:
         depth_mod._TILE_PREGEN_MAX = orig
     assert r["ok"] is False and "too many tiles" in r["error"]
+
+
+def test_water_rings_cache_only_and_memoised(tmp_path):
+    """#128: _water_rings_for reads the water cache only (no Overpass); None when
+    absent, rings when a covering polygon is stored."""
+    from shapely.geometry import Polygon
+
+    from vanchor.nav import water as water_mod
+    rt = _rt(tmp_path)
+    rt.import_depth_map("c.geojson", _COMP, replace=True)   # chart around (18.0, 59.0)
+    assert rt._depth._water_rings_for((17.9, 58.9, 18.1, 59.1)) is None   # nothing cached
+
+    wc = water_mod.WaterCache(str(tmp_path))                # bbox order = (s, w, n, e)
+    wc.store((58.5, 17.5, 59.5, 18.5),
+             Polygon([(17.5, 58.5), (18.5, 58.5), (18.5, 59.5), (17.5, 59.5)]))
+    rt._depth._water_memo = None
+    rings = rt._depth._water_rings_for((17.9, 58.9, 18.1, 59.1))
+    assert rings and len(rings[0][0]) >= 4                  # an exterior ring came back
+    assert rt._depth._water_memo is not None                # memoised for later tiles
 
 
 def test_version_changes_when_composition_changes(tmp_path):

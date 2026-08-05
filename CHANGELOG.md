@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Composition tiles clipped to the shoreline (#128).** The server-rendered
+  composition tiles are now masked to the OSM water polygon, so the fill no
+  longer bleeds onto land past the shoreline (the one rough edge left from the
+  tiling epic). The water polygon is read **cache-only** — never fetched from
+  Overpass on the render path — and clipped to the chart bbox once + memoised, so
+  per-tile masking is cheap; where no water is cached, tiles render unclipped as
+  before. A new renderer-version token folds into the tile cache key so existing
+  tiles re-render with the clip.
+
 - **Pre-generate depth tiles (#121, part of #116).** A **pre-generate** button
   (in the "fast tiles" controls) batch-renders and persists the whole chart's
   tile pyramid over its data bbox — from the min zoom up to the current zoom — in

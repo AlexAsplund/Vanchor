@@ -28,6 +28,10 @@ _COMPOSITION_STOPS = (
 
 TILE_PX = 256          # tile edge in CSS px (256, per the #117 decision)
 _MERC_LAT_LIMIT = 85.05112878   # web-mercator clamp
+# Bump when the RENDERED OUTPUT changes (style/blur/clip) so the cache version
+# rolls and old tiles re-render instead of being served stale. 1 = #117/#118,
+# 2 = #128 water-mask clip.
+RENDERER_VERSION = 2
 
 
 def composition_rgb(pct: float) -> tuple[int, int, int]:
@@ -108,15 +112,20 @@ def padded_query_bbox(z: int, x: int, y: int, *, tile_px: int = TILE_PX,
 
 def render_composition_tile(features, z: int, x: int, y: int, *,
                             tile_px: int = TILE_PX, supersample: int = 2,
-                            blur_px: float = 2.0, pad_px: int = 8) -> bytes | None:
+                            blur_px: float = 2.0, pad_px: int = 8,
+                            water=None) -> bytes | None:
     """Render composition ``features`` -> a ``tile_px`` PNG (bytes), or ``None``
     when nothing is drawn (an empty tile -- the caller serves a shared
     transparent PNG and does not persist it, to spare SD writes).
 
     ``features`` is an iterable of ``{"pct": float, "ring": [[lat, lon], ...]}``
     (exactly what ``DepthMap.composition_in(bbox)`` yields), for the padded bbox.
+
+    ``water`` (optional, #128) clips the fill to the shoreline: an iterable of
+    ``(exterior, holes)`` polygons in **(lon, lat)** -- the blurred fill's alpha
+    is masked to the water so it does not bleed onto land. ``None`` -> unclipped.
     """
-    from PIL import Image, ImageDraw, ImageFilter   # lazy: keep import off hot paths
+    from PIL import Image, ImageChops, ImageDraw, ImageFilter   # lazy: keep off hot paths
 
     n = 1 << z
     ss = max(1, int(supersample))
@@ -143,6 +152,21 @@ def render_composition_tile(features, z: int, x: int, y: int, *,
 
     if blur_px > 0:
         img = img.filter(ImageFilter.GaussianBlur(blur_px * ss))
+    if water:
+        # Mask the (blurred) fill to the water polygon so it can't bleed onto land
+        # (#128). Exterior rings -> keep (255), island holes -> drop (0).
+        mask = Image.new("L", img.size, 0)
+        md = ImageDraw.Draw(mask)
+        painted = False
+        for exterior, holes in water:
+            if len(exterior) >= 3:
+                md.polygon([to_px(lat, lon) for lon, lat in exterior], fill=255)
+                painted = True
+            for hole in holes or ():
+                if len(hole) >= 3:
+                    md.polygon([to_px(lat, lon) for lon, lat in hole], fill=0)
+        if painted:
+            img.putalpha(ImageChops.multiply(img.getchannel("A"), mask))
     img = img.crop((P, P, P + S, P + S))
     if ss != 1:
         img = img.resize((tile_px, tile_px), Image.LANCZOS)
