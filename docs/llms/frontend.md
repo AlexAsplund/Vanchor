@@ -193,7 +193,14 @@ module (Catches, heatmap, no-go).
   (`setData` → chain segments → Chaikin smooth → stroke).
 - **Bottom composition** — the `CompositionLayer`: filled translucent YlOrBr
   polygons from `GET /api/depth/composition`, drawn in its OWN map pane
-  (`composition`, z-index 350) so it sits **below** the contour lines.
+  (`composition`, z-index 350) so it sits **below** the contour lines. Rendered
+  **edgeless** (no per-polygon stroke) at ~0.6 opacity with a small CSS
+  `blur(COMPOSITION_BLUR_PX)` on the whole canvas, so the pct bands blend into
+  gradients instead of drawing seams that fight the depth isobaths. The fetch is
+  **region-cached** (`compositionBBox`): while the viewport stays inside the last
+  fully-loaded extent the ~5 MB payload is **not** refetched — only redrawn — so
+  panning within a lake is cheap. A truncated (`?limit=`-capped) fetch is partial,
+  so it's never cached (always refetched as the view changes).
 
 ### `CanvasOverlayMixin` — two load-bearing invariants (do not regress)
 
