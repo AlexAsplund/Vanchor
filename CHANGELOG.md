@@ -4,6 +4,18 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Bottom-composition overlay: cleaner look + much cheaper panning.** The
+  composition polygons now render **edgeless** (no per-polygon stroke) at ~0.6
+  opacity with a light edge-blur, so the bottom-hardness bands blend into smooth
+  gradients instead of a dark boundary mesh that muddied the map and competed
+  with the depth contours (which now read crisply on top — closer to the cmapper
+  reference render). Performance: the ~5 MB composition payload is now
+  **region-cached** — while the viewport stays inside the last fully-loaded
+  extent it's redrawn, not refetched + re-parsed, so panning within a lake no
+  longer re-hits the network every move. (Interim step; a server-rendered raster
+  **tile** cache for the static composition/contour layers is the planned
+  follow-up.) (`map-depth.js`.)
+
 - **Gzipped depth-chart imports.** `POST /api/depth/import` (and
   `Runtime.import_depth_map`) now accept a **gzip-compressed** upload,
   transparently decompressed. Detection is by the gzip **magic bytes**

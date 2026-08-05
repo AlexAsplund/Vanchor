@@ -934,16 +934,22 @@
   let contourShow = false;       // Depth contours overlay on/off (default off)
 
   // ---- bottom-composition overlay (composition polygons) ----------
-  // Composition is a VECTOR POLYGON layer (RENDERING_COMPOSITION.md §3/§5):
-  // FILLED polygons coloured by pct on a sequential YlOrBr ramp (0..100, FIXED,
-  // uncalibrated -- no substrate names, polarity unknown), fill-opacity ~0.5 with
-  // a thin stroke, drawn UNDER the contour lines. Distinct from BOTH the depth
-  // palette AND the 0..127 hardness ramp -- never conflate them. Never rasterise
-  // it and never fill bare areas -- patchy coverage is missing data, not 0%.
+  // Composition is a VECTOR POLYGON layer: FILLED polygons coloured by pct on a
+  // sequential YlOrBr ramp (0..100, FIXED, uncalibrated -- no substrate names,
+  // polarity unknown), drawn UNDER the contour lines. Rendered EDGELESS (no
+  // per-polygon stroke) at fill-opacity ~0.6: the chart is made of thousands of
+  // small polygons, so stroking each one drew a dark mesh that muddied the fill;
+  // structure comes from the depth-contour isobaths overlaid on top instead
+  // (matches the cmapper reference render). Distinct from BOTH the depth palette
+  // AND the 0..127 hardness ramp -- never conflate them. Never rasterise it and
+  // never fill bare areas -- patchy coverage is missing data, not 0%.
   const COMPOSITION_STOPS = [
     [0.0, [255, 255, 229]], [0.25, [254, 227, 145]], [0.5, [254, 153, 41]],
     [0.75, [217, 95, 14]], [1.0, [153, 52, 4]],
   ];
+  // Edge-blend blur (CSS px) applied to the whole composition canvas so the
+  // pct-band boundaries soften into gradients instead of hard seams.
+  const COMPOSITION_BLUR_PX = 2.5;
   function compositionColorRGB(pct) {
     const f = Math.max(0, Math.min(1, (+pct || 0) / 100));   // fixed 0..100 domain
     const stops = COMPOSITION_STOPS;
@@ -968,6 +974,12 @@
       const c = this._canvas = L.DomUtil.create("canvas", "leaflet-depth-composition");
       c.style.position = "absolute";
       c.style.pointerEvents = "none";
+      // Soften the hard pct-step edges so adjacent bands BLEND instead of drawing
+      // crisp seams that read like isobaths and fight the depth-contour overlay.
+      // A GPU compositor blur on the whole layer (cheap, once per frame at
+      // composite) -- NOT a per-vertex draw cost, and it never touches the
+      // separate, crisp contour canvas sitting above it. (COMPOSITION_BLUR_PX)
+      c.style.filter = "blur(" + COMPOSITION_BLUR_PX + "px)";
       (m.getPane("composition") || m.getPanes().overlayPane).appendChild(c);
       m.on("moveend zoomend resize", this._scheduleReset, this);
       if (m.options.zoomAnimation) m.on("zoomanim", this._animateZoom, this);
@@ -1022,15 +1034,13 @@
       }
       ctx2.save();
       clipToWaterMask(ctx2, m);               // never paint composition over land
-      ctx2.globalAlpha = 0.5;                 // fill-opacity ~0.5 so basemap/depth read through (spec §5)
-      ctx2.lineWidth = 0.6;                   // thin stroke on each polygon (spec §5)
-      ctx2.lineJoin = "round";
+      ctx2.globalAlpha = 0.6;                 // fill-opacity ~0.6 so basemap/depth read through
+      // EDGELESS fill (one fill() per pct group, no stroke): stroking each of the
+      // thousands of small polygons drew a dark boundary mesh that muddied the
+      // map. Boundaries read from the pct colour steps + the contour overlay.
       for (const [pct, rings] of byPct) {
         const rgb = compositionColorRGB(pct);
         ctx2.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-        // Thin stroke: a darkened shade of the same fill so boundaries read
-        // without introducing a second (conflatable) colour scale.
-        ctx2.strokeStyle = `rgb(${Math.round(rgb[0] * 0.6)},${Math.round(rgb[1] * 0.6)},${Math.round(rgb[2] * 0.6)})`;
         ctx2.beginPath();
         for (const ring of rings) {
           const p0 = m.latLngToContainerPoint([ring[0][0] + off.lat, ring[0][1] + off.lon]);
@@ -1042,7 +1052,6 @@
           ctx2.closePath();
         }
         ctx2.fill();
-        ctx2.stroke();
       }
       ctx2.restore();
     },
@@ -1110,24 +1119,44 @@
     const badge = document.getElementById("depth-state");
     if (badge && !depthShow) badge.textContent = msg || "";
   }
+  // Region cache: the extent the loaded polygons cover, and whether that fetch
+  // was capped. The composition payload is large (~5 MB / hundreds of k
+  // vertices) and the polygons for a region don't change with pan/zoom, so we
+  // skip the refetch while the viewport stays inside a fully-loaded extent --
+  // panning within a lake no longer re-hits the network + re-parses. (perf)
+  let compositionBBox = null;        // {w,s,e,n} last fetched extent, or null
+  let compositionTruncated = false;  // last fetch was ?limit=-capped (partial)
   async function fetchComposition() {
     if (!compositionShow || compositionBusy) return;
     if (map.getZoom() < DEPTH_MIN_ZOOM) {   // zoom gate (perf): clear + hint
       compositionLayer.setData([]);
       compHint("zoom in for composition");
+      compositionBBox = null;
+      return;
+    }
+    const b = map.getBounds().pad(0.3);
+    // Already fully covered by a non-truncated fetch -> reuse; just redraw.
+    if (!compositionTruncated && compositionBBox &&
+        b.getWest() >= compositionBBox.w && b.getSouth() >= compositionBBox.s &&
+        b.getEast() <= compositionBBox.e && b.getNorth() <= compositionBBox.n) {
       return;
     }
     compositionBusy = true;
     try {
-      const b = map.getBounds().pad(0.3);
       const r = await VA.getJSON(
         "/api/depth/composition?west=" + b.getWest() + "&south=" + b.getSouth() +
         "&east=" + b.getEast() + "&north=" + b.getNorth());
       const ps = r && Array.isArray(r.polygons) ? r.polygons : [];
       if (!map.hasLayer(compositionLayer)) compositionLayer.addTo(map);
       compositionLayer.setData(ps);
+      compositionTruncated = !!(r && r.truncated);
+      // Cache the covered extent only when the fetch was complete; a capped
+      // (truncated) fetch is partial, so always refetch as the view changes.
+      compositionBBox = compositionTruncated
+        ? null
+        : { w: b.getWest(), s: b.getSouth(), e: b.getEast(), n: b.getNorth() };
       // Server may cap the payload (?limit=) and flag it — same zoom-in hint.
-      compHint(r && r.truncated ? "partial — zoom in" : "");
+      compHint(compositionTruncated ? "partial — zoom in" : "");
     } catch (e) { /* leave the last good render */ }
     finally { compositionBusy = false; }
     maybeFetchWaterMask();   // async: clips when the water arrives; reused per region
@@ -1143,6 +1172,7 @@
     } else {
       if (map.hasLayer(compositionLayer)) map.removeLayer(compositionLayer);
       compositionLayer.setData([]);
+      compositionBBox = null;   // force a fresh fetch when re-enabled
     }
     compositionSyncing = true;
     if (compositionShow && !map.hasLayer(compositionProxy)) compositionProxy.addTo(map);
