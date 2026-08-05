@@ -11,15 +11,26 @@ _depth_chart_path, _depth_saved_n, _depth_save_in_flight, etc.).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import os
+import threading
+from collections import OrderedDict
 from typing import TYPE_CHECKING
+
+from ..nav import depth_tiles
 
 if TYPE_CHECKING:
     from ..core.models import GeoPoint
 
 logger = logging.getLogger("vanchor.app")
+
+# Composition raster-tile cache (#117): RAM-LRU in front of a write-once disk
+# cache. Static data -> each tile is written at most once (SD-friendly); the LRU
+# serves hot tiles with no disk read and bounds RAM.
+_TILE_LRU_MAX = 256          # ~a few MB of PNG bytes
+_TILE_MIN_ZOOM = 9           # below this a tile spans too much data to render
 
 
 class DepthService:
@@ -27,6 +38,9 @@ class DepthService:
 
     def __init__(self, rt) -> None:
         self._rt = rt   # back-reference to Runtime for shared state
+        self._tile_lru: "OrderedDict[tuple, bytes]" = OrderedDict()
+        self._tile_lru_lock = threading.Lock()
+        self._transparent_tile: bytes | None = None
 
     # ------------------------------------------------------------------ #
     # Live sounding + divergence
@@ -385,3 +399,98 @@ class DepthService:
                     len(pts), len(hard), len(cont), len(comp), filename)
         return {"ok": True, "imported": len(pts), "hardness": len(hard),
                 "contours": len(cont), "composition": len(comp), "total": len(dm.points)}
+
+    # ------------------------------------------------------------------ #
+    # Composition raster tiles (#117) -- server-rendered, write-once cached
+    # ------------------------------------------------------------------ #
+
+    def _composition_version(self) -> str:
+        """Short cache-busting token for the current composition chart. Changes
+        only when a new chart is imported -- derived from the persisted ``.npz``
+        (mtime + size), so tiles are re-rendered after a real re-import, not on
+        every request. Doubles as the on-disk cache subdir + the client ``?v=``."""
+        from ..nav.depth import DepthMap
+
+        npz = DepthMap._npz_path(self._rt._depth_chart_path)
+        try:
+            st = os.stat(npz)
+            sig = f"{st.st_mtime_ns}-{st.st_size}"
+        except OSError:
+            # No persisted chart on disk: key off the in-memory layer size.
+            sig = f"mem-{len(getattr(self._rt.depth_map, 'composition', ()) or ())}"
+        return hashlib.sha1(sig.encode()).hexdigest()[:12]
+
+    def composition_tiles_info(self) -> dict:
+        """Metadata the client needs to mount the tile layer: whether any
+        composition exists, the cache-busting version, tile size, and the
+        server's minimum render zoom."""
+        has = bool(getattr(self._rt.depth_map, "composition", None))
+        return {"ok": True, "has_composition": has,
+                "version": self._composition_version(),
+                "tile_size": depth_tiles.TILE_PX, "min_zoom": _TILE_MIN_ZOOM}
+
+    def composition_tile(self, z: int, x: int, y: int) -> bytes:
+        """A composition raster-tile PNG for slippy tile ``z/x/y``.
+
+        RAM-LRU -> disk (write-once) -> render. Empty tiles return a shared
+        transparent PNG cached in RAM only (never written, to spare SD writes).
+        Out-of-range or too-far-out (< min zoom) tiles are transparent."""
+        rt = self._rt
+        if self._transparent_tile is None:
+            self._transparent_tile = depth_tiles.transparent_tile()
+        n = (1 << z) if 0 <= z <= 24 else 0
+        if z < _TILE_MIN_ZOOM or n == 0 or not (0 <= x < n and 0 <= y < n):
+            return self._transparent_tile
+        if not getattr(rt.depth_map, "composition", None):
+            return self._transparent_tile
+
+        version = self._composition_version()
+        key = (version, z, x, y)
+        hit = self._tile_lru_get(key)
+        if hit is not None:
+            return hit
+
+        path = os.path.join(rt.config.data_dir, "tiles", "composition",
+                            version, str(z), str(x), f"{y}.png")
+        try:
+            with open(path, "rb") as fh:
+                png = fh.read()
+            self._tile_lru_put(key, png)
+            return png
+        except OSError:
+            pass   # not cached on disk yet -> render below
+
+        bbox = depth_tiles.padded_query_bbox(z, x, y)
+        feats = rt.depth_map.composition_in(bbox, limit=200000)
+        png = depth_tiles.render_composition_tile(feats, z, x, y)
+        if png is None:                       # empty tile: RAM-cache, no SD write
+            self._tile_lru_put(key, self._transparent_tile)
+            return self._transparent_tile
+        self._write_tile_atomic(path, png)    # write-once
+        self._tile_lru_put(key, png)
+        return png
+
+    def _tile_lru_get(self, key: tuple) -> bytes | None:
+        with self._tile_lru_lock:
+            png = self._tile_lru.get(key)
+            if png is not None:
+                self._tile_lru.move_to_end(key)
+            return png
+
+    def _tile_lru_put(self, key: tuple, png: bytes) -> None:
+        with self._tile_lru_lock:
+            self._tile_lru[key] = png
+            self._tile_lru.move_to_end(key)
+            while len(self._tile_lru) > _TILE_LRU_MAX:
+                self._tile_lru.popitem(last=False)
+
+    @staticmethod
+    def _write_tile_atomic(path: str, png: bytes) -> None:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(png)
+            os.replace(tmp, path)             # atomic; matches the chart writers
+        except OSError as exc:                # pragma: no cover - defensive
+            logger.warning("could not persist depth tile %s: %s", path, exc)

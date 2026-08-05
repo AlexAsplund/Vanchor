@@ -279,6 +279,10 @@
     <div class="comp-legend-bar"></div>
     <div class="depth-legend-labels"><span>0</span><span>100</span></div>
     <div class="depth-legend-cap">composition (0–100%, uncalibrated)</div>
+    <!-- #117: opt-in server-rendered raster tiles (fast, cached) vs live vectors. -->
+    <label class="comp-tiles-toggle" title="Render the composition as fast server tiles instead of live polygons">
+      <input type="checkbox" id="composition-tiles"> fast tiles (beta)
+    </label>
   </div>
 
   <!-- Drop-marker FAB: arms marker placement; tap the map to drop (or long-press

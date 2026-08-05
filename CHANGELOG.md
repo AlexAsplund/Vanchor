@@ -4,6 +4,23 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Composition raster tiles — keystone (#117, part of #116).** The static
+  bottom-composition overlay can now render as **server-side raster tiles**
+  instead of live vector polygons: a Pillow renderer (`nav/depth_tiles.py`)
+  rasterises each 256 px XYZ tile from the in-memory chart (edgeless YlOrBr fills,
+  blended edges, seamless across tiles), served at
+  `GET /api/depth/tiles/composition/{z}/{x}/{y}.png` with a
+  `GET /api/depth/tiles/info` metadata endpoint. Tiles are cached **RAM-LRU →
+  write-once on disk** under `<data_dir>/tiles/composition/<version>/` — each tile
+  is rendered and written at most once (SD-friendly), empty tiles are a shared
+  transparent PNG kept in RAM only, and a chart re-import bumps the `version` so
+  tiles refresh. On the client an opt-in **"fast tiles (beta)"** toggle
+  (`VA.setCompositionTiles`, persisted) swaps the vector overlay for an
+  `L.TileLayer`; tiles render at **any** zoom (no 8000-polygon truncation) and the
+  browser caches them, so panning/zooming is smooth. The live-vector overlay
+  remains the default and fallback. Next phases (contour tiles, hash-keyed
+  invalidation + GUI, offline, pre-generate) are tracked under #116.
+
 - **Bottom-composition overlay: cleaner look + much cheaper panning.** The
   composition polygons now render **edgeless** (no per-polygon stroke) at ~0.6
   opacity with a light edge-blur, so the bottom-hardness bands blend into smooth

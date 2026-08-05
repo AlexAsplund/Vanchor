@@ -14,6 +14,7 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",  # file uploads (POST /api/restore)
     "numpy>=1.24",        # Fossen 3-DOF boat model (sim model="fossen")
+    "pillow>=10",         # server-rendered depth raster tiles (nav/depth_tiles.py)
     "pyyaml>=6.0",        # YAML config files
     "orjson>=3.9",        # fast depth-chart JSON (de)serialisation (graceful fallback)
     "pygeomag>=1.1",      # full WMM2025 magnetic declination (nav.wmm; degree-2 fallback)

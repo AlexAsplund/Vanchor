@@ -1128,6 +1128,7 @@
   let compositionTruncated = false;  // last fetch was ?limit=-capped (partial)
   async function fetchComposition() {
     if (!compositionShow || compositionBusy) return;
+    if (compositionUseTiles) return;        // tile mode draws no vectors (#117)
     if (map.getZoom() < DEPTH_MIN_ZOOM) {   // zoom gate (perf): clear + hint
       compositionLayer.setData([]);
       compHint("zoom in for composition");
@@ -1161,25 +1162,65 @@
     finally { compositionBusy = false; }
     maybeFetchWaterMask();   // async: clips when the water arrives; reused per region
   }
+  // ---- server raster-tile mode (#117, opt-in) --------------------------
+  // Instead of fetching + drawing thousands of vector polygons per move, mount
+  // the server-rendered composition as an ordinary L.TileLayer (the browser
+  // caches PNGs; the server renders each tile once). Off by default; persisted.
+  let compositionUseTiles = false;
+  try { compositionUseTiles = localStorage.getItem("va-composition-tiles") === "1"; } catch (e) { /* private mode */ }
+  let compositionTileLayer = null;
+  function unmountCompositionTiles() {
+    if (compositionTileLayer) { map.removeLayer(compositionTileLayer); compositionTileLayer = null; }
+  }
+  function unmountCompositionVector() {
+    if (map.hasLayer(compositionLayer)) map.removeLayer(compositionLayer);
+    compositionLayer.setData([]);
+    compositionBBox = null;
+  }
+  async function mountCompositionTiles() {
+    let info = null;
+    try { info = await VA.getJSON("/api/depth/tiles/info"); } catch (e) { /* leave */ }
+    if (!compositionShow || !compositionUseTiles) return;   // toggled off while awaiting
+    unmountCompositionTiles();
+    if (!info || !info.has_composition) { compHint(""); return; }   // no chart -> nothing
+    const v = encodeURIComponent(info.version || "0");
+    compositionTileLayer = L.tileLayer(
+      "/api/depth/tiles/composition/{z}/{x}/{y}.png?v=" + v,
+      { pane: "composition", opacity: 0.6, tileSize: info.tile_size || 256,
+        minZoom: info.min_zoom || 9, maxNativeZoom: 18, updateWhenZooming: false,
+        className: "leaflet-depth-composition-tiles" });
+    compositionTileLayer.addTo(map);
+    compHint("");
+  }
+  // Apply the current (show, tiles) combination: exactly one of the vector
+  // overlay / the tile layer is mounted, never both.
+  function applyCompositionMode() {
+    if (!compositionShow) { unmountCompositionTiles(); unmountCompositionVector(); return; }
+    if (compositionUseTiles) { unmountCompositionVector(); mountCompositionTiles(); }
+    else { unmountCompositionTiles(); fetchComposition(); }
+  }
+
   const compositionProxy = L.layerGroup();   // fronts the layers-panel checkbox
   let compositionSyncing = false;
   function setCompositionShow(on) {
     compositionShow = !!on;
     const legend = document.getElementById("composition-legend");
     if (legend) legend.classList.toggle("hidden", !compositionShow);
-    if (compositionShow) {
-      fetchComposition();
-    } else {
-      if (map.hasLayer(compositionLayer)) map.removeLayer(compositionLayer);
-      compositionLayer.setData([]);
-      compositionBBox = null;   // force a fresh fetch when re-enabled
-    }
+    applyCompositionMode();
     compositionSyncing = true;
     if (compositionShow && !map.hasLayer(compositionProxy)) compositionProxy.addTo(map);
     else if (!compositionShow && map.hasLayer(compositionProxy)) map.removeLayer(compositionProxy);
     compositionSyncing = false;
   }
   VA.setCompositionShow = setCompositionShow;
+  function setCompositionTiles(on) {
+    compositionUseTiles = !!on;
+    try { localStorage.setItem("va-composition-tiles", compositionUseTiles ? "1" : "0"); } catch (e) { /* private mode */ }
+    const cb = document.getElementById("composition-tiles");
+    if (cb) cb.checked = compositionUseTiles;
+    applyCompositionMode();   // swap vector <-> tiles live if composition is on
+  }
+  VA.setCompositionTiles = setCompositionTiles;
 
   let gridOk = false;            // true once a grid fetch has succeeded
   let gridTimer = null;
@@ -1660,6 +1701,19 @@
     document.addEventListener("DOMContentLoaded", wireDepthImport);
   } else {
     wireDepthImport();
+  }
+
+  // Wire the "fast tiles (beta)" checkbox in the composition legend (#117).
+  function wireCompositionTiles() {
+    const cb = document.getElementById("composition-tiles");
+    if (!cb) return;
+    cb.checked = compositionUseTiles;
+    cb.addEventListener("change", () => setCompositionTiles(cb.checked));
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", wireCompositionTiles);
+  } else {
+    wireCompositionTiles();
   }
 
   // ---- per-frame render --------------------------------------------------
