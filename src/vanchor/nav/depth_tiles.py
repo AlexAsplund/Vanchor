@@ -56,6 +56,38 @@ def tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
     return (lon(x), lat(y + 1), lon(x + 1), lat(y))
 
 
+def lonlat_to_tile(lat: float, lon: float, z: int) -> tuple[int, int]:
+    """The (x, y) slippy tile containing (lat, lon) at zoom ``z`` (clamped)."""
+    n = 1 << z
+    xt = int((lon + 180.0) / 360.0 * n)
+    lat = max(-_MERC_LAT_LIMIT, min(_MERC_LAT_LIMIT, lat))
+    r = math.radians(lat)
+    yt = int((1.0 - math.log(math.tan(r) + 1.0 / math.cos(r)) / math.pi) / 2.0 * n)
+    return (max(0, min(n - 1, xt)), max(0, min(n - 1, yt)))
+
+
+def tiles_covering(bbox: tuple[float, float, float, float], z: int):
+    """Yield ``(x, y)`` tiles covering the (west, south, east, north) bbox at ``z``."""
+    w, s, e, n = bbox
+    x0, y0 = lonlat_to_tile(n, w, z)   # NW corner (north -> smaller y)
+    x1, y1 = lonlat_to_tile(s, e, z)   # SE corner
+    for x in range(min(x0, x1), max(x0, x1) + 1):
+        for y in range(min(y0, y1), max(y0, y1) + 1):
+            yield x, y
+
+
+def count_tiles_covering(bbox: tuple[float, float, float, float],
+                         zmin: int, zmax: int) -> int:
+    """Number of tiles covering ``bbox`` over ``zmin..zmax`` (no materialisation)."""
+    w, s, e, n = bbox
+    total = 0
+    for z in range(zmin, zmax + 1):
+        x0, y0 = lonlat_to_tile(n, w, z)
+        x1, y1 = lonlat_to_tile(s, e, z)
+        total += (abs(x1 - x0) + 1) * (abs(y1 - y0) + 1)
+    return total
+
+
 def _merc_y01(lat_deg: float) -> float:
     """Normalised web-mercator Y in [0, 1] (0 at the north edge of the world)."""
     lat = math.radians(max(-_MERC_LAT_LIMIT, min(_MERC_LAT_LIMIT, lat_deg)))

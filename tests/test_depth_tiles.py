@@ -77,6 +77,16 @@ def test_transparent_tile_is_fully_transparent():
     assert img.split()[3].getextrema() == (0, 0)
 
 
+def test_tiles_covering_round_trips_the_containing_tile():
+    lat, lon, z = 59.0, 18.0, 13
+    x, y = depth_tiles.lonlat_to_tile(lat, lon, z)
+    covering = set(depth_tiles.tiles_covering((lon - 1e-6, lat - 1e-6, lon + 1e-6, lat + 1e-6), z))
+    assert (x, y) in covering
+    # count matches enumeration
+    bbox = (17.9, 58.9, 18.1, 59.1)
+    assert depth_tiles.count_tiles_covering(bbox, z, z) == len(list(depth_tiles.tiles_covering(bbox, z)))
+
+
 # --- runtime cache (write-once disk + RAM-LRU) ----------------------------- #
 
 def _rt(tmp_path):
@@ -264,6 +274,38 @@ def test_clear_tiles_wipes_cache(tmp_path):
     # tiles re-render on demand afterwards
     assert rt.composition_tile(z, x, y)
     assert (tmp_path / "tiles" / "composition").exists()
+
+
+def test_pregenerate_fills_the_disk_cache(tmp_path):
+    rt = _rt(tmp_path)
+    rt.import_depth_map("c.geojson", _COMP_AND_CONTOURS, replace=True)
+    r = rt.pregenerate_tiles(zmax=14)
+    assert r["ok"] and r["rendered"] > 0 and r["zmax"] == 14
+    ver = rt.tiles_info()["version"]
+    pngs = list((tmp_path / "tiles").rglob("*.png"))
+    assert pngs, "pre-generate wrote no tiles"
+    # both layers were pre-generated under the current version
+    assert (tmp_path / "tiles" / "composition" / ver).exists()
+    assert (tmp_path / "tiles" / "contours" / ver).exists()
+
+
+def test_pregenerate_no_chart_is_noop(tmp_path):
+    r = _rt(tmp_path).pregenerate_tiles(zmax=12)
+    assert r["ok"] and r["rendered"] == 0
+
+
+def test_pregenerate_caps_excessive_tiles(tmp_path):
+    rt = _rt(tmp_path)
+    rt.import_depth_map("c.geojson", _COMP, replace=True)
+    # zmax 18 over even a small bbox * the cap -> refuse without rendering
+    from vanchor.runtime import depth as depth_mod
+    orig = depth_mod._TILE_PREGEN_MAX
+    depth_mod._TILE_PREGEN_MAX = 1                 # force the cap to trip
+    try:
+        r = rt.pregenerate_tiles(zmax=18)
+    finally:
+        depth_mod._TILE_PREGEN_MAX = orig
+    assert r["ok"] is False and "too many tiles" in r["error"]
 
 
 def test_version_changes_when_composition_changes(tmp_path):

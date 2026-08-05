@@ -1466,6 +1466,10 @@ class Runtime:
         """Shim → DepthService: wipe the server tile cache (#119)."""
         return self._depth.clear_tiles()
 
+    def pregenerate_tiles(self, zmax: int = 16) -> dict:
+        """Shim → DepthService: batch-render the chart's tile pyramid (#121)."""
+        return self._depth.pregenerate_tiles(zmax)
+
     def water_polygon(self, bbox) -> dict:
         """OSM water polygon(s) for a (west, south, east, north) bbox, used to
         CLIP the depth overlays to water (don't draw composition over land). Uses
