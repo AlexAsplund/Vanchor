@@ -112,7 +112,7 @@ def test_tile_written_once_then_read_from_disk(tmp_path, monkeypatch):
     assert calls["n"] == 1
 
     # persisted to <data_dir>/tiles/composition/<ver>/<z>/<x>/<y>.png
-    ver = rt._depth.composition_tiles_info()["version"]
+    ver = rt._depth.tiles_info()["version"]
     tile_path = tmp_path / "tiles" / "composition" / ver / str(z) / str(x) / f"{y}.png"
     assert tile_path.exists()
 
@@ -131,7 +131,7 @@ def test_empty_tile_is_transparent_and_not_written(tmp_path):
     x, y = _deg2tile(40.0, -100.0, z)
     png = rt.composition_tile(z, x, y)
     assert png == depth_tiles.transparent_tile()
-    ver = rt._depth.composition_tiles_info()["version"]
+    ver = rt._depth.tiles_info()["version"]
     assert not (tmp_path / "tiles" / "composition" / ver / str(z)).exists()
 
 
@@ -146,15 +146,72 @@ def test_below_min_zoom_and_out_of_range_are_transparent(tmp_path):
 
 def test_no_composition_tile_is_transparent(tmp_path):
     rt = _rt(tmp_path)                                # nothing imported
-    info = rt.composition_tiles_info()
-    assert info["has_composition"] is False and info["tile_size"] == 256
+    info = rt.tiles_info()
+    assert info["has_composition"] is False and info["has_contours"] is False
+    assert info["tile_size"] == 256
     assert rt.composition_tile(13, 4400, 2400) == depth_tiles.transparent_tile()
+    assert rt.contours_tile(13, 4400, 2400) == depth_tiles.transparent_tile()
+
+
+# --- contour tiles (#118) -------------------------------------------------- #
+
+def test_render_contours_returns_png_for_a_line():
+    lat, lon, z = 59.0, 18.0, 13
+    x, y = _deg2tile(lat, lon, z)
+    feats = [{"d": 5.0, "pts": [[lat - 0.004, lon - 0.004], [lat + 0.004, lon + 0.004]]}]
+    png = depth_tiles.render_contours_tile(feats, z, x, y)
+    assert png is not None
+    img = Image.open(io.BytesIO(png))
+    assert img.size == (256, 256) and img.mode == "RGBA"
+    assert img.split()[3].getextrema()[1] > 0        # a line was drawn
+
+
+def test_render_contours_empty_is_none():
+    assert depth_tiles.render_contours_tile([], 13, 4400, 2400) is None
+    assert depth_tiles.render_contours_tile(
+        [{"d": 5, "pts": [[59.0, 18.0]]}], 13, 4400, 2400) is None   # <2 pts skipped
+
+
+_COMP_AND_CONTOURS = json.dumps({"type": "FeatureCollection", "features": [
+    {"geometry": {"type": "Polygon", "coordinates": [[
+        [18.0, 59.0], [18.008, 59.0], [18.008, 59.008], [18.0, 59.008], [18.0, 59.0]]]},
+     "properties": {"composition_pct": 75.0, "kind": "composition"}},
+    {"geometry": {"type": "LineString",
+                  "coordinates": [[18.0, 59.0], [18.004, 59.004], [18.008, 59.008]]},
+     "properties": {"depth_m": 5.0, "kind": "contour"}},
+]}).encode()
+
+
+def test_contour_tile_written_once_then_read_from_disk(tmp_path, monkeypatch):
+    rt = _rt(tmp_path)
+    r = rt.import_depth_map("c.geojson", _COMP_AND_CONTOURS, replace=True)
+    assert r["contours"] == 1 and r["composition"] == 1
+    assert rt.tiles_info()["has_contours"] is True
+    z = 13
+    x, y = _deg2tile(59.004, 18.004, z)
+
+    calls = {"n": 0}
+    real = depth_tiles.render_contours_tile
+    monkeypatch.setattr(depth_tiles, "render_contours_tile",
+                        lambda *a, **k: (calls.__setitem__("n", calls["n"] + 1) or real(*a, **k)))
+
+    png1 = rt.contours_tile(z, x, y)
+    assert png1 and Image.open(io.BytesIO(png1)).split()[3].getextrema()[1] > 0
+    assert calls["n"] == 1
+    ver = rt._depth.tiles_info()["version"]
+    # contours persist under their OWN layer dir (distinct from composition's)
+    assert (tmp_path / "tiles" / "contours" / ver / str(z) / str(x) / f"{y}.png").exists()
+    assert not (tmp_path / "tiles" / "composition").exists()   # not fetched here
+
+    rt._depth._tile_lru.clear()
+    assert rt.contours_tile(z, x, y) == png1
+    assert calls["n"] == 1                            # write-once: no re-render
 
 
 def test_version_changes_when_composition_changes(tmp_path):
     rt = _rt(tmp_path)
     rt.import_depth_map("c.geojson", _COMP, replace=True)
-    v1 = rt.composition_tiles_info()["version"]
+    v1 = rt.tiles_info()["version"]
     bigger = json.dumps({"type": "FeatureCollection", "features": [
         {"geometry": {"type": "Polygon", "coordinates": [[
             [18.0, 59.0], [18.02, 59.0], [18.02, 59.02], [18.0, 59.02], [18.0, 59.0]]]},
@@ -164,4 +221,4 @@ def test_version_changes_when_composition_changes(tmp_path):
          "properties": {"composition_pct": 90.0, "kind": "composition"}},
     ]}).encode()
     rt.import_depth_map("c2.geojson", bigger, replace=True)
-    assert rt.composition_tiles_info()["version"] != v1
+    assert rt.tiles_info()["version"] != v1

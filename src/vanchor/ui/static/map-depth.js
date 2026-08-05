@@ -961,12 +961,20 @@
     return a[1].map((ch, i) => Math.round(ch + (b[1][i] - ch) * tt));
   }
   // Render composition UNDER the contour lines: its own pane below overlayPane
-  // (tilePane 200 < composition 350 < overlayPane 400 where contours live).
+  // (tilePane 200 < composition 350 < contourTiles 360 < overlayPane 400 where
+  // the vector contours live).
   if (!map.getPane("composition")) {
     map.createPane("composition");
     const cp = map.getPane("composition");
     cp.style.zIndex = "350";
     cp.style.pointerEvents = "none";
+  }
+  // Contour raster tiles (#118) sit just above the composition tiles.
+  if (!map.getPane("contourTiles")) {
+    map.createPane("contourTiles");
+    const ctp = map.getPane("contourTiles");
+    ctp.style.zIndex = "360";
+    ctp.style.pointerEvents = "none";
   }
   const CompositionLayer = L.Layer.extend(Object.assign({}, CanvasOverlayMixin, {
     onAdd(m) {
@@ -1213,12 +1221,47 @@
     compositionSyncing = false;
   }
   VA.setCompositionShow = setCompositionShow;
+  // Contour raster tiles (#118): the SAME "fast tiles" toggle swaps the
+  // imported-isobath overlay to server tiles, stacked ABOVE the composition
+  // tiles (thin dark lines over the soft fill). Tile mode renders imported
+  // isobaths only -- the marching-squares grid fallback is a vector-mode feature.
+  let contourTileLayer = null;
+  function unmountContourTiles() {
+    if (contourTileLayer) { map.removeLayer(contourTileLayer); contourTileLayer = null; }
+  }
+  function unmountContourVector() {
+    if (map.hasLayer(contourLayer)) map.removeLayer(contourLayer);
+    contourLayer.setExplicit(null);
+    hasExplicitContours = false;
+  }
+  async function mountContourTiles() {
+    let info = null;
+    try { info = await VA.getJSON("/api/depth/tiles/info"); } catch (e) { /* leave */ }
+    if (!contourShow || !compositionUseTiles) return;   // toggled off while awaiting
+    unmountContourTiles();
+    if (!info || !info.has_contours) { contourHint(""); return; }
+    const v = encodeURIComponent(info.version || "0");
+    contourTileLayer = L.tileLayer(
+      "/api/depth/tiles/contours/{z}/{x}/{y}.png?v=" + v,
+      { pane: "contourTiles", opacity: 0.9, tileSize: info.tile_size || 256,
+        minZoom: info.min_zoom || 9, maxNativeZoom: 18, updateWhenZooming: false,
+        className: "leaflet-depth-contours-tiles" });
+    contourTileLayer.addTo(map);
+    contourHint("");
+  }
+  function applyContourMode() {
+    if (!contourShow) { unmountContourTiles(); unmountContourVector(); stopGridPoll(); return; }
+    if (compositionUseTiles) { unmountContourVector(); stopGridPoll(); mountContourTiles(); }
+    else { unmountContourTiles(); fetchContours(); startGridPoll(); if (gridOk) fetchDepthGrid(); }
+  }
+
   function setCompositionTiles(on) {
     compositionUseTiles = !!on;
     try { localStorage.setItem("va-composition-tiles", compositionUseTiles ? "1" : "0"); } catch (e) { /* private mode */ }
     const cb = document.getElementById("composition-tiles");
     if (cb) cb.checked = compositionUseTiles;
-    applyCompositionMode();   // swap vector <-> tiles live if composition is on
+    applyCompositionMode();   // composition: swap vector <-> tiles
+    applyContourMode();       // contours ride the same toggle (#118)
   }
   VA.setCompositionTiles = setCompositionTiles;
 
@@ -1305,6 +1348,7 @@
   let contoursBusy = false;
   async function fetchContours() {
     if (!contourShow || contoursBusy) return;
+    if (compositionUseTiles) return;        // tile mode draws no vector isobaths (#118)
     if (map.getZoom() < DEPTH_MIN_ZOOM) {   // zoom gate (perf): clear + hint
       contourLayer.setExplicit(null);       // drop imported isobaths
       contourLayer.setData([]);             // drop the marching-squares field
@@ -1355,8 +1399,10 @@
     gridTimer = setInterval(pollGridTick, 4000); // depth map changes slowly
   }
   function stopGridPoll() {
-    // Keep polling while either consumer (heatmap or contours) is still on.
-    if (depthShow || contourShow) return;
+    // Keep polling while a consumer still needs the grid: the heatmap, or the
+    // VECTOR contour overlay (its marching-squares fallback). Tiled contours
+    // (#118) render server-side and don't use the grid.
+    if (depthShow || (contourShow && !compositionUseTiles)) return;
     if (gridTimer) { clearInterval(gridTimer); gridTimer = null; }
   }
 
@@ -1451,16 +1497,9 @@
   function setContourShow(on) {
     on = !!on;
     contourShow = on;
-    if (on) {
-      fetchContours();   // prefer explicit imported isobaths (windowed)
-      startGridPoll();   // shared with the heatmap; safe to call when running
-      if (gridOk) fetchDepthGrid();
-    } else {
-      if (map.hasLayer(contourLayer)) map.removeLayer(contourLayer);
-      contourLayer.setExplicit(null);
-      hasExplicitContours = false;
-      stopGridPoll();    // no-op while the heatmap is still on
-    }
+    // applyContourMode mounts exactly one of: contour tiles (#118) / vector
+    // isobaths + marching-squares fallback, or unmounts everything when off.
+    applyContourMode();
     // Mirror into the control proxy (suppressing its own add/remove handler).
     contourSyncing = true;
     if (on && !map.hasLayer(contourProxy)) contourProxy.addTo(map);

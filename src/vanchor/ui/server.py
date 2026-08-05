@@ -924,11 +924,11 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
 
     @app.get("/api/depth/tiles/info")
     async def depth_tiles_info() -> dict:
-        """Metadata for the composition raster-tile layer (#117): whether any
-        composition is loaded, the cache-busting ``version`` (send as ``?v=``),
-        the tile size, and the server's minimum render zoom."""
+        """Metadata for the static-chart raster-tile layers (#116): which layers
+        are loaded (``has_composition`` / ``has_contours``), the cache-busting
+        ``version`` (send as ``?v=``), the tile size, and the min render zoom."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, runtime.composition_tiles_info)
+        return await loop.run_in_executor(None, runtime.tiles_info)
 
     @app.get("/api/depth/tiles/composition/{z}/{x}/{y}.png")
     async def depth_tile_composition(z: int, x: int, y: int) -> Response:
@@ -938,6 +938,16 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         loop = asyncio.get_event_loop()
         png = await loop.run_in_executor(
             None, lambda: runtime.composition_tile(z, x, y))
+        return Response(content=png, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/api/depth/tiles/contours/{z}/{x}/{y}.png")
+    async def depth_tile_contours(z: int, x: int, y: int) -> Response:
+        """A server-rendered depth-contour (isobath) raster tile (#118). Stacks
+        above the composition tile; thin dark lines. Transparent when empty."""
+        loop = asyncio.get_event_loop()
+        png = await loop.run_in_executor(
+            None, lambda: runtime.contours_tile(z, x, y))
         return Response(content=png, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=86400"})
 

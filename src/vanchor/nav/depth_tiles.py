@@ -119,6 +119,54 @@ def render_composition_tile(features, z: int, x: int, y: int, *,
     return buf.getvalue()
 
 
+def render_contours_tile(features, z: int, x: int, y: int, *,
+                         tile_px: int = TILE_PX, supersample: int = 2,
+                         pad_px: int = 4) -> bytes | None:
+    """Render depth-contour ``features`` (isobaths) -> a ``tile_px`` PNG, or
+    ``None`` when nothing is drawn.
+
+    Thin dark semi-transparent lines (the nautical "composition + contours" chart
+    look) that read cleanly over the soft composition fill -- major isobaths
+    (every 5 m) a touch stronger. ``features`` is ``{"d": depth, "pts": [[lat,
+    lon], ...]}`` (``DepthMap.contours_in(bbox)``). Rendered at ``supersample``x
+    then downsampled for crisp antialiased lines; a render margin keeps lines
+    continuous across tile seams. No blur (lines stay sharp)."""
+    from PIL import Image, ImageDraw
+
+    n = 1 << z
+    ss = max(1, int(supersample))
+    S = tile_px * ss
+    P = pad_px * ss
+
+    def to_px(lat: float, lon: float) -> tuple[float, float]:
+        px = ((lon + 180.0) / 360.0 * n - x) * S + P
+        py = (_merc_y01(lat) * n - y) * S + P
+        return (px, py)
+
+    img = Image.new("RGBA", (S + 2 * P, S + 2 * P), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    drew = False
+    for feat in features:
+        ll = feat.get("pts") or []
+        if len(ll) < 2:
+            continue
+        major = round(float(feat.get("d", 0.0))) % 5 == 0
+        colour = (28, 28, 28, 210 if major else 150)     # #1c1c1c, darker for major
+        width = int(round((1.5 if major else 1.0) * ss))
+        draw.line([to_px(float(p[0]), float(p[1])) for p in ll],
+                  fill=colour, width=width, joint="curve")
+        drew = True
+    if not drew:
+        return None
+
+    img = img.crop((P, P, P + S, P + S))
+    if ss != 1:
+        img = img.resize((tile_px, tile_px), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def transparent_tile(tile_px: int = TILE_PX) -> bytes:
     """A fully-transparent ``tile_px`` PNG -- served for empty tiles (and cached
     in RAM, never written to disk)."""
