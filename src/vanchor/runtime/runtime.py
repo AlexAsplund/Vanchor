@@ -1458,6 +1458,14 @@ class Runtime:
         """Shim → DepthService: static-chart tile-layer metadata (#116)."""
         return self._depth.tiles_info()
 
+    def set_tiles_mode(self, mode: str) -> dict:
+        """Shim → DepthService: set tile invalidation mode auto/static (#119)."""
+        return self._depth.set_tiles_mode(mode)
+
+    def clear_tiles(self) -> dict:
+        """Shim → DepthService: wipe the server tile cache (#119)."""
+        return self._depth.clear_tiles()
+
     def water_polygon(self, bbox) -> dict:
         """OSM water polygon(s) for a (west, south, east, north) bbox, used to
         CLIP the depth overlays to water (don't draw composition over land). Uses

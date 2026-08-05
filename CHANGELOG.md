@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Depth-tile cache control + invalidation (#119, part of #116).** A re-import
+  now bumps the tile `version` **and** garbage-collects the previous chart's tile
+  directories (SD hygiene), and the client remounts the tile layers so it picks
+  up the fresh tiles. New **auto/static** mode: *auto* re-renders when the chart
+  changes; *static* freezes the current tile set (no re-key / re-render / writes
+  until cleared). The "fast tiles" legend now has an **update: auto/static**
+  selector and a **clear cache** button. Endpoints:
+  `POST /api/depth/tiles/mode?mode=auto|static`, `POST /api/depth/tiles/clear`;
+  `/tiles/info` now reports `mode`.
+
 - **Depth-contour raster tiles (#118, part of #116).** The **"fast tiles (beta)"**
   toggle now also renders the depth contours as server-side tiles, stacked above
   the composition tiles: thin dark isobath lines (the nautical "composition +

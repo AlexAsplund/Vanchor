@@ -951,6 +951,19 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         return Response(content=png, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=86400"})
 
+    @app.post("/api/depth/tiles/mode")
+    async def depth_tiles_mode(mode: str) -> dict:
+        """Set the tile invalidation mode (#119): ``auto`` (re-render when the
+        chart changes) or ``static`` (freeze the current tile set)."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: runtime.set_tiles_mode(mode))
+
+    @app.post("/api/depth/tiles/clear")
+    async def depth_tiles_clear() -> dict:
+        """Wipe the server tile cache (#119); tiles re-render lazily afterwards."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, runtime.clear_tiles)
+
     @app.get("/api/depth/water")
     async def depth_water(
         west: float, south: float, east: float, north: float,

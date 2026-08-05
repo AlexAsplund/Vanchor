@@ -333,13 +333,18 @@ continuous across tile seams. `DepthService.{composition,contours}_tile(z, x, y)
 wrap `_layer_tile()` with a **RAM-LRU → write-once disk** cache under
 `<data_dir>/tiles/<layer>/<version>/`: each non-empty tile is rendered + written
 **once** (SD-friendly), empty tiles are a shared transparent PNG kept in RAM only.
-`version` is a short hash of the persisted `.npz` (mtime+size, shared by both
-layers), so a re-import re-renders. Endpoints: `GET /api/depth/tiles/info`
-(`{has_composition, has_contours, version, tile_size, min_zoom}`),
-`/tiles/composition/{z}/{x}/{y}.png`, `/tiles/contours/{z}/{x}/{y}.png`. Opt-in on
-the client via the "fast tiles (beta)" toggle (drives both layers); the
-live-vector overlays are the default/fallback. Design + roadmap:
-[`../depth-tiles.md`](../depth-tiles.md) (epic #116).
+`version` is the **effective** token: the short hash of the persisted `.npz`
+(mtime+size) in **auto** mode, or a frozen pin in **static** mode (#119). A
+re-import bumps the auto version and **GCs** the previous version's tile dirs
+(`_gc_stale_tiles`, SD hygiene). Endpoints: `GET /api/depth/tiles/info`
+(`{has_composition, has_contours, version, mode, tile_size, min_zoom}`),
+`/tiles/composition/{z}/{x}/{y}.png`, `/tiles/contours/{z}/{x}/{y}.png`,
+`POST /tiles/mode?mode=auto|static` (`set_tiles_mode` — static writes a `pinned`
+file with the current version so tiles never re-key), `POST /tiles/clear`
+(`clear_tiles` — wipe the whole `tiles/` dir + RAM LRU, reset to auto). Opt-in on
+the client via the "fast tiles (beta)" toggle (drives both layers) with
+auto/static + clear-cache controls; the live-vector overlays are the
+default/fallback. Design + roadmap: [`../depth-tiles.md`](../depth-tiles.md) (epic #116).
 
 ### `Runtime` depth methods (`runtime/depth.py`)
 

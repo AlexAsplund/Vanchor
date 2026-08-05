@@ -280,9 +280,19 @@
     <div class="depth-legend-labels"><span>0</span><span>100</span></div>
     <div class="depth-legend-cap">composition (0–100%, uncalibrated)</div>
     <!-- #117: opt-in server-rendered raster tiles (fast, cached) vs live vectors. -->
-    <label class="comp-tiles-toggle" title="Render the composition as fast server tiles instead of live polygons">
+    <label class="comp-tiles-toggle" title="Render the composition + contours as fast server tiles instead of live polygons">
       <input type="checkbox" id="composition-tiles"> fast tiles (beta)
     </label>
+    <!-- #119: tile-cache controls, shown only when fast tiles is on. -->
+    <div id="composition-tiles-controls" class="comp-tiles-controls hidden">
+      <label title="auto = re-render tiles when the chart changes; static = freeze the current tiles">update
+        <select id="composition-tiles-mode">
+          <option value="auto">auto</option>
+          <option value="static">static</option>
+        </select>
+      </label>
+      <button type="button" id="composition-tiles-clear" title="Wipe the server tile cache; tiles re-render on demand">clear cache</button>
+    </div>
   </div>
 
   <!-- Drop-marker FAB: arms marker placement; tap the map to drop (or long-press

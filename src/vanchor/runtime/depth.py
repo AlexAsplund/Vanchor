@@ -15,6 +15,7 @@ import hashlib
 import logging
 import math
 import os
+import shutil
 import threading
 from collections import OrderedDict
 from typing import TYPE_CHECKING
@@ -395,6 +396,7 @@ class DepthService:
         dm.save(rt._depth_map_path)           # soundings
         dm.save_chart(rt._depth_chart_path)   # static chart (hardness/contours/composition)
         rt._depth_saved_n = len(dm.points)
+        self._gc_stale_tiles()                # drop the previous chart's raster tiles (#119)
         logger.info("imported %d soundings + %d hardness + %d contours + %d composition from %s",
                     len(pts), len(hard), len(cont), len(comp), filename)
         return {"ok": True, "imported": len(pts), "hardness": len(hard),
@@ -410,12 +412,16 @@ class DepthService:
             self._transparent_tile = depth_tiles.transparent_tile()
         return self._transparent_tile
 
-    def _chart_tiles_version(self) -> str:
-        """Short cache-busting token for the current chart. Changes only when a
-        new chart is imported -- derived from the persisted ``.npz`` (mtime +
-        size), so tiles re-render after a real re-import, not on every request.
-        Shared by both tiled layers (they come from the same ``.npz``); doubles
-        as the on-disk cache subdir + the client ``?v=``."""
+    def _tiles_root(self) -> str:
+        return os.path.join(self._rt.config.data_dir, "tiles")
+
+    def _pin_path(self) -> str:
+        return os.path.join(self._tiles_root(), "pinned")
+
+    def _auto_version(self) -> str:
+        """Version derived from the persisted ``.npz`` (mtime + size) -- changes
+        on a real re-import, not on every request. Shared by both tiled layers
+        (same ``.npz``)."""
         from ..nav.depth import DepthMap
 
         npz = DepthMap._npz_path(self._rt._depth_chart_path)
@@ -428,14 +434,88 @@ class DepthService:
                    f"-{len(getattr(dm, 'contours', ()) or ())}")
         return hashlib.sha1(sig.encode()).hexdigest()[:12]
 
+    def _pinned_version(self) -> str | None:
+        """The frozen version in 'static' mode, or ``None`` (auto)."""
+        try:
+            with open(self._pin_path(), "r", encoding="utf-8") as fh:
+                return fh.read().strip() or None
+        except OSError:
+            return None
+
+    def _chart_tiles_version(self) -> str:
+        """The EFFECTIVE tile version: the pinned value in 'static' mode (tiles
+        never re-key/re-render on a chart change), else the auto value. Doubles
+        as the on-disk cache subdir + the client ``?v=``."""
+        return self._pinned_version() or self._auto_version()
+
+    def tiles_mode(self) -> str:
+        return "static" if self._pinned_version() else "auto"
+
+    def set_tiles_mode(self, mode: str) -> dict:
+        """``auto`` -> tiles re-render when the chart changes; ``static`` ->
+        freeze the current tile version (no re-key / re-render / writes on a
+        change, until cleared). Prunes now-stale version dirs."""
+        want_static = str(mode).lower() in ("static", "pinned")
+        if want_static:
+            os.makedirs(self._tiles_root(), exist_ok=True)
+            self._write_atomic_text(self._pin_path(), self._auto_version())
+        else:
+            try:
+                os.remove(self._pin_path())
+            except OSError:
+                pass
+        self._gc_stale_tiles()
+        return {"ok": True, "mode": self.tiles_mode(),
+                "version": self._chart_tiles_version()}
+
+    def clear_tiles(self) -> dict:
+        """Wipe the whole server tile cache (all layers + versions) and reset to
+        auto; tiles re-render lazily on demand afterwards."""
+        try:
+            shutil.rmtree(self._tiles_root())
+        except FileNotFoundError:
+            pass
+        except OSError as exc:              # pragma: no cover - disk failure
+            logger.warning("could not clear tile cache: %s", exc)
+        with self._tile_lru_lock:
+            self._tile_lru.clear()
+        return {"ok": True, "message": "Cleared the server tile cache."}
+
+    def _gc_stale_tiles(self) -> None:
+        """Remove tile version dirs that are no longer the effective version --
+        after a re-import the old version's tiles are orphaned (SD hygiene)."""
+        keep = self._chart_tiles_version()
+        for layer in ("composition", "contours"):
+            ldir = os.path.join(self._tiles_root(), layer)
+            try:
+                versions = os.listdir(ldir)
+            except OSError:
+                continue
+            for ver in versions:
+                p = os.path.join(ldir, ver)
+                if ver != keep and os.path.isdir(p):
+                    try:
+                        shutil.rmtree(p)
+                    except OSError as exc:  # pragma: no cover - disk failure
+                        logger.warning("could not GC stale tiles %s: %s", p, exc)
+
+    @staticmethod
+    def _write_atomic_text(path: str, text: str) -> None:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+
     def tiles_info(self) -> dict:
         """Metadata the client needs to mount the tile layers: which static
-        layers exist, the cache-busting version, tile size, min render zoom."""
+        layers exist, the cache-busting version, tile size, min render zoom,
+        and the invalidation mode (auto/static)."""
         dm = self._rt.depth_map
         return {"ok": True,
                 "has_composition": bool(getattr(dm, "composition", None)),
                 "has_contours": bool(getattr(dm, "contours", None)),
                 "version": self._chart_tiles_version(),
+                "mode": self.tiles_mode(),
                 "tile_size": depth_tiles.TILE_PX, "min_zoom": _TILE_MIN_ZOOM}
 
     def _layer_tile(self, layer: str, z: int, x: int, y: int,

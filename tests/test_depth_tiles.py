@@ -208,6 +208,64 @@ def test_contour_tile_written_once_then_read_from_disk(tmp_path, monkeypatch):
     assert calls["n"] == 1                            # write-once: no re-render
 
 
+# --- invalidation + cache control (#119) ----------------------------------- #
+
+def test_reimport_gcs_stale_tiles_and_rekeys(tmp_path):
+    rt = _rt(tmp_path)
+    rt.import_depth_map("c.geojson", _COMP, replace=True)
+    z = 13
+    x, y = _deg2tile(59.004, 18.004, z)
+    rt.composition_tile(z, x, y)                      # render + persist under v1
+    v1 = rt.tiles_info()["version"]
+    assert (tmp_path / "tiles" / "composition" / v1).exists()
+
+    # A re-import with different data bumps the version AND GCs the old dir.
+    bigger = json.dumps({"type": "FeatureCollection", "features": [
+        {"geometry": {"type": "Polygon", "coordinates": [[
+            [18.0, 59.0], [18.03, 59.0], [18.03, 59.03], [18.0, 59.03], [18.0, 59.0]]]},
+         "properties": {"composition_pct": 40.0, "kind": "composition"}},
+    ]}).encode()
+    rt.import_depth_map("c2.geojson", bigger, replace=True)
+    v2 = rt.tiles_info()["version"]
+    assert v2 != v1
+    assert not (tmp_path / "tiles" / "composition" / v1).exists()   # stale GC'd
+
+
+def test_static_mode_freezes_version(tmp_path):
+    rt = _rt(tmp_path)
+    rt.import_depth_map("c.geojson", _COMP, replace=True)
+    assert rt.tiles_info()["mode"] == "auto"
+    pinned = rt.set_tiles_mode("static")
+    assert pinned["mode"] == "static"
+    v = rt.tiles_info()["version"]
+    # a re-import no longer changes the effective (pinned) version
+    bigger = json.dumps({"type": "FeatureCollection", "features": [
+        {"geometry": {"type": "Polygon", "coordinates": [[
+            [18.0, 59.0], [18.05, 59.0], [18.05, 59.05], [18.0, 59.05], [18.0, 59.0]]]},
+         "properties": {"composition_pct": 60.0, "kind": "composition"}},
+    ]}).encode()
+    rt.import_depth_map("c2.geojson", bigger, replace=True)
+    assert rt.tiles_info()["version"] == v and rt.tiles_info()["mode"] == "static"
+    # back to auto -> version tracks the chart again
+    assert rt.set_tiles_mode("auto")["mode"] == "auto"
+    assert rt.tiles_info()["version"] != v
+
+
+def test_clear_tiles_wipes_cache(tmp_path):
+    rt = _rt(tmp_path)
+    rt.import_depth_map("c.geojson", _COMP, replace=True)
+    z = 13
+    x, y = _deg2tile(59.004, 18.004, z)
+    rt.composition_tile(z, x, y)
+    assert (tmp_path / "tiles" / "composition").exists()
+    r = rt.clear_tiles()
+    assert r["ok"] and not (tmp_path / "tiles").exists()
+    assert len(rt._depth._tile_lru) == 0
+    # tiles re-render on demand afterwards
+    assert rt.composition_tile(z, x, y)
+    assert (tmp_path / "tiles" / "composition").exists()
+
+
 def test_version_changes_when_composition_changes(tmp_path):
     rt = _rt(tmp_path)
     rt.import_depth_map("c.geojson", _COMP, replace=True)
