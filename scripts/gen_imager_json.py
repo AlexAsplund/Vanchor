@@ -58,8 +58,8 @@ def build_os_list(
                 "name": f"Vanchor-NG {version}",
                 "description": (
                     "Trolling-motor autopilot boat controller. "
-                    "Boots a setup hotspot 'vanchor-setup' (password vanchor-boat); "
-                    "UI at http://vanchor.local:8000."
+                    "Boots an always-on WiFi access point 'vanchor-<last4 of MAC>' "
+                    "(password vanchor-boat); UI at http://vanchor.local:8000."
                 ),
                 "url": url,
                 "extract_size": extract_size,

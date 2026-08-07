@@ -84,8 +84,10 @@ def test_nmconnection():
     assert cfg.get("ipv4", "method") == "shared"
     psk = cfg.get("wifi-security", "psk")
     assert len(psk) >= 8, f"PSK too short: {psk!r}"
+    # Offline-first: the AP is the primary interface and must win on reboot even
+    # over a saved home network (default priority 0), so its priority is positive.
     priority = cfg.get("connection", "autoconnect-priority")
-    assert priority == "-10"
+    assert int(priority) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -219,9 +221,7 @@ BOOT_TIME_SCRIPTS = [
     STAGE_ROOT / "02-stack" / "00-run.sh",
     STAGE_ROOT / "02-stack" / "01-run-chroot.sh",
     STAGE_ROOT / "02-stack" / "files" / "vanchor-load-images.sh",
-    STAGE_ROOT / "02-stack" / "files" / "vanchor-hotspot-check.sh" if \
-        (STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot-check.sh").exists() else
-        STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot-check.sh",
+    STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot-setup.sh",
     STAGE_ROOT / "03-trim" / "00-run-chroot.sh",
 ]
 
@@ -229,7 +229,7 @@ BOOT_TIME_SCRIPTS = [
 BOOT_TIME_SCRIPTS_FIXED = [
     STAGE_ROOT / "01-net" / "00-run.sh",
     STAGE_ROOT / "01-net" / "01-run-chroot.sh",
-    STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot-check.sh",
+    STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot-setup.sh",
     STAGE_ROOT / "02-stack" / "00-run.sh",
     STAGE_ROOT / "02-stack" / "01-run-chroot.sh",
     STAGE_ROOT / "02-stack" / "files" / "vanchor-load-images.sh",

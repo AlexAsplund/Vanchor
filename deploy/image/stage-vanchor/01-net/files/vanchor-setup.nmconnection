@@ -1,10 +1,17 @@
+# Offline-first: the boat has no upstream WiFi, so the Pi IS the network. This
+# access point comes up at every boot (high autoconnect priority beats any saved
+# home network, which sits at the default 0), so it wins on reboot even after an
+# optional temporary join. The `id` stays stable ("vanchor-setup" -- what
+# wifi.py keys on); the broadcast `ssid` here is only a placeholder, rewritten at
+# boot to vanchor-<last 4 of the wlan0 MAC> by vanchor-hotspot-setup so multiple
+# units don't collide.
 [connection]
 id=vanchor-setup
 uuid=b1e0c1a4-0000-4000-8000-76616e63686f
 type=wifi
 interface-name=wlan0
 autoconnect=true
-autoconnect-priority=-10
+autoconnect-priority=100
 
 [wifi]
 mode=ap

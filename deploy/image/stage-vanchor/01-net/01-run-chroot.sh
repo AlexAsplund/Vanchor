@@ -4,5 +4,5 @@ raspi-config nonint do_wifi_country "${WPA_COUNTRY:-SE}" || true
 # Purge ModemManager — it probes /dev/ttyUSB* and /dev/ttyACM* on hotplug
 # and can seize the GPS and motor serial adapters.
 apt-get purge -y modemmanager || true
-# Enable the hotspot fallback service.
+# Enable the access-point service (brings the AP up at every boot; offline-first).
 systemctl enable vanchor-hotspot.service
