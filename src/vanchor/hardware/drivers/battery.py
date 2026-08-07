@@ -368,4 +368,5 @@ register_context_driver(
     "battery", "ina226", build_ina226,
     api_version=DRIVER_API_VERSION,
     label="INA226 / shunt battery monitor",
+    transport="i2c",
 )

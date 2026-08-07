@@ -2442,6 +2442,19 @@ body.mobile.dock-collapsed .dock { padding-bottom: 0; }
 .dev-menu { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .dev-menu .btn-row { margin-top: 6px; }
 .dev-menu-out { margin-top: 6px; min-height: 1em; white-space: pre-wrap; }
+/* First-run nudge / not-detected callout under a device menu title. */
+.dev-menu-notice {
+  margin: 4px 0 8px; padding: 6px 8px; border-radius: 6px;
+  background: rgba(255, 200, 80, 0.10); border: 1px solid rgba(255, 200, 80, 0.35);
+  color: var(--fg);
+}
+/* Raw-dump output: selectable monospace block for copy + share. */
+.dev-menu-dump {
+  margin-top: 8px; padding: 8px; max-height: 40vh; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  line-height: 1.35; white-space: pre; user-select: all;
+  background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line); border-radius: 6px;
+}
 
 /* ===================================================================== */
 /* VIEWS (spec §3) — specialised, URL-addressable layouts of the SAME live  */

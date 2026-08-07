@@ -95,12 +95,33 @@ request while one is in progress also returns 409.
 
 ## I²C probing
 
-Only two named addresses are probed, never a bus-wide sweep:
+Only named addresses are probed, never a bus-wide sweep:
 
 | Address | Kind | What is checked |
 |---|---|---|
 | 0x42 | helm-Pico | WHOAMI register returns 0x42 |
 | 0x40–0x4F | INA226 | Manufacturer ID register (0xFE = 0x5449 = "TI") |
+| 0x0D | QMC5883L compass | chip-ID register (0x0D = 0xFF) |
+| 0x1E | HMC5883L compass | identity registers 0x0A–0x0C = "H43" |
+| 0x0E | IST8310 compass | WHO_AM_I register (0x00 = 0x10) |
+
+The compass rows cover the magnetometer on combo GNSS boards (Beitian
+BN-880 / BE-880) and standalone parts. A detected magnetometer suggests
+`compass_source: magnetometer` with `compass_port: i2c:<bus>:0x<addr>`; the driver
+**autodetects** which chip is fitted at run time. Calibrate it after setup in
+**Settings → Devices** (Start calibration → turn the boat through a full slow
+circle → Finish) — a magnetometer needs a hard/soft-iron fit to read true, and
+the device panel nudges you until it's done.
+
+**Won't detect?** With `compass_source: magnetometer` selected, use the **Dump
+raw I2C** action in **Settings → Devices**. It reads the raw registers (identity
++ data) at the known addresses and shows a hex block you can copy into an issue —
+enough to tell a wrong chip-id, swapped bytes, or a dead/miswired sensor apart
+without the board in hand.
+
+See **[compass-magnetometer.md](compass-magnetometer.md)** for the full guide —
+wiring, calibration, options, and the **tilt limitation** (a bare magnetometer is
+only accurate when it's level; use the HWT901B AHRS if your boat tilts).
 
 ## Offline / demo mode
 

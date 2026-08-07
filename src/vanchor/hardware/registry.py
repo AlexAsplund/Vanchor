@@ -70,6 +70,10 @@ class DriverSpec:
     source: str        # the *_source value that selects it, e.g. "hwt901b" / "ina226"
     build: BuildFn | None = None     # legacy (runtime, cfg) -> device
     label: str = ""    # human label for the UI
+    # How the device connects, so the UI shows the RIGHT connection fields (a
+    # serial port + baud, an I2C target, or nothing) instead of always the serial
+    # ones. "serial" | "i2c" | "none".
+    transport: str = "serial"
     menu: dict | None = None  # static device_menu() schema (defaults), so the UI
                               # can render settings/actions on selection
     # Versioned capability API (roadmap #43): when set, the driver is built via
@@ -197,21 +201,25 @@ _REGISTRY: dict[tuple[str, str], DriverSpec] = {}
 
 
 def register_driver(kind: str, source: str, build: BuildFn, *,
-                    label: str = "", menu: dict | None = None) -> None:
+                    label: str = "", menu: dict | None = None,
+                    transport: str = "serial") -> None:
     """Register a **legacy** driver (``build(runtime, cfg)``) as a selectable
     ``{kind}_source`` value. Optional ``menu`` is the driver's default
     device_menu() schema, so the UI can render its settings/actions the moment
-    the source is selected. Idempotent.
+    the source is selected. ``transport`` ("serial" | "i2c" | "none") tells the
+    UI which connection fields to show. Idempotent.
 
     New drivers — and every community pack — should prefer
     :func:`register_context_driver`, which hands the driver a NARROW, versioned
     capability object instead of the whole runtime."""
-    _REGISTRY[(kind, source)] = DriverSpec(kind, source, build=build, label=label, menu=menu)
+    _REGISTRY[(kind, source)] = DriverSpec(kind, source, build=build, label=label,
+                                           menu=menu, transport=transport)
 
 
 def register_context_driver(
     kind: str, source: str, build: ContextBuildFn, *,
     api_version: int = DRIVER_API_VERSION, label: str = "", menu: dict | None = None,
+    transport: str = "serial",
 ) -> None:
     """Register a driver against the **versioned capability API** (roadmap #43).
 
@@ -227,8 +235,19 @@ def register_context_driver(
             kind, source, api_version, DRIVER_API_VERSION,
         )
     _REGISTRY[(kind, source)] = DriverSpec(
-        kind, source, label=label, menu=menu, ctx_build=build, api_version=api_version,
+        kind, source, label=label, menu=menu, ctx_build=build,
+        api_version=api_version, transport=transport,
     )
+
+
+def transports() -> dict:
+    """``{kind: {source: transport}}`` for registered drivers -- so the UI can
+    show the right connection fields (serial port / I2C target / none) for the
+    selected source instead of always the serial ones."""
+    out: dict = {}
+    for s in _REGISTRY.values():
+        out.setdefault(s.kind, {})[s.source] = s.transport
+    return out
 
 
 def menus(kind: str) -> dict:

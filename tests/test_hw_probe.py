@@ -391,6 +391,33 @@ class TestProbeI2c:
         # OSError from _probe_helm_pico is caught; probe_i2c returns detected=unknown
         assert result.get("detected") == "unknown"
 
+    def test_magnetometer_qmc5883l_detected(self):
+        """QMC5883L at 0x0D: chip-id reg 0x0D reads 0xFF -> detected=magnetometer."""
+
+        def fake_smbus(bus_num):
+            return MagicMock(), (lambda data: MagicMock()), (lambda n: _FakeReadMsg(b"\xff"))
+
+        result = probe_i2c(1, 0x0D, kind="magnetometer", smbus_factory=fake_smbus)
+        assert result.get("detected") == "magnetometer"
+        assert result["sample"]["chip"] == "QMC5883L"
+
+    def test_magnetometer_hmc5883l_detected_via_auto(self):
+        """HMC5883L at 0x1E identifies as 'H43'; the auto path finds it too."""
+
+        def fake_smbus(bus_num):
+            return MagicMock(), (lambda data: MagicMock()), (lambda n: _FakeReadMsg(b"H43"))
+
+        result = probe_i2c(1, 0x1E, kind="auto", smbus_factory=fake_smbus)
+        assert result.get("detected") == "magnetometer"
+        assert result["sample"]["chip"] == "HMC5883L"
+
+    def test_magnetometer_wrong_id_is_unknown(self):
+        def fake_smbus(bus_num):
+            return MagicMock(), (lambda data: MagicMock()), (lambda n: _FakeReadMsg(b"\x00"))
+
+        result = probe_i2c(1, 0x0D, kind="magnetometer", smbus_factory=fake_smbus)
+        assert result.get("detected") == "unknown"
+
 
 # --------------------------------------------------------------------------- #
 # hint_from_metadata — unit tests

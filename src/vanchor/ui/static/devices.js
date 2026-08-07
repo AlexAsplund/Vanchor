@@ -84,6 +84,7 @@
 
   let loaded = false;
   let options = DEFAULT_OPTS;
+  let sourceTransports = {};   // { optKey: { source: "serial"|"i2c"|"none" } }
   let driverMenus = {};   // { source: menu-schema } — shown on selection
   let activeMenus = [];   // menus from the running devices (live values)
   let lastRestartRequired = false;
@@ -137,20 +138,80 @@
     sel.value = has ? want : "";
   }
 
-  // Reveal serial settings (ports + baud) when any source is WIRED -- i.e. not
-  // Auto/sim/nmea. Covers "serial", motor "both", and pluggable serial drivers
-  // like "hwt901b" (which needs its port set), without hardcoding driver names.
-  const _WIRELESS = { "": 1, sim: 1, nmea: 1 };
-  function anySerial() {
-    return SRC_FIELDS.some((f) => {
-      const sel = $(f.id);
-      return sel && !(sel.value in _WIRELESS);
-    });
+  // Show each device's connection fields to match the SELECTED source's
+  // transport: a serial source -> port + baud; an I2C source (e.g. the
+  // magnetometer) -> a single I2C target field (no serial port auto-picked);
+  // sim / nmea / none / phone -> no connection field at all. Driven by the
+  // backend's source_transports map, so pluggable drivers classify themselves
+  // and we never show a ttyUSB port for an I2C device.
+  const CONN_KINDS = [
+    { kind: "gps", sel: "dev-src-gps", opt: "gps" },
+    { kind: "compass", sel: "dev-src-compass", opt: "compass" },
+    { kind: "motor", sel: "dev-src-motor", opt: "motor" },
+    { kind: "steering", sel: "dev-src-steering", opt: "steering" },
+    { kind: "thrust", sel: "dev-src-thrust", opt: "thrust" },
+  ];
+  function transportFor(opt, val) {
+    const m = sourceTransports[opt] || {};
+    if (val && Object.prototype.hasOwnProperty.call(m, val)) return m[val];
+    return val ? "serial" : "none";   // unknown wired source -> serial fields
   }
-
-  function syncSerial() {
+  function connEls(kind) {
+    const input = $("dev-" + kind + "-port");
+    const pick = $("dev-" + kind + "-port-pick");
+    const baud = $("dev-" + kind + "-baud");
+    const customRow = input && input.closest(".dev-srcrow");
+    return {
+      input, pick,
+      pickRow: pick && pick.closest(".dev-srcrow"),
+      customRow,
+      lineRow: baud && baud.closest(".dev-lineopts"),
+      label: customRow && customRow.querySelector("span"),
+    };
+  }
+  function relabelConn(kind, el, i2c) {
+    // Cache the HTML defaults once so serial mode restores them (motor keeps its
+    // "…or i2c:<bus>:<addr>" hint; only a genuinely-I2C source is relabelled).
+    if (el.input && el.input.dataset.origPh === undefined)
+      el.input.dataset.origPh = el.input.placeholder || "";
+    if (el.label && el.label.dataset.origText === undefined)
+      el.label.dataset.origText = el.label.textContent || "";
+    const nice = kind.charAt(0).toUpperCase() + kind.slice(1);
+    if (i2c) {
+      if (el.label) el.label.textContent = nice + " I2C bus";
+      if (el.input) {
+        el.input.placeholder = "i2c:1  or  i2c:1:0x0d  (bus[:address]; address optional = autodetect)";
+        const v = (el.input.value || "").trim();
+        if (!/^i2c:/i.test(v)) el.input.value = "i2c:1";   // drop a leftover serial port
+      }
+    } else {
+      if (el.label && el.label.dataset.origText !== undefined)
+        el.label.textContent = el.label.dataset.origText;
+      if (el.input && el.input.dataset.origPh !== undefined)
+        el.input.placeholder = el.input.dataset.origPh;
+    }
+  }
+  function syncConnFields() {
+    let anyShown = false;
+    CONN_KINDS.forEach(({ kind, sel, opt }) => {
+      const s = $(sel);
+      if (!s) return;
+      const tr = transportFor(opt, s.value);
+      const el = connEls(kind);
+      const serial = tr === "serial", i2c = tr === "i2c";
+      if (el.pickRow) el.pickRow.classList.toggle("hidden", !serial);   // serial-port picker
+      if (el.lineRow) el.lineRow.classList.toggle("hidden", !serial);   // baud/parity/…
+      if (el.customRow) {
+        // i2c -> always show it (it's the I2C field); serial -> only when the
+        // picker is on "Custom path…"; none -> hide.
+        const showCustom = i2c || (serial && el.pick && el.pick.value === PORT_CUSTOM);
+        el.customRow.classList.toggle("hidden", !showCustom);
+      }
+      relabelConn(kind, el, i2c);
+      if (serial || i2c) anyShown = true;
+    });
     const box = $("dev-serial");
-    if (box) box.classList.toggle("hidden", !anySerial());
+    if (box) box.classList.toggle("hidden", !anyShown);
   }
 
   function syncMode() {
@@ -210,6 +271,8 @@
   function render(cfg) {
     cfg = cfg || {};
     options = cfg.options && typeof cfg.options === "object" ? cfg.options : DEFAULT_OPTS;
+    sourceTransports = (cfg.source_transports && typeof cfg.source_transports === "object")
+      ? cfg.source_transports : {};
     const hw = cfg.hardware && typeof cfg.hardware === "object" ? cfg.hardware : {};
     const nmea = cfg.nmea_tcp && typeof cfg.nmea_tcp === "object" ? cfg.nmea_tcp : {};
     lastRestartRequired = !!cfg.restart_required;
@@ -275,7 +338,7 @@
     setVal("dev-nmea-port", nmea.port);
 
     syncMode();
-    syncSerial();
+    syncConnFields();
     syncNmea();
     setBadge(hw.enabled ? "● hardware" : "sim");
     driverMenus = (cfg.driver_menus && typeof cfg.driver_menus === "object") ? cfg.driver_menus : {};
@@ -313,6 +376,12 @@
       h.className = "drawer-section";
       h.textContent = menu.title || (menu.device + " settings");
       box.appendChild(h);
+      if (menu.notice) {   // first-run nudge / "not detected" callout (#magnetometer)
+        const n = document.createElement("div");
+        n.className = "hint dev-menu-notice";
+        n.textContent = menu.notice;
+        box.appendChild(n);
+      }
       (menu.settings || []).forEach((s) => box.appendChild(renderSetting(menu.device, s, box)));
       if ((menu.actions || []).length) {
         const row = document.createElement("div");
@@ -403,6 +472,19 @@
         if (r && r.status) msg += "  " + Object.entries(r.status)
           .map(([k, v]) => k + "=" + v).join(", ");
         out.textContent = msg;
+        // A raw dump (e.g. "Dump raw I2C") comes back as multi-line text: show it
+        // in a selectable monospace block so it's easy to copy + share.
+        let pre = box.querySelector(".dev-menu-dump");
+        if (r && r.dump) {
+          if (!pre) {
+            pre = document.createElement("pre");
+            pre.className = "dev-menu-dump";
+            box.appendChild(pre);
+          }
+          pre.textContent = r.dump;
+        } else if (pre) {
+          pre.remove();
+        }
       })
       .catch(() => { if (out) out.textContent = "Action failed."; });
   }
@@ -569,6 +651,7 @@
       inp.value = sel.value;  // the dropdown IS the source; mirror into the input
       if (customRow) customRow.classList.add("hidden");
     }
+    syncConnFields();   // keep the box + custom-row visibility consistent
   }
 
   function loadSerialPorts() {
@@ -661,7 +744,7 @@
   // Source selects → toggle serial disclosure + show the picked driver's menu.
   SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
-    if (sel) sel.addEventListener("change", () => { syncSerial(); refreshMenus(); });
+    if (sel) sel.addEventListener("change", () => { syncConnFields(); refreshMenus(); });
   });
 
   // Split-channel source selects → toggle per-channel serial rows.

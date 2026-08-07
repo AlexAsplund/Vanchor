@@ -126,12 +126,20 @@ def client(tmp_path):
 def test_get_returns_config_and_options(client):
     data = client.get("/api/config/devices").json()
     assert set(data) == {"hardware", "nmea_tcp", "sim_motor", "options", "menus",
-                         "driver_menus", "restart_required"}
+                         "driver_menus", "source_transports", "restart_required"}
     assert data["restart_required"] is False
+    # Each source's connection transport, so the UI shows the right fields.
+    st = data["source_transports"]
+    assert st["compass"]["magnetometer"] == "i2c"   # I2C -> I2C target field
+    assert st["compass"]["hwt901b"] == "serial"     # serial -> port + baud
+    assert st["compass"]["serial"] == "serial"
+    assert st["compass"]["sim"] == "none" and st["compass"]["nmea"] == "none"
+    assert st["compass"]["phone"] == "none"
+    assert st["battery"]["ina226"] == "i2c"
     assert data["options"] == {
         "sensor": ["sim", "serial", "nmea", "none"],  # "none" = Not connected
         "gps": ["sim", "serial", "nmea", "none", "phone", "ublox"],  # + registered drivers
-        "compass": ["sim", "serial", "nmea", "none", "hwt901b", "phone"],  # + registered drivers
+        "compass": ["sim", "serial", "nmea", "none", "hwt901b", "magnetometer", "phone"],  # + registered drivers
         "motor": ["sim", "serial", "both", "none"],
         "battery": ["sim", "none", "ina226"],  # sim/none built-in + registered ina226 driver
         # Split-channel sources: "both" is a combined concept, not per-channel.

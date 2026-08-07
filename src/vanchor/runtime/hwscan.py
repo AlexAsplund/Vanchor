@@ -168,6 +168,14 @@ class HardwareScan:
             {"kind": "ina226", "addr": f"0x{_ina_addr:02x}",
              "label": "INA226 battery shunt"},
         ]
+        # Magnetometer compass chips (BN-880/BE-880 & standalone). Addresses come
+        # from the driver's chip table so the wizard offers exactly what it can
+        # autodetect.
+        from ..nav import magnetometer as _mag
+        for _spec in _mag.CHIP_TABLE:
+            for _a in _spec.addresses:
+                known_i2c.append({"kind": "magnetometer", "addr": f"0x{_a:02x}",
+                                  "label": f"{_spec.label} compass"})
 
         # Demo mode: return sim posture without scanning real hardware
         if getattr(rt.config, "demo", None) and rt.config.demo.enabled:
@@ -367,7 +375,7 @@ class HardwareScan:
         if not (0x03 <= _addr <= 0x77):
             raise ValueError(f"i2c addr 0x{_addr:02X} out of range 0x03..0x77")
 
-        if _kind not in ("auto", "helm-pico", "ina226"):
+        if _kind not in ("auto", "helm-pico", "ina226", "magnetometer"):
             raise ValueError(f"unknown i2c kind {_kind!r}")
 
         # Ownership check
@@ -381,7 +389,16 @@ class HardwareScan:
                 ),
             }
 
-        _raw = await asyncio.to_thread(probe_mod.probe_i2c, _bus, _addr, _kind)
+        try:
+            _raw = await asyncio.to_thread(probe_mod.probe_i2c, _bus, _addr, _kind)
+        except RuntimeError as exc:
+            # smbus2 (the 'i2c' extra) not installed -> a clean message, not a 500.
+            return {"ok": False, "error": str(exc)}
+        except OSError as exc:
+            # bus device missing / not permitted (e.g. I2C not enabled on the Pi).
+            return {"ok": False,
+                    "error": f"could not open /dev/i2c-{_bus}: {exc}. "
+                             "Enable I2C (raspi-config) and check permissions."}
 
         # Build response inline
         _detected = _raw.get("detected", "unknown")
@@ -404,6 +421,15 @@ class HardwareScan:
                     "set battery.i2c_bus/i2c_addr in vanchor.yaml if not 1/0x40"
                 )
             _resp["suggest"] = _sug
+        elif _detected == "magnetometer":
+            _chip = _raw.get("sample", {}).get("chip", "magnetometer")
+            _resp["suggest"] = {
+                "kind": "compass", "source": "magnetometer",
+                "fields": {"compass_source": "magnetometer",
+                           "compass_port": f"i2c:{_bus}:0x{_addr:02x}"},
+                "note": f"{_chip} compass on I2C. Calibrate it in "
+                        "Settings -> Devices after setup.",
+            }
         else:
             _resp["suggest"] = None
         return _resp

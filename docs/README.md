@@ -53,6 +53,9 @@ The interfaces the front end and integrations build against.
   the registry.
 - **[custom-hardware.md](custom-hardware.md)** — split steering + thrust channels,
   off-centre mounts.
+- **[compass-magnetometer.md](compass-magnetometer.md)** — the I2C magnetometer
+  compass (BN-880 / BE-880 & standalone): autodetect, calibration, the **tilt
+  limitation**, and the raw-dump troubleshooter.
 - **[firmware.md](firmware.md)** — the Pi ↔ Arduino software contract.
 - **[ublox-m9n-fusion.md](ublox-m9n-fusion.md)** — GNSS/INS fusion (M9N + HWT901B).
 - **[push-notifications.md](push-notifications.md)** — Web Push alarms to a locked

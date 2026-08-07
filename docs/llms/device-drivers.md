@@ -182,6 +182,42 @@ A driver for exotic hardware must not force its dependency on everyone:
 - Declare an **extra** in `pyproject.toml` (`[project.optional-dependencies]`),
   e.g. `mycompass = ["mylib>=1.0"]`. The core install and the simulator never pull it.
 
+## Second worked example: an I2C sensor with autodetection (`magnetometer.py`)
+
+The `magnetometer` compass driver is the template for an **I2C** device and for
+**autodetecting** one of several interchangeable chips:
+
+- **Pure chip layer** (`nav/magnetometer.py`) talks to an injected `I2CBus`
+  (`write_byte_data`/`read_byte_data`/`read_block_data`) — so every register map,
+  the `detect()` autodetection, the heading math and the hard/soft-iron
+  calibration are unit-tested with a **fake bus** (no smbus2, no hardware). Add a
+  chip = one `ChipSpec` in `CHIP_TABLE` (address, id register, init writes, byte
+  order, axis order); the driver **and** the wizard probe both read that table, so
+  support lives in one place.
+- **Driver layer** (`hardware/drivers/magnetometer.py`) wraps it: a `SmbusBus`
+  (lazy `smbus2`), autodetect-on-start with reconnect, reuse of
+  `HeadingOffsetEstimator` for GPS-learned declination, and a `device_menu` with a
+  **spin-to-calibrate** action that fits + persists the calibration (via a
+  `persist_cal` callback the legacy `_build` wires from `save_device_overrides`).
+- **Config** reuses `compass_port` as an `i2c:<bus>[:<addr>]` target (address
+  optional → autodetect). **Wizard**: `probe.py` `_probe_magnetometer` +
+  `hwscan.py` `known_i2c` list detect it and suggest `compass_source: magnetometer`.
+- **Calibration** (hard/soft-iron) is mandatory for a usable heading: the
+  `calibrate_start`/`calibrate_stop` device actions fit `min/max` over a spin
+  (`CalibrationCollector`; needs ≥2 moving axes so a vertical-axis boat turn
+  works) and persist it via a `persist_cal` callback. A **`dump_raw` action**
+  reads the raw registers (id + a data window, sampled) into a copy-pasteable hex
+  block for remote debugging — it opens its own short-lived bus handle so it works
+  even when autodetect is failing and the read loop has no device.
+- **Tilt (important, and a hard limit):** a bare magnetometer has **no
+  accelerometer**, so it cannot separate heading from tilt. `heading_deg` computes
+  the bearing from the horizontal (X/Y) field **assuming the sensor is level**; on
+  a heeling/pitching boat the heading swings with the tilt. There is **no tilt
+  compensation** here and adding it isn't a knob — it needs an accel/IMU. If a
+  build tilts, point the user at the fused **HWT901B** AHRS
+  (`compass_source: hwt901b`) instead. Keep this caveat visible in any UI/docs.
+- **User guide:** [`../compass-magnetometer.md`](../compass-magnetometer.md).
+
 ## Device-specific settings menu (`device_menu`)
 
 A driver can expose its own settings + actions that the UI renders generically —

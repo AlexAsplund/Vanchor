@@ -169,6 +169,18 @@ class TestHwProbeEndpoint:
         r = client.post("/api/hw/probe", json={"target": "serial"})
         assert r.status_code == 400
 
+    def test_i2c_without_smbus2_returns_clean_error_not_500(self, client):
+        """Probing an I2C address when the 'i2c' extra (smbus2) is missing must
+        report a clean message, not a 500 -- the guided setup stays usable."""
+        with patch("vanchor.hardware.probe.probe_i2c",
+                   side_effect=RuntimeError("I2C probe requires the 'i2c' extra")):
+            r = client.post("/api/hw/probe",
+                            json={"target": "i2c", "bus": 1, "addr": "0x0d",
+                                  "kind": "magnetometer"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False and "i2c" in body["error"].lower()
+
     def test_concurrent_probe_returns_409(self, rt, client):
         """When the lock is held a second probe returns 409."""
         lock = rt._hw_probe_lock
