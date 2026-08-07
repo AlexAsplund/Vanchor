@@ -4,6 +4,18 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **SD image: the Pi is an always-on WiFi access point (offline-first), with a
+  per-device SSID.** Previously the AP was a low-priority *fallback* that only
+  came up when no known network was reachable (`autoconnect-priority=-10`, a 25 s
+  conditional check), on the assumption you would join a home network. On a boat
+  there is no upstream WiFi, so the AP is now the primary interface: it comes up
+  at every boot at high priority (`100`), and a boot service sets its broadcast
+  SSID to `vanchor-<last 4 of the wlan0 MAC>` (e.g. `vanchor-a1b2`) so multiple
+  units don't collide. Joining a home network from the UI still works, but it is
+  now explicitly a temporary, this-session-only way to get online — the Pi
+  returns to its own AP on the next reboot. Password (`vanchor-boat`) and address
+  (`10.42.0.1` / `vanchor.local`) are unchanged; the WiFi status card now shows
+  the real per-device SSID.
 - **Safety: a non-finite sensor value can no longer command full thrust.** A
   `NaN`/`inf` reaching `MotorCommand.clamped()` used to pass through
   `max(low, min(high, NaN))`, which evaluates to `high` — i.e. **full thrust /

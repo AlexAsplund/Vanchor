@@ -16,6 +16,9 @@ from typing import Any
 
 logger = logging.getLogger("vanchor.wifi")
 
+# The stable NetworkManager connection *id* for the access point. Its broadcast
+# SSID is per-device (vanchor-<last4 MAC>, set at boot by vanchor-hotspot-setup),
+# so status() resolves the real SSID separately rather than showing this id.
 HOTSPOT_PROFILE = "vanchor-setup"
 JOIN_TIMEOUT_S = 45
 
@@ -130,12 +133,22 @@ async def status(runner=_run) -> dict:
                 hotspot_active = True
                 if mode not in ("wifi",):  # wifi outranks hotspot in mode display
                     mode = "hotspot"
-                    ssid = HOTSPOT_PROFILE
+                    ssid = HOTSPOT_PROFILE  # placeholder; resolved to the real SSID below
             else:
                 mode = "wifi"
                 ssid = name
         elif conn_type == "802-3-ethernet":
             mode = "ethernet"
+
+    # The hotspot broadcasts a per-device SSID (vanchor-<last4 MAC>), not its
+    # connection id -- resolve it so the UI shows the network the phone must join.
+    if hotspot_active and mode == "hotspot":
+        rc_s, out_s, _ = await runner(
+            ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", HOTSPOT_PROFILE],
+            timeout=10.0,
+        )
+        if rc_s == 0 and out_s.strip():
+            ssid = out_s.strip()
 
     # Best-effort IP lookup for wlan0
     ip: str | None = None

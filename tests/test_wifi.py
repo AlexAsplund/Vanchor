@@ -67,6 +67,7 @@ CONNECTIONS_WIFI = "HomeNet:802-11-wireless:wlan0\nlo:loopback:lo\n"
 CONNECTIONS_ETH = "eth0:802-3-ethernet:eth0\nlo:loopback:lo\n"
 CONNECTIONS_EMPTY = "lo:loopback:lo\n"
 IP_HOTSPOT = "IP4.ADDRESS[1]:10.42.0.1/24\n"
+SSID_HOTSPOT = "vanchor-a1b2\n"   # per-device SSID from `nmcli -g 802-11-wireless.ssid`
 IP_HOME = "IP4.ADDRESS[1]:192.168.1.50/24\n"
 
 SCAN_OUTPUT = (
@@ -126,14 +127,16 @@ async def test_scan_parses_sample():
 
 async def test_status_hotspot():
     r = make_runner(
-        (0, CONNECTIONS_HOTSPOT, ""),   # connection show
-        (0, IP_HOTSPOT, ""),             # device show
+        (0, CONNECTIONS_HOTSPOT, ""),   # connection show --active
+        (0, SSID_HOTSPOT, ""),           # nmcli -g 802-11-wireless.ssid (per-device)
+        (0, IP_HOTSPOT, ""),             # device show wlan0
     )
     result = await status(runner=r)
     assert result["ok"] is True
     assert result["available"] is True
     assert result["mode"] == "hotspot"
     assert result["hotspot_active"] is True
+    assert result["ssid"] == "vanchor-a1b2"   # real broadcast SSID, not the profile id
     assert result["ip"] == "10.42.0.1"
 
 

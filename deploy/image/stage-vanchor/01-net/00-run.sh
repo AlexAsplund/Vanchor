@@ -12,5 +12,5 @@ install -m 0644 files/vanchor-dnsmasq.conf \
     "${ROOTFS_DIR}/etc/NetworkManager/dnsmasq-shared.d/vanchor.conf"
 install -m 0644 files/vanchor-hotspot.service \
     "${ROOTFS_DIR}/etc/systemd/system/vanchor-hotspot.service"
-install -m 0755 files/vanchor-hotspot-check.sh \
-    "${ROOTFS_DIR}/usr/local/sbin/vanchor-hotspot-check"
+install -m 0755 files/vanchor-hotspot-setup.sh \
+    "${ROOTFS_DIR}/usr/local/sbin/vanchor-hotspot-setup"

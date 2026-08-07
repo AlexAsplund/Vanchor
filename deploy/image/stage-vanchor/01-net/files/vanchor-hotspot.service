@@ -1,11 +1,11 @@
 [Unit]
-Description=Vanchor setup-hotspot fallback
+Description=Vanchor access point (offline-first, per-device SSID)
 After=NetworkManager.service
 Wants=NetworkManager.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/vanchor-hotspot-check
+ExecStart=/usr/local/sbin/vanchor-hotspot-setup
 
 [Install]
 WantedBy=multi-user.target

@@ -86,7 +86,8 @@ Settings.
 - Docker CE + docker-compose plugin
 - The `vanchor/vanchor` docker image pre-loaded (no first-boot pull)
 - The `vanchor-supervisor` host daemon (update / backup / disk / device policy)
-- NetworkManager hotspot (`vanchor-setup`) for initial phone connection
+- NetworkManager **access point** — always-on, offline-first; per-device SSID
+  `vanchor-<last 4 of the wlan0 MAC>` (e.g. `vanchor-a1b2`) so units don't collide
 - SD-write minimisation: volatile journald, tmpfs `/tmp`+`/var/log`, noatime,
   bounded docker logs (`local` driver, max 5 MB × 2), zram swap
 
@@ -101,36 +102,45 @@ Settings.
 3. *(Optional)* Click the gear ⚙ to pre-configure hostname / user / SSH / WiFi.
 4. Select your 16 GB (or larger) SD card and flash.
 
-### First boot (no ethernet, no WiFi configured)
+### First boot (offline, no configuration needed)
 
 1. Insert the card and power on. The root partition auto-expands (one automatic
    reboot is normal and expected).
 2. `vanchor-load-images` runs in the background (~30–60 s on Pi 4, once only).
 3. The docker stack comes up. Total time to a responsive UI: ≤ ~3 min.
-4. The setup hotspot **`vanchor-setup`** appears (WPA2 password `vanchor-boat`).
-   Connect your phone to it.
+4. The access point **`vanchor-<last 4 of the MAC>`** (e.g. `vanchor-a1b2`)
+   appears (WPA2 password `vanchor-boat`). This AP is always on — it is how you
+   reach the boat, no upstream WiFi required. Connect your phone to it.
 5. Open **`http://10.42.0.1:8000`** (or **`http://vanchor.local:8000`**) — the UI
    loads.
 
-### Join your home WiFi
+> The exact SSID is derived per-device from the Pi's wlan0 MAC, so it is unique.
+> To find yours before you go out, boot the Pi once and look for the
+> `vanchor-…` network, or read it in the UI under **WiFi & network**.
+
+### Optionally join a home WiFi (temporary — to get online)
+
+The AP is the primary interface and Vanchor is offline-first (updates upload
+through the UI, no internet needed). But you can put the Pi online for a session
+— e.g. to pull something from the internet — by joining a network.
 
 In the UI → Settings → "Data & system" → **WiFi & network** card:
 1. Click **Scan for networks** — your home network appears.
 2. Click it, enter the password → the join runs in the background.
-3. The hotspot drops while joining (single radio). Reconnect your phone to your
-   home WiFi, then open **`http://vanchor.local:8000`** (avahi mDNS on the LAN).
-4. If the wrong password was entered, the hotspot returns automatically after
-   ~60 s.
-5. On subsequent reboots the Pi joins your home WiFi directly (autoconnect
-   priority: saved home profiles 0 > hotspot -10). The hotspot only returns when
-   no known network is reachable.
+3. The AP drops while joined (single radio). Reconnect your phone to your home
+   WiFi, then open **`http://vanchor.local:8000`** (avahi mDNS on the LAN).
+4. If the wrong password was entered, the AP returns automatically after ~60 s.
+5. **The join is for this session only.** The AP has higher autoconnect priority
+   (100) than a saved home network (0), so on the **next reboot the Pi comes back
+   up as its own access point** — the boat is always reachable without any known
+   network in range. Join again when you next need to be online.
 
 ### Default credentials
 
 | Item | Value |
 |---|---|
-| Hotspot SSID | `vanchor-setup` |
-| Hotspot password | `vanchor-boat` |
+| Access-point SSID | `vanchor-<last 4 of wlan0 MAC>` (per device, e.g. `vanchor-a1b2`) |
+| Access-point password | `vanchor-boat` |
 | Console login | `vanchor` / `vanchor` (change with `passwd`) |
 | SSH | **Disabled by default.** Enable: touch a file named `ssh` on the boot partition and reboot. |
 
@@ -159,14 +169,14 @@ File a GitHub issue for any failing box.
 - [ ] **Flash** — Imager shows **Vanchor-NG** from the custom URL; write the card.
 - [ ] **Boot** — insert, power on; root auto-expands (one reboot is normal);
   `vanchor-load-images` completes; container is up. Responsive UI ≤ ~3 min.
-- [ ] **Hotspot** — SSID `vanchor-setup` appears; join with `vanchor-boat`; phone
-  gets a `10.42.0.x` lease.
+- [ ] **Access point** — SSID `vanchor-<last4 MAC>` appears (unique per device);
+  join with `vanchor-boat`; phone gets a `10.42.0.x` lease.
 - [ ] **UI reachable** — `http://10.42.0.1:8000` and `http://vanchor.local:8000`
   both load (test iOS **and** Android — Android mDNS is the weak spot).
-- [ ] **Join home WiFi** — Settings → WiFi & network → Scan → pick network →
-  hotspot drops; reconnect phone to home WiFi, `http://vanchor.local:8000` loads.
-  Wrong password → hotspot returns within ~60 s, and the error does **not** echo
-  the PSK.
+- [ ] **Optional join home WiFi** — Settings → WiFi & network → Scan → pick
+  network → AP drops; reconnect phone to home WiFi, `http://vanchor.local:8000`
+  loads. Wrong password → AP returns within ~60 s, and the error does **not**
+  echo the PSK. **Reboot → the Pi comes back up as its own AP** (offline-first).
 - [ ] **Device probe** — `systemctl status ModemManager` is `not-found`; a USB GPS
   on `/dev/ttyACM0` streams clean NMEA (not seized by ModemManager).
 

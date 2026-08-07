@@ -6,7 +6,7 @@ Builds a flashable Raspberry Pi SD image (`.img.xz`) containing:
 - Docker CE + docker-compose plugin
 - The `vanchor/vanchor` docker image pre-loaded (no first-boot internet required)
 - The `vanchor-supervisor` host daemon
-- NetworkManager setup hotspot (`vanchor-setup` / `vanchor-boat`)
+- NetworkManager always-on access point (SSID `vanchor-<last4 MAC>` / `vanchor-boat`)
 - SD-write minimisation: volatile journald, tmpfs `/tmp`+`/var/log`, noatime,
   bounded docker logs, zram swap
 
@@ -152,13 +152,13 @@ stage-vanchor/
     files/daemon.json    log-driver=local, max-size=5m, max-file=2
   01-net/
     00-packages          avahi-daemon
-    00-run.sh            install NM connection + dnsmasq + hotspot files
-    01-run-chroot.sh     wifi country, purge modemmanager, enable hotspot svc
+    00-run.sh            install NM connection + dnsmasq + AP files
+    01-run-chroot.sh     wifi country, purge modemmanager, enable AP svc
     files/
-      vanchor-setup.nmconnection   WPA2-PSK AP profile, priority -10
+      vanchor-setup.nmconnection   WPA2-PSK AP profile, priority 100 (offline-first)
       vanchor-dnsmasq.conf         address=/vanchor.local/10.42.0.1
-      vanchor-hotspot.service      systemd oneshot fallback
-      vanchor-hotspot-check.sh     25 s sleep then nmcli up if no active conn
+      vanchor-hotspot.service      systemd oneshot: bring the AP up at boot
+      vanchor-hotspot-setup.sh     set per-device SSID (vanchor-<last4 MAC>), nmcli up
   02-stack/
     00-run.sh            copy compose + supervisor + bundle + units into rootfs
     01-run-chroot.sh     enable units, add groups, noatime, zram, disable SD swap
