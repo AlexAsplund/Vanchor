@@ -182,13 +182,25 @@
       if (el.input) {
         el.input.placeholder = "i2c:1  or  i2c:1:0x0d  (bus[:address]; address optional = autodetect)";
         const v = (el.input.value || "").trim();
-        if (!/^i2c:/i.test(v)) el.input.value = "i2c:1";   // drop a leftover serial port
+        if (!/^i2c:/i.test(v)) {
+          el.input.dataset.serialValue = v;   // remember the serial port we replace
+          el.input.value = "i2c:1";           // so an I2C source never shows a ttyUSB
+        }
       }
     } else {
       if (el.label && el.label.dataset.origText !== undefined)
         el.label.textContent = el.label.dataset.origText;
       if (el.input && el.input.dataset.origPh !== undefined)
         el.input.placeholder = el.input.dataset.origPh;
+      // Undo the i2c:1 we injected, so switching back to a serial source restores
+      // the port the user had. Only touches the value WE overwrote (never motor's
+      // legitimate i2c:<bus>:<addr>, which is serial-transport and never enters
+      // the i2c branch, so serialValue is never set for it).
+      if (el.input && el.input.dataset.serialValue !== undefined) {
+        if (/^i2c:/i.test((el.input.value || "").trim()))
+          el.input.value = el.input.dataset.serialValue;
+        delete el.input.dataset.serialValue;
+      }
     }
   }
   function syncConnFields() {

@@ -113,24 +113,45 @@ IST8310 = ChipSpec(
 CHIP_TABLE: tuple[ChipSpec, ...] = (QMC5883L, HMC5883L, IST8310)
 
 
+def _specs_by_specificity() -> list[ChipSpec]:
+    """Chips ordered most-specific id first, so a weak single-byte ``0xFF``
+    signature (QMC5883L) is tried LAST. Matters when probing an EXPLICIT address
+    that belongs to a *different* chip whose unmapped register happens to read
+    ``0xFF`` -- the stronger ``"H43"`` / ``0x10`` ids win the race."""
+    return sorted(CHIP_TABLE, key=lambda s: (-s.id_len, s.id_expected == b"\xff"))
+
+
 def detect(bus: I2CBus, *, addresses: tuple[int, ...] | None = None
            ) -> tuple[ChipSpec, int] | None:
-    """Probe known magnetometer addresses and return ``(spec, addr)`` for the
-    first chip whose identity register matches, else ``None``.
+    """Probe magnetometer addresses and return ``(spec, addr)`` for the first
+    chip whose identity register matches, else ``None``.
 
-    Register READS only (plus, implicitly, none of the init writes) at explicitly
-    named addresses -- never a bus-wide sweep. ``addresses`` optionally restricts
-    the probe (e.g. to a single configured address)."""
-    for spec in CHIP_TABLE:
-        for addr in spec.addresses:
-            if addresses is not None and addr not in addresses:
-                continue
-            try:
-                got = bytes(bus.read_block_data(addr, spec.id_reg, spec.id_len))
-            except Exception:
-                continue          # NAK / no device at this address
-            if got == spec.id_expected:
-                return spec, addr
+    Register READS only (never a bus-wide sweep). Two modes:
+
+    * ``addresses is None`` (autodetect) -- probe each chip at ITS OWN default
+      address(es).
+    * ``addresses`` given (the user pinned an address, e.g. ``i2c:1:0x0c``) --
+      probe EVERY chip's id register at each given address, since a chip can be
+      strapped to a non-default address (an IST8310's CAD pins, say).
+
+    Both modes try the most-specific id first (``_specs_by_specificity``), so a
+    weak single-byte ``0xFF`` (QMC5883L) can't false-match: on a combo board
+    where a foreign device answers ``0xFF`` at QMC's ``0x0D`` while a
+    strongly-identified chip sits at its own address, the strong ``"H43"``/``0x10``
+    id wins the race."""
+    if addresses is None:
+        candidates = [(spec, addr) for spec in _specs_by_specificity()
+                      for addr in spec.addresses]
+    else:
+        candidates = [(spec, addr) for addr in addresses
+                      for spec in _specs_by_specificity()]
+    for spec, addr in candidates:
+        try:
+            got = bytes(bus.read_block_data(addr, spec.id_reg, spec.id_len))
+        except Exception:
+            continue              # NAK / no device / short read at this address
+        if got == spec.id_expected:
+            return spec, addr
     return None
 
 

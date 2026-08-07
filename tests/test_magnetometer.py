@@ -68,6 +68,30 @@ def test_detect_respects_address_filter():
     assert m.detect(bus, addresses=(0x1E,)) is None
 
 
+def test_detect_autodetect_prefers_strong_id_over_stray_qmc_0xff():
+    # A foreign device answers the weak 0xFF at QMC's default 0x0D, while a real
+    # HMC5883L (strong "H43" id) sits at its own 0x1E. Autodetect must return the
+    # strongly-identified HMC, not the false QMC -- specificity ordering applies
+    # to the autodetect branch too, not just explicit addresses.
+    bus = FakeBus({(0x0D, 0x0D): b"\xff", (0x0D, 0x00): b"\x00" * 6,
+                   (0x1E, 0x0A): b"H43", (0x1E, 0x03): b"\x00" * 6})
+    spec, addr = m.detect(bus)
+    assert spec.name == "HMC5883L" and addr == 0x1E
+
+
+def test_detect_explicit_address_finds_chip_off_its_default_address():
+    # An IST8310 strapped to a NON-default address (0x0C via its CAD pins). An
+    # explicit address must probe EVERY chip's id there -- and the weak 0xFF
+    # (QMC) signature must not win over IST's specific 0x10, even though reg 0x0D
+    # here reads 0xFF.
+    bus = FakeBus({(0x0C, 0x00): b"\x10", (0x0C, 0x0D): b"\xff",
+                   (0x0C, 0x03): b"\x00" * 6})
+    spec, addr = m.detect(bus, addresses=(0x0C,))
+    assert spec.name == "IST8310" and addr == 0x0C
+    # ...but at that chip's DEFAULT addresses autodetect finds nothing.
+    assert m.detect(bus) is None
+
+
 # --- register decode (byte order + axis order) ----------------------------- #
 
 def test_qmc_decode_little_endian_xyz():
