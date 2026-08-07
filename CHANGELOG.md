@@ -16,6 +16,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   returns to its own AP on the next reboot. Password (`vanchor-boat`) and address
   (`10.42.0.1` / `vanchor.local`) are unchanged; the WiFi status card now shows
   the real per-device SSID.
+- **Magnetometer fixes (review of #130).** A **pinned I2C address** now works even
+  when the chip sits off its default address (e.g. an IST8310 strapped to 0x0C):
+  `detect()` probes every chip's id register at the given address, most-specific
+  id first so a weak `0xFF` can't false-match. And switching a device's source
+  from an I2C one (magnetometer) back to a serial one no longer leaves `i2c:1`
+  stranded in the port field — the previous serial port is restored (motor's
+  legitimate `i2c:<bus>:<addr>` is untouched).
 
 - **CI: releases don't re-run the test suite; automation works under branch
   protection.** A version-only `pyproject.toml` bump (a release commit) now skips
