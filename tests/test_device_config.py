@@ -131,7 +131,7 @@ def test_get_returns_config_and_options(client):
     assert data["options"] == {
         "sensor": ["sim", "serial", "nmea", "none"],  # "none" = Not connected
         "gps": ["sim", "serial", "nmea", "none", "phone", "ublox"],  # + registered drivers
-        "compass": ["sim", "serial", "nmea", "none", "hwt901b", "phone"],  # + registered drivers
+        "compass": ["sim", "serial", "nmea", "none", "hwt901b", "magnetometer", "phone"],  # + registered drivers
         "motor": ["sim", "serial", "both", "none"],
         "battery": ["sim", "none", "ina226"],  # sim/none built-in + registered ina226 driver
         # Split-channel sources: "both" is a combined concept, not per-channel.

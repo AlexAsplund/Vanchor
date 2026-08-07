@@ -95,12 +95,22 @@ request while one is in progress also returns 409.
 
 ## I²C probing
 
-Only two named addresses are probed, never a bus-wide sweep:
+Only named addresses are probed, never a bus-wide sweep:
 
 | Address | Kind | What is checked |
 |---|---|---|
 | 0x42 | helm-Pico | WHOAMI register returns 0x42 |
 | 0x40–0x4F | INA226 | Manufacturer ID register (0xFE = 0x5449 = "TI") |
+| 0x0D | QMC5883L compass | chip-ID register (0x0D = 0xFF) |
+| 0x1E | HMC5883L compass | identity registers 0x0A–0x0C = "H43" |
+| 0x0E | IST8310 compass | WHO_AM_I register (0x00 = 0x10) |
+
+The compass rows cover the magnetometer on combo GNSS boards (Beitian
+BN-880 / BE-880) and standalone parts. A detected magnetometer suggests
+`compass_source: magnetometer` with `compass_port: i2c:<bus>:0x<addr>`; the driver
+**autodetects** which chip is fitted at run time. Calibrate it after setup in
+**Settings → Devices** (Start calibration → turn the boat through a full slow
+circle → Finish) — a magnetometer needs a hard/soft-iron fit to read true.
 
 ## Offline / demo mode
 

@@ -4,6 +4,20 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **I2C magnetometer compass driver (autodetecting).** A new `compass_source:
+  magnetometer` reads the 3-axis magnetometer on combo GNSS boards (Beitian
+  BN-880 / BE-880) and standalone parts, and **autodetects** which chip is fitted
+  — HMC5883L, QMC5883L, or IST8310 — by its identity register, so the user only
+  picks "magnetometer" and points it at an I2C bus (`compass_port:
+  i2c:<bus>[:<addr>]`; address optional). The setup wizard probes the known
+  magnetometer addresses (0x0D / 0x1E / 0x0E) and suggests the config. It learns
+  declination + mount offset from the GPS course (like the HWT901B), and has a
+  **spin-to-calibrate** action (turn the boat through a circle) that fits and
+  persists the hard/soft-iron correction. Emits `HDT`; `smbus2` is an optional
+  dep (`vanchor[i2c]`); fully unit-tested with a fake bus. Adding another chip is
+  one entry in `nav/magnetometer.py`'s `CHIP_TABLE`. BENCH-VERIFY: the register
+  maps + I2C timing are not yet verified on hardware.
+
 - **Composition tiles clipped to the shoreline (#128).** The server-rendered
   composition tiles are now masked to the OSM water polygon, so the fill no
   longer bleeds onto land past the shoreline (the one rough edge left from the

@@ -622,6 +622,12 @@ def probe_i2c(bus_num: int, addr: int, kind: str = "auto", *,
             except OSError:
                 pass
 
+        if kind in ("magnetometer", "auto"):
+            try:
+                return _probe_magnetometer(bus, addr, write_fn, read_fn)
+            except OSError:
+                pass
+
         return {"ok": True, "detected": "unknown"}
     finally:
         try:
@@ -670,3 +676,27 @@ def _probe_ina226(bus, addr: int, write_fn, read_fn) -> dict:
         "detected": "ina226",
         "sample": {"mfr_id": "0x5449", "die_id": "0x2260"},
     }
+
+
+def _probe_magnetometer(bus, addr: int, write_fn, read_fn) -> dict:
+    """Probe for a known I2C magnetometer at addr (BN-880/BE-880 compass and
+    friends). Reads the chip's identity register only -- reuses the same chip
+    table the driver autodetects with, so support stays in one place. Raises
+    OSError if nothing known matches."""
+    from ..nav import magnetometer as mag
+
+    for spec in mag.CHIP_TABLE:
+        if addr not in spec.addresses:
+            continue
+        w = write_fn(bytes([spec.id_reg]))
+        r = read_fn(spec.id_len)
+        bus.i2c_rdwr(w, r)
+        got = bytes(r)
+        if got == spec.id_expected:
+            return {"ok": True, "detected": "magnetometer",
+                    "sample": {"chip": spec.name, "id": "0x" + got.hex()}}
+        raise OSError(
+            f"{spec.name} id=0x{got.hex()} (expected 0x{spec.id_expected.hex()}) "
+            f"at addr=0x{addr:02X}"
+        )
+    raise OSError(f"no known magnetometer at addr 0x{addr:02X}")

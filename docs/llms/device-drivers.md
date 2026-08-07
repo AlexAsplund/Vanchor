@@ -182,6 +182,27 @@ A driver for exotic hardware must not force its dependency on everyone:
 - Declare an **extra** in `pyproject.toml` (`[project.optional-dependencies]`),
   e.g. `mycompass = ["mylib>=1.0"]`. The core install and the simulator never pull it.
 
+## Second worked example: an I2C sensor with autodetection (`magnetometer.py`)
+
+The `magnetometer` compass driver is the template for an **I2C** device and for
+**autodetecting** one of several interchangeable chips:
+
+- **Pure chip layer** (`nav/magnetometer.py`) talks to an injected `I2CBus`
+  (`write_byte_data`/`read_byte_data`/`read_block_data`) — so every register map,
+  the `detect()` autodetection, the heading math and the hard/soft-iron
+  calibration are unit-tested with a **fake bus** (no smbus2, no hardware). Add a
+  chip = one `ChipSpec` in `CHIP_TABLE` (address, id register, init writes, byte
+  order, axis order); the driver **and** the wizard probe both read that table, so
+  support lives in one place.
+- **Driver layer** (`hardware/drivers/magnetometer.py`) wraps it: a `SmbusBus`
+  (lazy `smbus2`), autodetect-on-start with reconnect, reuse of
+  `HeadingOffsetEstimator` for GPS-learned declination, and a `device_menu` with a
+  **spin-to-calibrate** action that fits + persists the calibration (via a
+  `persist_cal` callback the legacy `_build` wires from `save_device_overrides`).
+- **Config** reuses `compass_port` as an `i2c:<bus>[:<addr>]` target (address
+  optional → autodetect). **Wizard**: `probe.py` `_probe_magnetometer` +
+  `hwscan.py` `known_i2c` list detect it and suggest `compass_source: magnetometer`.
+
 ## Device-specific settings menu (`device_menu`)
 
 A driver can expose its own settings + actions that the UI renders generically —
