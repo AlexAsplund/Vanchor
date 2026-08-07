@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a11] — 2026-08-07
+
 - **I2C magnetometer compass driver (autodetecting).** A new `compass_source:
   magnetometer` reads the 3-axis magnetometer on combo GNSS boards (Beitian
   BN-880 / BE-880) and standalone parts, and **autodetects** which chip is fitted
