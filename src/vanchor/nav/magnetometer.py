@@ -132,10 +132,16 @@ def detect(bus: I2CBus, *, addresses: tuple[int, ...] | None = None
       address(es).
     * ``addresses`` given (the user pinned an address, e.g. ``i2c:1:0x0c``) --
       probe EVERY chip's id register at each given address, since a chip can be
-      strapped to a non-default address (an IST8310's CAD pins, say). The
-      most-specific id is tried first so a weak ``0xFF`` can't false-match."""
+      strapped to a non-default address (an IST8310's CAD pins, say).
+
+    Both modes try the most-specific id first (``_specs_by_specificity``), so a
+    weak single-byte ``0xFF`` (QMC5883L) can't false-match: on a combo board
+    where a foreign device answers ``0xFF`` at QMC's ``0x0D`` while a
+    strongly-identified chip sits at its own address, the strong ``"H43"``/``0x10``
+    id wins the race."""
     if addresses is None:
-        candidates = [(spec, addr) for spec in CHIP_TABLE for addr in spec.addresses]
+        candidates = [(spec, addr) for spec in _specs_by_specificity()
+                      for addr in spec.addresses]
     else:
         candidates = [(spec, addr) for addr in addresses
                       for spec in _specs_by_specificity()]
