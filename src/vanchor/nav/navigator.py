@@ -335,8 +335,10 @@ class Navigator:
             return  # never had a compass; don't invent a heading
         if (self._mono_fn() - compass_mono) <= COMPASS_STALE_S:
             return  # compass still fresh -> keep using it
-        if not fix.valid or fix.sog_knots < COG_HEADING_MIN_SOG_KNOTS:
-            return  # at rest -> COG is meaningless, keep coasting
+        if not fix.valid or not (fix.sog_knots >= COG_HEADING_MIN_SOG_KNOTS):
+            return  # at rest / NaN sog -> COG is meaningless, keep coasting
+        if not math.isfinite(fix.cog_deg):
+            return  # garbage course -> keep coasting (don't write NaN heading)
         self.state.heading_deg = fix.cog_deg % 360
         self.state.heading_received_mono = self._mono_fn()
         self.state.heading_from_cog = True

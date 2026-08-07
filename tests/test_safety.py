@@ -25,6 +25,18 @@ def _state(mode=ControlModeName.MANUAL, dist=0.0, radius=5.0, anchor=True) -> Na
     return s
 
 
+def test_nonfinite_command_clamps_to_neutral_not_full_thrust():
+    # The actuator backstop: a NaN/inf thrust or steering must coerce to 0.0, NOT
+    # to +1.0. Bare max(low, min(high, nan)) evaluates to `high` -- full thrust /
+    # hard-over -- which is the P0 defect this guards. Independent of any sensor.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        c = MotorCommand(thrust=bad, steering=bad).clamped()
+        assert c.thrust == 0.0 and c.steering == 0.0
+    # Finite values still clamp normally.
+    c = MotorCommand(thrust=5.0, steering=-9.0).clamped()
+    assert c.thrust == 1.0 and c.steering == -1.0
+
+
 def test_thrust_step_is_slew_limited():
     gov = _gov(max_thrust_slew_per_s=1.0)
     cmd, status = gov.govern(MotorCommand(thrust=1.0), _state(), dt=0.2, fix_is_fresh=True)

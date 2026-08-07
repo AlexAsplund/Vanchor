@@ -6,6 +6,7 @@ and to unit-test. Supports output clamping with integral anti-windup.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -35,6 +36,13 @@ class PID:
         Useful for headings, where the error must be the *shortest* angular
         difference rather than a naive subtraction.
         """
+        # A non-finite error (NaN/inf heading or measurement) would poison the
+        # integral permanently (NaN + anything = NaN) and, via the output clamp,
+        # saturate to output_max. Freeze all state and command the safe neutral
+        # instead, so one bad sample doesn't wedge the loop.
+        if not (math.isfinite(error) and math.isfinite(dt)):
+            return 0.0 if self.output_min <= 0.0 <= self.output_max else self.output_min
+
         if dt <= 0:
             dt = 1e-6
 
