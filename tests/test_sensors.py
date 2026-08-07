@@ -1,5 +1,7 @@
 """Tests for sensor-anomaly protection (spike rejection with confirmation)."""
 
+import math
+
 from vanchor.core.geo import destination_point
 from vanchor.core.models import GeoPoint
 from vanchor.nav.guard import SensorGuard, SensorGuardConfig
@@ -55,3 +57,15 @@ def test_heading_wrap_small_change_accepted():
     g.check_heading(355.0)
     assert g.check_heading(5.0)  # 10 deg across the wrap, accepted
     assert g.heading_rejected == 0
+
+
+def test_nonfinite_heading_rejected_and_does_not_latch():
+    # A NaN/inf heading must be rejected outright, and must NOT poison the guard:
+    # a following good heading is still accepted (regression for the "first NaN
+    # latches _last_heading and then rejects everything" bug that reached the PID).
+    g = _g(heading_jump_max_deg=30.0)
+    assert not g.check_heading(float("nan"))
+    assert not g.check_heading(float("inf"))
+    assert g.heading_rejected == 2
+    assert g.check_heading(90.0)   # good heading after garbage -> accepted
+    assert g.check_heading(95.0)

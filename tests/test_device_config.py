@@ -54,6 +54,21 @@ def test_save_load_round_trip(tmp_path):
     assert loaded["nmea_tcp"]["port"] == 10111
 
 
+def test_save_is_atomic_no_tmp_left_and_replaces_cleanly(tmp_path):
+    # Atomic write: the tmp file must not survive, and an existing (older) file is
+    # fully replaced, never left truncated. Guards against a power-loss mid-write
+    # silently reverting all hardware config to defaults.
+    hw = HardwareConfig(enabled=True, gps_source="nmea")
+    nmea = NmeaTcpConfig(enabled=False, port=10110)
+    save_device_overrides(tmp_path, hw, nmea)
+    # Overwrite with a different config; result must be the new one, clean JSON.
+    save_device_overrides(tmp_path, HardwareConfig(enabled=True, gps_source="ublox"), nmea)
+    assert not (tmp_path / (DEVICES_FILE + ".tmp")).exists()  # no tmp litter
+    on_disk = json.loads((tmp_path / DEVICES_FILE).read_text())  # not truncated
+    assert on_disk["hardware"]["gps_source"] == "ublox"
+    assert load_device_overrides(tmp_path)["hardware"]["gps_source"] == "ublox"
+
+
 def test_load_missing_returns_none(tmp_path):
     assert load_device_overrides(tmp_path) is None
 

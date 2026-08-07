@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from vanchor.core.pid import PID
@@ -40,3 +42,22 @@ def test_reset_clears_state():
     pid.reset()
     # After reset the integral is gone, so a fresh small error gives a small out.
     assert pid.update_error(0.5, dt=1.0) == pytest.approx(0.5)
+
+
+def test_nonfinite_error_returns_neutral_and_freezes_state():
+    # A NaN/inf error must not poison the integral (NaN + x = NaN forever) nor
+    # saturate the output via the clamp. It returns the safe neutral (0.0) and
+    # leaves prior state intact, so the next good sample behaves normally.
+    pid = PID(kp=1.0, ki=1.0, kd=0.0, setpoint=0.0, output_min=-1.0, output_max=1.0)
+    pid.update_error(0.3, dt=1.0)          # build some integral
+    assert pid.update_error(float("nan"), dt=1.0) == 0.0
+    assert pid.update_error(float("inf"), dt=1.0) == 0.0
+    # Integral was not poisoned: a zero error now yields only the kept integral,
+    # a finite number (not NaN).
+    out = pid.update_error(0.0, dt=1.0)
+    assert math.isfinite(out) and out == pytest.approx(0.3)
+
+
+def test_nonfinite_dt_returns_neutral():
+    pid = PID(kp=1.0, setpoint=0.0, output_min=-1.0, output_max=1.0)
+    assert pid.update_error(0.5, dt=float("nan")) == 0.0

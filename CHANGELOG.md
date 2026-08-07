@@ -4,6 +4,21 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Safety: a non-finite sensor value can no longer command full thrust.** A
+  `NaN`/`inf` reaching `MotorCommand.clamped()` used to pass through
+  `max(low, min(high, NaN))`, which evaluates to `high` — i.e. **full thrust /
+  hard-over**, not zero. The clamp now coerces any non-finite command to the safe
+  neutral (0.0). Defense in depth on the way there: the `PID` freezes its state
+  and returns neutral on a non-finite error (a `NaN` error otherwise poisoned the
+  integral permanently); `SensorGuard.check_heading` rejects non-finite headings
+  (a first `NaN` used to latch and then reject every good heading after it); and
+  the COG-fallback no longer writes a `NaN` course/speed into the heading. Added
+  regression tests for each layer.
+- **Safety: `devices.json` is written atomically** (tmp + `os.replace`, like every
+  other store). A power loss mid-write (routine on a boat) previously left a
+  truncated file that load then discarded, silently reverting all hardware config
+  (GPS, compass, motor) to defaults.
+
 - **CI: releases don't re-run the test suite; automation works under branch
   protection.** A version-only `pyproject.toml` bump (a release commit) now skips
   the heavy CI jobs — the `changes` job detects it, on both PR and push events —
