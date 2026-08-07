@@ -129,6 +129,20 @@ To change the required set or strictness later:
 `gh api --method PUT repos/AlexAsplund/Vanchor/branches/main/protection --input <file>`
 (GET the same path to see the current config).
 
+**Releases are automated — don't hand-craft a release PR.** Cut an alpha (or
+patch/minor/major/final) with the **Release** workflow:
+```bash
+gh workflow run release.yml -f bump=alpha     # or: Actions tab -> Release -> Run
+```
+It bumps `pyproject` + rolls the `CHANGELOG` (`Unreleased` -> dated section),
+commits `release: v<version>`, tags `v<version>`, pushes, and publishes the
+GitHub Release — no PR. The push to protected `main` uses the `RELEASE_PAT`
+secret (an admin fine-grained/classic-`repo` token; needed because required
+checks block the default token). A **version-only `pyproject` bump** skips the
+heavy CI (the `changes` job detects it), so a release never re-runs the suite —
+whether it lands via the workflow's direct push or a manual PR. Pushing a
+`v*` tag by itself also publishes a Release from the matching CHANGELOG section.
+
 ## 7. Verify before done
 
 Before opening/merging a PR, get the required checks (§6) green **locally** — at
