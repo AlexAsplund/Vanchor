@@ -42,8 +42,14 @@ jobs:
           files="$(git diff --name-only "$base" "$head")"
           printf 'changed files:\n%s\n' "$files"
           # docs-only = every changed file is markdown / under docs/ / the PR template / LICENSE
-          if [ -z "$files" ] || ! printf '%s\n' "$files" | grep -qvE '(^docs/|\.md$|^\.github/pull_request_template\.md$|^LICENSE$)'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          docs_re='(^docs/|\.md$|^\.github/pull_request_template\.md$|^LICENSE$)'
+          nondoc="$(printf '%s\n' "$files" | grep -vE "$docs_re" || true)"
+          if [ -z "$files" ] || [ -z "$nondoc" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"          # docs-only change
+          elif [ "$nondoc" = "pyproject.toml" ] && ! git diff "$base" "$head" -- pyproject.toml | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -qvE '^[+-]version *= *'; then
+            # Release commit: the only non-docs change is a version bump in
+            # pyproject.toml -> nothing to test (the code was tested when it merged).
+            echo "skip=true" >> "$GITHUB_OUTPUT"          # release: version-only bump (+ docs)
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi

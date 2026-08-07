@@ -4,6 +4,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **CI: releases don't re-run the test suite; automation works under branch
+  protection.** A version-only `pyproject.toml` bump (a release commit) now skips
+  the heavy CI jobs — the `changes` job detects it, on both PR and push events —
+  so cutting a release no longer runs the whole suite again. The **Release**
+  workflow (`gh workflow run release.yml -f bump=alpha`) pushes the bump + tag to
+  protected `main` using a `RELEASE_PAT` secret, so a release is one command with
+  no hand-made PR.
+
 ## [1.5.0a11] — 2026-08-07
 
 - **I2C magnetometer compass driver (autodetecting).** A new `compass_source:
