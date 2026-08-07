@@ -16,6 +16,14 @@ that fits and persists the hard/soft-iron correction a magnetometer needs.
 never need it; the driver is fully testable with a fake I2C bus (no smbus2, no
 hardware).
 
+**Tilt / level-mount assumption.** A bare 3-axis magnetometer has no way to sense
+gravity, so the heading is computed from the horizontal (X/Y) field assuming the
+sensor sits roughly level. On a small boat that heels or pitches under way the
+heading will swing with the tilt -- there is no tilt compensation here because
+that needs an accelerometer. If your mount tilts significantly, use a fused AHRS
+instead (the WitMotion HWT901B driver, ``compass_source='hwt901b'``, does the
+accel+gyro fusion). Mounting the magnetometer level and low is the cheap fix.
+
 BENCH-VERIFY: the chip register maps + I2C timing have not yet been checked on
 real hardware; the logic is unit-tested with a fake bus.
 """
@@ -96,13 +104,25 @@ def parse_i2c_target(port: str | None, *, default_bus: int = _DEFAULT_BUS
 # --------------------------------------------------------------------------- #
 def _menu_schema(declination_mode: str, manual_declination_deg: float, hz: float,
                  forward_axis: str, right_axis: str, invert: bool,
-                 detected: str | None) -> dict:
+                 detected: str | None, calibrated: bool = False) -> dict:
     title = "Compass — magnetometer"
     if detected:
         title += f" ({detected})"
+    # First-run nudge: a magnetometer must be calibrated to read true, so surface
+    # it right in the settings panel until it's done (or if nothing is detected).
+    if detected is None:
+        notice = ("No magnetometer detected on the I2C bus yet. Check the wiring "
+                  "(SDA/SCL/3V3/GND), then use \"Dump raw I2C\" to troubleshoot.")
+    elif not calibrated:
+        notice = ("⚠ Not calibrated. Heading will be wrong until you calibrate: "
+                  "press \"Start calibration\", turn the boat slowly through a "
+                  "full circle, then \"Finish calibration\".")
+    else:
+        notice = ""
     return {
         "device": "compass",
         "title": title,
+        "notice": notice,
         "settings": [
             {"key": "declination_mode", "label": "Declination", "type": "select",
              "options": ["auto", "manual", "off"], "value": declination_mode,
@@ -118,7 +138,7 @@ def _menu_schema(declination_mode: str, manual_declination_deg: float, hz: float
              "help": "Which sensor axis points toward the bow (for the mount)."},
             {"key": "right_axis", "label": "Starboard axis", "type": "select",
              "options": ["y", "-y", "x", "-x"], "value": right_axis},
-            {"key": "invert", "label": "Mirror correction", "type": "bool",
+            {"key": "invert", "label": "Mirror correction", "type": "toggle",
              "value": invert, "help": "Enable if the heading turns the wrong way."},
         ],
         "actions": [
@@ -128,6 +148,8 @@ def _menu_schema(declination_mode: str, manual_declination_deg: float, hz: float
              "help": "Then slowly turn the boat through a full circle."},
             {"name": "calibrate_stop", "label": "Finish calibration",
              "help": "Fit + save the hard/soft-iron correction from the spin."},
+            {"name": "dump_raw", "label": "Dump raw I2C",
+             "help": "Read the raw registers to share for troubleshooting."},
             {"name": "redetect", "label": "Re-scan I2C",
              "help": "Probe the bus again for the magnetometer."},
         ],
@@ -153,6 +175,7 @@ class MagnetometerCompass(Sensor):
     def __init__(
         self, open_bus: Callable[[], Any], *,
         addr: int | None = None,
+        bus_num: int | None = None,
         bus: EventBus | None = None,
         hz: float = 5.0,
         motion_provider: MotionProvider | None = None,
@@ -164,6 +187,7 @@ class MagnetometerCompass(Sensor):
     ) -> None:
         self._open_bus = open_bus
         self._addr = addr
+        self._bus_num = bus_num
         self.bus = bus
         self.hz = max(0.5, hz)
         self.motion_provider = motion_provider
@@ -311,9 +335,10 @@ class MagnetometerCompass(Sensor):
 
     # -- device menu -------------------------------------------------------- #
     def device_menu(self) -> dict:
+        calibrated = self.calibration.offset != (0.0, 0.0, 0.0)
         return _menu_schema(self.declination_mode, self.manual_declination_deg,
                             self.hz, self.forward_axis, self.right_axis,
-                            self.invert, self.detected)
+                            self.invert, self.detected, calibrated)
 
     def apply_setting(self, key: str, value: Any) -> dict:
         if key == "declination_mode" and value in ("auto", "manual", "off"):
@@ -370,10 +395,36 @@ class MagnetometerCompass(Sensor):
                             "calibration": result.to_dict()}
             return {"ok": True, "message": "Calibration saved.",
                     "calibration": result.to_dict()}
+        if name == "dump_raw":
+            return self._dump_raw()
         if name == "redetect":
             self._close_bus()   # loop reopens + re-detects on the next tick
             return {"ok": True, "message": "Re-scanning the I2C bus…"}
         return {"ok": False, "message": f"unknown action {name!r}"}
+
+    def _dump_raw(self) -> dict:
+        """Read the raw magnetometer registers and return a hex dump the operator
+        can copy into a report. Opens its OWN short-lived bus handle (so it works
+        even when autodetection is failing and the read loop has no device), and
+        never disturbs the running loop."""
+        try:
+            probe_bus = self._open_bus()
+        except Exception as exc:  # noqa: BLE001 - no bus / no smbus2
+            return {"ok": False, "message": f"Could not open the I2C bus: {exc}"}
+        try:
+            addrs = (self._addr,) if self._addr is not None else None
+            text = mag.dump_i2c(probe_bus, addresses=addrs, bus_num=self._bus_num)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "message": f"Dump failed: {exc}"}
+        finally:
+            close = getattr(probe_bus, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # pragma: no cover
+                    pass
+        return {"ok": True, "message": "Raw I2C dump — copy the block below and "
+                "share it for troubleshooting.", "dump": text}
 
 
 def open_magnetometer_compass(
@@ -387,7 +438,7 @@ def open_magnetometer_compass(
     """Build the driver for the I2C target in ``port`` (``i2c:<bus>[:<addr>]``)."""
     bus_num, addr = parse_i2c_target(port)
     return MagnetometerCompass(
-        lambda: SmbusBus(bus_num), addr=addr, bus=bus, hz=hz,
+        lambda: SmbusBus(bus_num), addr=addr, bus_num=bus_num, bus=bus, hz=hz,
         motion_provider=motion_provider, declination_mode=declination_mode,
         manual_declination_deg=manual_declination_deg, calibration=calibration,
         forward_axis=forward_axis, right_axis=right_axis, invert=invert,
@@ -429,4 +480,4 @@ def _build(runtime: Any, cfg: Any) -> MagnetometerCompass:
 
 register_driver("compass", "magnetometer", _build,
                 label="I2C magnetometer (HMC5883L / QMC5883L / IST8310)",
-                menu=default_menu())
+                menu=default_menu(), transport="i2c")

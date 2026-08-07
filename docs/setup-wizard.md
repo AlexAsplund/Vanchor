@@ -110,7 +110,18 @@ BN-880 / BE-880) and standalone parts. A detected magnetometer suggests
 `compass_source: magnetometer` with `compass_port: i2c:<bus>:0x<addr>`; the driver
 **autodetects** which chip is fitted at run time. Calibrate it after setup in
 **Settings → Devices** (Start calibration → turn the boat through a full slow
-circle → Finish) — a magnetometer needs a hard/soft-iron fit to read true.
+circle → Finish) — a magnetometer needs a hard/soft-iron fit to read true, and
+the device panel nudges you until it's done.
+
+**Won't detect?** With `compass_source: magnetometer` selected, use the **Dump
+raw I2C** action in **Settings → Devices**. It reads the raw registers (identity
++ data) at the known addresses and shows a hex block you can copy into an issue —
+enough to tell a wrong chip-id, swapped bytes, or a dead/miswired sensor apart
+without the board in hand.
+
+See **[compass-magnetometer.md](compass-magnetometer.md)** for the full guide —
+wiring, calibration, options, and the **tilt limitation** (a bare magnetometer is
+only accurate when it's level; use the HWT901B AHRS if your boat tilts).
 
 ## Offline / demo mode
 

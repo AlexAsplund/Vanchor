@@ -157,6 +157,37 @@ def test_calibrate_start_requires_a_detected_chip():
     assert d.run_action("calibrate_start")["ok"] is False
 
 
+# --- raw dump (remote troubleshooting) ------------------------------------- #
+
+def test_dump_raw_action_returns_hex_dump():
+    d = MagnetometerCompass(lambda: _qmc_bus(x=100, y=0), bus_num=1)
+    r = d.run_action("dump_raw")
+    assert r["ok"] is True and "dump" in r
+    assert "QMC5883L" in r["dump"] and "bus /dev/i2c-1" in r["dump"]
+
+
+def test_dump_raw_reports_bus_open_failure():
+    def boom():
+        raise RuntimeError("i2c extra not installed")
+    r = MagnetometerCompass(boom).run_action("dump_raw")
+    assert r["ok"] is False and "Could not open" in r["message"]
+
+
+# --- first-run calibration nudge ------------------------------------------- #
+
+def test_menu_notice_nudges_until_calibrated():
+    d = MagnetometerCompass(lambda: _qmc_bus())
+    d._open_and_detect()                                  # detected, not calibrated
+    assert "Not calibrated" in d.device_menu()["notice"]
+    d.apply_setting("calibration", {"offset": [5, 5, 5], "scale": [1, 1, 1]})
+    assert d.device_menu()["notice"] == ""               # cleared once calibrated
+
+
+def test_menu_notice_when_nothing_detected():
+    d = MagnetometerCompass(lambda: FakeBus({}))
+    assert "No magnetometer detected" in d.device_menu()["notice"]
+
+
 # --- device menu ----------------------------------------------------------- #
 
 def test_device_menu_and_apply_setting():

@@ -138,6 +138,17 @@ def test_calibration_rejects_insufficient_rotation():
     assert col.result() is None
 
 
+def test_dump_i2c_reports_matches_window_and_no_response():
+    window = b"\x64\x00\xc8\x00\xce\xff" + b"\x00" * 10   # 16 bytes from 0x00
+    bus = FakeBus({(0x0D, 0x0D): b"\xff", (0x0D, 0x00): window})   # only QMC present
+    rep = m.dump_i2c(bus, samples=2, delay_s=0, bus_num=1)
+    assert "bus /dev/i2c-1" in rep
+    assert "QMC5883L" in rep and "MATCH" in rep      # id matched
+    assert "0x0d: responds" in rep
+    assert window.hex() in rep                       # raw window shown for decoding
+    assert "0x1e: NO RESPONSE" in rep and "0x0e: NO RESPONSE" in rep
+
+
 def test_calibration_roundtrips_through_dict():
     cal = m.Calibration(offset=(1.0, 2.0, 3.0), scale=(1.1, 0.9, 1.0))
     assert m.Calibration.from_dict(cal.to_dict()).offset == (1.0, 2.0, 3.0)

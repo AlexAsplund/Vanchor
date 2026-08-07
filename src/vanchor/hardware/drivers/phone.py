@@ -246,5 +246,5 @@ def _build_compass(runtime: Any, cfg: Any) -> PhoneCompass:
     return PhoneCompass(ensure_hub(runtime), runtime.bus)
 
 
-register_driver("gps", "phone", _build_gps, label="Phone (this device)")
-register_driver("compass", "phone", _build_compass, label="Phone (this device)")
+register_driver("gps", "phone", _build_gps, label="Phone (this device)", transport="none")
+register_driver("compass", "phone", _build_compass, label="Phone (this device)", transport="none")

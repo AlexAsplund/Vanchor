@@ -164,6 +164,60 @@ class Magnetometer:
 
 
 # --------------------------------------------------------------------------- #
+# Raw register dump (remote troubleshooting)
+# --------------------------------------------------------------------------- #
+def dump_i2c(bus: I2CBus, *, addresses: tuple[int, ...] | None = None,
+             samples: int = 3, window: int = 16, delay_s: float = 0.1,
+             bus_num: int | None = None) -> str:
+    """A human-readable hex dump of the known magnetometer addresses -- so a
+    remote user can copy it into an issue when a chip won't autodetect and we
+    diagnose it (wrong id? swapped bytes? dead sensor?) without the hardware.
+
+    Reads ONLY the named magnetometer addresses (no bus-wide sweep). For each: an
+    explicit identity-register check per candidate chip, plus ``samples``
+    snapshots of a ``window``-byte register block from 0x00 (which spans the data
+    AND id registers of every supported chip), so changing bytes = live data. All
+    reads are guarded, so an absent address just reports 'NO RESPONSE'."""
+    addrs = addresses if addresses is not None else tuple(
+        sorted({a for s in CHIP_TABLE for a in s.addresses}))
+    hdr = "I2C magnetometer raw dump"
+    if bus_num is not None:
+        hdr += f" (bus /dev/i2c-{bus_num})"
+    lines = [hdr + ":", f"probing {', '.join(f'0x{a:02x}' for a in addrs)}"]
+    for addr in addrs:
+        id_notes = []
+        for s in CHIP_TABLE:
+            if addr not in s.addresses:
+                continue
+            try:
+                got = bytes(bus.read_block_data(addr, s.id_reg, s.id_len))
+                verdict = "MATCH" if got == s.id_expected else "differs"
+                id_notes.append(f"{s.name}: id@0x{s.id_reg:02x}=0x{got.hex()} "
+                                f"(expect 0x{s.id_expected.hex()} -> {verdict})")
+            except Exception:
+                id_notes.append(f"{s.name}: id@0x{s.id_reg:02x} no response")
+        snaps: list[str] = []
+        responded = False
+        n = max(1, samples)
+        for j in range(n):
+            try:
+                w = bytes(bus.read_block_data(addr, 0x00, window))
+                snaps.append(w.hex())
+                responded = True
+            except Exception:
+                snaps.append("(no response)")
+                break                       # dead address -> don't retry
+            if delay_s > 0 and j < n - 1:
+                time.sleep(delay_s)         # spacing between live samples only
+        lines.append(f"0x{addr:02x}: {'responds' if responded else 'NO RESPONSE'}")
+        lines += [f"    {n}" for n in id_notes]
+        if responded:
+            lines.append(f"    regs 0x00..0x{window - 1:02x} x{len(snaps)}:")
+            lines += [f"      {i}: {s}" for i, s in enumerate(snaps)]
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
 # Calibration (hard- + soft-iron) and heading
 # --------------------------------------------------------------------------- #
 @dataclass

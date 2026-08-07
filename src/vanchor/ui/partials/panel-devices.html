@@ -134,8 +134,8 @@
             only when the feeder disconnects (taking the helm never switches it).</div>
 
           <div id="dev-serial" class="hidden">
-            <div class="ctx-sub">Serial ports</div>
-            <div class="hint">Pick a detected port. Prefer a "stable" entry (<code>/dev/serial/by-id/…</code> or an on-board <code>/dev/serial0</code>) — it survives reboots &amp; replugging; a raw <code>/dev/ttyUSB0</code> can get renumbered. Set each port's baud to match its device.</div>
+            <div class="ctx-sub">Connections</div>
+            <div class="hint">Only the connection fields for the sources you picked are shown. For a serial device, prefer a "stable" port (<code>/dev/serial/by-id/…</code> or an on-board <code>/dev/serial0</code>) — it survives reboots &amp; replugging; a raw <code>/dev/ttyUSB0</code> can get renumbered. For an I2C device, enter <code>i2c:&lt;bus&gt;</code> (address optional).</div>
             <datalist id="dev-serial-ports"></datalist>
 
             <label class="dev-srcrow">

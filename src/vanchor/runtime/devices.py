@@ -12,6 +12,26 @@ import logging
 
 logger = logging.getLogger("vanchor.app")
 
+# Built-in (non-driver) sources -> how they connect: "serial" needs a port+baud,
+# "i2c" needs a bus/address, "none" needs no connection field. Registered drivers
+# carry their own transport (registry.transports()).
+_BUILTIN_TRANSPORT = {"sim": "none", "serial": "serial", "nmea": "none",
+                      "none": "none", "both": "serial"}
+# option-key -> registry device kind (only where they differ; depth uses "sensor").
+_OPTION_REG_KIND = {"sensor": "depth"}
+
+
+def _source_transports(options: dict, reg_transports: dict) -> dict:
+    """``{option_key: {source: transport}}`` merging the built-in sources with the
+    registry's per-driver transport, so the UI can show serial / I2C / no
+    connection fields to match the selected source (not always serial)."""
+    out: dict = {}
+    for opt_key, sources in options.items():
+        reg = reg_transports.get(_OPTION_REG_KIND.get(opt_key, opt_key), {})
+        out[opt_key] = {s: reg.get(s, _BUILTIN_TRANSPORT.get(s, "serial"))
+                        for s in sources}
+    return out
+
 
 class DeviceManager:
     """Device config, construction, status, health, debug -- split out of Runtime."""
@@ -30,22 +50,28 @@ class DeviceManager:
         plain read; a POST returns ``True`` because devices are rebuilt only on
         restart, not hot-swapped)."""
         from dataclasses import asdict
+
+        from ..hardware import registry
         rt = self._rt
+        options = {
+            "sensor": list(rt._SENSOR_SOURCES),
+            "gps": list(rt._gps_sources()),
+            "compass": list(rt._compass_sources()),
+            "motor": list(rt._MOTOR_SOURCES),
+            "battery": list(rt._battery_sources()),
+            # Per-channel split sources ("both" is a combined concept, not a
+            # per-channel one; split channels use sim | serial | none).
+            "steering": list(rt._CHANNEL_SOURCES),
+            "thrust": list(rt._CHANNEL_SOURCES),
+        }
         return {
             "hardware": asdict(rt.config.hardware),
             "nmea_tcp": asdict(rt.config.nmea_tcp),
             "sim_motor": asdict(rt.config.sim_motor),  # actuation shaping (#36)
-            "options": {
-                "sensor": list(rt._SENSOR_SOURCES),
-                "gps": list(rt._gps_sources()),
-                "compass": list(rt._compass_sources()),
-                "motor": list(rt._MOTOR_SOURCES),
-                "battery": list(rt._battery_sources()),
-                # Per-channel split sources ("both" is a combined concept, not a
-                # per-channel one; split channels use sim | serial | none).
-                "steering": list(rt._CHANNEL_SOURCES),
-                "thrust": list(rt._CHANNEL_SOURCES),
-            },
+            "options": options,
+            # How each source connects, so the UI shows the RIGHT connection
+            # fields (serial port + baud / I2C target / none) per selected source.
+            "source_transports": _source_transports(options, registry.transports()),
             "menus": self._device_menus(),
             "driver_menus": rt._driver_menus(),
             "restart_required": False,

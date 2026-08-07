@@ -389,7 +389,16 @@ class HardwareScan:
                 ),
             }
 
-        _raw = await asyncio.to_thread(probe_mod.probe_i2c, _bus, _addr, _kind)
+        try:
+            _raw = await asyncio.to_thread(probe_mod.probe_i2c, _bus, _addr, _kind)
+        except RuntimeError as exc:
+            # smbus2 (the 'i2c' extra) not installed -> a clean message, not a 500.
+            return {"ok": False, "error": str(exc)}
+        except OSError as exc:
+            # bus device missing / not permitted (e.g. I2C not enabled on the Pi).
+            return {"ok": False,
+                    "error": f"could not open /dev/i2c-{_bus}: {exc}. "
+                             "Enable I2C (raspi-config) and check permissions."}
 
         # Build response inline
         _detected = _raw.get("detected", "unknown")

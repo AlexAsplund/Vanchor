@@ -15,8 +15,30 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   **spin-to-calibrate** action (turn the boat through a circle) that fits and
   persists the hard/soft-iron correction. Emits `HDT`; `smbus2` is an optional
   dep (`vanchor[i2c]`); fully unit-tested with a fake bus. Adding another chip is
-  one entry in `nav/magnetometer.py`'s `CHIP_TABLE`. BENCH-VERIFY: the register
-  maps + I2C timing are not yet verified on hardware.
+  one entry in `nav/magnetometer.py`'s `CHIP_TABLE`. For remote troubleshooting
+  there's a **"Dump raw I2C"** device action that reads the raw registers (id +
+  data window, live samples) and returns a copy-pasteable hex block — works even
+  when a chip won't autodetect, so a wrong id / swapped bytes can be diagnosed
+  without the hardware. The device panel also shows a **first-run nudge** until
+  the compass is calibrated (and if nothing is detected). Heading assumes a
+  roughly level mount (no tilt compensation without an accelerometer — use the
+  HWT901B AHRS if the sensor tilts). BENCH-VERIFY: the register maps + I2C timing
+  are not yet verified on hardware.
+
+- **Device settings: connection fields now match the source.** Selecting a device
+  source only shows the connection fields that source actually uses — a serial
+  source shows its port + baud, an **I2C** source (the magnetometer) shows a
+  single **I2C bus** field (defaulting to `i2c:1`, never auto-picking a
+  `/dev/ttyUSB*`), and sim / NMEA-bridge / none / phone show nothing. Each
+  registered driver declares its `transport` (`serial` / `i2c` / `none`), exposed
+  as `source_transports` in `/api/config/devices`, so pluggable drivers classify
+  themselves. Previously every device's serial fields appeared whenever any source
+  was wired.
+
+- **Guided setup: I2C probe degrades gracefully.** Probing an I2C address when the
+  `i2c` extra (smbus2) isn't installed, or when the bus can't be opened, now
+  returns a clear message ("install `vanchor[i2c]`" / "enable I2C") instead of a
+  500 — so the wizard stays usable while troubleshooting a compass/battery.
 
 - **Composition tiles clipped to the shoreline (#128).** The server-rendered
   composition tiles are now masked to the OSM water polygon, so the fill no
