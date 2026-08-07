@@ -222,4 +222,11 @@ class BoatState:
 
 
 def _clamp(value: float, low: float, high: float) -> float:
+    # A non-finite command (NaN/inf from a bad sensor, a divide-by-zero, or a
+    # poisoned PID) must NOT slip through: max(low, min(high, nan)) evaluates to
+    # `high` -- i.e. FULL thrust / hard-over. Coerce it to the safe neutral (0.0
+    # when in range, else the low bound) so garbage coasts instead of slamming a
+    # limit. This is the last line of defence, downstream of every sensor source.
+    if not math.isfinite(value):
+        return 0.0 if low <= 0.0 <= high else low
     return max(low, min(high, value))

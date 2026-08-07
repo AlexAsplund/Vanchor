@@ -7,6 +7,8 @@ steering. These tests drive the navigator directly with a controllable
 monotonic clock (matching the other navigator tests).
 """
 
+import math
+
 import pytest
 
 from vanchor.core.models import GeoPoint
@@ -148,6 +150,34 @@ def test_fresh_rmc_still_drives_cog_after_gga():
     nav.handle_sentence(nmea.encode_rmc(_POS, sog_knots=3.0, cog_deg=270.0))
     assert state.heading_from_cog is True
     assert state.heading_deg == pytest.approx(270.0)
+
+
+def test_stale_compass_nan_cog_does_not_write_nan_heading():
+    """A garbage (NaN) course while the compass is stale must NOT be written into
+    state.heading_deg -- a NaN heading clamps the steering PID to hard-over. The
+    fallback declines and the governor keeps coasting on the stale compass."""
+    clock = [0.0]
+    state, nav = _nav(clock)
+    nav.handle_sentence(nmea.encode_hdt(90.0))
+    stamp_before = state.heading_received_mono
+    clock[0] = COMPASS_STALE_S + 1.0
+    nav.handle_sentence(nmea.encode_rmc(_POS, sog_knots=3.0, cog_deg=float("nan")))
+    assert math.isfinite(state.heading_deg)
+    assert state.heading_deg == pytest.approx(90.0)   # last compass value held
+    assert state.heading_from_cog is False
+    assert state.heading_received_mono == pytest.approx(stamp_before)  # stays stale
+
+
+def test_stale_compass_nan_sog_does_not_engage_cog():
+    """A NaN sog must not sneak past the speed gate (NaN >= threshold is False),
+    which would otherwise adopt a meaningless COG as heading."""
+    clock = [0.0]
+    state, nav = _nav(clock)
+    nav.handle_sentence(nmea.encode_hdt(90.0))
+    clock[0] = COMPASS_STALE_S + 1.0
+    nav.handle_sentence(nmea.encode_rmc(_POS, sog_knots=float("nan"), cog_deg=270.0))
+    assert state.heading_deg == pytest.approx(90.0)
+    assert state.heading_from_cog is False
 
 
 def test_heading_from_cog_in_telemetry():

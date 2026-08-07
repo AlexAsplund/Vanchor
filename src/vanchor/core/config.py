@@ -926,8 +926,16 @@ def save_device_overrides(
         payload["sim_motor"] = asdict(sim_motor)
     d = Path(data_dir)
     d.mkdir(parents=True, exist_ok=True)
-    (d / DEVICES_FILE).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    log.info("saved device overrides to %s", d / DEVICES_FILE)
+    dest = d / DEVICES_FILE
+    # Atomic write (tmp + os.replace), like every other store (prefs, boat
+    # profiles, alert log). A boat loses power mid-write often; a bare write_text
+    # can leave a truncated devices.json that _load_device_overrides then discards
+    # as invalid, silently reverting ALL hardware config (GPS, compass, motor) to
+    # defaults. os.replace is atomic on POSIX, so a crash sees old file or new.
+    tmp = d / (DEVICES_FILE + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, dest)
+    log.info("saved device overrides to %s", dest)
     return payload
 
 

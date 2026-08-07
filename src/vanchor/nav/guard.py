@@ -13,6 +13,7 @@ dropped. It also rejects out-of-range coordinates outright.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from ..core.geo import angle_difference, haversine_m
@@ -65,6 +66,14 @@ class SensorGuard:
         return False
 
     def check_heading(self, heading_deg: float) -> bool:
+        # Reject non-finite headings outright (like check_position rejects
+        # out-of-range coords). A NaN/inf heading otherwise latches into
+        # _last_heading on the first sample -- angle_difference(NaN, x) is NaN, so
+        # every later good heading then fails the jump test and is rejected too,
+        # while the stored NaN flows to state.heading_deg -> the PID/motor.
+        if not math.isfinite(heading_deg):
+            self.heading_rejected += 1
+            return False
         if self._last_heading is None:
             self._last_heading = heading_deg
             return True
