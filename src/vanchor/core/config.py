@@ -514,6 +514,12 @@ class ServerConfig:
     # plain-HTTP LAN serving can't give. 0 disables. If the port is busy or no
     # cert can be produced, HTTPS is skipped with a warning (HTTP unaffected).
     https_port: int = 8443
+    # Captive-portal probe responder on ITS OWN port (normally 80). An
+    # internet-less AP makes phones (iOS esp.) re-probe connectivity every
+    # ~30-60 s and deprioritize the WiFi -- seen as periodic WS drops on the
+    # boat. Answering the probes convinces the OS the network is fine. 0
+    # disables; a busy port / no permission skips it with a warning.
+    captive_port: int = 80
     # Bring-your-own cert paths; both empty -> a self-signed cert with
     # CN=vanchor.local is auto-generated once into <data_dir>/tls/ and reused.
     ssl_certfile: str = ""

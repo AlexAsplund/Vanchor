@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **The boat AP now answers phone connectivity checks (the real "data stale"
+  cure).** iOS shows "No Internet Connection" for the boat WiFi, so it re-probes
+  `captive.apple.com` every ~30-60 s, fails, and deprioritizes/flaps the WiFi --
+  the confirmed source of the periodic WebSocket drops (the same phone against a
+  network with internet is rock solid). The AP's dnsmasq now aliases the
+  Apple/Android/Windows connectivity-check hostnames to the boat, and vanchor
+  answers them on port 80 with each OS's expected response (byte-exact Apple
+  Success page), so the phone treats the network as online and stops flapping.
+  Anything else on port 80 redirects to the UI (typing `10.42.0.1` now works
+  without a port). No DNS wildcard -- a real uplink (dock ethernet) still works.
+
 - **Fixed the ~45 s WebSocket drop cycle ("data stale" flashes).** A debug
   recording showed the server perfectly healthy while the phone's socket got
   error/close/reopen every ~45 s: uvicorn's default WS keepalive (ping 20 s /

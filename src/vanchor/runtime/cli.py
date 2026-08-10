@@ -124,6 +124,24 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("HTTPS listening on port %d (cert: %s)",
                     config.server.https_port, cert)
 
+    # Captive-portal probe responder (port 80, best-effort). Answers the OS
+    # connectivity checks (Apple/Android/Windows) that the AP's dnsmasq aliases
+    # to the boat, so a phone on the internet-less AP stops re-probing every
+    # ~45 s and flapping the WiFi (the periodic "data stale" WS drops). A busy
+    # port or missing CAP_NET_BIND (non-root dev runs) skips it with a warning.
+    if config.server.captive_port:
+        from ..tls import port_free as _port_free
+        from ..ui.captive import make_captive_app
+        if _port_free(config.server.host, config.server.captive_port):
+            servers.append(uvicorn.Server(uvicorn.Config(
+                make_captive_app(config.server.port), host=config.server.host,
+                port=config.server.captive_port, log_level="warning")))
+            logger.info("captive-portal responder on port %d",
+                        config.server.captive_port)
+        else:
+            logger.warning("captive port %d unavailable; probe responder off",
+                           config.server.captive_port)
+
     async def _serve_all() -> None:
         # One event loop for every listener (the Runtime's tasks/bus live on it).
         # We own the signal handling: uvicorn's per-server handlers would clobber
