@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a15] — 2026-08-10
+
 - **Relayed fetches now fail over between Overpass endpoints.** When the online
   fetch went through a connected client and the first OpenStreetMap/Overpass
   endpoint answered with an error (e.g. HTTP 504 under load), the route planner
