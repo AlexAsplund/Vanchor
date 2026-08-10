@@ -11,6 +11,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   velocity noise floor at rest, and whether the reported hAcc is honest --
   ending with suggested hold-controller constants (velocity deadband, outer
   position-loop tau). Reads `.ndjson`/`.ndjson.gz` parts, stdlib only.
+- **Faster boot, especially offline.** Three changes: (1) the SD image no longer
+  gates boot on "network online" -- `NetworkManager-wait-online` blocked Docker
+  (and therefore vanchor) for its full 30-60 s timeout on the internet-less boat
+  AP; (2) firmware delays trimmed (`disable_splash=1`, `boot_delay=0`); (3) the
+  saved depth map/chart now loads in the background after the server is up --
+  a big imported chart took seconds on a Pi before the UI would answer at all;
+  overlays briefly render blank and pop in when loaded. Estimated ~30-90 s
+  faster to a responsive UI on an offline boot (image changes need a reflash;
+  the depth-load change arrives with the bundle).
 
 ## [1.5.0a19] — 2026-08-10
 
