@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a20] — 2026-08-10
+
 - **GPS walk analysis tool (`python -m vanchor.analysis.gps_walk`).** Feeds the
   no-RTK station-keeping design (#154): run it over a stationary debug
   recording and it reports the M9N's position-walk envelope (std/CEP50/CEP95),
