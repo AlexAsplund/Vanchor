@@ -103,6 +103,19 @@ def test_load_images_service():
     assert "WantedBy=multi-user.target" in text
 
 
+def test_hotspot_setup_tunes_the_radio():
+    """The AP boot script must disable Pi-side WiFi power-save and prefer 5 GHz
+    when supported, with a guaranteed 2.4 GHz fallback so the boat is ALWAYS
+    joinable (activation failure -> band bg retry)."""
+    text = (STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot-setup.sh").read_text()
+    assert "802-11-wireless.powersave 2" in text          # power-save disabled
+    assert "WIFI-PROPERTIES.5GHZ" in text                  # capability-gated 5 GHz
+    assert "802-11-wireless.band a" in text
+    assert "802-11-wireless.band bg" in text               # fallback path exists
+    # Fallback must be tied to a FAILED activation, not unconditional.
+    assert "if ! nmcli connection up" in text
+
+
 def test_net_chroot_frees_gpio_uart():
     """01-net chroot must free /dev/serial0 for a pin-wired GPS/compass: enable
     the UART, disable Bluetooth (so PL011 lands on the pins), drop the serial

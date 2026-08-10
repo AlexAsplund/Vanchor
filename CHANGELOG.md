@@ -4,6 +4,18 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Fixed the ~45 s WebSocket drop cycle ("data stale" flashes).** A debug
+  recording showed the server perfectly healthy while the phone's socket got
+  error/close/reopen every ~45 s: uvicorn's default WS keepalive (ping 20 s /
+  timeout 20 s) disconnects a phone whose WiFi power-naps long enough to delay
+  one pong -- routine on an iPhone on the boat AP, aggressive in Low Power Mode.
+  The server now pings less often and tolerates slow pongs (25 s / 60 s); real
+  link loss is still caught by the app's own ping + data-stale detection.
+- **SD image: AP radio tuned for phones on deck.** The boot script now disables
+  Pi-side WiFi power-save and prefers a 5 GHz AP (channel 36) when the hardware
+  supports it (Pi 3B+/4/5), with a guaranteed 2.4 GHz fallback if activation
+  fails -- the boat always ends up joinable.
+
 ## [1.5.0a18] — 2026-08-10
 
 - **The map's water-clip no longer touches the network at all (link-loss fix,
