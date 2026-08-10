@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a13] — 2026-08-10
+
 - **Runtime no longer starts twice when HTTPS is enabled.** The CLI serves the
   same app over two uvicorn servers (HTTP + HTTPS), and each server runs the
   FastAPI lifespan, so `Runtime.start()`/`stop()` were each called once **per
