@@ -206,10 +206,14 @@ def fetch_overpass(
     ``http_post(url, body_bytes, headers) -> bytes`` is an injectable transport:
     the runtime passes a client-fetch-relay-backed poster so an offline Pi can
     fetch THROUGH a connected phone/tablet; ``None`` (the default) posts
-    directly with requests. A relay poster raising ``FetchRelayError`` aborts
-    immediately (retrying the other endpoint through the same dead relay can't
-    help and would double the operator's wait) -- its message is operator-facing
-    and propagates as-is."""
+    directly with requests.
+
+    Relay error handling: a base ``FetchRelayError`` (no client connected / no
+    answer) aborts immediately -- retrying the other endpoint through the same
+    dead relay can't help and would double the operator's wait. But a
+    ``FetchRelayTargetError`` (the client answered; the TARGET failed, e.g.
+    Overpass 504 under load) falls through to the next endpoint, preserving the
+    same failover the direct path has. Operator-facing messages propagate."""
     from urllib.parse import urlencode
 
     query = overpass_query(south, west, north, east)
@@ -228,11 +232,16 @@ def fetch_overpass(
     for url in overpass_endpoints():
         try:
             return json.loads(http_post(url, body, headers)).get("elements", [])
-        except Exception as exc:  # pragma: no cover - network path
+        except Exception as exc:
+            # Exact-name check on purpose (no runtime import): the TargetError
+            # subclass has a different __name__ and so falls through to the
+            # next-endpoint retry below.
             if type(exc).__name__ == "FetchRelayError":
-                raise  # relay failed: clear message, retrying can't help
+                raise  # relay itself is dead: clear message, retrying can't help
             logger.warning("Overpass fetch from %s failed: %s", url, exc)
             last_exc = exc
+    if type(last_exc).__name__ == "FetchRelayTargetError":
+        raise last_exc  # keep the operator-facing relay message intact
     raise RuntimeError(f"all Overpass endpoints failed: {last_exc}")
 
 

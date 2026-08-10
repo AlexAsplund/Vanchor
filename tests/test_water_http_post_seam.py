@@ -58,3 +58,41 @@ def test_fetch_fail_message_prefers_relay_error():
     assert "no connected device" in NavGlue._fetch_fail_message(
         FetchRelayError("No internet on the boat and no connected device")).lower()
     assert "offline chart" in NavGlue._fetch_fail_message(OSError("boom")).lower()
+
+
+def test_fetch_overpass_target_error_fails_over_to_next_endpoint():
+    # The client relayed fine but Overpass endpoint 1 replied 504: that is a
+    # TARGET failure -- the second endpoint is a different target, so the
+    # failover the direct path has must be preserved through the relay.
+    from vanchor.runtime.fetch_relay import FetchRelayTargetError
+    calls = []
+
+    def post(url, body, headers):
+        calls.append(url)
+        if len(calls) == 1:
+            raise FetchRelayTargetError("HTTP 504 from overpass-api.de")
+        return b'{"elements": [{"type": "way", "id": 2}]}'
+
+    out = water.fetch_overpass(59.0, 12.0, 59.1, 12.1, http_post=post)
+    assert out == [{"type": "way", "id": 2}]
+    assert len(calls) == 2                       # endpoint 2 tried and won
+
+
+def test_fetch_overpass_all_targets_fail_keeps_relay_message():
+    # Every endpoint 504'd through the client: the raised error keeps the
+    # operator-facing relay message (not a generic RuntimeError wrap).
+    from vanchor.runtime.fetch_relay import FetchRelayTargetError
+
+    def post(url, body, headers):
+        raise FetchRelayTargetError("HTTP 504 from " + url)
+
+    with pytest.raises(FetchRelayTargetError) as ei:
+        water.fetch_overpass(59.0, 12.0, 59.1, 12.1, http_post=post)
+    assert "504" in str(ei.value)
+
+
+def test_fetch_fail_message_covers_target_subclass():
+    from vanchor.runtime.fetch_relay import FetchRelayTargetError
+    from vanchor.runtime.nav_glue import NavGlue
+    msg = NavGlue._fetch_fail_message(FetchRelayTargetError("HTTP 504 from overpass-api.de"))
+    assert "504" in msg

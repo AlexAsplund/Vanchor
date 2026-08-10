@@ -156,3 +156,23 @@ async def test_relay_http_post_adapter():
     post = relay_http_post(r)
     out = await asyncio.to_thread(post, "http://overpass", b"data=q", {"User-Agent": "t"})
     assert out == b'{"elements": []}'
+
+
+async def test_client_error_raises_target_subclass():
+    # A client-reported failure means the relay pipeline worked -- the TARGET
+    # failed. Callers distinguish it (endpoint failover) via the subclass.
+    from vanchor.runtime.fetch_relay import FetchRelayTargetError
+
+    async def direct(url, **kw):
+        raise ConnectionError("offline")
+    r = _relay(direct=direct, clients=True)
+    task = asyncio.ensure_future(r.fetch("http://overpass/api"))
+    await asyncio.sleep(0.02)
+    r.resolve("rid", ok=False, error="HTTP 504 from overpass-api.de")
+    with pytest.raises(FetchRelayTargetError):
+        await task
+    # Infra failures stay the BASE class (no-client case).
+    r2 = _relay(direct=direct, clients=False)
+    with pytest.raises(FetchRelayError) as ei:
+        await r2.fetch("http://x")
+    assert not isinstance(ei.value, FetchRelayTargetError)

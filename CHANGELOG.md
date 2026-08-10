@@ -4,6 +4,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Relayed fetches now fail over between Overpass endpoints.** When the online
+  fetch went through a connected client and the first OpenStreetMap/Overpass
+  endpoint answered with an error (e.g. HTTP 504 under load), the route planner
+  gave up instead of trying the second endpoint like the direct path does. A
+  client-reported *target* failure is now distinguished from a relay failure
+  (no client / no answer): target errors fail over to the next endpoint through
+  the same relay; relay failures still abort immediately with a clear message.
+
 ## [1.5.0a14] — 2026-08-10
 
 - **The boat now fetches online data through your phone when it has no internet.**
