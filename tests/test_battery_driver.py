@@ -163,14 +163,22 @@ def test_runtime_default_uses_sim_battery_monitor(tmp_path):
     assert rt.battery_snapshot() == rt.simulator.battery.to_dict()
 
 
-def test_battery_source_none_disables_monitor(tmp_path):
+def test_battery_source_none_disables_gauge_and_alarms(tmp_path):
+    # "none" = the operator turned the gauge off. It must NOT fall back to the
+    # simulator's pack (which showed a fake level and fired low/critical alarms).
     cfg = load(None)
     cfg.data_dir = str(tmp_path)
     cfg.hardware.battery_source = "none"
     rt = Runtime(cfg)
     assert rt.battery_monitor is None
-    # Falls back to the sim battery directly, so telemetry still works.
-    assert rt.battery_snapshot() == rt.simulator.battery.to_dict()
+    snap = rt.battery_snapshot()
+    # Disabled: no SoC (UI renders "—"), and not the sim pack's reading.
+    assert snap["soc_pct"] is None
+    assert snap != rt.simulator.battery.to_dict()
+    assert snap.get("present") is False
+    # The thrust-derating ladder must not derate when the gauge is off, even
+    # though a simulator exists (soc None -> cap stays 1.0).
+    assert rt.evaluate_battery_ladder() == 1.0
 
 
 def test_runtime_battery_source_routes_through_capability_api(tmp_path):
