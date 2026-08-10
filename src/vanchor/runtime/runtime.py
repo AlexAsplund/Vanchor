@@ -1688,8 +1688,19 @@ class Runtime:
                 logger.exception("background depth-map load failed; starting empty")
                 return
             boot_map = self.depth_map
+            # Merge-preserving swap: anything that touched the boot map while
+            # the load ran (an early import, a test fixture, live soundings)
+            # must survive. Replay soundings into the fresh map, and carry over
+            # bulk fields the fresh load doesn't have. If someone REPLACED the
+            # map object meanwhile (an import with replace=True), keep theirs.
+            if self.depth_map is not boot_map:
+                return
             for lat, lon, depth in list(boot_map.points):  # soundings during load
                 fresh.record(GeoPoint(lat, lon), depth)
+            for attr in ("composition", "contours", "hardness"):
+                boot_val = getattr(boot_map, attr, None)
+                if len(boot_val or []) and not len(getattr(fresh, attr, None) or []):
+                    setattr(fresh, attr, boot_val)
             self.depth_map = fresh
             self._depth_saved_n = len(fresh.points)
             logger.info("boot: depth map loaded in background (%d points)",
