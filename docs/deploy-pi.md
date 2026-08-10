@@ -94,12 +94,12 @@ Settings.
 ### Flash with Raspberry Pi Imager
 
 1. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (≥ v1.8).
-2. Click **OS → Use custom → Provide URL**, paste:
+2. Click **Add Options → Content Repository → Custom URL**, paste:
    ```
    https://github.com/AlexAsplund/vanchor-ng/releases/latest/download/os_list.json
    ```
    Select **Vanchor-NG** from the list.
-3. *(Optional)* Click the gear ⚙ to pre-configure hostname / user / SSH / WiFi.
+3. *(Optional)* Customize or click "Skip Customization".
 4. Select your 16 GB (or larger) SD card and flash.
 
 ### First boot (offline, no configuration needed)
