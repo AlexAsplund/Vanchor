@@ -88,6 +88,9 @@ Settings.
 - The `vanchor-supervisor` host daemon (update / backup / disk / device policy)
 - NetworkManager **access point** — always-on, offline-first; per-device SSID
   `vanchor-<last 4 of the wlan0 MAC>` (e.g. `vanchor-a1b2`) so units don't collide
+- **GPIO UART freed** for a pin-wired GPS/compass: `enable_uart=1`, the serial
+  login console removed, and Bluetooth disabled so the reliable PL011 UART lands
+  on the pins (`/dev/serial0`). No manual `raspi-config` step; USB GPS unaffected.
 - SD-write minimisation: volatile journald, tmpfs `/tmp`+`/var/log`, noatime,
   bounded docker logs (`local` driver, max 5 MB × 2), zram swap
 

@@ -153,7 +153,9 @@ stage-vanchor/
   01-net/
     00-packages          avahi-daemon
     00-run.sh            install NM connection + dnsmasq + AP files
-    01-run-chroot.sh     wifi country, purge modemmanager, enable AP svc
+    01-run-chroot.sh     wifi country, purge modemmanager, free GPIO UART
+                         (enable_uart + disable-bt + drop serial console),
+                         enable AP svc
     files/
       vanchor-setup.nmconnection   WPA2-PSK AP profile, priority 100 (offline-first)
       vanchor-dnsmasq.conf         address=/vanchor.local/10.42.0.1

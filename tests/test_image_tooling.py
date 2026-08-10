@@ -103,6 +103,18 @@ def test_load_images_service():
     assert "WantedBy=multi-user.target" in text
 
 
+def test_net_chroot_frees_gpio_uart():
+    """01-net chroot must free /dev/serial0 for a pin-wired GPS/compass: enable
+    the UART, disable Bluetooth (so PL011 lands on the pins), drop the serial
+    console from cmdline.txt, and mask the serial getty."""
+    text = (STAGE_ROOT / "01-net" / "01-run-chroot.sh").read_text()
+    assert "enable_uart=1" in text
+    assert "dtoverlay=disable-bt" in text
+    assert "cmdline.txt" in text and "console=" in text   # strips the serial console
+    assert "serial-getty@" in text and "mask" in text     # getty no longer holds the port
+    assert "disable hciuart" in text                       # BT-UART service off
+
+
 def test_hotspot_service():
     path = STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot.service"
     assert path.exists()

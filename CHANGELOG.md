@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **SD image frees the GPIO UART for a pin-wired GPS/compass.** By default the Pi
+  keeps a login console on the serial port, so a GPS wired to the TX/RX pins
+  (`/dev/serial0`) can't be read — the most common wired-GPS gotcha (and the exact
+  wall a maker hit in the discussions). The image now enables the UART
+  (`enable_uart=1`), removes the serial console from `cmdline.txt`, masks the
+  serial `getty`, and disables onboard Bluetooth (`dtoverlay=disable-bt`) so the
+  reliable PL011 UART lands on the GPIO pins. No manual `raspi-config` step; USB
+  GPS is unaffected. (BENCH-VERIFY: UART routing can't be validated without a Pi.)
+
 - **Fixed the SD-image download URL in `os_list.json`.** The Raspberry Pi Imager
   custom-repo JSON pointed at `github.com/AlexAsplund/vanchor-ng/.../vanchor-<ver>-arm64.img.xz`
   — wrong on two counts: the repo is `AlexAsplund/Vanchor`, and pi-gen names the
