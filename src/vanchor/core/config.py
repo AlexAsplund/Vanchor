@@ -514,6 +514,16 @@ class ServerConfig:
     # plain-HTTP LAN serving can't give. 0 disables. If the port is busy or no
     # cert can be produced, HTTPS is skipped with a warning (HTTP unaffected).
     https_port: int = 8443
+    # Captive-portal probe responder (OPT-IN, 0 = off). Set to 80 to answer the
+    # OS connectivity checks so a phone on the internet-less AP stops re-probing
+    # every ~30-60 s and flapping the WiFi. THE TRADE-OFF: once the phone
+    # believes the WiFi has internet it routes internet traffic OVER THE WIFI
+    # (not cellular) -- live map tiles and the client fetch relay then fail on
+    # the boat. Only enable for a fully-offline setup (maps prefetched, no
+    # reliance on the phone's internet). Default keeps the hybrid behavior:
+    # local traffic on WiFi, internet via cellular, occasional re-probe blips
+    # (absorbed by the relaxed WS keepalive).
+    captive_port: int = 0
     # Bring-your-own cert paths; both empty -> a self-signed cert with
     # CN=vanchor.local is auto-generated once into <data_dir>/tls/ and reused.
     ssl_certfile: str = ""

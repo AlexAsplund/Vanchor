@@ -103,6 +103,18 @@ def test_load_images_service():
     assert "WantedBy=multi-user.target" in text
 
 
+def test_dnsmasq_aliases_connectivity_checks():
+    """The AP's dnsmasq must alias the OS connectivity-check hostnames to the
+    boat (answered by ui/captive.py on :80) so phones stop re-probing an
+    internet-less network and flapping the WiFi. No wildcard: a real uplink
+    keeps working."""
+    text = (STAGE_ROOT / "01-net" / "files" / "vanchor-dnsmasq.conf").read_text()
+    for host in ("captive.apple.com", "connectivitycheck.gstatic.com",
+                 "www.msftconnecttest.com"):
+        assert f"address=/{host}/10.42.0.1" in text
+    assert "address=/#/" not in text   # no DNS wildcard
+
+
 def test_hotspot_setup_tunes_the_radio():
     """The AP boot script must disable Pi-side WiFi power-save and prefer 5 GHz
     when supported, with a guaranteed 2.4 GHz fallback so the boat is ALWAYS

@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Opt-in captive-portal responder (`server.captive_port`, default off).**
+  iOS shows "No Internet Connection" for the boat WiFi and re-probes
+  `captive.apple.com` every ~30-60 s -- the source of the periodic WebSocket
+  blips. Answering the probes stops the flapping, BUT a phone that believes the
+  WiFi is online routes its internet over the WiFi instead of cellular --
+  breaking live map tiles and the client fetch relay. So the responder ships
+  **off** (the relaxed WS keepalive absorbs the blips) and can be enabled for
+  fully-offline setups (maps prefetched, no reliance on phone internet): set
+  `server.captive_port: 80`. Bonus when enabled: any non-probe request to port
+  80 redirects to the UI, so `10.42.0.1` works without typing a port.
+
 - **Fixed the ~45 s WebSocket drop cycle ("data stale" flashes).** A debug
   recording showed the server perfectly healthy while the phone's socket got
   error/close/reopen every ~45 s: uvicorn's default WS keepalive (ping 20 s /
