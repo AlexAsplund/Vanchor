@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a17] — 2026-08-10
+
 - **Fixed the periodic "data stale" / WS drops around "land guard: water chart
   loaded".** The land guard's chart refresh re-parsed the cached water chart
   (WKB) and re-handed the full geometry to the safety governor **every 20 s**,
