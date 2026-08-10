@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a16] — 2026-08-10
+
 - **Map panning no longer hammers the phone/Overpass (link-loss fix).** The
   water-clip lookup behind the depth overlays fires on every map pan/zoom, and
   since the client fetch relay it was relayed through the phone whenever the Pi
