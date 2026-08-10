@@ -21,6 +21,21 @@ _BUILTIN_TRANSPORT = {"sim": "none", "serial": "serial", "nmea": "none",
 _OPTION_REG_KIND = {"sensor": "depth"}
 
 
+def _same_serial_port(a: str | None, b: str | None) -> bool:
+    """True if two configured serial ports point at the same device -- exact
+    match, or the same target after resolving symlinks (e.g. /dev/ttyACM0 vs
+    /dev/serial/by-id/...)."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    try:
+        import os
+        return os.path.realpath(a) == os.path.realpath(b)
+    except Exception:  # noqa: BLE001 - realpath on a nonexistent path shouldn't crash
+        return False
+
+
 def _source_transports(options: dict, reg_transports: dict) -> dict:
     """``{option_key: {source: transport}}`` merging the built-in sources with the
     registry's per-driver transport, so the UI can show serial / I2C / no
@@ -420,6 +435,17 @@ class DeviceManager:
                     "compass source %r could not be built (%s); running without a "
                     "compass. Change it in Settings -> Devices.", src["compass"], exc)
                 compass = None
+        # Share ONE reader when the compass is a serial NMEA source on the SAME
+        # port as the serial GPS (a combo source emitting RMC/GGA + HDG). Two
+        # readers on one port double-read the stream and publish every line to
+        # events.NMEA_IN twice; both sensors are dumb pipes to that bus, so one
+        # reader feeds the navigator (GPS *and* compass sentences) for both slots.
+        if (src["gps"] == "serial" and src["compass"] == "serial"
+                and gps is not None and compass is not None
+                and _same_serial_port(cfg.hardware.gps_port, cfg.hardware.compass_port)):
+            compass = gps
+            logger.info("compass shares the GPS serial reader (same port %s)",
+                        cfg.hardware.gps_port)
         if src["depth"] == "sim":
             depth = SimDepthSounder(
                 simulator.truth,

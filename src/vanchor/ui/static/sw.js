@@ -90,6 +90,7 @@ const SHELL = [
   "/static/wizard.js",
   "/static/boat.js",
   "/static/debug.js",
+  "/static/tools.js",
   "/static/appcore.js",
   "/static/health.js",
   "/static/controls.js",

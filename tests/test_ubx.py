@@ -254,3 +254,91 @@ def test_cfg_marine_10hz_wellformed() -> None:
     # 8 items (UART1 + USB): RATE U2, DYNMODEL U1, 2x NAV_PVT U1, 4x OUTPROT L
     # -> value bytes 2+1+1+1+1+1+1+1 = 9, plus 8*4 key bytes, plus 4-byte header
     assert len(payload) == 4 + 8 * 4 + 9
+
+
+# --- ublox-tools config builders (#ublox-tools) ---------------------------- #
+
+def _valset_items(frame: bytes) -> dict[int, int]:
+    """Parse a CFG-VALSET frame -> {key_id: value} (widths inferred from key)."""
+    frames, rem = ubx.parse_stream(frame)
+    assert rem == b"" and len(frames) == 1
+    cls, mid, payload = frames[0]
+    assert (cls, mid) == ubx.CFG_VALSET
+    body = payload[4:]  # skip version/layers/reserved
+    out: dict[int, int] = {}
+    i = 0
+    while i < len(body):
+        key = int.from_bytes(body[i:i + 4], "little")
+        width = {0x1: 1, 0x2: 1, 0x3: 2, 0x4: 4, 0x5: 8}[(key >> 28) & 0x7]
+        out[key] = int.from_bytes(body[i + 4:i + 4 + width], "little")
+        i += 4 + width
+    return out
+
+
+def test_cfg_set_output_protocols_nmea_toggle() -> None:
+    on = _valset_items(ubx.cfg_set_output_protocols(nmea=True))
+    assert on[ubx.KEY_UART1OUTPROT_NMEA] == 1 and on[ubx.KEY_USBOUTPROT_NMEA] == 1
+    off = _valset_items(ubx.cfg_set_output_protocols(nmea=False))
+    assert off[ubx.KEY_UART1OUTPROT_NMEA] == 0 and off[ubx.KEY_USBOUTPROT_NMEA] == 0
+    # UBX untouched when only nmea is passed.
+    assert ubx.KEY_UART1OUTPROT_UBX not in off
+    both = _valset_items(ubx.cfg_set_output_protocols(nmea=True, ubx=True))
+    assert both[ubx.KEY_UART1OUTPROT_UBX] == 1 and both[ubx.KEY_UART1OUTPROT_NMEA] == 1
+
+
+def test_cfg_set_output_protocols_requires_arg() -> None:
+    import pytest
+    with pytest.raises(ValueError):
+        ubx.cfg_set_output_protocols()
+
+
+def test_cfg_set_rate_hz() -> None:
+    assert _valset_items(ubx.cfg_set_rate_hz(10))[ubx.KEY_RATE_MEAS] == 100
+    assert _valset_items(ubx.cfg_set_rate_hz(1))[ubx.KEY_RATE_MEAS] == 1000
+    assert _valset_items(ubx.cfg_set_rate_hz(5))[ubx.KEY_RATE_MEAS] == 200
+    # 40 Hz floors at the 25 ms minimum.
+    assert _valset_items(ubx.cfg_set_rate_hz(40))[ubx.KEY_RATE_MEAS] == 25
+    import pytest
+    for bad in (0, -1, 50):
+        with pytest.raises(ValueError):
+            ubx.cfg_set_rate_hz(bad)
+
+
+def test_cfg_set_uart_baud() -> None:
+    assert _valset_items(ubx.cfg_set_uart_baud(9600))[ubx.KEY_UART1_BAUDRATE] == 9600
+    assert _valset_items(ubx.cfg_set_uart_baud(115200))[ubx.KEY_UART1_BAUDRATE] == 115200
+    import pytest
+    with pytest.raises(ValueError):
+        ubx.cfg_set_uart_baud(12345)
+
+
+def test_poll_is_empty_frame() -> None:
+    frame = ubx.poll(*ubx.MON_VER)
+    frames, rem = ubx.parse_stream(frame)
+    assert rem == b"" and frames == [(ubx.MON_VER[0], ubx.MON_VER[1], b"")]
+
+
+def test_find_ack() -> None:
+    ack = ubx.build_frame(*ubx.ACK_ACK, b"\x06\x8a")
+    nak = ubx.build_frame(*ubx.ACK_NAK, b"\x06\x8a")
+    assert ubx.find_ack(ubx.parse_stream(ack)[0]) is True
+    assert ubx.find_ack(ubx.parse_stream(nak)[0]) is False
+    assert ubx.find_ack(ubx.parse_stream(ubx.build_frame(*ubx.NAV_PVT, b"\x00" * 92))[0]) is None
+
+
+def test_decode_mon_ver() -> None:
+    payload = (b"ROM 5.10\x00".ljust(30, b"\x00") + b"00080000\x00".ljust(10, b"\x00")
+               + b"FWVER=SPG 5.10\x00".ljust(30, b"\x00"))
+    ver = ubx.decode_mon_ver(payload)
+    assert ver["sw"] == "ROM 5.10" and ver["hw"] == "00080000"
+    assert "FWVER=SPG 5.10" in ver["extensions"]
+    assert ubx.decode_mon_ver(b"\x00" * 10) == {}
+
+
+def test_describe_marine_config_matches_frame() -> None:
+    # The warning must mention NMEA-off, and the actual frame must set NMEA=0.
+    desc = " ".join(ubx.describe_marine_config()).lower()
+    assert "nmea" in desc and "off" in desc
+    items = _valset_items(ubx.cfg_marine_10hz())
+    assert items[ubx.KEY_UART1OUTPROT_NMEA] == 0 and items[ubx.KEY_USBOUTPROT_NMEA] == 0
+    assert items[ubx.KEY_RATE_MEAS] == 100  # 10 Hz

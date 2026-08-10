@@ -16,6 +16,20 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   silent: the route result carries a clear operator-facing message ("No internet
   on the boat and no connected device could fetch..."), and the client shows an
   'Online fetch failed' notification when its own fetch fails.
+- **New "Tools" tab with a u-blox toolbox.** Configure any u-blox / UBX-speaking
+  receiver on a serial port -- independent of the selected GPS source (handy for a
+  combo module like a BE-880). Read live stats (fix, sat count, which protocols
+  stream, firmware) and set NMEA on/off, update rate, and UART baud (RAM, or saved
+  to flash). Backed by device-independent `/api/tools/ublox/*` endpoints.
+- **Warning when selecting the u-blox GPS driver.** Choosing `gps_source: ublox`
+  now pops a confirm dialog listing what it applies to the receiver -- notably that
+  **NMEA output is turned OFF** (it reads UBX NAV-PVT). Cancel reverts the pick.
+- **Devices on the same serial port now share one reader.** Configuring both the
+  GPS and the compass as `serial` on the same port (a combo NMEA source emitting
+  RMC/GGA + HDG) previously opened the port twice, so two readers split/garbled
+  the byte stream and published every sentence to the bus twice. The compass now
+  reuses the GPS reader when the ports match (symlinks resolved), and the serial
+  sensor's start()/stop() are idempotent so a shared reader opens exactly once.
 
 ## [1.5.0a13] — 2026-08-10
 
