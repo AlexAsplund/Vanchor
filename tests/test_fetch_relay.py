@@ -176,3 +176,23 @@ async def test_client_error_raises_target_subclass():
     with pytest.raises(FetchRelayError) as ei:
         await r2.fetch("http://x")
     assert not isinstance(ei.value, FetchRelayTargetError)
+
+
+async def test_identical_concurrent_requests_coalesce_to_one_broadcast():
+    # A viewport burst asking for the SAME resource must produce ONE relayed
+    # request; all callers share the answer (no client/target stampede -> 429s).
+    async def direct(url, **kw):
+        raise ConnectionError("offline")
+    r = _relay(direct=direct, clients=True, ids=["only", "other"])
+    t1 = asyncio.ensure_future(r.fetch("http://overpass/api", method="POST", body=b"q"))
+    await asyncio.sleep(0.02)
+    t2 = asyncio.ensure_future(r.fetch("http://overpass/api", method="POST", body=b"q"))
+    t3 = asyncio.ensure_future(r.fetch("http://overpass/api", method="POST", body=b"DIFFERENT"))
+    await asyncio.sleep(0.02)
+    reqs = [m for m in r.sent if m["type"] == "fetch_request"]
+    assert len(reqs) == 2                      # q coalesced; DIFFERENT separate
+    r.resolve("only", ok=True, data=b"shared")
+    assert await t1 == b"shared"
+    assert await t2 == b"shared"               # coalesced caller shares the answer
+    with pytest.raises(FetchRelayError):       # its own request timed out (0.2 s)
+        await t3

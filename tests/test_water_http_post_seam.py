@@ -96,3 +96,26 @@ def test_fetch_fail_message_covers_target_subclass():
     from vanchor.runtime.nav_glue import NavGlue
     msg = NavGlue._fetch_fail_message(FetchRelayTargetError("HTTP 504 from overpass-api.de"))
     assert "504" in msg
+
+
+def test_viewport_water_clip_never_uses_the_relay(tmp_path, monkeypatch):
+    # /api/depth/water fires per viewport (every pan/zoom). It must fetch
+    # DIRECT-only -- relaying it hammered Overpass through the phone (429/504)
+    # and saturated the boat link. Offline it fails fast; the clip is optional.
+    from vanchor.app import Runtime
+    from vanchor.core.config import load
+
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    rt.fetch_relay = object()   # a relay EXISTS; water_polygon must not use it
+    seen = {}
+
+    def fake_fetch(*bbox, http_post=None, **kw):
+        seen["http_post"] = http_post
+        raise OSError("offline")
+
+    monkeypatch.setattr(water, "fetch_overpass", fake_fetch)
+    out = rt.water_polygon((12.0, 59.0, 12.1, 59.1))
+    assert out == {"ok": False, "water": []}   # fail-fast, clip skipped
+    assert seen["http_post"] is None            # direct-only: relay untouched

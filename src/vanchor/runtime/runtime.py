@@ -1493,9 +1493,14 @@ class Runtime:
         try:
             geom = cache.find_covering(wbbox)
             if geom is None:
-                from .fetch_relay import relay_http_post
-                _post = relay_http_post(getattr(self, "fetch_relay", None))
-                geom = water.assemble_water(water.fetch_overpass(*wbbox, http_post=_post))
+                # DIRECT fetch only -- deliberately NOT through the client relay.
+                # This endpoint fires PER VIEWPORT (every map pan/zoom); relaying
+                # it hammered Overpass through the phone (429/504), stalled
+                # executors, and saturated the boat link. The clip is optional
+                # decoration: offline it fails fast here and the overlay simply
+                # renders unclipped until the area is prefetched (chart prefetch
+                # / route plan DO use the relay -- one-shot, user-initiated).
+                geom = water.assemble_water(water.fetch_overpass(*wbbox))
                 if geom is not None and not geom.is_empty:
                     cache.store(wbbox, geom)
         except Exception as exc:  # noqa: BLE001 - network/parse; clip is optional

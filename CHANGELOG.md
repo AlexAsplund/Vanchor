@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Map panning no longer hammers the phone/Overpass (link-loss fix).** The
+  water-clip lookup behind the depth overlays fires on every map pan/zoom, and
+  since the client fetch relay it was relayed through the phone whenever the Pi
+  was offline -- flooding Overpass (HTTP 429/504), stalling the server, and
+  saturating the boat link (perceived link loss / paused data link). The
+  per-viewport clip is now direct-only again (offline it fails fast and the
+  overlay renders unclipped until the area is prefetched); only one-shot,
+  user-initiated actions (route planning, island loops, chart prefetch) go
+  through the relay. Identical concurrent relayed requests now also coalesce
+  into a single fetch instead of stampeding the client.
+
 ## [1.5.0a15] — 2026-08-10
 
 - **Relayed fetches now fail over between Overpass endpoints.** When the online

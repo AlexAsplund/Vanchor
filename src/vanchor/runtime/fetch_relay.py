@@ -75,6 +75,9 @@ class FetchRelay:
         self._relay_timeout_s = relay_timeout_s
         self._direct_timeout_s = direct_timeout_s
         self._pending: dict[str, _Pending] = {}
+        # Identical concurrent requests coalesce onto one relayed fetch:
+        # (url, method, body) -> the pending entry whose future they share.
+        self._inflight: dict[tuple, _Pending] = {}
         self._offline_until: float = 0.0  # sticky-offline circuit-breaker deadline
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -142,10 +145,22 @@ class FetchRelay:
             raise FetchRelayError(
                 "No internet on the boat and no connected device to fetch "
                 f"through (needed {url}).")
+        # Coalesce identical in-flight requests: concurrent callers wanting the
+        # SAME resource (a viewport burst, parallel tile loops) share ONE relayed
+        # request instead of stampeding the client and the target (429s).
+        key = (url, method, body)
+        existing = self._inflight.get(key)
+        if existing is not None and not existing.future.done():
+            # shield: a secondary awaiter timing out must not cancel the shared
+            # future out from under the primary (or other) awaiters.
+            return await asyncio.wait_for(asyncio.shield(existing.future),
+                                          timeout or self._relay_timeout_s)
         rid = self._new_id()
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[bytes] = loop.create_future()
-        self._pending[rid] = _Pending(fut, url)
+        pending = _Pending(fut, url)
+        self._pending[rid] = pending
+        self._inflight[key] = pending
         msg: dict[str, Any] = {"type": "fetch_request", "id": rid, "url": url,
                                "method": method}
         if headers:
@@ -160,6 +175,8 @@ class FetchRelay:
                 f"No connected device answered the fetch for {url} in time.") from exc
         finally:
             self._pending.pop(rid, None)
+            if self._inflight.get(key) is pending:
+                self._inflight.pop(key, None)
 
     # -- called by the /api/relay result endpoint ------------------------ #
     def resolve(self, request_id: str, *, ok: bool, data: bytes | None = None,
