@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a19] — 2026-08-10
+
 - **Opt-in captive-portal responder (`server.captive_port`, default off).**
   iOS shows "No Internet Connection" for the boat WiFi and re-probes
   `captive.apple.com` every ~30-60 s -- the source of the periodic WebSocket
