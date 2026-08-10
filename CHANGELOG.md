@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a12] — 2026-08-10
+
 - **Battery source "none" now actually disables the gauge.** Selecting **None (no
   gauge)** built no battery monitor, but `battery_snapshot()` then fell back to
   the *simulator's* pack — so in a simulated run the UI still showed a battery
