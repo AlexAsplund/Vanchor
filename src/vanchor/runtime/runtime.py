@@ -473,6 +473,15 @@ class Runtime:
         )
 
         self._tasks: list[asyncio.Task] = []
+        # Guard against starting the runtime more than once. The CLI serves the
+        # SAME app over two uvicorn servers (HTTP + HTTPS), and each server runs
+        # the FastAPI lifespan -> start()/stop() are each called once PER server.
+        # Without this, every subsystem ran twice: two controller loops driving
+        # the motor, two simulator loops, two serial readers on one port (the
+        # asyncio "readuntil() while another coroutine is already waiting" crash).
+        # Ref-counted so the first start() actually starts and the last stop()
+        # (when every server has shut down) actually tears down.
+        self._start_count = 0
         self.calibration = CalibrationRunner(self)
 
         # --- Named boat profiles (#75, #89): persisted, selectable spec bundles.
@@ -1631,6 +1640,14 @@ class Runtime:
     # Lifecycle
     # ------------------------------------------------------------------ #
     async def start(self) -> None:
+        # Idempotent across multiple server lifespans (HTTP + HTTPS share one
+        # Runtime): only the first start() boots the subsystems; later ones are
+        # no-ops so nothing (controller, simulator, serial readers) runs twice.
+        self._start_count += 1
+        if self._start_count > 1:
+            logger.debug("runtime start() ignored (already started, count=%d)",
+                         self._start_count)
+            return
         self.recorder.start()
         # Arm the external hardware watchdog (#44) before the supervisor begins
         # petting it. A no-op when disabled; a bad GPIO must not crash boot.
@@ -1685,6 +1702,14 @@ class Runtime:
         await self._hw._start_armed_connectors()
 
     async def stop(self) -> None:
+        # Mirror start()'s ref-count: tear down only when the LAST server that
+        # started us shuts down. A stop() with servers still running is a no-op.
+        if self._start_count > 0:
+            self._start_count -= 1
+        if self._start_count > 0:
+            logger.debug("runtime stop() deferred (%d server(s) still up)",
+                         self._start_count)
+            return
         # Stop the Web Push worker thread before task cleanup (best-effort).
         with contextlib.suppress(Exception):
             self.push.stop()
