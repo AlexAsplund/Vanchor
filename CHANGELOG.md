@@ -4,6 +4,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Devices on the same serial port now share one reader.** Configuring both the
+  GPS and the compass as `serial` on the same port (a combo NMEA source emitting
+  RMC/GGA + HDG) previously opened the port twice, so two readers split/garbled
+  the byte stream and published every sentence to the bus twice. The compass now
+  reuses the GPS reader when the ports match (symlinks resolved), and the serial
+  sensor's start()/stop() are idempotent so a shared reader opens exactly once.
+
 ## [1.5.0a13] — 2026-08-10
 
 - **Runtime no longer starts twice when HTTPS is enabled.** The CLI serves the
