@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a18] — 2026-08-10
+
 - **The map's water-clip no longer touches the network at all (link-loss fix,
   round 2).** The per-viewport clip lookup still tried a *direct* Overpass fetch
   when uncached -- and on the boat "direct" doesn't fail fast: with the AP's DNS
