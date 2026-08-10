@@ -103,6 +103,15 @@ def test_load_images_service():
     assert "WantedBy=multi-user.target" in text
 
 
+def test_net_chroot_speeds_up_offline_boot():
+    """Boot time: the wait-online gate (which blocks Docker 30-60 s on an
+    internet-less boat) must be disabled, and the firmware delays trimmed."""
+    text = (STAGE_ROOT / "01-net" / "01-run-chroot.sh").read_text()
+    assert "systemctl disable NetworkManager-wait-online.service" in text
+    assert "disable_splash=1" in text
+    assert "boot_delay=0" in text
+
+
 def test_dnsmasq_aliases_connectivity_checks():
     """The AP's dnsmasq must alias the OS connectivity-check hostnames to the
     boat (answered by ui/captive.py on :80) so phones stop re-probing an

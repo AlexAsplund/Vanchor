@@ -125,3 +125,29 @@ async def test_reload_devices_stops_old_motor():
     assert rt.controller.motor is not motor  # swapped to the new (sim) motor
 
     await rt.stop()
+
+
+async def test_depth_map_loads_in_background_after_start(tmp_path):
+    # A big saved chart used to load synchronously in Runtime.__init__, blocking
+    # boot for seconds on a Pi before the server could serve anything. It now
+    # loads in a background task started by start(): pre-seeded data appears
+    # shortly after start() without having blocked construction.
+    import asyncio
+    import json
+
+    (tmp_path / "depthmap.json").write_text(
+        json.dumps({"points": [[59.0, 13.0, 4.2], [59.001, 13.001, 5.0]]}))
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    assert len(rt.depth_map.points) == 0        # constructor no longer loads
+    await rt.start()
+    try:
+        for _ in range(100):                     # background task swaps it in
+            if len(rt.depth_map.points) == 2:
+                break
+            await asyncio.sleep(0.02)
+        assert len(rt.depth_map.points) == 2
+        assert rt._depth_saved_n == 2            # save-threshold baseline updated
+    finally:
+        await rt.stop()
