@@ -26,21 +26,29 @@ class TelemetryBuilder:
     # Battery (#60)
     # ------------------------------------------------------------------ #
     def battery_snapshot(self) -> dict:
-        """Battery telemetry. From the active battery monitor (#42) — the sim
-        pack or a real shunt driver — falling back to the sim battery directly,
-        then to zeros when there is no battery source at all."""
+        """Battery telemetry from the active battery monitor (#42) — the sim pack
+        or a real shunt driver.
+
+        When there is NO battery source — ``battery_source: none`` (the operator
+        turned the gauge off), or a driver that could not be built — the battery
+        is **disabled**: report ``soc_pct=None`` so the UI shows no level and the
+        alarm / thrust-ladder / RTL paths (all guarded on a ``None`` SoC) stay
+        quiet. We deliberately do NOT fall back to the simulator's pack here: that
+        resurrected a battery the operator had disabled, showing a fake level and
+        firing low/critical alarms for a gauge that isn't there. ``range_m`` stays
+        a number (0.0) because ``evaluate_rtl_recommend`` compares ``range_m <=
+        0.0`` before it checks the (None) SoC."""
         rt = self._rt
         if getattr(rt, "battery_monitor", None) is not None:
             return rt.battery_monitor.snapshot()
-        if rt.simulator is not None:
-            return rt.simulator.battery.to_dict()
         return {
-            "soc_pct": 0.0,
-            "voltage_v": 0.0,
-            "current_a": 0.0,
-            "draw_w": 0.0,
+            "soc_pct": None,
+            "voltage_v": None,
+            "current_a": None,
+            "draw_w": None,
             "range_m": 0.0,
             "time_to_empty_s": None,
+            "present": False,
         }
 
     # ------------------------------------------------------------------ #

@@ -391,6 +391,8 @@
     VA.setText("m-batt-volts", voltV === null ? "— V" : voltV.toFixed(1) + " V");
     const siBatt = document.getElementById("si-batt");
     if (siBatt) {
+      // Gauge turned off (battery_source: none) -> hide the tile entirely.
+      siBatt.classList.toggle("hidden", !!(b && b.present === false));
       const lvl = VA.battLevel ? VA.battLevel(soc) : "ok";
       siBatt.dataset.level = lvl;
     }

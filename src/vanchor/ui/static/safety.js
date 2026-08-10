@@ -75,6 +75,20 @@
     const tte = b && Number.isFinite(b.time_to_empty_s) ? b.time_to_empty_s : null;
     const level = battLevel(soc);
     const haveBatt = !!b;
+    // Gauge turned OFF (battery_source: none) -> hide the HUD widget, chip, and
+    // Settings battery section entirely rather than showing "—". A real gauge
+    // that is merely between readings has soc null but present !== false, so it
+    // stays visible. `present: false` is set only by the disabled snapshot.
+    const disabled = !!(b && b.present === false);
+    // Use a dedicated class, not `.hidden`: settings.js/views.js own the HUD
+    // widget's `.hidden`/`.vw-off` (the user's HUD-visibility pref), so toggling
+    // `.hidden` here every frame would override it when a gauge is present.
+    const hudWidget = $("hud-battery-widget");
+    if (hudWidget) hudWidget.classList.toggle("batt-off", disabled);
+    const setSection = $("set-batt-section");
+    if (setSection) setSection.classList.toggle("hidden", disabled);
+    const setTest = $("set-batt-test-section");
+    if (setTest) setTest.classList.toggle("hidden", disabled);
 
     // ---- HUD widget ----
     VA.setText("hud-batt-soc", soc === null ? "—" : Math.round(soc).toString());
@@ -90,7 +104,7 @@
 
     // ---- status-bar chip ----
     const chip = $("chip-batt");
-    if (chip) chip.classList.toggle("hidden", !haveBatt);
+    if (chip) chip.classList.toggle("hidden", disabled || !haveBatt);
     if (chip) chip.dataset.level = level;
     VA.setText("chip-batt-val", soc === null ? "—" : Math.round(soc).toString());
     const chipFill = $("chip-batt-fill");
