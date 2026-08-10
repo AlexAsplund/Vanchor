@@ -51,3 +51,10 @@ def test_probe_table_covers_the_dnsmasq_hosts():
     assert "/generate_204" in PROBES              # gstatic/android
     assert "/connecttest.txt" in PROBES           # msftconnecttest
     assert "/ncsi.txt" in PROBES                  # msftncsi
+
+
+def test_captive_responder_is_opt_in_by_default():
+    # Default OFF: answering probes makes the phone route internet over the
+    # (dead) WiFi instead of cellular, breaking live tiles + the fetch relay.
+    from vanchor.core.config import ServerConfig
+    assert ServerConfig().captive_port == 0

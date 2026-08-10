@@ -11,6 +11,11 @@ check hostnames to the boat (see ``vanchor-dnsmasq.conf``), and this tiny ASGI
 app answers the probes on port 80 with EXACTLY what each OS expects, so the
 phone considers the network online and stops the periodic re-probing.
 
+OPT-IN (``server.captive_port``, default 0/off): a phone that believes the WiFi
+has internet routes its internet traffic over the WiFi instead of cellular --
+which BREAKS live map tiles and the client fetch relay on the boat. Enable only
+for a fully-offline setup (maps prefetched, nothing relies on phone internet).
+
 The responses must be byte-exact-ish: Apple in particular shows the captive-
 portal sheet unless ``hotspot-detect.html`` returns its canonical Success page.
 Anything that is NOT a known probe path redirects to the real UI -- a nice side
