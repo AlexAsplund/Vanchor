@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **New "Tools" tab with a u-blox toolbox.** Configure any u-blox / UBX-speaking
+  receiver on a serial port -- independent of the selected GPS source (handy for a
+  combo module like a BE-880). Read live stats (fix, sat count, which protocols
+  stream, firmware) and set NMEA on/off, update rate, and UART baud (RAM, or saved
+  to flash). Backed by device-independent `/api/tools/ublox/*` endpoints.
+- **Warning when selecting the u-blox GPS driver.** Choosing `gps_source: ublox`
+  now pops a confirm dialog listing what it applies to the receiver -- notably that
+  **NMEA output is turned OFF** (it reads UBX NAV-PVT). Cancel reverts the pick.
+
 ## [1.5.0a13] — 2026-08-10
 
 - **Runtime no longer starts twice when HTTPS is enabled.** The CLI serves the

@@ -759,6 +759,45 @@
     if (sel) sel.addEventListener("change", () => { syncConnFields(); refreshMenus(); });
   });
 
+  // Warn when the u-blox GPS driver is chosen: it reconfigures the receiver
+  // (NMEA off, 10 Hz, sea model). Blocking confirm; Cancel reverts the pick.
+  (function () {
+    const gsel = $("dev-src-gps"), dlg = $("ublox-warn-dlg");
+    if (!gsel || !dlg) return;
+    let prev = gsel.value;
+    gsel.addEventListener("focus", () => { prev = gsel.value; });
+    gsel.addEventListener("change", async () => {
+      if (gsel.value !== "ublox" || prev === "ublox") { prev = gsel.value; return; }
+      try {
+        const d = await (await fetch("/api/tools/ublox/marine-config")).json();
+        const ul = $("ublox-warn-list");
+        if (ul) {
+          ul.innerHTML = "";
+          (d.summary || []).forEach((s) => {
+            const li = document.createElement("li");
+            li.textContent = s;
+            ul.appendChild(li);
+          });
+        }
+      } catch (e) { /* fall back to the dialog's static copy */ }
+      dlg.returnValue = "";
+      const onClose = () => {
+        dlg.removeEventListener("close", onClose);
+        if (dlg.returnValue !== "ok") {   // cancelled / Esc -> revert the pick
+          gsel.value = prev;
+          syncConnFields();
+          refreshMenus();
+        }
+        prev = gsel.value;
+      };
+      dlg.addEventListener("close", onClose);
+      if (typeof dlg.showModal === "function") dlg.showModal();
+    });
+    const ok = $("ublox-warn-ok"), cancel = $("ublox-warn-cancel");
+    if (ok) ok.addEventListener("click", () => { dlg.returnValue = "ok"; dlg.close(); });
+    if (cancel) cancel.addEventListener("click", () => { dlg.returnValue = "cancel"; dlg.close(); });
+  })();
+
   // Split-channel source selects → toggle per-channel serial rows.
   SPLIT_SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
