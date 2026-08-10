@@ -305,6 +305,10 @@ body.light .leaflet-control-layers-toggle { filter: none; }
 .sim-indicator.hidden { display: none; }
 
 .hidden { display: none !important; }
+/* Battery gauge turned off (battery_source: none). A dedicated class so
+   renderBattery can hide the HUD widget without clobbering the user's HUD
+   visibility pref (settings.js/views.js own its `.hidden`/`.vw-off`). */
+.batt-off { display: none !important; }
 .boat-icon { transition: transform 0.18s linear; }
 .boat-glow { fill: var(--accent); opacity: 0.30; filter: blur(3px); }
 .boat-hull { filter: drop-shadow(0 0 4px rgba(27, 228, 255, 0.55)); }

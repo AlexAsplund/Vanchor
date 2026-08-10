@@ -10,8 +10,11 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
   level and the low/critical alarms and thrust-derating ladder still fired for a
   gauge the operator had turned off (and on real hardware with no gauge the
   zeros fallback reported 0% → a false *critical* alarm). With no battery source
-  the snapshot now reports `soc_pct: null` (UI shows "—"), which the alarm, RTL,
-  and ladder paths already treat as "no reading" and skip.
+  the snapshot now reports `soc_pct: null` + `present: false`, which the alarm,
+  RTL, and ladder paths already treat as "no reading" and skip. The UI **hides**
+  the battery HUD widget, status-bar chip, mobile tile, and the Settings battery
+  section entirely when the gauge is off (a real gauge merely between readings —
+  `soc` null but `present` not false — still shows, as "—").
 
 - **SD image: the Pi is an always-on WiFi access point (offline-first), with a
   per-device SSID.** Previously the AP was a low-priority *fallback* that only
