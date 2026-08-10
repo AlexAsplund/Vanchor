@@ -967,6 +967,11 @@
           <span class="cm-tile-lbl">Devices</span>
           <span class="cm-tile-hint">Sensors, motor &amp; hardware</span>
         </button>
+        <button class="cm-tile" type="button" data-cat="tools">
+          <span class="cm-tile-ic" aria-hidden="true">🛠</span>
+          <span class="cm-tile-lbl">Tools</span>
+          <span class="cm-tile-hint">u-blox config &amp; diagnostics</span>
+        </button>
         <button class="cm-tile" type="button" data-cat="data">
           <span class="cm-tile-ic" aria-hidden="true">📊</span>
           <span class="cm-tile-lbl">Data &amp; system</span>
@@ -1004,6 +1009,9 @@
       <!-- Devices -->
 <!--#include: panel-devices.html-->
 
+      <!-- Tools -->
+<!--#include: panel-tools.html-->
+
       <!-- Data & system -->
 <!--#include: panel-data.html-->
 
@@ -1033,6 +1041,17 @@
     <div class="btn-row">
       <button id="sup-confirm-cancel" class="btn-ghost wide">Cancel</button>
       <button id="sup-confirm-ok" class="btn-primary wide">Apply</button>
+    </div>
+  </dialog>
+
+  <dialog id="ublox-warn-dlg" class="sup-confirm">
+    <b>Selecting u-blox reconfigures the receiver</b>
+    <p class="hint">Choosing the u-blox driver applies these settings to the GPS when it connects:</p>
+    <ul id="ublox-warn-list" class="hint" style="margin:.2rem 0 .2rem 1.1rem"></ul>
+    <p class="hint"><b>NMEA sentence output is turned OFF</b> (the app reads UBX NAV-PVT instead). Need NMEA on? Use the <b>Tools</b> tab.</p>
+    <div class="btn-row">
+      <button id="ublox-warn-cancel" class="btn-ghost wide" value="cancel">Cancel</button>
+      <button id="ublox-warn-ok" class="btn-primary wide" value="ok">Use u-blox</button>
     </div>
   </dialog>
 
@@ -1354,6 +1373,7 @@
   <script src="/static/boat.js"></script>
   <script src="/static/selectboat.js"></script>
   <script src="/static/debug.js"></script>
+  <script src="/static/tools.js"></script>
   <script src="/static/appcore.js"></script>
   <script src="/static/controls.js"></script>
   <script src="/static/steerwheel.js"></script>

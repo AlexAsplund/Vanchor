@@ -203,6 +203,99 @@ def cfg_valset(items: list[tuple[int, int]], layers: int = 1) -> bytes:
     return build_frame(CFG_VALSET[0], CFG_VALSET[1], bytes(payload))
 
 
+# --------------------------------------------------------------------------- #
+# Named config keys (gen-9 / M9 configuration database) + poll/ack helpers
+# --------------------------------------------------------------------------- #
+KEY_RATE_MEAS = 0x30210001          # U2  measurement period, ms
+KEY_NAVSPG_DYNMODEL = 0x20110021    # U1  dynamic model (5 = sea)
+KEY_UART1_BAUDRATE = 0x40520001     # U4  UART1 baud
+KEY_UART1OUTPROT_UBX = 0x10740001   # L
+KEY_UART1OUTPROT_NMEA = 0x10740002  # L
+KEY_USBOUTPROT_UBX = 0x10780001     # L
+KEY_USBOUTPROT_NMEA = 0x10780002    # L
+KEY_MSGOUT_NAV_PVT_UART1 = 0x20910007  # U1
+KEY_MSGOUT_NAV_PVT_USB = 0x20910009    # U1
+
+MON_VER = (0x0A, 0x04)  # UBX-MON-VER (poll for sw/hw version)
+ACK_ACK = (0x05, 0x01)
+ACK_NAK = (0x05, 0x00)
+
+_SUPPORTED_BAUDS = (4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800)
+
+
+def poll(msg_class: int, msg_id: int) -> bytes:
+    """A UBX *poll* request: an empty-payload frame. The receiver replies with
+    the current message (e.g. ``poll(*MON_VER)`` -> UBX-MON-VER)."""
+    return build_frame(msg_class, msg_id, b"")
+
+
+def find_ack(frames: list[tuple[int, int, bytes]]) -> bool | None:
+    """Scan parsed frames for a UBX-ACK response: True = ACK-ACK, False =
+    ACK-NAK, None = neither present."""
+    for cls, mid, _ in frames:
+        if (cls, mid) == ACK_ACK:
+            return True
+        if (cls, mid) == ACK_NAK:
+            return False
+    return None
+
+
+def decode_mon_ver(payload: bytes) -> dict:
+    """Decode UBX-MON-VER: 30-byte swVersion, 10-byte hwVersion, then zero or
+    more 30-byte extension strings (all null-padded ASCII)."""
+    if len(payload) < 40:
+        return {}
+    def _s(b: bytes) -> str:
+        return b.split(b"\x00", 1)[0].decode("ascii", "replace").strip()
+    exts = [_s(payload[o:o + 30]) for o in range(40, len(payload) - 29, 30)]
+    return {"sw": _s(payload[0:30]), "hw": _s(payload[30:40]),
+            "extensions": [e for e in exts if e]}
+
+
+def cfg_set_output_protocols(*, nmea: bool | None = None, ubx: bool | None = None,
+                             layers: int = 1) -> bytes:
+    """VALSET turning the NMEA and/or UBX *output* protocols on/off, on both
+    UART1 and USB. Pass only the protocol(s) you want to change."""
+    items: list[tuple[int, int]] = []
+    if ubx is not None:
+        items += [(KEY_UART1OUTPROT_UBX, int(ubx)), (KEY_USBOUTPROT_UBX, int(ubx))]
+    if nmea is not None:
+        items += [(KEY_UART1OUTPROT_NMEA, int(nmea)), (KEY_USBOUTPROT_NMEA, int(nmea))]
+    if not items:
+        raise ValueError("nothing to set: pass nmea and/or ubx")
+    return cfg_valset(items, layers=layers)
+
+
+def cfg_set_rate_hz(hz: float, layers: int = 1) -> bytes:
+    """VALSET the navigation/measurement rate in Hz (CFG-RATE-MEAS, in ms)."""
+    if not 0 < hz <= 40:
+        raise ValueError(f"rate {hz} Hz out of range (0, 40]")
+    ms = max(25, min(round(1000.0 / hz), 65535))  # M9 floor 25 ms (40 Hz); U2 cap
+    return cfg_valset([(KEY_RATE_MEAS, ms)], layers=layers)
+
+
+def cfg_set_uart_baud(baud: int, layers: int = 1) -> bytes:
+    """VALSET the UART1 baud (CFG-UART1-BAUDRATE). After this the host must
+    reconnect at the new baud, and only affects a UART-wired receiver."""
+    if baud not in _SUPPORTED_BAUDS:
+        raise ValueError(f"unsupported baud {baud}; use one of {_SUPPORTED_BAUDS}")
+    return cfg_valset([(KEY_UART1_BAUDRATE, baud)], layers=layers)
+
+
+# Marine config as (key, value, human-description) so the frame and the UI
+# warning (describe_marine_config) can never drift apart.
+_MARINE_ITEMS: tuple[tuple[int, int, str], ...] = (
+    (KEY_RATE_MEAS, 100, "Update rate set to 10 Hz"),
+    (KEY_NAVSPG_DYNMODEL, 5, "Dynamic model set to Sea"),
+    (KEY_MSGOUT_NAV_PVT_UART1, 1, "UBX NAV-PVT output enabled (UART1)"),
+    (KEY_MSGOUT_NAV_PVT_USB, 1, "UBX NAV-PVT output enabled (USB)"),
+    (KEY_UART1OUTPROT_UBX, 1, "UBX protocol output enabled (UART1)"),
+    (KEY_UART1OUTPROT_NMEA, 0, "NMEA output turned OFF (UART1)"),
+    (KEY_USBOUTPROT_UBX, 1, "UBX protocol output enabled (USB)"),
+    (KEY_USBOUTPROT_NMEA, 0, "NMEA output turned OFF (USB)"),
+)
+
+
 def cfg_marine_10hz() -> bytes:
     """Build a VALSET frame configuring an M9N for 10 Hz marine UBX output.
 
@@ -211,17 +304,20 @@ def cfg_marine_10hz() -> bytes:
     over USB (``/dev/ttyACM*``) -- the keys for the port that isn't in use are
     valid and simply have no effect. All key IDs verified against a real M9N
     (every VALSET item ACKs; 10 Hz NAV-PVT confirmed over USB).
+
+    NMEA output is turned OFF (the driver parses UBX NAV-PVT). See
+    :func:`describe_marine_config` for the human-readable summary shown to the
+    operator when the u-blox driver is selected.
     """
-    items: list[tuple[int, int]] = [
-        (0x30210001, 100),  # CFG-RATE-MEAS         U2 = 100 ms (10 Hz)
-        (0x20110021, 5),    # CFG-NAVSPG-DYNMODEL    U1 = 5 (sea)
-        # NAV-PVT out on each port: I2C=6, UART1=7, UART2=8, USB=9, SPI=a.
-        (0x20910007, 1),    # CFG-MSGOUT-UBX_NAV_PVT_UART1 U1 = 1
-        (0x20910009, 1),    # CFG-MSGOUT-UBX_NAV_PVT_USB   U1 = 1
-        # Output protocols: UBX on, NMEA off, per port.
-        (0x10740001, 1),    # CFG-UART1OUTPROT-UBX   L = 1 (on)
-        (0x10740002, 0),    # CFG-UART1OUTPROT-NMEA  L = 0 (off)
-        (0x10780001, 1),    # CFG-USBOUTPROT-UBX     L = 1 (on)
-        (0x10780002, 0),    # CFG-USBOUTPROT-NMEA    L = 0 (off)
+    return cfg_valset([(k, v) for k, v, _ in _MARINE_ITEMS], layers=1)
+
+
+def describe_marine_config() -> list[str]:
+    """Concise, de-duplicated human summary of what selecting the u-blox driver
+    applies to the receiver -- for a confirm/warning dialog in the UI."""
+    return [
+        "Update rate set to 10 Hz",
+        "Dynamic model set to Sea",
+        "UBX NAV-PVT output enabled (the app reads this)",
+        "NMEA sentence output turned OFF",
     ]
-    return cfg_valset(items, layers=1)

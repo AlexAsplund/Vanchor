@@ -1066,6 +1066,51 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         of the user hand-typing ``/dev/tty...`` (OpenPlotter-style auto-detect)."""
         return {"ports": runtime.list_serial_ports()}
 
+    # -- u-blox toolbox: poke UBX config on ANY serial port, independent of --- #
+    # whether gps_source is 'ublox' (e.g. a BE-880 that speaks UBX). ---------- #
+    @app.get("/api/tools/ublox/marine-config")
+    async def ublox_marine_config() -> dict:
+        """The settings selecting ``gps_source: ublox`` applies to the receiver,
+        for a UI confirm/warning (it turns NMEA off, sets 10 Hz, etc.)."""
+        from ..nav import ubx
+        return {"summary": ubx.describe_marine_config()}
+
+    def _ublox_transport(port: str, baud: int):
+        from ..hardware.serial_link import PySerialTransport
+        return PySerialTransport(port, baudrate=int(baud))
+
+    @app.get("/api/tools/ublox/stats")
+    async def ublox_stats(port: str, baud: int = 38400) -> dict:
+        """Sample a receiver on ``port`` for ~2 s: fix, sat count, which
+        protocols stream, firmware. Opens the port briefly then closes it."""
+        from ..runtime import ublox_tools
+        try:
+            return await ublox_tools.read_stats(_ublox_transport(port, baud))
+        except Exception as exc:  # noqa: BLE001 - busy/missing port, no serial extra
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    @app.post("/api/tools/ublox/apply")
+    async def ublox_apply(payload: dict) -> Response:
+        """Apply UBX settings on ``port``: ``nmea`` (bool), ``rate_hz`` (float),
+        ``new_baud`` (int). ``persist`` writes flash (survives reboot)."""
+        from ..runtime import ublox_tools
+        data = payload or {}
+        port = data.get("port")
+        if not port:
+            return Response(json.dumps({"ok": False, "error": "port required"}),
+                            media_type="application/json", status_code=400)
+        try:
+            res = await ublox_tools.apply_settings(
+                _ublox_transport(port, data.get("baud") or 38400),
+                nmea=data.get("nmea"), rate_hz=data.get("rate_hz"),
+                baud=data.get("new_baud"), persist=bool(data.get("persist")))
+        except ValueError as exc:  # out-of-range rate/baud -> nothing sent
+            return Response(json.dumps({"ok": False, "error": str(exc)}),
+                            media_type="application/json", status_code=400)
+        except Exception as exc:  # noqa: BLE001 - busy/missing port
+            res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return Response(json.dumps(res), media_type="application/json")
+
     # -- Hardware setup wizard endpoints (adoption pack #2) ---------------- #
     @app.get("/api/hw/scan")
     async def hw_scan() -> dict:

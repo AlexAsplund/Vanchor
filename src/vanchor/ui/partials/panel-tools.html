@@ -1,0 +1,58 @@
+      <section class="cm-panel hidden" data-cat="tools">
+
+      <details class="card" id="ublox-tools-card" open>
+        <summary>u-blox tools <span class="badge">UBX</span></summary>
+        <div class="hint">
+          Configure any u-blox / UBX-speaking receiver on a serial port —
+          independent of which GPS source is selected. Changes apply to the chip
+          immediately (RAM); tick <b>Save to flash</b> to keep them across a power
+          cycle. If the port is in use by the running GPS, set that source to
+          Simulation / Not connected first.
+        </div>
+
+        <div class="row"><span>Port</span>
+          <select id="ubxt-port"><option value="">— scanning —</option></select>
+        </div>
+        <div class="row"><span>Connection baud</span>
+          <select id="ubxt-baud">
+            <option>4800</option><option>9600</option><option>19200</option>
+            <option selected>38400</option><option>57600</option>
+            <option>115200</option><option>230400</option>
+          </select>
+        </div>
+
+        <div class="ctx-sub">Stats</div>
+        <button id="ubxt-read" class="btn-primary wide" type="button">Read stats (~2 s)</button>
+        <pre id="ubxt-stats" class="dev-debug-out" style="margin-top:.4rem;max-height:9rem;overflow-y:auto">—</pre>
+
+        <div class="ctx-sub">Settings</div>
+        <div class="row"><span>NMEA output</span>
+          <select id="ubxt-nmea">
+            <option value="">(no change)</option>
+            <option value="1">On</option>
+            <option value="0">Off</option>
+          </select>
+        </div>
+        <div class="row"><span>Update rate</span>
+          <select id="ubxt-rate">
+            <option value="">(no change)</option>
+            <option value="1">1 Hz</option>
+            <option value="5">5 Hz</option>
+            <option value="10">10 Hz</option>
+          </select>
+        </div>
+        <div class="row"><span>Set UART baud</span>
+          <select id="ubxt-newbaud">
+            <option value="">(no change)</option>
+            <option>9600</option><option>38400</option>
+            <option>57600</option><option>115200</option>
+          </select>
+        </div>
+        <label class="switch" title="Write to flash so the setting survives a power cycle (otherwise it reverts on reboot).">
+          <input type="checkbox" id="ubxt-persist" /><span class="track"></span> Save to flash (survives power cycle)
+        </label>
+        <button id="ubxt-apply" class="btn-primary wide" type="button">Apply settings</button>
+        <div id="ubxt-result" class="hint"></div>
+      </details>
+
+      </section><!-- /tools -->
