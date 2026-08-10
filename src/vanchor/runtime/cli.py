@@ -104,13 +104,23 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("boot: mDNS advertise done in %.1fs", _time.monotonic() - _t3)
 
     log_level = (args.log_level or "info").lower()
+    # WS keepalive tuned for a phone on the boat AP: uvicorn's defaults
+    # (ping 20 s / timeout 20 s) DISCONNECT a client whose WiFi power-naps long
+    # enough to delay one pong -- on an iPhone (esp. Low Power Mode) that made
+    # the server close the socket every ~45 s ("data stale" flashes; confirmed
+    # in a debug recording: ws error/close/open cycles at +0.6 s and +46.3 s
+    # with the server perfectly healthy). Ping less often and tolerate slow
+    # pongs; the app has its OWN ping + data-stale detection for real losses.
+    _ws_keepalive = {"ws_ping_interval": 25.0, "ws_ping_timeout": 60.0}
     servers = [uvicorn.Server(uvicorn.Config(
-        app, host=config.server.host, port=config.server.port, log_level=log_level))]
+        app, host=config.server.host, port=config.server.port, log_level=log_level,
+        **_ws_keepalive))]
     if tls_pair:
         cert, key = tls_pair
         servers.append(uvicorn.Server(uvicorn.Config(
             app, host=config.server.host, port=config.server.https_port,
-            log_level=log_level, ssl_certfile=cert, ssl_keyfile=key)))
+            log_level=log_level, ssl_certfile=cert, ssl_keyfile=key,
+            **_ws_keepalive)))
         logger.info("HTTPS listening on port %d (cert: %s)",
                     config.server.https_port, cert)
 
