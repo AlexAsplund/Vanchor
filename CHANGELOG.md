@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a14] — 2026-08-10
+
 - **The boat now fetches online data through your phone when it has no internet.**
   Calculating a route needs OpenStreetMap water data; the Pi (usually offline on
   the water) tried to fetch it itself, failed, and the route silently died. A new
