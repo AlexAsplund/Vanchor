@@ -405,8 +405,27 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
                 logger.exception("broadcaster loop error — will retry")
                 await asyncio.sleep(1.0)
 
+    # --- Client fetch relay (#147): the offline Pi fetches online data (route
+    # water polygons, ...) THROUGH a connected client, which has internet. The
+    # relay broadcasts {type:"fetch_request"} over this same WS client set; the
+    # client answers on POST /api/relay/{id}.
+    from ..runtime.fetch_relay import FetchRelay
+
+    async def _relay_broadcast(msg: dict) -> None:
+        txt = json.dumps(msg)
+        for ws in list(clients):
+            try:
+                await asyncio.wait_for(ws.send_text(txt), timeout=2.0)
+            except Exception:  # noqa: BLE001 - drop a dead/wedged socket
+                clients.discard(ws)
+
+    fetch_relay = FetchRelay(
+        broadcast=_relay_broadcast, has_clients=lambda: bool(clients))
+    runtime.fetch_relay = fetch_relay  # nav/route code reaches it via the runtime
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
+        fetch_relay.bind_loop(asyncio.get_running_loop())
         await runtime.start()
         task = asyncio.ensure_future(broadcaster())
         try:
@@ -1066,6 +1085,26 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         of the user hand-typing ``/dev/tty...`` (OpenPlotter-style auto-detect)."""
         return {"ports": runtime.list_serial_ports()}
 
+    # -- Client fetch relay result (#147) ---------------------------------- #
+    _RELAY_MAX_BYTES = 32 * 1024 * 1024  # defensive cap on a relayed resource
+
+    @app.post("/api/relay/{request_id}")
+    async def relay_result(request_id: str, request: _Request, ok: int = 1) -> dict:
+        """A client's answer to a ``fetch_request``: raw resource bytes on
+        success (``?ok=1``), or an error message body (``?ok=0``). Late/duplicate
+        answers (a second client) are ignored (``matched: false``)."""
+        data = await request.body()
+        if len(data) > _RELAY_MAX_BYTES:
+            matched = fetch_relay.resolve(
+                request_id, ok=False,
+                error=f"relayed resource too large ({len(data)} bytes)")
+        elif ok:
+            matched = fetch_relay.resolve(request_id, ok=True, data=data)
+        else:
+            matched = fetch_relay.resolve(
+                request_id, ok=False,
+                error=data.decode("utf-8", "replace")[:500] or None)
+        return {"ok": True, "matched": matched}
     # -- u-blox toolbox: poke UBX config on ANY serial port, independent of --- #
     # whether gps_source is 'ublox' (e.g. a BE-880 that speaks UBX). ---------- #
     @app.get("/api/tools/ublox/marine-config")

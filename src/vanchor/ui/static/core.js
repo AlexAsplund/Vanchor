@@ -262,6 +262,10 @@ function _stopConfirmed(t) {
 VA.role = "observer";        // "helm" | "observer" — until the first role frame
 VA._phoneHandlers = [];
 VA.onPhoneSensors = (fn) => VA._phoneHandlers.push(fn);
+// Fetch-relay requests (#147): the offline boat asks THIS client (which has
+// internet) to fetch an online resource on its behalf. relay.js registers.
+VA._fetchRelayHandlers = [];
+VA.onFetchRequest = (fn) => VA._fetchRelayHandlers.push(fn);
 VA.helmPresent = false;      // is ANY client currently the helm?
 VA.clientCount = 1;          // number of connected clients
 VA.isHelm = function () { return VA.role === "helm"; };
@@ -397,6 +401,9 @@ VA.connect = function () {
       case "role": dispatchRole(t); return;      // multi-client role/presence (#24)
       case "phone_sensors":                       // phone-as-sensor feeder status
         (VA._phoneHandlers || []).forEach((fn) => { try { fn(t); } catch (e) { /* ignore */ } });
+        return;
+      case "fetch_request":                       // boat asks us to fetch online data (#147)
+        (VA._fetchRelayHandlers || []).forEach((fn) => { try { fn(t); } catch (e) { /* ignore */ } });
         return;
       case "role_denied":                        // command rejected: not the helm
         VA.logLine("⛔ " + (t.error || "observer — take the helm to command"));

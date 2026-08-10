@@ -28,6 +28,25 @@ class NavGlue:
         self._rt = rt   # back-reference to Runtime for shared state
 
     # ------------------------------------------------------------------ #
+    # Online fetches (Overpass) through the client relay when offline
+    # ------------------------------------------------------------------ #
+    def _relay_post(self):
+        """The relay-backed ``http_post`` for ``water.fetch_overpass`` (tries the
+        server's own internet first, then a connected client), or ``None`` when
+        no relay is attached (tests / headless) so the direct default applies."""
+        from .fetch_relay import relay_http_post
+        return relay_http_post(getattr(self._rt, "fetch_relay", None))
+
+    @staticmethod
+    def _fetch_fail_message(exc: Exception) -> str:
+        """Operator-facing message for a failed water fetch. A FetchRelayError
+        already says exactly what went wrong (no internet + no client, client
+        couldn't fetch, timeout); anything else gets the generic offline hint."""
+        if type(exc).__name__ == "FetchRelayError":
+            return str(exc)
+        return "No offline chart for this area; connect once to download it."
+
+    # ------------------------------------------------------------------ #
     # Fusion calibration (still-capture system-ID; see nav.calibration)
     # ------------------------------------------------------------------ #
 
@@ -219,13 +238,13 @@ class NavGlue:
         water_ll = cache.find_covering(bbox)
         if water_ll is None:
             try:
-                elements = water.fetch_overpass(*bbox)
+                elements = water.fetch_overpass(*bbox, http_post=self._relay_post())
             except Exception as exc:  # network / endpoint failure
                 logger.warning("water fetch failed: %s", exc)
                 return {
                     "ok": False,
                     "waypoints": [],
-                    "message": "No offline chart for this area; connect once to download it.",
+                    "message": self._fetch_fail_message(exc),
                 }
             water_ll = water.assemble_water(elements)
             if water_ll.is_empty:
@@ -306,14 +325,14 @@ class NavGlue:
         water_ll = cache.find_covering(bbox)
         if water_ll is None:
             try:
-                elements = water.fetch_overpass(*bbox)
+                elements = water.fetch_overpass(*bbox, http_post=self._relay_post())
             except Exception as exc:  # network / endpoint failure
                 logger.warning("water fetch failed: %s", exc)
                 return {
                     "ok": False,
                     "waypoints": [],
                     "loop": True,
-                    "message": "No offline chart for this area; connect once to download it.",
+                    "message": self._fetch_fail_message(exc),
                 }
             water_ll = water.assemble_water(elements)
             if water_ll.is_empty:
