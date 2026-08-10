@@ -26,7 +26,7 @@ import sys
 
 
 GITHUB_OWNER = "AlexAsplund"
-GITHUB_REPO = "vanchor-ng"
+GITHUB_REPO = "Vanchor"
 
 
 def sha256_of(path: pathlib.Path) -> str:
@@ -47,9 +47,12 @@ def build_os_list(
     download_size = img_xz.stat().st_size
     download_sha256 = sha256_of(img_xz)
 
+    # Derive the download filename from the ACTUAL built image, not a guessed
+    # name -- image.yml uploads it under its real basename (pi-gen names it e.g.
+    # image_<date>-vanchor-lite.img.xz), so a hardcoded name would 404.
     url = (
         f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}"
-        f"/releases/download/v{version}/vanchor-{version}-arm64.img.xz"
+        f"/releases/download/v{version}/{img_xz.name}"
     )
 
     return {
