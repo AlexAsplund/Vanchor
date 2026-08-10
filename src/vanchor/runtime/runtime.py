@@ -247,12 +247,15 @@ class Runtime:
         self.battery_monitor = dev["battery_monitor"]
         motor = dev["motor"]
 
-        # Accumulates depth soundings for the auto depth-map overlay.
+        # Accumulates depth soundings for the auto depth-map overlay. The saved
+        # map/chart is LOADED IN THE BACKGROUND from start() (a big imported
+        # chart takes seconds on a Pi and used to block boot before the server
+        # would accept a single request); until the swap the map is just empty,
+        # so overlays render blank briefly and then pop in.
         self.depth_map = DepthMap()
         self._depth_map_path = os.path.join(cfg.data_dir, "depthmap.json")
         self._depth_chart_path = os.path.join(cfg.data_dir, "depthchart.json")
-        self.depth_map.load(self._depth_map_path, self._depth_chart_path)
-        self._depth_saved_n = len(self.depth_map.points)
+        self._depth_saved_n = 0
         # Depth cluster (issue #71): depth soundings, chart management, depth
         # grid/query, contour routing, import -- all live in DepthService.
         self._depth = DepthService(self)
@@ -1672,6 +1675,37 @@ class Runtime:
             return
         import time as _time
         _boot_t0 = _time.monotonic()
+        # Load the saved depth map/chart off the boot path: build a fresh
+        # DepthMap in a worker thread, then swap it in on the loop, replaying
+        # any soundings recorded into the boot map meanwhile (the swap is a
+        # plain attribute assignment, so readers see old-empty or new-full).
+        async def _load_depth_bg() -> None:
+            try:
+                fresh = DepthMap()
+                await asyncio.to_thread(
+                    fresh.load, self._depth_map_path, self._depth_chart_path)
+            except Exception:  # noqa: BLE001 - a corrupt file must not kill boot
+                logger.exception("background depth-map load failed; starting empty")
+                return
+            boot_map = self.depth_map
+            # Merge-preserving swap: anything that touched the boot map while
+            # the load ran (an early import, a test fixture, live soundings)
+            # must survive. Replay soundings into the fresh map, and carry over
+            # bulk fields the fresh load doesn't have. If someone REPLACED the
+            # map object meanwhile (an import with replace=True), keep theirs.
+            if self.depth_map is not boot_map:
+                return
+            for lat, lon, depth in list(boot_map.points):  # soundings during load
+                fresh.record(GeoPoint(lat, lon), depth)
+            for attr in ("composition", "contours", "hardness"):
+                boot_val = getattr(boot_map, attr, None)
+                if len(boot_val or []) and not len(getattr(fresh, attr, None) or []):
+                    setattr(fresh, attr, boot_val)
+            self.depth_map = fresh
+            self._depth_saved_n = len(fresh.points)
+            logger.info("boot: depth map loaded in background (%d points)",
+                        len(fresh.points))
+        self._tasks.append(asyncio.ensure_future(_load_depth_bg()))
         self.recorder.start()
         # Arm the external hardware watchdog (#44) before the supervisor begins
         # petting it. A no-op when disabled; a bad GPIO must not crash boot.

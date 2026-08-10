@@ -27,5 +27,20 @@ systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true
 systemctl mask serial-getty@ttyS0.service 2>/dev/null || true
 systemctl mask serial-getty@serial0.service 2>/dev/null || true
 
+# Boot time: don't gate boot on "network online". docker.service Wants=
+# network-online.target, which runs NetworkManager-wait-online -- and on the
+# boat (an AP with no upstream internet) that blocks for its FULL timeout
+# (30-60 s) before Docker (and therefore vanchor) even starts. The boat never
+# needs to be "online" to serve its own AP; disabling the wait lets the target
+# activate immediately. (Dependencies can't be removed via drop-in, so
+# disabling the wait service is the standard appliance fix.)
+systemctl disable NetworkManager-wait-online.service 2>/dev/null || true
+
+# Boot time: shave firmware delays (no rainbow splash, no boot_delay wait).
+if [ -f "$BOOT_DIR/config.txt" ]; then
+    grep -q '^disable_splash=1' "$BOOT_DIR/config.txt" || echo 'disable_splash=1' >> "$BOOT_DIR/config.txt"
+    grep -q '^boot_delay=0'     "$BOOT_DIR/config.txt" || echo 'boot_delay=0'     >> "$BOOT_DIR/config.txt"
+fi
+
 # Enable the access-point service (brings the AP up at every boot; offline-first).
 systemctl enable vanchor-hotspot.service

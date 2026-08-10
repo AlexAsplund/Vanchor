@@ -125,3 +125,58 @@ async def test_reload_devices_stops_old_motor():
     assert rt.controller.motor is not motor  # swapped to the new (sim) motor
 
     await rt.stop()
+
+
+async def test_depth_map_loads_in_background_after_start(tmp_path):
+    # A big saved chart used to load synchronously in Runtime.__init__, blocking
+    # boot for seconds on a Pi before the server could serve anything. It now
+    # loads in a background task started by start(): pre-seeded data appears
+    # shortly after start() without having blocked construction.
+    import asyncio
+    import json
+
+    (tmp_path / "depthmap.json").write_text(
+        json.dumps({"points": [[59.0, 13.0, 4.2], [59.001, 13.001, 5.0]]}))
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    assert len(rt.depth_map.points) == 0        # constructor no longer loads
+    await rt.start()
+    try:
+        for _ in range(100):                     # background task swaps it in
+            if len(rt.depth_map.points) == 2:
+                break
+            await asyncio.sleep(0.02)
+        assert len(rt.depth_map.points) == 2
+        assert rt._depth_saved_n == 2            # save-threshold baseline updated
+    finally:
+        await rt.stop()
+
+
+async def test_background_depth_load_preserves_early_mutations(tmp_path):
+    # Regression (caught by CI ordering): data put into the map BETWEEN start()
+    # and the background swap -- an early import, a test fixture, live
+    # soundings -- must survive the swap instead of being clobbered.
+    import asyncio
+    import json
+
+    from vanchor.core.models import GeoPoint
+
+    (tmp_path / "depthmap.json").write_text(
+        json.dumps({"points": [[59.0, 13.0, 4.2]]}))
+    cfg = load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    await rt.start()
+    try:
+        # Mutate the boot map immediately (races the background load on purpose).
+        rt.depth_map.composition = [{"pct": 50.0, "ring": [[59, 13], [59.1, 13.1], [59.1, 13]]}]
+        rt.depth_map.record(GeoPoint(59.5, 13.5), 7.0)
+        for _ in range(100):
+            if len(rt.depth_map.points) >= 2:      # disk point + recorded point
+                break
+            await asyncio.sleep(0.02)
+        assert len(rt.depth_map.points) == 2
+        assert len(rt.depth_map.composition) == 1  # early mutation survived
+    finally:
+        await rt.stop()
