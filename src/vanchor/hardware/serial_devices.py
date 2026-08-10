@@ -369,14 +369,21 @@ class _SerialNmeaSensor(Sensor):
             return f"{cls}: debug error ({exc})"
 
     async def start(self) -> None:
+        # Idempotent. When one reader is SHARED across device slots (e.g. a GPS
+        # and compass on the SAME serial port -- a combo NMEA source), start() is
+        # called once per slot; only the first opens the port and spawns the read
+        # task, so a shared port never gets two readers on one stream.
+        if self._task is not None and not self._task.done():
+            return
         await self.transport.open()
         self._task = asyncio.ensure_future(self._sup.run())
 
     async def stop(self) -> None:
+        if self._task is None:
+            return  # never started, or a shared instance already stopped
         self._sup.request_stop()
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
+        self._task.cancel()
+        self._task = None
         await self.transport.close()
 
 
