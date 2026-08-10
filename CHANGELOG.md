@@ -4,6 +4,13 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **GPS walk analysis tool (`python -m vanchor.analysis.gps_walk`).** Feeds the
+  no-RTK station-keeping design (#154): run it over a stationary debug
+  recording and it reports the M9N's position-walk envelope (std/CEP50/CEP95),
+  the walk's autocorrelation time, the averaging-window sweet spot, the Doppler
+  velocity noise floor at rest, and whether the reported hAcc is honest --
+  ending with suggested hold-controller constants (velocity deadband, outer
+  position-loop tau). Reads `.ndjson`/`.ndjson.gz` parts, stdlib only.
 - **Faster boot, especially offline.** Three changes: (1) the SD image no longer
   gates boot on "network online" -- `NetworkManager-wait-online` blocked Docker
   (and therefore vanchor) for its full 30-60 s timeout on the internet-less boat
