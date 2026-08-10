@@ -4,6 +4,19 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **The map's water-clip no longer touches the network at all (link-loss fix,
+  round 2).** The per-viewport clip lookup still tried a *direct* Overpass fetch
+  when uncached -- and on the boat "direct" doesn't fail fast: with the AP's DNS
+  pointing at a dead upstream every attempt hangs for the full timeout in an
+  executor thread, a few map pans exhaust the pool, and everything queued behind
+  it (depth grids/tiles) stalls -- the recurring "data link loss" right after an
+  "Overpass fetch from ..." log line. The viewport path is now **cache-only**
+  (like the land guard): uncached -> the overlay renders unclipped until the
+  area is prefetched via chart prefetch / route planning.
+- **Boot-phase timings in the log.** Startup logs how long Runtime construction,
+  app creation, TLS, mDNS, and runtime start each took, so a slow boot (reported
+  on the Pi without a network connection) shows exactly where the time goes.
+
 ## [1.5.0a17] — 2026-08-10
 
 - **Fixed the periodic "data stale" / WS drops around "land guard: water chart
