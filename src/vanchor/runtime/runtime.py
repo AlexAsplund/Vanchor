@@ -1167,7 +1167,19 @@ class Runtime:
         bb = self._land_water_bbox
         inside = (bb is not None and
                   bb[0] <= pos.lat <= bb[2] and bb[1] <= pos.lon <= bb[3])
-        if now < self._land_water_next and inside and gov.has_water_geometry:
+        if inside and gov.has_water_geometry:
+            # Covered: nothing to (re)load. The old guard fell through here
+            # whenever the 20 s timer expired, re-parsing the cached chart (WKB)
+            # and re-handing the whole geometry to the governor ON the event
+            # loop every 20 s -- on a big chart a periodic multi-hundred-ms
+            # stall ("data stale" + WS drops correlating with the "water chart
+            # loaded" log line). Just keep the retry timer fresh.
+            self._land_water_next = now + 20.0
+            return False
+        if now < self._land_water_next:
+            # Throttle (re)load ATTEMPTS. The old guard required `inside` here,
+            # so a boat OUTSIDE any cached chart re-scanned the whole cache at
+            # the full supervisor rate (1 Hz) -- same event-loop stall.
             return False
         self._land_water_next = now + 20.0
         try:

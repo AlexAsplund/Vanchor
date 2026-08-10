@@ -145,3 +145,61 @@ def test_guard_cut_does_not_freeze_the_probe_direction():
     cmd, status = _govern(gov, st, thrust=-0.4)  # commanding reverse (away)
     assert not status.land_stop
     assert cmd.thrust != 0.0
+
+
+# --- refresh_land_guard_water reload cadence (event-loop stall regression) --- #
+
+def _refresh_rt(tmp_path, monkeypatch):
+    """A sim Runtime with a controllable clock and a counting WaterCache."""
+    from vanchor.app import Runtime
+    from vanchor.core.config import load as _load
+    from vanchor.core.models import GeoPoint, GpsFix
+    from vanchor.nav import water as _water
+
+    cfg = _load(None)
+    cfg.data_dir = str(tmp_path)
+    rt = Runtime(cfg)
+    rt.controller.safety.config.land_guard_enabled = True
+    rt.state.fix = GpsFix(point=GeoPoint(59.66, 13.32), valid=True)
+    clock = {"t": 1000.0}
+    rt._mono_fn = lambda: clock["t"]
+    calls = {"n": 0}
+
+    def counting_find(self, bbox):
+        calls["n"] += 1
+        return None                      # nothing cached
+
+    monkeypatch.setattr(_water.WaterCache, "find_covering", counting_find)
+    return rt, clock, calls
+
+
+def test_covered_boat_never_reloads_the_chart(tmp_path, monkeypatch):
+    # Regression: with the chart loaded and the boat inside the trigger box, the
+    # 20 s timer used to force a FULL cache re-parse + geometry hand-off every
+    # expiry -- a periodic event-loop stall ("data stale" + WS drops). Covered
+    # must mean NO reload, ever.
+    from shapely.geometry import MultiPolygon, Polygon
+    rt, clock, calls = _refresh_rt(tmp_path, monkeypatch)
+    rt.controller.safety.set_water_geometry(
+        MultiPolygon([Polygon([(13.0, 59.5), (13.6, 59.5), (13.6, 59.8), (13.0, 59.8)])]))
+    rt._land_water_bbox = (59.6, 13.2, 59.7, 13.4)   # boat inside
+    for k in range(10):
+        clock["t"] += 25.0                            # every timer expiry
+        assert rt.refresh_land_guard_water() is False
+    assert calls["n"] == 0                            # cache never touched
+
+
+def test_uncovered_boat_throttles_reload_attempts(tmp_path, monkeypatch):
+    # Regression: OUTSIDE any cached chart, the old guard bypassed the timer and
+    # re-scanned the whole cache at the 1 Hz supervisor rate. Attempts must be
+    # throttled to the 20 s cadence.
+    rt, clock, calls = _refresh_rt(tmp_path, monkeypatch)
+    assert rt.refresh_land_guard_water() is False     # first attempt (miss)
+    assert calls["n"] == 1
+    for k in range(19):                               # 19 more 1 Hz ticks
+        clock["t"] += 1.0
+        rt.refresh_land_guard_water()
+    assert calls["n"] == 1                            # throttled: no re-scan yet
+    clock["t"] += 2.0                                 # past the 20 s timer
+    rt.refresh_land_guard_water()
+    assert calls["n"] == 2                            # one retry per 20 s
