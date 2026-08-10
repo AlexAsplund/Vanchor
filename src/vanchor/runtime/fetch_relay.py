@@ -68,6 +68,12 @@ class FetchRelay:
         self._direct_timeout_s = direct_timeout_s
         self._pending: dict[str, _Pending] = {}
         self._offline_until: float = 0.0  # sticky-offline circuit-breaker deadline
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Remember the event loop so :meth:`fetch_sync` can be called from
+        worker threads (the route planner runs in an executor)."""
+        self._loop = loop
 
     # -- state (for telemetry / UI) -------------------------------------- #
     @property
@@ -82,21 +88,45 @@ class FetchRelay:
     # -- the public fetch ------------------------------------------------- #
     async def fetch(self, url: str, *, method: str = "GET",
                     headers: dict | None = None, body: bytes | None = None,
-                    timeout: float | None = None) -> bytes:
+                    timeout: float | None = None,
+                    direct_timeout: float | None = None) -> bytes:
         """Return the resource bytes, via a direct server fetch or (if offline)
         by relaying through a connected client. Raises :class:`FetchRelayError`
-        with a clear message when neither can satisfy it."""
+        with a clear message when neither can satisfy it.
+
+        ``direct_timeout`` overrides the short default for sources that are
+        legitimately slow even when online (an Overpass query can take tens of
+        seconds server-side). An offline Pi usually fails FAST regardless (no
+        default route -> immediate "network unreachable"), so a longer direct
+        timeout doesn't delay the offline fallback in practice."""
         if not self.offline:
+            dt = direct_timeout if direct_timeout is not None else self._direct_timeout_s
             try:
                 return await asyncio.wait_for(
-                    self._direct(url, method=method, headers=headers, body=body),
-                    timeout=self._direct_timeout_s)
+                    self._direct(url, method=method, headers=headers, body=body,
+                                 timeout=dt),
+                    timeout=dt + 1.0)
             except Exception as exc:  # noqa: BLE001 - any direct failure -> go offline
                 logger.info("direct fetch of %s failed (%s); switching to client relay",
                             url, exc)
                 self._trip_offline()
         return await self._relay(url, method=method, headers=headers,
                                  body=body, timeout=timeout)
+
+    def fetch_sync(self, url: str, *, method: str = "GET",
+                   headers: dict | None = None, body: bytes | None = None,
+                   timeout: float | None = None,
+                   direct_timeout: float | None = None) -> bytes:
+        """Blocking :meth:`fetch` for WORKER THREADS (e.g. the route planner in
+        its executor). Must never be called from the event-loop thread."""
+        if self._loop is None:
+            raise FetchRelayError("fetch relay not started (no event loop bound)")
+        fut = asyncio.run_coroutine_threadsafe(
+            self.fetch(url, method=method, headers=headers, body=body,
+                       timeout=timeout, direct_timeout=direct_timeout),
+            self._loop)
+        outer = (timeout or self._relay_timeout_s) + (direct_timeout or self._direct_timeout_s) + 10.0
+        return fut.result(timeout=outer)
 
     async def _relay(self, url: str, *, method: str, headers: dict | None,
                      body: bytes | None, timeout: float | None) -> bytes:
@@ -155,11 +185,27 @@ def _rand_id() -> str:
 
 async def _default_direct_fetch(url: str, *, method: str = "GET",
                                 headers: dict | None = None,
-                                body: bytes | None = None) -> bytes:
+                                body: bytes | None = None,
+                                timeout: float = 10.0) -> bytes:
     """Blocking HTTP via requests, run in a thread so it never blocks the loop."""
     def _do() -> bytes:
         import requests
-        resp = requests.request(method, url, headers=headers, data=body, timeout=10.0)
+        resp = requests.request(method, url, headers=headers, data=body,
+                                timeout=timeout)
         resp.raise_for_status()
         return resp.content
     return await asyncio.to_thread(_do)
+
+
+def relay_http_post(relay: "FetchRelay | None", *, direct_timeout: float = 25.0,
+                    timeout: float = 90.0):
+    """An ``http_post(url, body, headers) -> bytes`` adapter for SYNC code
+    (``water.fetch_overpass``'s injectable seam), or ``None`` when no relay
+    exists so callers keep their direct default."""
+    if relay is None:
+        return None
+
+    def _post(url: str, body: bytes, headers: dict) -> bytes:
+        return relay.fetch_sync(url, method="POST", headers=headers, body=body,
+                                timeout=timeout, direct_timeout=direct_timeout)
+    return _post

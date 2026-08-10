@@ -4,6 +4,19 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **The boat now fetches online data through your phone when it has no internet.**
+  Calculating a route needs OpenStreetMap water data; the Pi (usually offline on
+  the water) tried to fetch it itself, failed, and the route silently died. A new
+  generic **client fetch relay** fixes this: the server tries its own internet
+  first (fast at the dock), and on failure flips a sticky offline switch and
+  relays the fetch to a connected client (phone/tablet) over the telemetry
+  WebSocket -- the client answers from its offline tile cache when it can, else
+  fetches with its own connection. Route planning, island loops, chart prefetch
+  and the water-clip overlay all use it. And these failures are no longer
+  silent: the route result carries a clear operator-facing message ("No internet
+  on the boat and no connected device could fetch..."), and the client shows an
+  'Online fetch failed' notification when its own fetch fails.
+
 ## [1.5.0a13] — 2026-08-10
 
 - **Runtime no longer starts twice when HTTPS is enabled.** The CLI serves the

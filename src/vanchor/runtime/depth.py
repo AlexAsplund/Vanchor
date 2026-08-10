@@ -177,7 +177,9 @@ class DepthService:
                 "message": "Area already cached.",
             }
         try:
-            elements = water.fetch_overpass(*box)
+            from .fetch_relay import relay_http_post
+            elements = water.fetch_overpass(
+                *box, http_post=relay_http_post(getattr(rt, "fetch_relay", None)))
         except Exception as exc:  # network / endpoint failure
             logger.warning("chart prefetch fetch failed: %s", exc)
             return {

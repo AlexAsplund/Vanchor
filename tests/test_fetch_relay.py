@@ -125,3 +125,34 @@ async def test_relay_message_carries_method_and_body():
     assert msg["method"] == "POST" and "body_b64" in msg
     r.resolve("rid", ok=True, data=b"ok")
     await task
+
+
+async def test_fetch_sync_from_worker_thread():
+    # The route planner runs sync in an executor; fetch_sync must marshal onto
+    # the bound loop and return the relayed bytes.
+    async def direct(url, **kw):
+        raise ConnectionError("offline")
+    r = _relay(direct=direct, clients=True)
+    r.bind_loop(asyncio.get_running_loop())
+
+    def worker():
+        return r.fetch_sync("http://overpass/api", method="POST", body=b"q")
+
+    task = asyncio.ensure_future(asyncio.to_thread(worker))
+    await asyncio.sleep(0.05)                 # let the relay broadcast
+    assert r.sent[-1]["type"] == "fetch_request"
+    r.resolve("rid", ok=True, data=b"elements")
+    assert await task == b"elements"
+
+
+async def test_relay_http_post_adapter():
+    from vanchor.runtime.fetch_relay import relay_http_post
+    assert relay_http_post(None) is None      # no relay -> caller keeps direct
+
+    async def direct(url, **kw):
+        return b'{"elements": []}'
+    r = _relay(direct=direct)
+    r.bind_loop(asyncio.get_running_loop())
+    post = relay_http_post(r)
+    out = await asyncio.to_thread(post, "http://overpass", b"data=q", {"User-Agent": "t"})
+    assert out == b'{"elements": []}'

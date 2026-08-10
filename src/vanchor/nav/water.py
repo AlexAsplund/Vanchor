@@ -198,24 +198,39 @@ def assemble_water(elements: list[dict]) -> MultiPolygon:
 # Network fetch (lazy: never imported at module load, never hit in tests)
 # --------------------------------------------------------------------------- #
 def fetch_overpass(
-    south: float, west: float, north: float, east: float, *, timeout: float = 60.0
+    south: float, west: float, north: float, east: float, *, timeout: float = 60.0,
+    http_post=None,
 ) -> list[dict]:
-    """Fetch raw water elements from Overpass (tries endpoints in order)."""
-    import requests
+    """Fetch raw water elements from Overpass (tries endpoints in order).
+
+    ``http_post(url, body_bytes, headers) -> bytes`` is an injectable transport:
+    the runtime passes a client-fetch-relay-backed poster so an offline Pi can
+    fetch THROUGH a connected phone/tablet; ``None`` (the default) posts
+    directly with requests. A relay poster raising ``FetchRelayError`` aborts
+    immediately (retrying the other endpoint through the same dead relay can't
+    help and would double the operator's wait) -- its message is operator-facing
+    and propagates as-is."""
+    from urllib.parse import urlencode
 
     query = overpass_query(south, west, north, east)
+    body = urlencode({"data": query}).encode()
+    headers = {"User-Agent": user_agent(),
+               "Content-Type": "application/x-www-form-urlencoded"}
+
+    if http_post is None:
+        def http_post(url: str, body: bytes, headers: dict) -> bytes:  # noqa: F811
+            import requests
+            resp = requests.post(url, data=body, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            return resp.content
+
     last_exc: Exception | None = None
     for url in overpass_endpoints():
         try:
-            resp = requests.post(
-                url,
-                data={"data": query},
-                headers={"User-Agent": user_agent()},
-                timeout=timeout,
-            )
-            resp.raise_for_status()
-            return resp.json().get("elements", [])
+            return json.loads(http_post(url, body, headers)).get("elements", [])
         except Exception as exc:  # pragma: no cover - network path
+            if type(exc).__name__ == "FetchRelayError":
+                raise  # relay failed: clear message, retrying can't help
             logger.warning("Overpass fetch from %s failed: %s", url, exc)
             last_exc = exc
     raise RuntimeError(f"all Overpass endpoints failed: {last_exc}")
