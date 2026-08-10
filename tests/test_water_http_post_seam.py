@@ -98,10 +98,11 @@ def test_fetch_fail_message_covers_target_subclass():
     assert "504" in msg
 
 
-def test_viewport_water_clip_never_uses_the_relay(tmp_path, monkeypatch):
-    # /api/depth/water fires per viewport (every pan/zoom). It must fetch
-    # DIRECT-only -- relaying it hammered Overpass through the phone (429/504)
-    # and saturated the boat link. Offline it fails fast; the clip is optional.
+def test_viewport_water_clip_is_cache_only(tmp_path, monkeypatch):
+    # /api/depth/water fires per viewport (every pan/zoom). It must NEVER touch
+    # the network: relaying hammered Overpass through the phone (429/504), and a
+    # "direct" fetch hangs in DNS for the full timeout on the offline Pi,
+    # exhausting the executor pool ("data link loss"). Uncached -> clip skipped.
     from vanchor.app import Runtime
     from vanchor.core.config import load
 
@@ -109,13 +110,10 @@ def test_viewport_water_clip_never_uses_the_relay(tmp_path, monkeypatch):
     cfg.data_dir = str(tmp_path)
     rt = Runtime(cfg)
     rt.fetch_relay = object()   # a relay EXISTS; water_polygon must not use it
-    seen = {}
 
-    def fake_fetch(*bbox, http_post=None, **kw):
-        seen["http_post"] = http_post
-        raise OSError("offline")
+    def fake_fetch(*bbox, **kw):
+        raise AssertionError("viewport water-clip must not fetch (cache-only)")
 
     monkeypatch.setattr(water, "fetch_overpass", fake_fetch)
     out = rt.water_polygon((12.0, 59.0, 12.1, 59.1))
-    assert out == {"ok": False, "water": []}   # fail-fast, clip skipped
-    assert seen["http_post"] is None            # direct-only: relay untouched
+    assert out == {"ok": False, "water": []}   # uncached -> clip skipped, no fetch

@@ -60,12 +60,20 @@ def main(argv: list[str] | None = None) -> None:
     if args.log_level:
         config.log_level = args.log_level
 
+    import time as _time
+
     import uvicorn
 
     from ..ui.server import create_app
 
+    # Boot-phase timings at INFO so a slow start (seen on the Pi without a
+    # network connection) shows WHERE the time goes in the journal.
+    _t0 = _time.monotonic()
     runtime = Runtime(config)
+    logger.info("boot: Runtime constructed in %.1fs", _time.monotonic() - _t0)
+    _t1 = _time.monotonic()
     app = create_app(runtime)
+    logger.info("boot: app created in %.1fs", _time.monotonic() - _t1)
 
     # Optional HTTPS listener on a second port: secure-context browser APIs
     # (Screen Wake Lock, full PWA installs) need it. Best-effort -- a busy port
@@ -77,9 +85,11 @@ def main(argv: list[str] | None = None) -> None:
             logger.warning("HTTPS port %d is in use; HTTPS disabled",
                            config.server.https_port)
         else:
+            _t2 = _time.monotonic()
             tls_pair = ensure_tls_cert(config.data_dir,
                                        config.server.ssl_certfile,
                                        config.server.ssl_keyfile)
+            logger.info("boot: TLS cert ready in %.1fs", _time.monotonic() - _t2)
 
     # Advertise over mDNS so a phone/PWA finds vanchor.local without an IP.
     advert = None
@@ -89,7 +99,9 @@ def main(argv: list[str] | None = None) -> None:
         props = {"version": __version__}
         if tls_pair:
             props["https_port"] = str(config.server.https_port)
+        _t3 = _time.monotonic()
         advert = advertise(config.server.port, config.server.host, properties=props)
+        logger.info("boot: mDNS advertise done in %.1fs", _time.monotonic() - _t3)
 
     log_level = (args.log_level or "info").lower()
     servers = [uvicorn.Server(uvicorn.Config(

@@ -1505,14 +1505,17 @@ class Runtime:
         try:
             geom = cache.find_covering(wbbox)
             if geom is None:
-                # DIRECT fetch only -- deliberately NOT through the client relay.
-                # This endpoint fires PER VIEWPORT (every map pan/zoom); relaying
-                # it hammered Overpass through the phone (429/504), stalled
-                # executors, and saturated the boat link. The clip is optional
-                # decoration: offline it fails fast here and the overlay simply
-                # renders unclipped until the area is prefetched (chart prefetch
-                # / route plan DO use the relay -- one-shot, user-initiated).
-                geom = water.assemble_water(water.fetch_overpass(*wbbox))
+                # CACHE-ONLY -- no network fetch of any kind on this path. This
+                # endpoint fires PER VIEWPORT (every map pan/zoom). Relaying it
+                # hammered Overpass through the phone (429/504); and a "direct"
+                # fetch is no better on the boat: with the AP's DNS pointing at a
+                # dead upstream, each attempt HANGS for the full timeout in an
+                # executor thread, a few pans exhaust the pool, and everything
+                # queued behind it (depth grids/tiles) stalls -> "data link
+                # loss". The clip is optional decoration: uncached -> render
+                # unclipped. The cache is populated by the one-shot,
+                # user-initiated actions (chart prefetch / route plan).
+                return {"ok": False, "water": []}
                 if geom is not None and not geom.is_empty:
                     cache.store(wbbox, geom)
         except Exception as exc:  # noqa: BLE001 - network/parse; clip is optional
@@ -1667,6 +1670,8 @@ class Runtime:
             logger.debug("runtime start() ignored (already started, count=%d)",
                          self._start_count)
             return
+        import time as _time
+        _boot_t0 = _time.monotonic()
         self.recorder.start()
         # Arm the external hardware watchdog (#44) before the supervisor begins
         # petting it. A no-op when disabled; a bad GPIO must not crash boot.
@@ -1714,7 +1719,9 @@ class Runtime:
         # A connector that fails to build or start is logged and skipped;
         # it NEVER crashes the whole app (mirror the compass-driver resilience).
         await self._start_armed_connectors()
-        logger.info("runtime started (model=%s, hardware=%s)", self.config.sim.model, self.config.hardware.enabled)
+        logger.info("runtime started in %.1fs (model=%s, hardware=%s)",
+                    _time.monotonic() - _boot_t0, self.config.sim.model,
+                    self.config.hardware.enabled)
 
     async def _start_armed_connectors(self) -> None:
         """Shim → HardwareGlue (issue #73)."""
