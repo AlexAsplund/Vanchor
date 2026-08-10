@@ -279,7 +279,7 @@ serves the app directly to your phone.
 Paste the URL below into Raspberry Pi Imager (OS → "Use custom → Provide URL"):
 
 ```
-https://github.com/AlexAsplund/vanchor-ng/releases/latest/download/os_list.json
+https://github.com/AlexAsplund/Vanchor/releases/latest/download/os_list.json
 ```
 
 **On a laptop / dev machine:**

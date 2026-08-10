@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Fixed the SD-image download URL in `os_list.json`.** The Raspberry Pi Imager
+  custom-repo JSON pointed at `github.com/AlexAsplund/vanchor-ng/.../vanchor-<ver>-arm64.img.xz`
+  — wrong on two counts: the repo is `AlexAsplund/Vanchor`, and pi-gen names the
+  image `image_<date>-vanchor-lite.img.xz`, not the guessed name. Both 404'd, so
+  Imager couldn't fetch the image. The generator now uses the correct repo and
+  derives the filename from the actual built image. Also corrected the
+  `vanchor-ng` URLs in the deploy docs / README. (The v1.5.0a12 release asset was
+  patched in place.)
+
 ## [1.5.0a12] — 2026-08-10
 
 - **Battery source "none" now actually disables the gauge.** Selecting **None (no

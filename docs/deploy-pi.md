@@ -96,7 +96,7 @@ Settings.
 1. Open [Raspberry Pi Imager](https://www.raspberrypi.com/software/) (≥ v1.8).
 2. Click **OS → Use custom → Provide URL**, paste:
    ```
-   https://github.com/AlexAsplund/vanchor-ng/releases/latest/download/os_list.json
+   https://github.com/AlexAsplund/Vanchor/releases/latest/download/os_list.json
    ```
    Select **Vanchor-NG** from the list.
 3. *(Optional)* Click the gear ⚙ to pre-configure hostname / user / SSH / WiFi.
@@ -187,7 +187,7 @@ File a GitHub issue for any failing box.
 ### Sideload updates (recommended — no Pi internet required)
 
 On your phone or laptop:
-1. Go to **[GitHub Releases](https://github.com/AlexAsplund/vanchor-ng/releases/latest)**
+1. Go to **[GitHub Releases](https://github.com/AlexAsplund/Vanchor/releases/latest)**
    and download `vanchor-update-<version>.bundle.tar`.
 2. In the Vanchor UI → Settings → **System & updates** → "Sideload update bundle"
    → upload the bundle.
@@ -365,7 +365,7 @@ Deploy under a service user (here `pi`) in `/opt/vanchor` (or a home dir):
 
 ```bash
 sudo mkdir -p /opt/vanchor && sudo chown $USER /opt/vanchor
-git clone https://github.com/AlexAsplund/vanchor-ng /opt/vanchor
+git clone https://github.com/AlexAsplund/Vanchor /opt/vanchor
 cd /opt/vanchor
 
 python3 -m venv .venv

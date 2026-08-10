@@ -155,8 +155,12 @@ def test_gen_imager_json(tmp_path):
     expected_sha = hashlib.sha256(fake_img.read_bytes()).hexdigest()
     assert entry["image_download_sha256"] == expected_sha
 
-    # Version appears in URL
-    assert "1.5.0a8" in entry["url"]
+    # URL points at the real repo, the release tag, and the ACTUAL image
+    # basename (not a guessed name that would 404).
+    assert entry["url"] == (
+        "https://github.com/AlexAsplund/Vanchor/releases/download/"
+        "v1.5.0a8/" + fake_img.name
+    )
 
     # JSON round-trips
     assert json.loads(json.dumps(data)) == data
