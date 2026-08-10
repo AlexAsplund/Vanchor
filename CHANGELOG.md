@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Runtime no longer starts twice when HTTPS is enabled.** The CLI serves the
+  same app over two uvicorn servers (HTTP + HTTPS), and each server runs the
+  FastAPI lifespan, so `Runtime.start()`/`stop()` were each called once **per
+  server** -- booting *everything* twice: two controller loops driving the motor,
+  two simulator physics loops, and two serial readers on one port (which crashed
+  with `readuntil() called while another coroutine is already waiting`, so a
+  `gps_source: serial` receiver never delivered data). `start()`/`stop()` are now
+  ref-counted: the runtime boots once and tears down only when the last server
+  stops.
+
 - **SD image frees the GPIO UART for a pin-wired GPS/compass.** By default the Pi
   keeps a login console on the serial port, so a GPS wired to the TX/RX pins
   (`/dev/serial0`) can't be read — the most common wired-GPS gotcha (and the exact

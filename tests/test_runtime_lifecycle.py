@@ -57,6 +57,33 @@ async def test_stop_closes_and_stops_serial_motor():
     assert "CMD 0 F 0" in transport.written
 
 
+async def test_start_stop_refcounted_for_dual_server_lifespan():
+    # The CLI serves ONE app over two uvicorn servers (HTTP + HTTPS), so the
+    # FastAPI lifespan runs twice -> start()/stop() are each called twice. The
+    # runtime must boot once (no double controller/simulator/serial-reader) and
+    # tear down only when the LAST server shuts down.
+    rt, transport, motor = _serial_motor_runtime()
+    await rt.start()
+    n_tasks = len(rt._tasks)
+    sim_task = rt._sim_task
+    assert transport.opened
+
+    await rt.start()                       # second server's lifespan
+    assert rt._start_count == 2
+    assert len(rt._tasks) == n_tasks        # no duplicate controller/sim/supervisor tasks
+    assert rt._sim_task is sim_task         # simulator not restarted
+
+    await rt.stop()                        # first server shuts down -> still up
+    assert rt._start_count == 1
+    assert not transport.closed             # motor still live
+    assert not sim_task.done()
+
+    await rt.stop()                        # last server shuts down -> real teardown
+    assert rt._start_count == 0
+    assert transport.closed
+    assert "CMD 0 F 0" in transport.written
+
+
 async def test_reload_devices_stops_old_motor():
     rt, transport, motor = _serial_motor_runtime()
     await rt.start()
