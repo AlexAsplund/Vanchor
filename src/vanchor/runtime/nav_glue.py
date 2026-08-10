@@ -40,9 +40,11 @@ class NavGlue:
     @staticmethod
     def _fetch_fail_message(exc: Exception) -> str:
         """Operator-facing message for a failed water fetch. A FetchRelayError
-        already says exactly what went wrong (no internet + no client, client
-        couldn't fetch, timeout); anything else gets the generic offline hint."""
-        if type(exc).__name__ == "FetchRelayError":
+        (incl. the TargetError subclass -- e.g. every Overpass endpoint 504'd
+        through the client) already says exactly what went wrong; anything else
+        gets the generic offline hint."""
+        from .fetch_relay import FetchRelayError
+        if isinstance(exc, FetchRelayError):
             return str(exc)
         return "No offline chart for this area; connect once to download it."
 

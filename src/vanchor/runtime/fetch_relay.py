@@ -39,6 +39,14 @@ class FetchRelayError(RuntimeError):
     (the whole point: these failures must never be silent)."""
 
 
+class FetchRelayTargetError(FetchRelayError):
+    """The relay pipeline WORKED -- a client answered -- but the *target*
+    failed (e.g. Overpass replied HTTP 504 under load). Distinct from the base
+    class so callers with alternative targets (the second Overpass endpoint)
+    know retrying a DIFFERENT url through the same relay is worthwhile, whereas
+    a base FetchRelayError (no client / no answer) makes any retry pointless."""
+
+
 @dataclass
 class _Pending:
     future: "asyncio.Future[bytes]"
@@ -165,7 +173,9 @@ class FetchRelay:
         if ok and data is not None:
             pending.future.set_result(data)
         else:
-            pending.future.set_exception(FetchRelayError(
+            # The client DID answer -- the target itself failed (504, DNS, ...).
+            # TargetError so callers with alternative targets can fail over.
+            pending.future.set_exception(FetchRelayTargetError(
                 error or f"The connected device could not fetch {pending.url}."))
         return True
 
