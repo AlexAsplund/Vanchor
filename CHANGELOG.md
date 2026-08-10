@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Fixed the periodic "data stale" / WS drops around "land guard: water chart
+  loaded".** The land guard's chart refresh re-parsed the cached water chart
+  (WKB) and re-handed the full geometry to the safety governor **every 20 s**,
+  on the event loop -- with a big imported chart that's a repeating multi-hundred
+  ms stall that froze telemetry and dropped the WebSocket, in sync with that log
+  line. And when the boat was *outside* any cached chart, the throttle was
+  bypassed entirely -- a full cache re-scan at 1 Hz. Now: while covered, nothing
+  reloads (the chart is already in the governor); while uncovered, retry attempts
+  are throttled to the 20 s cadence.
+
 ## [1.5.0a16] — 2026-08-10
 
 - **Map panning no longer hammers the phone/Overpass (link-loss fix).** The
