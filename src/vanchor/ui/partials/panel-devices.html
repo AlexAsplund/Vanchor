@@ -169,6 +169,13 @@
                 </details>
               </div>
             </div>
+            <!-- One Calibrate entry point per sensor (Task 5): devices.js shows
+                 this only for sources with a calibration flow and routes it —
+                 magnetometer -> the driver menu's spin-to-calibrate action,
+                 hwt901b -> the sensor-fusion calibration card. -->
+            <div class="btn-row">
+              <button type="button" class="btn-ghost hidden" id="dev-calibrate-compass">Calibrate…</button>
+            </div>
             <div id="dev-menus-compass"></div>
           </details>
 

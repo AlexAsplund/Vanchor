@@ -249,6 +249,14 @@
     const phoneOn = !!($("phone-share") && $("phone-share").checked);
     const phoneCard = $("dev-card-phone");
     if (phoneCard) phoneCard.classList.toggle("hidden", !(phoneOn || srcs.indexOf("phone") !== -1));
+    // One Calibrate per sensor (Task 5): the Compass card's Calibrate… button
+    // is shown only for sources that HAVE a calibration flow; the click handler
+    // (see wiring) routes it per source.
+    const calBtn = $("dev-calibrate-compass");
+    if (calBtn) {
+      const cSrc = ($("dev-src-compass") || {}).value;
+      calBtn.classList.toggle("hidden", cSrc !== "magnetometer" && cSrc !== "hwt901b");
+    }
   }
 
   // Guided-setup front door (Task 5): while nothing is configured (hardware
@@ -456,9 +464,15 @@
         menu.actions.forEach((a) => {
           const btn = document.createElement("button");
           btn.type = "button"; btn.className = "btn-ghost";
+          btn.dataset.action = a.name;   // deep-link target (Calibrate routing)
           btn.textContent = a.label || a.name;
           if (a.help) btn.title = a.help;
-          btn.addEventListener("click", () => runAction(menu.device, a.name, box));
+          if (a.disabled) {   // honest stub: greyed out, no dead-end POST
+            btn.disabled = true;
+            btn.textContent += " (coming soon)";
+          } else {
+            btn.addEventListener("click", () => runAction(menu.device, a.name, box));
+          }
           row.appendChild(btn);
         });
         box.appendChild(row);
@@ -990,6 +1004,32 @@
   BAUD_PICKS.forEach(([pk, ip]) => {
     const sel = $(pk);
     if (sel) sel.addEventListener("change", () => onBaudPick(pk, ip));
+  });
+
+  // Compass "Calibrate…" routing (Task 5) — one entry point per sensor:
+  //   magnetometer -> trigger the driver menu's spin-to-calibrate action (its
+  //     rendered button, so the result lands in that menu's own output line);
+  //   hwt901b -> deep-link to the sensor-fusion calibration card (the AHRS'
+  //     own mag calibration is still a stub — fusion cal is what applies).
+  const compassCalBtn = $("dev-calibrate-compass");
+  if (compassCalBtn) compassCalBtn.addEventListener("click", () => {
+    const src = ($("dev-src-compass") || {}).value;
+    if (src === "magnetometer") {
+      const slot = $("dev-menus-compass");
+      const act = slot && slot.querySelector('button[data-action="calibrate_start"]');
+      if (act) {
+        act.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        act.click();
+      } else if (slot) {   // menu not rendered (older backend) — just show it
+        slot.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    } else if (src === "hwt901b") {
+      const fusion = $("dev-card-fusion");
+      if (fusion) {
+        fusion.open = true;
+        fusion.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
   });
 
   const nEn = $("dev-nmea-enabled");

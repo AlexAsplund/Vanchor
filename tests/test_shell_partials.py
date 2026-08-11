@@ -280,6 +280,16 @@ def test_ux5_wizard_frontdoor_hint_present():
     assert 'id="hwwiz-open-hint"' in html, "#hwwiz-open-hint missing"
 
 
+def test_ux5_compass_calibrate_button_present():
+    """One Calibrate entry point in the Compass card (hidden until relevant)."""
+    html = _render_shell()
+    start = html.find('id="dev-card-compass"')
+    end = html.find('id="dev-card-depth"')
+    assert start >= 0 and end > start
+    assert 'id="dev-calibrate-compass"' in html[start:end], \
+        "#dev-calibrate-compass missing from the Compass card"
+
+
 # ---- Task 6 settings IA + PWA shell checks ---------------------------------
 
 def test_task6_install_card_present():
