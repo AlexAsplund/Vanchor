@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a24] — 2026-08-11
+
 - **Alerts no longer pile into an unreadable stack.** When several alerts fire
   together, the highest-priority one keeps its full banner (text, color,
   action buttons), and everything else collapses into one slim severity-
