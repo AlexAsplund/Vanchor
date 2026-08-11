@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a21] — 2026-08-11
+
 - **"GPS lost" now says WHY when the receiver is actually fine.** A u-blox that
   is receiving but below its own fix-quality gate (few satellites, poor sky
   view -- e.g. indoors) used to show a bare "GPS LOST", identically to a dead
