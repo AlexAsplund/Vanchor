@@ -694,9 +694,13 @@ input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 
   color: var(--text); background: var(--glass-solid); border: 1px solid var(--line);
 }
 .dev-srcrow input:focus { outline: none; border-color: var(--accent); }
-#dev-serial { display: flex; flex-direction: column; gap: 6px; }
 .dev-dim { opacity: 0.4; }
 .dev-actions { margin-top: 8px; }
+
+/* Per-device sub-cards (Devices panel, UX overhaul Task 3). */
+/* The fusion sub-card has no content until /api/fusion/calibration loads
+   (devices.js unhides #dev-calib); hide the whole card until then. */
+#dev-card-fusion:has(> #dev-calib.hidden) { display: none; }
 
 /* Backup & restore card (#backup-card / backup.js). */
 .backup-actions { grid-template-columns: 1fr; margin-top: 6px; }
