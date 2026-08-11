@@ -74,3 +74,42 @@ async def test_split_and_garbage_bytes_are_tolerated():
     # garbage prefix + the frame split across the buffer still yields exactly one fix
     got, _ = await _drive(b"\x00\xff\xb5garbage" + frame)
     assert len(got) == 1
+
+
+async def _drive_with_driver(frames: bytes):
+    """Like _drive but also returns the driver (for signal/status_detail)."""
+    bus = EventBus()
+    got: list = []
+
+    async def collect(fix):
+        got.append(fix)
+
+    bus.subscribe(events.GPS_FIX_IN, collect)
+    t = FakeSerialTransport()
+    drv = UbloxGps(t, bus, configure=False)
+    t.feed_bytes(frames)
+    await drv.start()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await asyncio.sleep(0.02)
+    await drv.stop()
+    return drv, got
+
+
+async def test_signal_detail_distinguishes_weak_fix_from_lost():
+    # gnssFixOK=0 (receiver's own quality gate) -> no fix published, but the
+    # driver reports WHY: signal snapshot + operator-facing detail (#142).
+    frames = ubx.build_frame(*ubx.NAV_PVT, _nav_pvt(59.0, 18.0, 0.0, 0.0, valid=False))
+    drv, got = await _drive_with_driver(frames)
+    assert got == []                                  # rejected fix: nothing on the bus
+    assert drv.signal == {"fix_type": 3, "num_sv": 11, "h_acc_m": 0.5, "fix_ok": False}
+    assert "quality gate" in drv.status_detail
+    assert "acquiring" in drv.status_detail
+
+
+async def test_signal_detail_for_a_healthy_fix():
+    frames = ubx.build_frame(*ubx.NAV_PVT, _nav_pvt(59.0, 18.0, 1.0, 0.0, valid=True))
+    drv, got = await _drive_with_driver(frames)
+    assert len(got) == 1
+    assert drv.signal["fix_ok"] is True
+    assert drv.status_detail == "11 sats, ±0.5 m"

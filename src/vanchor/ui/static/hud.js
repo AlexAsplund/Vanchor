@@ -19,7 +19,14 @@
   // ---- GPS fix label -----------------------------------------------------
   function fixLabel(t) {
     if (t.has_fix === false) return "NO FIX";
-    if (t.safety && t.safety.fix_lost) return "LOST";
+    if (t.safety && t.safety.fix_lost) {
+      // Receiving frames but the fix is below the receiver's quality gate ->
+      // "ACQ n" (acquiring, n sats) instead of a misleading "LOST".
+      const sig = t.health && t.health.devices && t.health.devices.gps
+        && t.health.devices.gps.signal;
+      if (sig && sig.num_sv > 0) return "ACQ " + sig.num_sv;
+      return "LOST";
+    }
     if (Number.isFinite(t.fix_seq) || t.has_fix === true || t.position) return "OK";
     return "—";
   }

@@ -48,6 +48,8 @@ class UbloxGps(Sensor):
         self.last_data_monotonic: float | None = None
         # Latest RAW decode for the Devices -> Debug live view.
         self._last_pvt: ubx.NavPvt | None = None
+        # Latest signal quality (every decode, incl. rejected fixes); see _emit.
+        self.signal: dict | None = None
         self._last_pvt_monotonic: float | None = None
         self._frames_received = 0
 
@@ -119,6 +121,11 @@ class UbloxGps(Sensor):
         self._last_pvt = pvt
         self._last_pvt_monotonic = time.monotonic()
         self._frames_received += 1
+        # Live signal-quality snapshot, kept for EVERY decode (valid or not) so
+        # the UI can say "receiving, fix below quality gate (4 sats)" instead of
+        # a bare "GPS lost" (#142). Read by _device_health via duck typing.
+        self.signal = {"fix_type": pvt.fix_type, "num_sv": pvt.num_sv,
+                       "h_acc_m": round(pvt.h_acc_m, 1), "fix_ok": pvt.valid}
         if not pvt.valid:
             return
         self.healthy = True
@@ -131,6 +138,21 @@ class UbloxGps(Sensor):
         )
         if self.bus is not None:
             await self.bus.publish(events.GPS_FIX_IN, fix)
+
+    @property
+    def status_detail(self) -> str | None:
+        """Operator-facing one-liner distinguishing "no data" / "acquiring" /
+        "fix below the receiver's quality gate" from a healthy fix -- so the UI
+        never reduces a weak-signal state to a bare "GPS lost"."""
+        s = self.signal
+        if s is None:
+            return None
+        if s["fix_ok"]:
+            return f"{s['num_sv']} sats, \u00b1{s['h_acc_m']} m"
+        if s["fix_type"] >= 2:
+            return (f"signal too weak: {s['num_sv']} sats, \u00b1{s['h_acc_m']} m "
+                    "(below receiver quality gate) \u2014 acquiring")
+        return f"no fix ({s['num_sv']} sats) \u2014 acquiring"
 
     def debug(self) -> str:
         pvt = self._last_pvt
