@@ -144,3 +144,27 @@ def test_a_source_can_be_reset_to_auto_null():
     rt.set_device_config({"hardware": {"gps_source": "serial"}})
     rt.set_device_config({"hardware": {"compass_source": "sim"}})
     assert rt.config.hardware.gps_source == "serial"
+
+
+def test_serial_alias_labeled_by_alias_name(monkeypatch):
+    """Regression: /dev/serial0 rendered as a second "ttyAMA0" entry (label was
+    the resolved TARGET only), so users hunting for "serial0" in the port menu
+    couldn't find it. The alias name must lead the label."""
+    import glob as _glob
+    import os as _os
+
+    def fake_glob(pat):
+        return ["/dev/serial0"] if pat == "/dev/serial[0-9]" else []
+
+    monkeypatch.setattr(_glob, "glob", fake_glob)
+    monkeypatch.setattr(_os.path, "realpath", lambda p: "/dev/ttyAMA0")
+    try:  # pyserial may or may not be importable; silence its contribution
+        from serial.tools import list_ports
+        monkeypatch.setattr(list_ports, "comports", lambda: [])
+    except ImportError:
+        pass
+    ports = _rt().list_serial_ports()
+    entry = next(p for p in ports if p["path"] == "/dev/serial0")
+    assert entry["stable"] is True
+    assert entry["description"].startswith("serial0 (ttyAMA0)")
+    assert "on-board UART" in entry["description"]
