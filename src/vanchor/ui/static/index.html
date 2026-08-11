@@ -306,7 +306,9 @@
        Full-width fixed strips; container pointer-transparent, buttons inside are not.
        Priority is the CSS `order` property (lower = top) — see style.css:
        health-fault 0 > MOB 1 > anchor 2 > fix-lost 3 > shallow 4 > hdg-stale 5 >
-       batt-crit 6 > batt-warn 7 > link 8 > depth-stale 9 > rtl 10 > apb 11 > gov 12. -->
+       batt-crit 6 > batt-warn 7 > link 8 > depth-stale 9 > rtl 10 > apb 11 > gov 12.
+       Coordinator alertstack.js collapses all-but-top into #sbanner-overflow-strip
+       when ≥2 are active, so the stack never costs more than two rows. -->
   <div id="safety-banners" class="safety-banners" role="alert" aria-live="assertive">
     <!-- MOB strip — MAN OVERBOARD -->
     <div id="mob-banner" class="sbanner sbanner-mob hidden">
@@ -364,6 +366,12 @@
       <span class="sb-msg">EXTERNAL AUTOPILOT — Follow-APB engaged automatically</span>
       <button id="auto-apb-banner-stop" class="sb-act" type="button">Disengage (STOP)</button>
     </div>
+    <!-- Overflow strip (#166): when ≥2 banners are active, alertstack.js keeps
+         the top strip full-size and collapses the rest into this one slim tap
+         target (labels + "+N more"); tap to expand the full stack. Static here
+         so tests find it in the shell; content/severity filled by alertstack.js.
+         order:50 sorts it just under the highest-priority active strip. -->
+    <button id="sbanner-overflow-strip" class="sbanner-overflow hidden" type="button" aria-expanded="false"></button>
   </div>
 
   <!-- Mobile-only recenter/follow FAB: re-enables follow-the-boat panning. -->
@@ -1401,6 +1409,7 @@
   <script src="/static/wifi.js"></script>
   <script src="/static/safety.js"></script>
   <script src="/static/health.js"></script>
+  <script src="/static/alertstack.js"></script>
   <script src="/static/measure.js"></script>
   <script src="/static/mobile.js"></script>
   <script src="/static/wakelock.js"></script>
