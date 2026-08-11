@@ -772,8 +772,10 @@
         // New source has no baud opinion: drop a stale driver default (never a
         // user-typed value — those fail the guard above) so it isn't saved.
         else if (cur !== "" && prevDef != null) inp.value = "";
-        syncBaudPick("dev-" + kind + "-baud-pick", "dev-" + kind + "-baud");
       }
+      // Always re-sync the dropdown, even when no default was written — the
+      // input is the source of truth and may have changed by other means.
+      syncBaudPick("dev-" + kind + "-baud-pick", "dev-" + kind + "-baud");
     }
     sel.dataset.prevSrc = next;
   }
