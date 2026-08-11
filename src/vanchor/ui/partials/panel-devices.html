@@ -260,7 +260,9 @@
 
           <!-- Phone-as-sensor sharing (hardware.drivers.phone). The toggle makes
                THIS browser stream its geolocation + compass heading to the boat;
-               select source "Phone" for GPS/Compass above to consume it. -->
+               select source "Phone" for GPS/Compass above to consume it.
+               Shown only when some source is "phone" or sharing is already on
+               (devices.js syncConditional); hidden via .hidden, state intact. -->
           <details class="card dev-card" id="dev-card-phone">
             <summary>📱 Phone as sensors</summary>
             <div class="dev-srcrow" id="phone-share-row">
@@ -365,12 +367,17 @@
             </div>
           </div>
 
-          <div class="ctx-sub">NMEA bridge</div>
-          <label class="switch"><input type="checkbox" id="dev-nmea-enabled" /><span class="track"></span> Listen for NMEA over TCP</label>
-          <label class="dev-srcrow" id="dev-nmea-port-row">
-            <span>TCP port</span>
-            <input type="number" id="dev-nmea-port" min="1" max="65535" step="1" placeholder="10110" autocomplete="off" />
-          </label>
+          <!-- Shown only when some source is "nmea" or the bridge is already
+               enabled (devices.js syncConditional). Hidden via .hidden — the
+               fields keep their state/ids and collect() still reads them. -->
+          <div id="dev-nmea-section">
+            <div class="ctx-sub">NMEA bridge</div>
+            <label class="switch"><input type="checkbox" id="dev-nmea-enabled" /><span class="track"></span> Listen for NMEA over TCP</label>
+            <label class="dev-srcrow" id="dev-nmea-port-row">
+              <span>TCP port</span>
+              <input type="number" id="dev-nmea-port" min="1" max="65535" step="1" placeholder="10110" autocomplete="off" />
+            </label>
+          </div>
 
           <button id="dev-save" class="btn-primary wide" type="button">Save</button>
           <div id="dev-status" class="hint"></div>

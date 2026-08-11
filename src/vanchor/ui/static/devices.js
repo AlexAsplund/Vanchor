@@ -222,6 +222,25 @@
     });
   }
 
+  // Progressive disclosure (Task 4): hide rarely-relevant sections until they
+  // apply. Hidden via .hidden only — ids/state stay intact and collect() still
+  // reads their fields. Re-evaluated on config load and on source changes (NOT
+  // on the toggles themselves, so an in-use section never vanishes mid-edit).
+  function syncConditional() {
+    const srcs = SRC_FIELDS.map((f) => {
+      const s = $(f.id);
+      return s ? s.value : "";
+    });
+    // NMEA bridge: some source consumes NMEA, or the bridge is already on.
+    const nmeaOn = !!($("dev-nmea-enabled") && $("dev-nmea-enabled").checked);
+    const nmeaSec = $("dev-nmea-section");
+    if (nmeaSec) nmeaSec.classList.toggle("hidden", !(nmeaOn || srcs.indexOf("nmea") !== -1));
+    // Phone-as-sensors: some source consumes the phone, or sharing is on.
+    const phoneOn = !!($("phone-share") && $("phone-share").checked);
+    const phoneCard = $("dev-card-phone");
+    if (phoneCard) phoneCard.classList.toggle("hidden", !(phoneOn || srcs.indexOf("phone") !== -1));
+  }
+
   function syncMode() {
     const enabled = readEnabled();
     const seg = $("dev-mode");
@@ -350,6 +369,7 @@
 
     syncMode();
     syncConnFields();
+    syncConditional();
     syncNmea();
     setBadge(hw.enabled ? "● hardware" : "sim");
     driverMenus = (cfg.driver_menus && typeof cfg.driver_menus === "object") ? cfg.driver_menus : {};
@@ -851,6 +871,7 @@
       const bk = BAUD_KIND_BY_SRC[f.id];
       if (bk) applyBaudDefault(bk, sel);
       syncConnFields();
+      syncConditional();
       refreshMenus();
     });
   });
@@ -883,6 +904,7 @@
           gsel.value = prev;
           applyBaudDefault("gps", gsel);  // undo the ublox default baud too
           syncConnFields();
+          syncConditional();
           refreshMenus();
         }
         prev = gsel.value;
