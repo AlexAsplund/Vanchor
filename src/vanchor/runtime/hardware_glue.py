@@ -69,7 +69,12 @@ class HardwareGlue:
                 except OSError:
                     target = os.path.basename(link)
                 tag = " - on-board UART" if target.startswith(("ttyAMA", "ttyS", "ttyO", "ttymxc")) else ""
-                candidates.append((link, f"{target}{tag} (stable)"))
+                # Label with the ALIAS name first, target in parens: showing only
+                # the resolved target made /dev/serial0 render as a second
+                # "ttyAMA0" entry -- users looking for "serial0" couldn't find it.
+                name = os.path.basename(link)
+                label = name if name == target else f"{name} ({target})"
+                candidates.append((link, f"{label}{tag} (stable)"))
         try:
             from serial.tools import list_ports
             for p in list_ports.comports():

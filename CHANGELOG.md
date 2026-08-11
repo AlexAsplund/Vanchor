@@ -4,6 +4,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **`serial0` is now findable in the port menu.** The stable on-board-UART alias
+  was listed with only its resolved target's name, so `/dev/serial0` rendered as
+  a second "ttyAMA0" entry -- anyone looking for "serial0" concluded it wasn't
+  there. Alias entries now lead with their own name: `serial0 (ttyAMA0) -
+  on-board UART (stable)`.
+
 ## [1.5.0a20] — 2026-08-10
 
 - **GPS walk analysis tool (`python -m vanchor.analysis.gps_walk`).** Feeds the
