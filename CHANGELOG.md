@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Device failures now say WHY, right on the device card (#142, #161).** A
+  serial device that can't open its port used to die silently for the whole
+  session with only a server-log line. Now: the error is classified into an
+  actionable message ("permission denied — the app isn't in the dialout
+  group…", "no device at /dev/ttyUSB0 — check the cable/port", "port in use",
+  "link unstable — reconnected 4× in the last minute"), shown on the device
+  chip (amber ⚠), in the debug view ("NOT RECEIVING — …"), and logged once per
+  change in the alert history. Better still, a failed open no longer kills the
+  device: the reconnect loop keeps retrying, so plugging the cable in later
+  just works. The u-blox driver's open failures get the same treatment.
+
 - **Nested settings disclosures now clearly look expandable.** The sub-cards
   inside a device card ("Advanced (8N1)…", "Receiver setup (u-blox)…") had no
   expand indicator at all (their flex summaries suppressed the browser's

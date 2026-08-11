@@ -711,6 +711,7 @@ input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 
   border-radius: 999px; padding: 2px 8px;
 }
 .dev-chip[data-state="ok"] { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 40%, var(--line)); }
+.dev-chip[data-state="warn"] { color: var(--warn, #e0a63a); border-color: color-mix(in srgb, var(--warn, #e0a63a) 45%, var(--line)); max-width: 60%; }
 /* Guided-setup front door (Task 5): extra prominence while nothing is
    configured yet; devices.js toggles the class (demoted = plain .btn-ghost). */
 #hwwiz-open.frontdoor { min-height: 56px; font-size: 16px; }

@@ -192,12 +192,26 @@
     if (el.dataset.state !== state) el.dataset.state = state;
   }
 
+  const prevDevErr = {};   // per-device edge trigger for the alert log (#142)
+
   function renderDevChips(h) {
     const devs = (h && h.devices) || {};
     ["gps", "compass", "depth", "motor"].forEach(function (name) {
       const d = devs[name];
       if (!d) { setChip("dev-chip-" + name, "—", ""); return; }
       const fresh = !!d.healthy && d.data_age_s != null && d.data_age_s < FRESH_S;
+      // Fault detail (#142/#161): a device that is configured but broken says
+      // WHY on its chip (permission, missing device, link storm, weak signal)
+      // instead of a mute "no data". Edge-triggered alert-log entry per change.
+      if (!fresh && d.detail) {
+        setChip("dev-chip-" + name, "⚠ " + d.detail, "warn");
+        if (prevDevErr[name] !== d.detail) {
+          prevDevErr[name] = d.detail;
+          if (VA.logAlert) VA.logAlert("warn", name.toUpperCase() + ": " + d.detail, { kind: "device" });
+        }
+        return;
+      }
+      if (prevDevErr[name]) prevDevErr[name] = null;
       if (!fresh) { setChip("dev-chip-" + name, "no data", "stale"); return; }
       let txt = "● " + fmtAge(d.data_age_s);
       if (name === "gps" && d.signal && d.signal.num_sv != null) {
