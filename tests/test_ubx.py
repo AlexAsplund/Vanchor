@@ -342,3 +342,49 @@ def test_describe_marine_config_matches_frame() -> None:
     items = _valset_items(ubx.cfg_marine_10hz())
     assert items[ubx.KEY_UART1OUTPROT_NMEA] == 0 and items[ubx.KEY_USBOUTPROT_NMEA] == 0
     assert items[ubx.KEY_RATE_MEAS] == 100  # 10 Hz
+
+
+# --- NMEA message output config (toolbox read/set) -------------------------- #
+
+def test_cfg_valget_request_and_response_roundtrip() -> None:
+    keys = [ubx.NMEA_MSGOUT_KEYS["RMC"]["uart1"], ubx.NMEA_MSGOUT_KEYS["GLL"]["usb"]]
+    req = ubx.cfg_valget_request(keys)
+    frames, rem = ubx.parse_stream(req)
+    assert rem == b"" and frames[0][:2] == ubx.CFG_VALGET
+    payload = frames[0][2]
+    assert payload[0] == 0 and payload[1] == 0          # version, RAM layer
+    assert len(payload) == 4 + 4 * len(keys)
+    # A receiver-style response: version=1 header + key/value pairs (U1 values).
+    resp = bytes([1, 0, 0, 0])
+    for k, v in ((keys[0], 1), (keys[1], 0)):
+        resp += k.to_bytes(4, "little") + bytes([v])
+    out = ubx.parse_valget_response(resp)
+    assert out == {keys[0]: 1, keys[1]: 0}
+
+
+def test_parse_valget_response_truncated_and_short() -> None:
+    assert ubx.parse_valget_response(b"") == {}
+    assert ubx.parse_valget_response(b"\x01\x00\x00") == {}
+    # A truncated trailing pair is dropped without raising.
+    key = ubx.NMEA_MSGOUT_KEYS["GGA"]["uart1"]
+    resp = bytes([1, 0, 0, 0]) + key.to_bytes(4, "little")  # key, no value byte
+    assert ubx.parse_valget_response(resp) == {}
+
+
+def test_cfg_set_nmea_messages_builds_both_ports() -> None:
+    frame = ubx.cfg_set_nmea_messages({"RMC": 1, "GLL": 0})
+    items = _valset_items(frame)
+    assert items[ubx.NMEA_MSGOUT_KEYS["RMC"]["uart1"]] == 1
+    assert items[ubx.NMEA_MSGOUT_KEYS["RMC"]["usb"]] == 1
+    assert items[ubx.NMEA_MSGOUT_KEYS["GLL"]["uart1"]] == 0
+    assert items[ubx.NMEA_MSGOUT_KEYS["GLL"]["usb"]] == 0
+
+
+def test_cfg_set_nmea_messages_validates() -> None:
+    import pytest
+    with pytest.raises(ValueError):
+        ubx.cfg_set_nmea_messages({"ZDA": 1})            # not in the table
+    with pytest.raises(ValueError):
+        ubx.cfg_set_nmea_messages({"RMC": 300})          # rate out of range
+    with pytest.raises(ValueError):
+        ubx.cfg_set_nmea_messages({})

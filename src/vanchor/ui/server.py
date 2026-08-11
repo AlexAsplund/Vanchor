@@ -1085,6 +1085,39 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
         of the user hand-typing ``/dev/tty...`` (OpenPlotter-style auto-detect)."""
         return {"ports": runtime.list_serial_ports()}
 
+    @app.get("/api/tools/ublox/nmea-messages")
+    async def ublox_nmea_messages(port: str, baud: int = 38400) -> dict:
+        """Which standard NMEA sentences the receiver currently emits (CFG-VALGET
+        on UART1+USB for GGA/GLL/GSA/GSV/RMC/VTG). Rate 0 = off."""
+        from ..runtime import ublox_tools
+        try:
+            return await ublox_tools.read_nmea_messages(_ublox_transport(port, baud))
+        except Exception as exc:  # noqa: BLE001 - busy/missing port
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+    @app.post("/api/tools/ublox/nmea-messages")
+    async def ublox_nmea_messages_set(payload: dict) -> Response:
+        """Set per-sentence NMEA output rates: {port, baud?, rates: {RMC: 1,
+        GLL: 0, ...}, persist?}. Rate 0 disables a sentence."""
+        from ..runtime import ublox_tools
+        data = payload or {}
+        port = data.get("port")
+        rates = data.get("rates")
+        if not port or not isinstance(rates, dict) or not rates:
+            return Response(json.dumps({"ok": False,
+                            "error": "port and non-empty rates required"}),
+                            media_type="application/json", status_code=400)
+        try:
+            res = await ublox_tools.set_nmea_messages(
+                _ublox_transport(port, data.get("baud") or 38400), rates,
+                persist=bool(data.get("persist")))
+        except ValueError as exc:  # unknown sentence / bad rate -> nothing sent
+            return Response(json.dumps({"ok": False, "error": str(exc)}),
+                            media_type="application/json", status_code=400)
+        except Exception as exc:  # noqa: BLE001
+            res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        return Response(json.dumps(res), media_type="application/json")
+
     # -- Client fetch relay result (#147) ---------------------------------- #
     _RELAY_MAX_BYTES = 32 * 1024 * 1024  # defensive cap on a relayed resource
 

@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Receiver setup can now read and edit which NMEA sentences the u-blox
+  transmits.** The GPS card's "Receiver setup (u-blox)" section gained an NMEA
+  sentences panel: **Read current** shows the chip's per-sentence output state
+  (RMC/GGA/GLL/GSA/GSV/VTG, via UBX CFG-VALGET), toggles set them on/off on
+  both UART and USB (optionally saved to flash), with RMC/GGA marked as what
+  vanchor actually needs and a confirmation guard before turning RMC off (it
+  carries the speed + course vanchor relies on). Fixes the "receiver only sends
+  GGA/GLL" class of problem at the source instead of widening the parser.
+  Bench-verified against a real M9N (VALGET read-back + GLL on/off round-trip).
+
 ## [1.5.0a22] — 2026-08-11
 
 - **Devices menu overhauled: everything for one device in one place.** The
