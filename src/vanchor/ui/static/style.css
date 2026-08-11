@@ -627,7 +627,7 @@ body.va-observer input[type="range"] {
 .slider-row { display: flex; flex-direction: column; gap: 2px; }
 label { display: block; margin: 0; color: var(--muted); font-size: 12px; }
 label output { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; float: right; }
-.hint { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.hint { color: var(--muted); font-size: 13px; line-height: 1.4; }
 .row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 13px; }
 .row span { color: var(--muted); }
 .row b { font-variant-numeric: tabular-nums; }
@@ -839,6 +839,14 @@ button#track-rec.recording { background: color-mix(in srgb, var(--stop) 35%, var
 .command-menu details.card { padding: 11px 13px; }
 .command-menu details.card > summary { min-height: 40px; font-size: 14px; }
 .command-menu .drawer-setup { min-height: 52px; font-size: 15px; }
+
+/* phone-on-a-boat touch targets — scoped to settings panels only */
+.command-menu .cm-panels button,
+.command-menu .cm-panels select,
+.command-menu .cm-panels summary,
+.command-menu .cm-tile { min-height: 48px; }
+.command-menu .cm-panels input[type="text"],
+.command-menu .cm-panels input[type="number"] { min-height: 44px; }
 
 /* ============================ SETTINGS DRAWER (legacy) ============================ */
 .scrim { position: fixed; inset: 0; z-index: 1900; background: rgba(0,0,0,0.55); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }

@@ -200,12 +200,12 @@
             <input type="number" id="dev-nmea-port" min="1" max="65535" step="1" placeholder="10110" autocomplete="off" />
           </label>
 
+          <button id="dev-save" class="btn-primary wide" type="button">Save</button>
+          <div id="dev-status" class="hint"></div>
           <div class="btn-row dev-actions">
-            <button id="dev-save" class="btn-primary" type="button">Save</button>
             <button id="dev-reset" class="btn-ghost" type="button">Reset to current</button>
             <button id="dev-restart" class="btn-ghost" type="button" title="Restart the server now (applies saved device/config changes)">⟳ Restart server</button>
           </div>
-          <div id="dev-status" class="hint"></div>
 
           <!-- Device-specific settings/actions rendered from each active device's
                device_menu() (e.g. the HWT901B compass: declination, calibration). -->
