@@ -149,6 +149,56 @@ def test_net_chroot_frees_gpio_uart():
     assert "disable hciuart" in text                       # BT-UART service off
 
 
+def test_wifi_keepalive_service():
+    """The keep-alive pinger unit must start after NM + the hotspot, restart
+    forever, and run the installed script."""
+    path = STAGE_ROOT / "01-net" / "files" / "vanchor-wifi-keepalive.service"
+    assert path.exists()
+    text = path.read_text()
+    assert "After=NetworkManager.service vanchor-hotspot.service" in text
+    assert "Restart=always" in text
+    assert "WantedBy=multi-user.target" in text
+    assert "ExecStart=/usr/bin/python3 /usr/local/sbin/vanchor-wifi-keepalive" in text
+
+
+def test_wifi_keepalive_script_content():
+    """The pinger must merge BOTH discovery sources (iw station dump + NM
+    dnsmasq leases, MAC->IP via the wlan0 neighbor table), keep ONE
+    long-running sub-second ping process per client (no per-packet forking),
+    kill pingers of departed clients, and never ping outside wlan0's own
+    subnet. Zero-network: no curl/apt/docker-pull."""
+    path = STAGE_ROOT / "01-net" / "files" / "vanchor-wifi-keepalive.py"
+    assert path.exists()
+    text = path.read_text()
+
+    # Discovery: associated stations + leases (with glob fallback), MAC->IP
+    # via the interface-scoped neighbor table.
+    assert "station" in text and "dump" in text, "must read iw station dump"
+    assert "/var/lib/NetworkManager/dnsmasq-wlan0.leases" in text
+    assert "/var/lib/NetworkManager/dnsmasq-*.leases" in text, \
+        "must glob-fallback for NM shared-mode lease files"
+    assert '"neigh"' in text, "must map MAC->IP via the neighbor table"
+
+    # One long-running ping per client at 0.2 s, in parallel; reconciled.
+    assert '"ping", "-i", "0.2", "-W", "1", "-q"' in text
+    assert "Popen" in text, "pingers must be parallel long-running processes"
+    assert "terminate()" in text and "poll()" in text, \
+        "departed clients must be killed and exits reaped"
+
+    # Safety: only the wlan0 subnet is ever pinged -- addresses are checked
+    # against the interface's own network, defaulting to the NM shared range.
+    assert "ipaddress" in text
+    assert "addr not in network" in text, \
+        "must drop any candidate IP outside wlan0's own subnet"
+    assert "10.42.0.0/24" in text, "fallback subnet must be the NM shared range"
+
+    # Zero-network / no package management (also enforced by the boot-time
+    # guard, but assert explicitly here).
+    assert "curl" not in text
+    assert "apt-get" not in text and "apt install" not in text
+    assert "docker pull" not in text
+
+
 def test_hotspot_service():
     path = STAGE_ROOT / "01-net" / "files" / "vanchor-hotspot.service"
     assert path.exists()
@@ -284,6 +334,7 @@ BOOT_TIME_SCRIPTS_FIXED = [
     STAGE_ROOT / "02-stack" / "01-run-chroot.sh",
     STAGE_ROOT / "02-stack" / "files" / "vanchor-load-images.sh",
     STAGE_ROOT / "03-trim" / "00-run-chroot.sh",
+    STAGE_ROOT / "01-net" / "files" / "vanchor-wifi-keepalive.py",
 ]
 
 # 00-docker runs at BUILD time in the pi-gen chroot with network; it's exempt

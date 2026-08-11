@@ -1,0 +1,13 @@
+[Unit]
+Description=Vanchor WiFi client keep-alive pinger (keeps phone radios awake)
+After=NetworkManager.service vanchor-hotspot.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/vanchor-wifi-keepalive
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
