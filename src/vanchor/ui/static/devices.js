@@ -102,6 +102,16 @@
     el.className = "hint" + (kind ? " " + kind : "");
   }
 
+  // Dirty-state sticky Save (Task 4): the Save bar stays hidden until the form
+  // is edited, then sticks to the bottom of the settings scroll. Cleared on
+  // save success and on every (re)load, so Reset hides it too.
+  let dirty = false;
+  function setDirty(on) {
+    dirty = !!on;
+    const bar = $("dev-save-bar");
+    if (bar) bar.classList.toggle("hidden", !dirty);
+  }
+
   function setBadge(txt) {
     const b = $("dev-state");
     if (b) b.textContent = txt || "";
@@ -204,7 +214,6 @@
     }
   }
   function syncConnFields() {
-    let anyShown = false;
     CONN_KINDS.forEach(({ kind, sel, opt }) => {
       const s = $(sel);
       if (!s) return;
@@ -220,10 +229,51 @@
         el.customRow.classList.toggle("hidden", !showCustom);
       }
       relabelConn(kind, el, i2c);
-      if (serial || i2c) anyShown = true;
     });
-    const box = $("dev-serial");
-    if (box) box.classList.toggle("hidden", !anyShown);
+  }
+
+  // Progressive disclosure (Task 4): hide rarely-relevant sections until they
+  // apply. Hidden via .hidden only — ids/state stay intact and collect() still
+  // reads their fields. Re-evaluated on config load and on source changes (NOT
+  // on the toggles themselves, so an in-use section never vanishes mid-edit).
+  function syncConditional() {
+    const srcs = SRC_FIELDS.map((f) => {
+      const s = $(f.id);
+      return s ? s.value : "";
+    });
+    // NMEA bridge: some source consumes NMEA, or the bridge is already on.
+    const nmeaOn = !!($("dev-nmea-enabled") && $("dev-nmea-enabled").checked);
+    const nmeaSec = $("dev-nmea-section");
+    if (nmeaSec) nmeaSec.classList.toggle("hidden", !(nmeaOn || srcs.indexOf("nmea") !== -1));
+    // Phone-as-sensors: some source consumes the phone, or sharing is on.
+    const phoneOn = !!($("phone-share") && $("phone-share").checked);
+    const phoneCard = $("dev-card-phone");
+    if (phoneCard) phoneCard.classList.toggle("hidden", !(phoneOn || srcs.indexOf("phone") !== -1));
+    // One Calibrate per sensor (Task 5): the Compass card's Calibrate… button
+    // is shown only for sources that HAVE a calibration flow; the click handler
+    // (see wiring) routes it per source.
+    const calBtn = $("dev-calibrate-compass");
+    if (calBtn) {
+      const cSrc = ($("dev-src-compass") || {}).value;
+      calBtn.classList.toggle("hidden", cSrc !== "magnetometer" && cSrc !== "hwt901b");
+    }
+  }
+
+  // Guided-setup front door (Task 5): while nothing is configured (hardware
+  // mode off, or every device source is sim/none/Auto), the wizard button is
+  // the prominent primary action with a hint; once real hardware is configured
+  // it demotes to a quiet secondary button. Re-evaluated on config load and on
+  // save success, so it demotes live after the config becomes configured.
+  function syncFrontdoor(enabled, sources) {
+    const wiz = $("hwwiz-open");
+    if (!wiz) return;
+    const unconfigured = !enabled ||
+      sources.every((s) => s == null || s === "" || s === "sim" || s === "none");
+    wiz.classList.toggle("btn-primary", unconfigured);
+    wiz.classList.toggle("frontdoor", unconfigured);
+    wiz.classList.toggle("btn-ghost", !unconfigured);
+    const hint = $("hwwiz-open-hint");
+    if (hint) hint.classList.toggle("hidden", !unconfigured);
   }
 
   function syncMode() {
@@ -295,6 +345,7 @@
       const sel = $(f.id);
       fillSelect(sel, f.kind);
       setSelectValue(sel, hw[f.key]);
+      if (sel) sel.dataset.prevSrc = sel.value;  // baseline for baud defaults
     });
 
     setVal("dev-gps-port", hw.gps_port);
@@ -318,12 +369,14 @@
       setVal("dev-" + ch + "-parity", hw[ch + "_parity"]);
       setVal("dev-" + ch + "-stopbits", hw[ch + "_stopbits"]);
     });
+    syncBaudPicks();  // reflect the loaded bauds in the dropdowns
 
     // Populate split-channel source selects.
     SPLIT_SRC_FIELDS.forEach((f) => {
       const sel = $(f.id);
       fillSelect(sel, f.kind);
       setSelectValue(sel, hw[f.key]);
+      if (sel) sel.dataset.prevSrc = sel.value;  // baseline for baud defaults
     });
 
     // Auto-open/close the split channels disclosure to reflect the saved config.
@@ -351,11 +404,15 @@
 
     syncMode();
     syncConnFields();
+    syncConditional();
     syncNmea();
+    syncFrontdoor(!!hw.enabled,
+      [hw.gps_source, hw.compass_source, hw.depth_source, hw.motor_source]);
     setBadge(hw.enabled ? "● hardware" : "sim");
     driverMenus = (cfg.driver_menus && typeof cfg.driver_menus === "object") ? cfg.driver_menus : {};
     activeMenus = Array.isArray(cfg.menus) ? cfg.menus : [];
     refreshMenus();
+    setDirty(false);  // freshly-(re)loaded form is clean — hide the Save bar
   }
 
   // Show the menu for the currently-SELECTED source of each device (from the
@@ -377,10 +434,16 @@
   // ---- device-specific menus (driver device_menu(): settings + actions) --
   // Rendered generically from the schema each active device advertises; a
   // setting change POSTs /api/device/setting, an action POSTs /api/device/action.
+  // Each menu is routed into its device's card slot (#dev-menus-<device>, e.g.
+  // #dev-menus-compass) when that slot exists; anything without a matching slot
+  // lands in the legacy #dev-menus fallback container at the panel bottom.
   function renderMenus(menus) {
-    const host = $("dev-menus");
-    if (!host) return;
-    host.innerHTML = "";
+    const fallback = $("dev-menus");
+    if (!fallback) return;
+    fallback.innerHTML = "";
+    document.querySelectorAll("[id^='dev-menus-']").forEach((slot) => {
+      slot.innerHTML = "";
+    });
     (menus || []).forEach((menu) => {
       const box = document.createElement("div");
       box.className = "dev-menu";
@@ -401,9 +464,15 @@
         menu.actions.forEach((a) => {
           const btn = document.createElement("button");
           btn.type = "button"; btn.className = "btn-ghost";
+          btn.dataset.action = a.name;   // deep-link target (Calibrate routing)
           btn.textContent = a.label || a.name;
           if (a.help) btn.title = a.help;
-          btn.addEventListener("click", () => runAction(menu.device, a.name, box));
+          if (a.disabled) {   // honest stub: greyed out, no dead-end POST
+            btn.disabled = true;
+            btn.textContent += " (coming soon)";
+          } else {
+            btn.addEventListener("click", () => runAction(menu.device, a.name, box));
+          }
           row.appendChild(btn);
         });
         box.appendChild(row);
@@ -411,6 +480,7 @@
       const out = document.createElement("div");
       out.className = "hint dev-menu-out";
       box.appendChild(out);
+      const host = (menu.device && $("dev-menus-" + menu.device)) || fallback;
       host.appendChild(box);
       applyShownWhen(box);
     });
@@ -666,6 +736,92 @@
     syncConnFields();   // keep the box + custom-row visibility consistent
   }
 
+  // Baud dropdowns (Task 4) — same pattern as the port picks: the number input
+  // (id unchanged) stays the source of truth that collect() reads; the select
+  // writes into it; "Custom…" reveals the input for oddball rates. An empty
+  // input = "Default" (backend/driver default, not sent).
+  const BAUD_PICKS = [
+    ["dev-gps-baud-pick",      "dev-gps-baud"],
+    ["dev-compass-baud-pick",  "dev-compass-baud"],
+    ["dev-motor-baud-pick",    "dev-motor-baud"],
+    ["dev-steering-baud-pick", "dev-steering-baud"],
+    ["dev-thrust-baud-pick",   "dev-thrust-baud"],
+  ];
+
+  function syncBaudPick(pickId, inputId) {
+    const sel = $(pickId), inp = $(inputId);
+    if (!sel || !inp) return;
+    const cur = (inp.value || "").trim();
+    const known = Array.prototype.some.call(sel.options,
+      (o) => o.value === cur && o.value !== PORT_CUSTOM);
+    sel.value = (known || cur === "") ? cur : PORT_CUSTOM;
+    inp.classList.toggle("hidden", sel.value !== PORT_CUSTOM);
+  }
+
+  function syncBaudPicks() {
+    BAUD_PICKS.forEach(([pk, ip]) => syncBaudPick(pk, ip));
+  }
+
+  function onBaudPick(pickId, inputId) {
+    const sel = $(pickId), inp = $(inputId);
+    if (!sel || !inp) return;
+    if (sel.value === PORT_CUSTOM) {
+      inp.classList.remove("hidden");
+      inp.focus();
+    } else {
+      inp.value = sel.value;  // the dropdown IS the source; mirror into the input
+      inp.classList.add("hidden");
+    }
+  }
+
+  // Driver-default baud per selected source. null = no opinion (no baud field,
+  // or the backend default applies).
+  function defaultBaud(kind, src) {
+    if (src === "ublox") return 38400;      // u-blox M9N UBX
+    if (src === "hwt901b") return 9600;     // WitMotion AHRS factory default
+    if (src === "serial" || src === "both") {
+      // NMEA-0183 sensors talk 4800; our motor/steering/thrust boards 115200.
+      return (kind === "gps" || kind === "compass") ? 4800 : 115200;
+    }
+    return null;
+  }
+
+  // On a SOURCE change, fill the baud field with the new driver's default —
+  // but only when it's empty or still at the PREVIOUS source's default; a
+  // user-typed value is never clobbered. Survives source flapping
+  // (ublox→serial→ublox keeps tracking) via data-prev-src on the select,
+  // which render() re-baselines on every config load.
+  function applyBaudDefault(kind, sel) {
+    const inp = $("dev-" + kind + "-baud");
+    if (!sel || !inp) return;
+    const prev = sel.dataset.prevSrc || "";
+    const next = sel.value;
+    if (next !== prev) {
+      const cur = (inp.value || "").trim();
+      const prevDef = defaultBaud(kind, prev);
+      const nextDef = defaultBaud(kind, next);
+      if (cur === "" || (prevDef != null && Number(cur) === prevDef)) {
+        if (nextDef != null) inp.value = String(nextDef);
+        // New source has no baud opinion: drop a stale driver default (never a
+        // user-typed value — those fail the guard above) so it isn't saved.
+        else if (cur !== "" && prevDef != null) inp.value = "";
+      }
+      // Always re-sync the dropdown, even when no default was written — the
+      // input is the source of truth and may have changed by other means.
+      syncBaudPick("dev-" + kind + "-baud-pick", "dev-" + kind + "-baud");
+    }
+    sel.dataset.prevSrc = next;
+  }
+
+  // Source-select id -> baud field prefix (devices without a baud are absent).
+  const BAUD_KIND_BY_SRC = {
+    "dev-src-gps": "gps",
+    "dev-src-compass": "compass",
+    "dev-src-motor": "motor",
+    "dev-src-steering": "steering",
+    "dev-src-thrust": "thrust",
+  };
+
   function loadSerialPorts() {
     fetch("/api/devices/serial-ports")
       .then((r) => (r.ok ? r.json() : null))
@@ -717,6 +873,8 @@
       })
       .catch(() => {
         setStatus("Couldn't load device config.", "err");
+        // The status may sit inside the hidden Save bar — surface it anyway.
+        if (VA.toast) VA.toast("Couldn't load device config.");
       });
   }
 
@@ -730,9 +888,15 @@
         if (btn) btn.disabled = false;
         if (res && res.ok === false) {
           setStatus("Save rejected: " + (res.error || "invalid"), "err");
-          return;
+          return;   // still dirty — the bar (and the error) stay visible
         }
         setStatus("Saved — restart the app to apply.", "ok");
+        setDirty(false);  // hides the sticky bar (and #dev-status with it) …
+        if (VA.toast) VA.toast("Saved — restart the app to apply.");  // … so toast it
+        // Promote/demote the guided-setup front door to match the saved config.
+        const hw = body.hardware || {};
+        syncFrontdoor(!!hw.enabled,
+          [hw.gps_source, hw.compass_source, hw.depth_source, hw.motor_source]);
       })
       .catch(() => {
         if (btn) btn.disabled = false;
@@ -742,7 +906,18 @@
 
   // ---- wiring -----------------------------------------------------------
 
-  // Mode segmented control.
+  // Any edit inside the card marks the form dirty (delegated; programmatic
+  // .value writes during render() fire no events, so loads stay clean).
+  // The u-blox receiver toolbox applies immediately via its own button —
+  // its controls are not part of collect(), so they don't dirty the form.
+  ["input", "change"].forEach((ev) => {
+    card.addEventListener(ev, (e) => {
+      if (e.target && e.target.closest && e.target.closest("#ublox-tools-card")) return;
+      setDirty(true);
+    });
+  });
+
+  // Mode segmented control (buttons fire no input/change → mark dirty here).
   const seg = $("dev-mode");
   if (seg) {
     seg.addEventListener("click", (e) => {
@@ -750,13 +925,21 @@
       if (!b) return;
       setEnabled(b.dataset.on === "true");
       syncMode();
+      setDirty(true);
     });
   }
 
-  // Source selects → toggle serial disclosure + show the picked driver's menu.
+  // Source selects → toggle serial disclosure + show the picked driver's menu
+  // (+ fill the new driver's default baud if the field isn't user-set).
   SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
-    if (sel) sel.addEventListener("change", () => { syncConnFields(); refreshMenus(); });
+    if (sel) sel.addEventListener("change", () => {
+      const bk = BAUD_KIND_BY_SRC[f.id];
+      if (bk) applyBaudDefault(bk, sel);
+      syncConnFields();
+      syncConditional();
+      refreshMenus();
+    });
   });
 
   // Warn when the u-blox GPS driver is chosen: it reconfigures the receiver
@@ -785,7 +968,9 @@
         dlg.removeEventListener("close", onClose);
         if (dlg.returnValue !== "ok") {   // cancelled / Esc -> revert the pick
           gsel.value = prev;
+          applyBaudDefault("gps", gsel);  // undo the ublox default baud too
           syncConnFields();
+          syncConditional();
           refreshMenus();
         }
         prev = gsel.value;
@@ -798,16 +983,53 @@
     if (cancel) cancel.addEventListener("click", () => { dlg.returnValue = "cancel"; dlg.close(); });
   })();
 
-  // Split-channel source selects → toggle per-channel serial rows.
+  // Split-channel source selects → toggle per-channel serial rows
+  // (+ per-channel driver-default baud).
   SPLIT_SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
-    if (sel) sel.addEventListener("change", syncSplitSerial);
+    if (sel) sel.addEventListener("change", () => {
+      const bk = BAUD_KIND_BY_SRC[f.id];
+      if (bk) applyBaudDefault(bk, sel);
+      syncSplitSerial();
+    });
   });
 
   // Serial-port dropdowns: mirror the pick into the (source-of-truth) input.
   PORT_PICKS.forEach(([pk, ip]) => {
     const sel = $(pk);
     if (sel) sel.addEventListener("change", () => onPortPick(pk, ip));
+  });
+
+  // Baud dropdowns: same mirroring into the (source-of-truth) number input.
+  BAUD_PICKS.forEach(([pk, ip]) => {
+    const sel = $(pk);
+    if (sel) sel.addEventListener("change", () => onBaudPick(pk, ip));
+  });
+
+  // Compass "Calibrate…" routing (Task 5) — one entry point per sensor:
+  //   magnetometer -> trigger the driver menu's spin-to-calibrate action (its
+  //     rendered button, so the result lands in that menu's own output line);
+  //   hwt901b -> deep-link to the sensor-fusion calibration card (the AHRS'
+  //     own mag calibration is still a stub — fusion cal is what applies).
+  const compassCalBtn = $("dev-calibrate-compass");
+  if (compassCalBtn) compassCalBtn.addEventListener("click", () => {
+    const src = ($("dev-src-compass") || {}).value;
+    if (src === "magnetometer") {
+      const slot = $("dev-menus-compass");
+      const act = slot && slot.querySelector('button[data-action="calibrate_start"]');
+      if (act) {
+        act.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        act.click();
+      } else if (slot) {   // menu not rendered (older backend) — just show it
+        slot.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    } else if (src === "hwt901b") {
+      const fusion = $("dev-card-fusion");
+      if (fusion) {
+        fusion.open = true;
+        fusion.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
   });
 
   const nEn = $("dev-nmea-enabled");
@@ -823,6 +1045,8 @@
   if (restartBtn) restartBtn.addEventListener("click", function () {
     if (!confirm("Restart the server now? The connection will drop for a few seconds.")) return;
     setStatus("Restarting the server…", "ok");
+    // The status may sit inside the hidden Save bar — surface it anyway.
+    if (VA.toast) VA.toast("Restarting the server…");
     // The response may not arrive before the process re-execs; ignore errors.
     VA.postJSON("/api/restart", {}).catch(function () {});
     // Poll until the server is back up, then reload the page.
@@ -1534,7 +1758,7 @@
   const $ = (id) => document.getElementById(id);
   const card = $("devices-card");
   const viewer = $("dev-debug-viewer");
-  const grid = document.querySelector(".dev-srcgrid");
+  const body = $("dev-body");
   if (!card || !viewer) return;
 
   const KINDS = { gps: 1, compass: 1, depth: 1, motor: 1, battery: 1, steering: 1, thrust: 1 };
@@ -1607,11 +1831,15 @@
       .catch(() => { if (kind === curKind) onFail(); });
   }
 
-  function openDebug(kind) {
+  function openDebug(kind, host) {
     if (!KINDS[kind]) return;
     stopPoll();               // never leak the previous poll on switch
     curKind = kind;
     fails = 0;
+    // Move the ONE shared viewer into the invoking device's card so the raw
+    // data shows up next to the device it belongs to (Task 3). No host (e.g.
+    // an unexpected caller) -> leave it wherever it currently is.
+    if (host && viewer.parentElement !== host) host.appendChild(viewer);
     viewer.classList.remove("hidden");
     const title = $("dev-debug-title");
     if (title) title.textContent = "Raw data — " + kind;
@@ -1627,23 +1855,17 @@
     viewer.classList.add("hidden");
   }
 
-  // Debug buttons (delegated on the sources grid). preventDefault stops the
-  // enclosing <label> from re-focusing its select.
-  if (grid) grid.addEventListener("click", (e) => {
+  // Debug buttons (delegated on the whole card body — the buttons now live
+  // inside each device's sub-card, incl. steering/thrust inside the motor
+  // card's split disclosure). preventDefault stops the enclosing <label> from
+  // re-focusing its select. The viewer is moved into the sub-card containing
+  // the clicked button (steering/thrust resolve to the motor card).
+  if (body) body.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-debug]");
     if (!b) return;
     e.preventDefault();
     e.stopPropagation();
-    openDebug(b.dataset.debug);
-  });
-
-  // Also handle debug buttons inside the split-channels disclosure (steering/thrust).
-  const splitDetails = $("dev-split-details");
-  if (splitDetails) splitDetails.addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-debug]");
-    if (!b) return;
-    e.preventDefault();
-    openDebug(b.dataset.debug);
+    openDebug(b.dataset.debug, b.closest("details.dev-card"));
   });
 
   const closeBtn = $("dev-debug-close");
@@ -1653,9 +1875,17 @@
   card.addEventListener("toggle", () => { if (!card.open) closeDebug(); });
 
   // Also stop the debug poll when the split-channels disclosure is collapsed.
+  const splitDetails = $("dev-split-details");
   if (splitDetails) {
     splitDetails.addEventListener("toggle", () => { if (!splitDetails.open) closeDebug(); });
   }
+
+  // And when the sub-card currently hosting the viewer is collapsed.
+  document.querySelectorAll("#dev-body details.dev-card").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (!d.open && curKind != null && d.contains(viewer)) closeDebug();
+    });
+  });
 })();
 
 /* Connectors consent UI — pluggable integrations (Devices panel).

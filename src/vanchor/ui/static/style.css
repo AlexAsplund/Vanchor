@@ -627,7 +627,7 @@ body.va-observer input[type="range"] {
 .slider-row { display: flex; flex-direction: column; gap: 2px; }
 label { display: block; margin: 0; color: var(--muted); font-size: 12px; }
 label output { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; float: right; }
-.hint { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.hint { color: var(--muted); font-size: 13px; line-height: 1.4; }
 .row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 13px; }
 .row span { color: var(--muted); }
 .row b { font-variant-numeric: tabular-nums; }
@@ -694,9 +694,26 @@ input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 
   color: var(--text); background: var(--glass-solid); border: 1px solid var(--line);
 }
 .dev-srcrow input:focus { outline: none; border-color: var(--accent); }
-#dev-serial { display: flex; flex-direction: column; gap: 6px; }
 .dev-dim { opacity: 0.4; }
 .dev-actions { margin-top: 8px; }
+
+/* Per-device sub-cards (Devices panel, UX overhaul Task 3). */
+/* The fusion sub-card has no content until /api/fusion/calibration loads
+   (devices.js unhides #dev-calib); hide the whole card until then. */
+#dev-card-fusion:has(> #dev-calib.hidden) { display: none; }
+/* Status chip in each sub-card summary (filled by health.js): a small pill,
+   pushed right (before the ▸ arrow) via margin-left:auto. */
+.dev-chip {
+  flex: 0 0 auto; margin-left: auto; margin-right: 8px;
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: var(--glass-solid); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 8px;
+}
+.dev-chip[data-state="ok"] { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 40%, var(--line)); }
+/* Guided-setup front door (Task 5): extra prominence while nothing is
+   configured yet; devices.js toggles the class (demoted = plain .btn-ghost). */
+#hwwiz-open.frontdoor { min-height: 56px; font-size: 16px; }
 
 /* Backup & restore card (#backup-card / backup.js). */
 .backup-actions { grid-template-columns: 1fr; margin-top: 6px; }
@@ -839,6 +856,14 @@ button#track-rec.recording { background: color-mix(in srgb, var(--stop) 35%, var
 .command-menu details.card { padding: 11px 13px; }
 .command-menu details.card > summary { min-height: 40px; font-size: 14px; }
 .command-menu .drawer-setup { min-height: 52px; font-size: 15px; }
+
+/* phone-on-a-boat touch targets — scoped to settings panels only */
+.command-menu .cm-panels button,
+.command-menu .cm-panels select,
+.command-menu .cm-panels summary,
+.command-menu .cm-tile { min-height: 48px; }
+.command-menu .cm-panels input[type="text"],
+.command-menu .cm-panels input[type="number"] { min-height: 44px; }
 
 /* ============================ SETTINGS DRAWER (legacy) ============================ */
 .scrim { position: fixed; inset: 0; z-index: 1900; background: rgba(0,0,0,0.55); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
@@ -2701,12 +2726,31 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
 }
 .va-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-/* Per-port serial line settings: baud + data bits + parity + stop bits inline. */
-.dev-lineopts { display: flex; align-items: center; gap: 8px; }
-.dev-lineopts > span { flex: 0 0 auto; }
+/* Per-port serial line settings (Task 4): a baud row (dropdown + hidden custom
+   input) stacked over a collapsed "Advanced (8N1)…" framing disclosure. The
+   whole block keeps class .dev-lineopts so syncConnFields() hides it as one. */
+.dev-lineopts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
 .dev-lineopts .line-fields { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; }
-.dev-lineopts .line-fields input { width: 5.5em; flex: 0 0 auto; }
+.dev-lineopts .line-fields input { width: 6.5em; flex: 0 0 auto; }
 .dev-lineopts .line-fields select { flex: 1 1 0; min-width: 0; }
+#dev-body details.adv > summary {
+  cursor: pointer; color: var(--muted); font-size: 12px;
+  display: flex; align-items: center;
+}
+#dev-body details.adv[open] > summary { color: var(--text); }
+
+/* Sticky dirty-state Save (Task 4): hidden until the form is edited, then
+   sticks to the bottom of the settings scroll on the panel background so the
+   content scrolling behind it can't bleed through. */
+#dev-save-bar {
+  position: sticky; bottom: 0; z-index: 6;
+  background: var(--glass-solid);
+  margin: 8px -13px 0; padding: 8px 13px 10px;  /* bleed to the card's edges */
+  border-top: 1px solid var(--line);
+}
+#dev-save-bar #dev-status { margin-top: 6px; }
+/* Room under the panel's last card so the stuck bar never covers its content. */
+.cm-panel[data-cat="devices"] { padding-bottom: 96px; }
 
 /* Depth readout at the top of the map long-press menu (nearest sounding/contour). */
 .map-menu .mm-depth {

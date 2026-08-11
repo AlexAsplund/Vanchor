@@ -84,7 +84,10 @@ def _menu_schema(declination_mode: str, manual_declination_deg: float, hz: float
             {"name": "profile", "label": "Sensor status",
              "help": "Read the live heading + the learned declination/offset "
                      "(needs the device running)."},
+            # ``disabled`` -> the UI renders this greyed out with a "(coming
+            # soon)" suffix instead of a live-looking dead-end button.
             {"name": "calibrate_mag", "label": "Calibrate magnetometer",
+             "disabled": True,
              "help": "Slowly rotate the boat through a full circle to fit the "
                      "hard/soft-iron correction (interactive; coming next)."},
         ],

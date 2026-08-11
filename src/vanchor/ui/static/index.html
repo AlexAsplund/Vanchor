@@ -967,17 +967,12 @@
           <span class="cm-tile-lbl">Devices</span>
           <span class="cm-tile-hint">Sensors, motor &amp; hardware</span>
         </button>
-        <button class="cm-tile" type="button" data-cat="tools">
-          <span class="cm-tile-ic" aria-hidden="true">🛠</span>
-          <span class="cm-tile-lbl">Tools</span>
-          <span class="cm-tile-hint">u-blox config &amp; diagnostics</span>
-        </button>
         <button class="cm-tile" type="button" data-cat="data">
           <span class="cm-tile-ic" aria-hidden="true">📊</span>
           <span class="cm-tile-lbl">Data &amp; system</span>
           <span class="cm-tile-hint">Updates, backup, WiFi, live data</span>
         </button>
-        <button class="cm-tile" type="button" data-cat="sim">
+        <button class="cm-tile hidden" type="button" data-cat="sim">
           <span class="cm-tile-ic" aria-hidden="true">🧪</span>
           <span class="cm-tile-lbl">Simulator</span>
           <span class="cm-tile-hint">Environment &amp; teleport</span>
@@ -1008,9 +1003,6 @@
 
       <!-- Devices -->
 <!--#include: panel-devices.html-->
-
-      <!-- Tools -->
-<!--#include: panel-tools.html-->
 
       <!-- Data & system -->
 <!--#include: panel-data.html-->
@@ -1048,7 +1040,7 @@
     <b>Selecting u-blox reconfigures the receiver</b>
     <p class="hint">Choosing the u-blox driver applies these settings to the GPS when it connects:</p>
     <ul id="ublox-warn-list" class="hint" style="margin:.2rem 0 .2rem 1.1rem"></ul>
-    <p class="hint"><b>NMEA sentence output is turned OFF</b> (the app reads UBX NAV-PVT instead). Need NMEA on? Use the <b>Tools</b> tab.</p>
+    <p class="hint"><b>NMEA sentence output is turned OFF</b> (the app reads UBX NAV-PVT instead). Need NMEA on? Use <b>Receiver setup (u-blox)</b> in the GPS card.</p>
     <div class="btn-row">
       <button id="ublox-warn-cancel" class="btn-ghost wide" value="cancel">Cancel</button>
       <button id="ublox-warn-ok" class="btn-primary wide" value="ok">Use u-blox</button>

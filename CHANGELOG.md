@@ -4,6 +4,22 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Devices menu overhauled: everything for one device in one place.** The
+  Devices panel is now six per-device cards (GPS, Compass, Depth, Motor,
+  Battery + fusion calibration) — each with its source, connection (port +
+  baud as a dropdown with per-driver defaults), driver settings, debug view and
+  a **live status chip** right on the card ("● 0.4 s · 11 sats" / "no data").
+  Rarely-needed fields (data bits/parity/stop bits) sit behind an "Advanced
+  (8N1)…" disclosure; the NMEA bridge and phone-share sections only appear when
+  a source uses them. Saving got a sticky **Save & restart** bar that appears
+  only when something changed. The u-blox toolbox moved from its own Tools tab
+  into the GPS card ("Receiver setup…"), with a warning when the chip's UART
+  baud diverges from the connection baud. The guided setup becomes a prominent
+  front door until the boat is configured, the Compass card gets a single
+  Calibrate action that routes to the right flow, and touch targets across the
+  settings meet the 44-48 px floor. Visible controls in the default Devices
+  view: ~72 → 43; "is my GPS receiving?" is now zero taps.
+
 - **Steadier phone connection at anchor: the boat now keeps your phone's WiFi
   awake.** Phones aggressively nap their WiFi radio (worse in Low Power Mode),
   which showed up as telemetry hiccups and brief "connection lost" moments in

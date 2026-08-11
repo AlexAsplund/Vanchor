@@ -164,6 +164,10 @@ def test_device_menu_shape_and_actions():
     menu = d.device_menu()
     assert menu["device"] == "compass"
     assert {a["name"] for a in menu["actions"]} >= {"profile", "calibrate_mag"}
+    # The stub mag calibration must advertise itself disabled so the UI renders
+    # it greyed out ("coming soon") instead of a live-looking dead end.
+    acts = {a["name"]: a for a in menu["actions"]}
+    assert acts["calibrate_mag"].get("disabled") is True
     assert d.apply_setting("declination_mode", "manual")["ok"]
     assert d.declination_mode == "manual"
     assert d.apply_setting("bogus", 1)["ok"] is False

@@ -256,6 +256,40 @@ def test_task3_view_switcher_text_labels():
         assert emoji not in snip, f"Emoji {emoji!r} still in view-switcher"
 
 
+# ---- UX overhaul Task 5: Tools tab merged into the GPS card ----------------
+
+def test_ux5_tools_panel_retired():
+    """The Tools tile/panel is gone; the u-blox toolbox lives in the GPS card."""
+    html = _render_shell()
+    assert 'data-cat="tools"' not in html, "Tools tile/panel must be retired"
+    # The toolbox (all its ids) moved inside the devices panel's GPS card.
+    dev_start = html.find('id="dev-card-gps"')
+    dev_end = html.find('id="dev-card-compass"')
+    assert dev_start >= 0 and dev_end > dev_start
+    gps_card = html[dev_start:dev_end]
+    for el_id in ("ublox-tools-card", "ubxt-port", "ubxt-baud", "ubxt-read",
+                  "ubxt-stats", "ubxt-nmea", "ubxt-rate", "ubxt-newbaud",
+                  "ubxt-persist", "ubxt-apply", "ubxt-result"):
+        assert f'id="{el_id}"' in gps_card, f"#{el_id} missing from the GPS card"
+
+
+def test_ux5_wizard_frontdoor_hint_present():
+    """The guided-setup button keeps its id and gains the front-door hint."""
+    html = _render_shell()
+    assert 'id="hwwiz-open"' in html
+    assert 'id="hwwiz-open-hint"' in html, "#hwwiz-open-hint missing"
+
+
+def test_ux5_compass_calibrate_button_present():
+    """One Calibrate entry point in the Compass card (hidden until relevant)."""
+    html = _render_shell()
+    start = html.find('id="dev-card-compass"')
+    end = html.find('id="dev-card-depth"')
+    assert start >= 0 and end > start
+    assert 'id="dev-calibrate-compass"' in html[start:end], \
+        "#dev-calibrate-compass missing from the Compass card"
+
+
 # ---- Task 6 settings IA + PWA shell checks ---------------------------------
 
 def test_task6_install_card_present():
