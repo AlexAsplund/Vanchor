@@ -14,3 +14,7 @@ install -m 0644 files/vanchor-hotspot.service \
     "${ROOTFS_DIR}/etc/systemd/system/vanchor-hotspot.service"
 install -m 0755 files/vanchor-hotspot-setup.sh \
     "${ROOTFS_DIR}/usr/local/sbin/vanchor-hotspot-setup"
+install -m 0644 files/vanchor-wifi-keepalive.service \
+    "${ROOTFS_DIR}/etc/systemd/system/vanchor-wifi-keepalive.service"
+install -m 0755 files/vanchor-wifi-keepalive.py \
+    "${ROOTFS_DIR}/usr/local/sbin/vanchor-wifi-keepalive"

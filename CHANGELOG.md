@@ -4,6 +4,17 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Steadier phone connection at anchor: the boat now keeps your phone's WiFi
+  awake.** Phones aggressively nap their WiFi radio (worse in Low Power Mode),
+  which showed up as telemetry hiccups and brief "connection lost" moments in
+  the UI. The SD image now runs a small keep-alive service on the Pi that
+  notices each connected phone/tablet within ~1.5 s and streams gentle pings
+  (5/s) to it for as long as it stays on the boat's network -- a standard
+  trick for latency-sensitive AP setups, complementing the app's relaxed WS
+  keepalive. It only ever pings devices on the boat's own WiFi subnet, and a
+  device that leaves is dropped cleanly. BENCH-VERIFY: keep-awake effect vs.
+  real phone power-save timing.
+
 ## [1.5.0a21] — 2026-08-11
 
 - **"GPS lost" now says WHY when the receiver is actually fine.** A u-blox that
