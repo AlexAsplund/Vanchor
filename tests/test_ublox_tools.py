@@ -116,3 +116,41 @@ async def test_apply_settings_bad_value_raises_before_sending() -> None:
     with pytest.raises(ValueError):
         await tools.apply_settings(tr, baud=12345)
     assert tr.written == []  # nothing sent when the plan can't be built
+
+
+async def test_read_nmea_messages_decodes_receiver_answer() -> None:
+    clk = FakeClock()
+    keys = ubx.NMEA_MSGOUT_KEYS
+    resp = bytes([1, 0, 0, 0])
+    for name, rate in (("RMC", 1), ("GGA", 1), ("GLL", 0)):
+        for port in ("uart1", "usb"):
+            resp += keys[name][port].to_bytes(4, "little") + bytes([rate])
+    tr = FakeTransport([ubx.build_frame(*ubx.CFG_VALGET, resp)])
+    out = await tools.read_nmea_messages(tr, clock=clk.now, sleep=clk.sleep)
+    assert out["ok"] is True
+    assert out["messages"]["RMC"] == {"uart1": 1, "usb": 1}
+    assert out["messages"]["GLL"] == {"uart1": 0, "usb": 0}
+    assert out["messages"]["GSV"] == {"uart1": None, "usb": None}  # not answered
+    # The request actually asked for all table keys.
+    frames, _ = ubx.parse_stream(tr.written[0])
+    assert frames[0][:2] == ubx.CFG_VALGET
+
+
+async def test_read_nmea_messages_no_answer_is_clear_error() -> None:
+    clk = FakeClock()
+    out = await tools.read_nmea_messages(FakeTransport([]), timeout=0.3,
+                                         clock=clk.now, sleep=clk.sleep)
+    assert out["ok"] is False and "VALGET" in out["error"]
+
+
+async def test_set_nmea_messages_acks_and_validates() -> None:
+    clk = FakeClock()
+    ack = ubx.build_frame(*ubx.ACK_ACK, b"\x06\x8a")
+    tr = FakeTransport([ack])
+    out = await tools.set_nmea_messages(tr, {"GLL": 0}, clock=clk.now, sleep=clk.sleep)
+    assert out == {"ok": True, "ack": True}
+    import pytest
+    tr2 = FakeTransport([])
+    with pytest.raises(ValueError):
+        await tools.set_nmea_messages(tr2, {"BAD": 1})
+    assert tr2.written == []                             # nothing sent on bad input

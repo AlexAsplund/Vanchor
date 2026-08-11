@@ -125,6 +125,76 @@ async def _await_ack(transport: Any, *, timeout: float, clock: Callable[[], floa
     return None
 
 
+async def _await_frame(transport: Any, want: tuple[int, int], *, timeout: float,
+                       clock: Callable[[], float],
+                       sleep: Callable[[float], Any]) -> bytes | None:
+    """Read until a frame of class/id ``want`` arrives; return its payload."""
+    buf = b""
+    end = clock() + timeout
+    while clock() < end:
+        try:
+            data = await asyncio.wait_for(transport.read(4096), timeout=0.3)
+        except (asyncio.TimeoutError, EOFError):
+            data = b""
+        if not data:
+            await sleep(0.02)
+            continue
+        buf += data
+        frames, buf = ubx.parse_stream(buf)
+        for cls, mid, payload in frames:
+            if (cls, mid) == want:
+                return payload
+    return None
+
+
+async def read_nmea_messages(transport: Any, *, timeout: float = 2.0,
+                             clock: Callable[[], float] = time.monotonic,
+                             sleep: Callable[[float], Any] = asyncio.sleep) -> dict:
+    """Read which standard NMEA sentences the receiver currently emits.
+
+    CFG-VALGET on the RAM layer for GGA/GLL/GSA/GSV/RMC/VTG on UART1 + USB.
+    Returns ``{ok, messages: {RMC: {uart1: rate, usb: rate}, ...}}`` -- rate 0
+    means off. ``ok: False`` with an error when the receiver doesn't answer
+    (not a u-blox / UBX input disabled)."""
+    keys = [k for m in ubx.NMEA_MSGOUT_KEYS.values() for k in m.values()]
+    await transport.open()
+    try:
+        await transport.write(ubx.cfg_valget_request(keys))
+        payload = await _await_frame(transport, ubx.CFG_VALGET,
+                                     timeout=timeout, clock=clock, sleep=sleep)
+    finally:
+        await transport.close()
+    if payload is None:
+        return {"ok": False, "error": "no VALGET answer (not a u-blox, or UBX "
+                "input disabled on this port)"}
+    values = ubx.parse_valget_response(payload)
+    messages = {
+        name: {port: values.get(key) for port, key in ports.items()}
+        for name, ports in ubx.NMEA_MSGOUT_KEYS.items()
+    }
+    return {"ok": True, "messages": messages}
+
+
+async def set_nmea_messages(transport: Any, rates: dict, *, persist: bool = False,
+                            ack_timeout: float = 1.0,
+                            clock: Callable[[], float] = time.monotonic,
+                            sleep: Callable[[float], Any] = asyncio.sleep) -> dict:
+    """Set per-sentence NMEA output rates (0 = off) on UART1 + USB.
+
+    ``persist`` writes RAM+BBR+Flash. Raises ValueError for unknown sentences /
+    out-of-range rates BEFORE anything is sent."""
+    layers = 0x07 if persist else 0x01
+    frame = ubx.cfg_set_nmea_messages(rates, layers=layers)  # may raise
+    await transport.open()
+    try:
+        await transport.write(frame)
+        ack = await _await_ack(transport, timeout=ack_timeout, clock=clock,
+                               sleep=sleep)
+    finally:
+        await transport.close()
+    return {"ok": ack is True, "ack": ack}
+
+
 # What each setting maps to (name -> frame builder taking the value + layers).
 def _frames_for(nmea: bool | None, rate_hz: float | None, baud: int | None,
                 layers: int) -> list[tuple[str, bytes]]:

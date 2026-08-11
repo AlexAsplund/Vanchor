@@ -126,6 +126,15 @@
               </label>
               <button id="ubxt-apply" class="btn-primary wide" type="button">Apply settings</button>
               <div id="ubxt-result" class="hint"></div>
+
+              <div class="ctx-sub">NMEA sentences</div>
+              <div class="hint">Which sentences the chip transmits. vanchor needs
+                <b>RMC</b> (position+speed+course) and uses <b>GGA</b> (fix quality);
+                the rest only cost bandwidth on a wired UART.</div>
+              <button id="ubxt-nmea-read" class="btn-ghost wide" type="button">Read current</button>
+              <div id="ubxt-nmea-list" class="ubxt-nmea-list"></div>
+              <button id="ubxt-nmea-apply" class="btn-primary wide hidden" type="button">Apply sentence changes</button>
+              <div id="ubxt-nmea-result" class="hint"></div>
             </details>
 
             <div id="dev-menus-gps"></div>

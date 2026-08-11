@@ -158,11 +158,77 @@
     } catch (e) { res.textContent = "Error: " + e; }
   }
 
+  // --- NMEA sentence output config (read via VALGET, set via VALSET) ------ #
+  const NMEA_SENTENCES = ["RMC", "GGA", "GLL", "GSA", "GSV", "VTG"];
+  const NMEA_NEEDED = { RMC: "required", GGA: "used" };
+
+  async function readNmeaMessages() {
+    const port = $("ubxt-port").value, baud = $("ubxt-baud").value;
+    const res = $("ubxt-nmea-result"), list = $("ubxt-nmea-list");
+    if (!port) { res.textContent = "Pick a serial port first."; return; }
+    res.textContent = "Reading \u2026";
+    try {
+      const r = await fetch("/api/tools/ublox/nmea-messages?port=" +
+        encodeURIComponent(port) + "&baud=" + encodeURIComponent(baud));
+      const d = await r.json();
+      if (!d.ok) { res.textContent = "Error: " + (d.error || "no response"); return; }
+      list.innerHTML = "";
+      NMEA_SENTENCES.forEach((name) => {
+        const m = (d.messages || {})[name] || {};
+        const on = (m.uart1 || 0) > 0 || (m.usb || 0) > 0;
+        const row = document.createElement("label");
+        row.className = "switch";
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.checked = on; cb.dataset.nmea = name;
+        cb.addEventListener("change", () => $("ubxt-nmea-apply").classList.remove("hidden"));
+        const track = document.createElement("span"); track.className = "track";
+        row.appendChild(cb); row.appendChild(track);
+        const tag = NMEA_NEEDED[name];
+        row.appendChild(document.createTextNode(" " + name +
+          (tag ? " \u2014 " + (tag === "required" ? "needed by vanchor" : "used by vanchor") : "")));
+        list.appendChild(row);
+      });
+      res.textContent = "";
+    } catch (e) { res.textContent = "Error: " + e; }
+  }
+
+  async function applyNmeaMessages() {
+    const port = $("ubxt-port").value;
+    const res = $("ubxt-nmea-result");
+    const rates = {};
+    document.querySelectorAll("#ubxt-nmea-list input[data-nmea]").forEach((cb) => {
+      rates[cb.dataset.nmea] = cb.checked ? 1 : 0;
+    });
+    if (rates.RMC === 0 && !window.confirm(
+        "Turning RMC off removes speed + course from vanchor (GPS shows 0 kn, " +
+        "no compass-loss fallback). Turn it off anyway?")) {
+      return;
+    }
+    res.textContent = "Applying \u2026";
+    try {
+      const r = await fetch("/api/tools/ublox/nmea-messages", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ port: port, baud: parseInt($("ubxt-baud").value, 10),
+                               rates: rates, persist: $("ubxt-persist").checked }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        res.textContent = "Applied \u2713" + ($("ubxt-persist").checked ? " \u00b7 saved to flash" : "");
+        $("ubxt-nmea-apply").classList.add("hidden");
+      } else {
+        res.textContent = "Failed: " + (d.error || JSON.stringify(d));
+      }
+    } catch (e) { res.textContent = "Error: " + e; }
+  }
+
   function init() {
     const read = $("ubxt-read"), apply = $("ubxt-apply");
     if (!read && !apply) return;   // toolbox markup not present
     if (read) read.addEventListener("click", readStats);
     if (apply) apply.addEventListener("click", applySettings);
+    const nmeaRead = $("ubxt-nmea-read"), nmeaApply = $("ubxt-nmea-apply");
+    if (nmeaRead) nmeaRead.addEventListener("click", readNmeaMessages);
+    if (nmeaApply) nmeaApply.addEventListener("click", applyNmeaMessages);
     // Refresh the port list + prefill from the GPS config on every open of the
     // disclosure (prefill runs AFTER the refresh so it can't be clobbered).
     const det = $("ublox-tools-card");

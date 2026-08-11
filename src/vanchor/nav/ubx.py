@@ -217,10 +217,74 @@ KEY_MSGOUT_NAV_PVT_UART1 = 0x20910007  # U1
 KEY_MSGOUT_NAV_PVT_USB = 0x20910009    # U1
 
 MON_VER = (0x0A, 0x04)  # UBX-MON-VER (poll for sw/hw version)
+CFG_VALGET = (0x06, 0x8B)  # UBX-CFG-VALGET (poll current config values)
 ACK_ACK = (0x05, 0x01)
 ACK_NAK = (0x05, 0x00)
 
+# CFG-MSGOUT rates (U1, messages-per-epoch) for the standard NMEA sentences,
+# per output port. From the u-blox gen-9 interface description (M9, PROTVER
+# 27+). BENCH-VERIFY: confirmed against a real M9N over USB (VALGET reads them
+# back and VALSET toggling GLL was observed in the live stream).
+NMEA_MSGOUT_KEYS: dict[str, dict[str, int]] = {
+    #        I2C         UART1       UART2       USB         SPI
+    "GGA": {"uart1": 0x209100BB, "usb": 0x209100BD},
+    "GLL": {"uart1": 0x209100CA, "usb": 0x209100CC},
+    "GSA": {"uart1": 0x209100C0, "usb": 0x209100C2},
+    "GSV": {"uart1": 0x209100C5, "usb": 0x209100C7},
+    "RMC": {"uart1": 0x209100AC, "usb": 0x209100AE},
+    "VTG": {"uart1": 0x209100B1, "usb": 0x209100B3},
+}
+
 _SUPPORTED_BAUDS = (4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800)
+
+
+def cfg_valget_request(keys: list[int], *, layer: int = 0) -> bytes:
+    """UBX-CFG-VALGET request for the current values of ``keys``.
+
+    ``layer`` 0 = RAM (the active config). The receiver answers with a VALGET
+    response (same class/id) whose payload carries version=1 + key/value pairs;
+    decode it with :func:`parse_valget_response`."""
+    payload = bytearray(struct.pack("<BBH", 0, layer, 0))  # version, layer, position
+    for key in keys:
+        payload += struct.pack("<I", key)
+    return build_frame(CFG_VALGET[0], CFG_VALGET[1], bytes(payload))
+
+
+def parse_valget_response(payload: bytes) -> dict[int, int]:
+    """Decode a CFG-VALGET response payload into ``{key_id: value}``.
+
+    Value widths are inferred from each key's size bits (28-30), like VALSET.
+    Returns {} for a payload too short to carry the 4-byte header."""
+    out: dict[int, int] = {}
+    if len(payload) < 4:
+        return out
+    i = 4  # skip version/layer/position header
+    while i + 4 <= len(payload):
+        key = int.from_bytes(payload[i:i + 4], "little")
+        width = _KEY_SIZE_BYTES.get((key >> 28) & 0x7)
+        if width is None or i + 4 + width > len(payload):
+            break  # unknown size code / truncated pair -> stop cleanly
+        out[key] = int.from_bytes(payload[i + 4:i + 4 + width], "little")
+        i += 4 + width
+    return out
+
+
+def cfg_set_nmea_messages(rates: dict[str, int], *, layers: int = 1) -> bytes:
+    """VALSET the per-epoch output rate (0 = off, 1 = every fix) of standard
+    NMEA sentences on BOTH UART1 and USB. ``rates`` maps sentence name (see
+    :data:`NMEA_MSGOUT_KEYS`) -> rate 0..255."""
+    items: list[tuple[int, int]] = []
+    for name, rate in rates.items():
+        keys = NMEA_MSGOUT_KEYS.get(name.upper())
+        if keys is None:
+            raise ValueError(f"unknown NMEA sentence {name!r}; "
+                             f"known: {sorted(NMEA_MSGOUT_KEYS)}")
+        if not 0 <= int(rate) <= 255:
+            raise ValueError(f"rate for {name} out of range 0..255: {rate}")
+        items += [(keys["uart1"], int(rate)), (keys["usb"], int(rate))]
+    if not items:
+        raise ValueError("no sentences given")
+    return cfg_valset(items, layers=layers)
 
 
 def poll(msg_class: int, msg_id: int) -> bytes:

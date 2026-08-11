@@ -27,3 +27,15 @@ def test_apply_requires_a_port(tmp_path):
     with _client(tmp_path) as c:
         r = c.post("/api/tools/ublox/apply", json={"nmea": True})
         assert r.status_code == 400 and r.json()["ok"] is False
+
+
+def test_nmea_messages_post_validation(tmp_path):
+    with _client(tmp_path) as c:
+        r = c.post("/api/tools/ublox/nmea-messages", json={"rates": {"RMC": 1}})
+        assert r.status_code == 400                      # port required
+        r = c.post("/api/tools/ublox/nmea-messages", json={"port": "/dev/x"})
+        assert r.status_code == 400                      # rates required
+        r = c.post("/api/tools/ublox/nmea-messages",
+                   json={"port": "/dev/x", "rates": {"ZDA": 1}})
+        assert r.status_code == 400                      # unknown sentence
+        assert "ZDA" in r.json()["error"]
