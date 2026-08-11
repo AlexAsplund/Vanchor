@@ -49,6 +49,23 @@ def test_safety_banners_present():
     assert 'id="link-banner"' in html
 
 
+def test_alert_overflow_strip_present():
+    """#166 overflow strip + alertstack.js coordinator are in the shell."""
+    html = _render_shell()
+    assert 'id="sbanner-overflow-strip"' in html, \
+        "#sbanner-overflow-strip button missing from #safety-banners"
+    assert '/static/alertstack.js' in html, "alertstack.js script tag missing"
+    # The strip must be inside #safety-banners (the compaction scope).
+    sb_pos = html.find('id="safety-banners"')
+    strip_pos = html.find('id="sbanner-overflow-strip"')
+    close_pos = html.find("</div>", strip_pos)
+    assert sb_pos >= 0 and strip_pos > sb_pos, \
+        "#sbanner-overflow-strip must be inside #safety-banners"
+    # alertstack.js loads after health.js (its priority order source).
+    assert html.find('/static/health.js') < html.find('/static/alertstack.js'), \
+        "alertstack.js must load after health.js"
+
+
 def test_peek_bar_layout():
     """Peekbar has STOP, mode button, and MOB."""
     html = _render_shell()

@@ -1833,7 +1833,10 @@ body.mobile[data-sheet="full"] .wa-next { display: none; }
 /* Priority order (lower = higher = nearer the topbar). Includes the four
    dynamic health strips prepended by health.js — CSS order beats DOM order,
    so no JS reordering is needed. MOB > drag/anchor > shallow > battery > link
-   with health strips slotted by severity. */
+   with health strips slotted by severity. This order map is ALSO the priority
+   source of truth read by the alertstack.js coordinator (#166): when ≥2 are
+   active it keeps the lowest-order strip full-size and collapses the rest into
+   #sbanner-overflow-strip (order 50, so it sorts just under the top strip). */
 #health-fault-banner       { order: 0; }
 #mob-banner                { order: 1; }
 #anchor-alarm-banner       { order: 2; }
@@ -1847,6 +1850,26 @@ body.mobile[data-sheet="full"] .wa-next { display: none; }
 #rtl-banner                { order: 10; }
 #auto-apb-banner           { order: 11; }
 #gov-banner                { order: 12; }
+#sbanner-overflow-strip    { order: 50; }
+
+/* ---- #166 compaction: overflow strip + collapsed banners ----
+   A banner compacted by alertstack.js is fully removed from the stack. The
+   !important beats the base `.sbanner { display: flex }` rule above. */
+.sbanner.sb-compacted { display: none !important; }
+/* Slim single-tap overflow strip. Full width like a banner but shorter; keeps
+   the 44px wet-finger tap floor even though it reads thin. Severity colour +
+   pulse are reused from the existing sbanner tokens (no new colours). */
+.sbanner-overflow {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; box-sizing: border-box;
+  padding: 4px 14px; min-height: 44px;
+  border: 0; cursor: pointer; text-align: left;
+  font-size: 12px; font-weight: 800; letter-spacing: 0.04em;
+  pointer-events: auto;
+}
+.sbanner-overflow.hidden { display: none; }
+.sbanner-overflow[data-sev="warn"]  { background: var(--warn); color: #2a1c00; }
+.sbanner-overflow[data-sev="alarm"] { background: var(--stop); color: #fff; animation: sbanner-pulse 1s infinite; }
 /* Make a freshly-shown banner pop in so it's harder to miss (#97). */
 .sbanner:not(.hidden) { animation: sbanner-in 0.28s ease-out; }
 .sbanner-alarm:not(.hidden) { animation: sbanner-in 0.28s ease-out, sbanner-pulse 1s infinite 0.28s; }

@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Alerts no longer pile into an unreadable stack.** When several alerts fire
+  together, the highest-priority one keeps its full banner (text, color,
+  action buttons), and everything else collapses into one slim severity-
+  colored strip (`GPS LOST · SHALLOW · +2 more`) — alarm labels are never
+  hidden, only lower-priority warnings fold into the "+N". Tap the strip to
+  expand the pile; it re-collapses after 10 s idle. At most two rows of screen,
+  ever, and the chart + STOP stay usable. Design record + alternatives in
+  docs/alerts-presentation.md.
+
 - **SD image enables I2C out of the box** (`dtparam=i2c_arm=on`). Wired I2C
   sensors — the combo-GPS magnetometers (BE-880 class) and the INA226 battery
   shunt — previously needed a manual `raspi-config` step before `/dev/i2c-1`
