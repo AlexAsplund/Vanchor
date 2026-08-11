@@ -288,3 +288,21 @@ def test_link_loss_manual_still_stops_even_with_continue_mission():
     assert rt.state.mode == ControlModeName.MANUAL     # stop lands in manual...
     cmd = rt.controller.control_tick(0.2)              # next tick applies the stop
     assert cmd.thrust == 0.0                           # ...with thrust CUT
+
+
+def test_health_devices_carries_signal_detail():
+    # A driver exposing status_detail/signal (the u-blox GPS) gets them surfaced
+    # so the UI can say "signal too weak (4 sats)" instead of a bare lost (#142).
+    rt = Runtime()
+
+    class _UbloxLike:
+        healthy = False
+        last_data_monotonic = 95.0
+        status_detail = "signal too weak: 4 sats, ±33.4 m (below receiver quality gate) — acquiring"
+        signal = {"fix_type": 3, "num_sv": 4, "h_acc_m": 33.4, "fix_ok": False}
+
+    rt.gps = _UbloxLike()
+    dev = rt._device_health(now=100.0)["gps"]
+    assert dev["healthy"] is False and dev["data_age_s"] == 5.0
+    assert "quality gate" in dev["detail"]
+    assert dev["signal"]["num_sv"] == 4 and dev["signal"]["fix_ok"] is False

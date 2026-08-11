@@ -545,6 +545,15 @@ class DeviceManager:
                 "healthy": bool(healthy),
                 "data_age_s": round(now - last, 2) if last is not None else None,
             }
+            # Optional richer status (duck-typed; e.g. the u-blox driver's
+            # signal quality) so the UI can explain WHY a device is unhealthy
+            # ("4 sats, below quality gate") instead of a bare lost state (#142).
+            detail = getattr(dev, "status_detail", None)
+            if detail:
+                out[name]["detail"] = detail
+            signal = getattr(dev, "signal", None)
+            if isinstance(signal, dict):
+                out[name]["signal"] = signal
         # Hardware watchdog (#44): only when enabled. healthy = the heartbeat is
         # armed + running (a stopped watchdog would drop the motor-supply relay).
         wd = getattr(rt, "watchdog", None)

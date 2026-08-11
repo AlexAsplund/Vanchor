@@ -4,6 +4,14 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **"GPS lost" now says WHY when the receiver is actually fine.** A u-blox that
+  is receiving but below its own fix-quality gate (few satellites, poor sky
+  view -- e.g. indoors) used to show a bare "GPS LOST", identically to a dead
+  cable. The driver now reports its live signal quality, the red banner reads
+  e.g. "GPS: signal too weak: 4 sats, ±33 m (below receiver quality gate) —
+  acquiring", and the HUD shows "ACQ 4" instead of "LOST" while satellites are
+  being tracked. First shipped slice of the device-error-visibility work (#142).
+
 - **`serial0` is now findable in the port menu.** The stable on-board-UART alias
   was listed with only its resolved target's name, so `/dev/serial0` rendered as
   a second "ttyAMA0" entry -- anyone looking for "serial0" concluded it wasn't

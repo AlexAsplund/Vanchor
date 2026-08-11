@@ -101,11 +101,20 @@
     }
 
     // ---- fix_lost --------------------------------------------------------
+    // With a u-blox driver we know WHY: the device-health detail distinguishes
+    // "receiving but signal too weak (N sats)" from a truly dead GPS (#142).
     const fixLost = !!h.fix_lost;
+    const gpsDetail = h.devices && h.devices.gps && h.devices.gps.detail;
+    if (fixLost) {
+      fixLostBanner.textContent = gpsDetail ? ("GPS: " + gpsDetail) : "GPS LOST";
+    }
     if (fixLost !== prevFixLost) {
       prevFixLost = fixLost;
       setBanner(fixLostBanner, fixLost);
-      if (fixLost && VA.logAlert) VA.logAlert("alarm", "GPS fix lost", { level: "high" });
+      if (fixLost && VA.logAlert) {
+        VA.logAlert("alarm", gpsDetail ? ("GPS unusable — " + gpsDetail) : "GPS fix lost",
+                    { level: "high" });
+      }
     }
 
     // ---- depth_stale -----------------------------------------------------
