@@ -251,6 +251,23 @@
     if (phoneCard) phoneCard.classList.toggle("hidden", !(phoneOn || srcs.indexOf("phone") !== -1));
   }
 
+  // Guided-setup front door (Task 5): while nothing is configured (hardware
+  // mode off, or every device source is sim/none/Auto), the wizard button is
+  // the prominent primary action with a hint; once real hardware is configured
+  // it demotes to a quiet secondary button. Re-evaluated on config load and on
+  // save success, so it demotes live after the config becomes configured.
+  function syncFrontdoor(enabled, sources) {
+    const wiz = $("hwwiz-open");
+    if (!wiz) return;
+    const unconfigured = !enabled ||
+      sources.every((s) => s == null || s === "" || s === "sim" || s === "none");
+    wiz.classList.toggle("btn-primary", unconfigured);
+    wiz.classList.toggle("frontdoor", unconfigured);
+    wiz.classList.toggle("btn-ghost", !unconfigured);
+    const hint = $("hwwiz-open-hint");
+    if (hint) hint.classList.toggle("hidden", !unconfigured);
+  }
+
   function syncMode() {
     const enabled = readEnabled();
     const seg = $("dev-mode");
@@ -381,6 +398,8 @@
     syncConnFields();
     syncConditional();
     syncNmea();
+    syncFrontdoor(!!hw.enabled,
+      [hw.gps_source, hw.compass_source, hw.depth_source, hw.motor_source]);
     setBadge(hw.enabled ? "● hardware" : "sim");
     driverMenus = (cfg.driver_menus && typeof cfg.driver_menus === "object") ? cfg.driver_menus : {};
     activeMenus = Array.isArray(cfg.menus) ? cfg.menus : [];
@@ -860,6 +879,10 @@
         setStatus("Saved — restart the app to apply.", "ok");
         setDirty(false);  // hides the sticky bar (and #dev-status with it) …
         if (VA.toast) VA.toast("Saved — restart the app to apply.");  // … so toast it
+        // Promote/demote the guided-setup front door to match the saved config.
+        const hw = body.hardware || {};
+        syncFrontdoor(!!hw.enabled,
+          [hw.gps_source, hw.compass_source, hw.depth_source, hw.motor_source]);
       })
       .catch(() => {
         if (btn) btn.disabled = false;

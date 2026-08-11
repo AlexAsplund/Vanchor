@@ -273,6 +273,13 @@ def test_ux5_tools_panel_retired():
         assert f'id="{el_id}"' in gps_card, f"#{el_id} missing from the GPS card"
 
 
+def test_ux5_wizard_frontdoor_hint_present():
+    """The guided-setup button keeps its id and gains the front-door hint."""
+    html = _render_shell()
+    assert 'id="hwwiz-open"' in html
+    assert 'id="hwwiz-open-hint"' in html, "#hwwiz-open-hint missing"
+
+
 # ---- Task 6 settings IA + PWA shell checks ---------------------------------
 
 def test_task6_install_card_present():

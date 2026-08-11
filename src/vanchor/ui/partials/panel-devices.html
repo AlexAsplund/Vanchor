@@ -6,7 +6,12 @@
            driver menu and debug all live inside that device's card. -->
       <details class="card" id="devices-card">
         <summary>Devices &amp; hardware <span id="dev-state" class="badge"></span></summary>
+        <!-- Guided-setup front door (Task 5): devices.js render() promotes this
+             to a prominent .btn-primary.frontdoor + hint while nothing is
+             configured (hardware off / all sources sim-none), and demotes it
+             to a quiet .btn-ghost once real hardware is set up. -->
         <button id="hwwiz-open" class="btn-primary wide" type="button" style="margin-top:.5rem">🧭 Guided hardware setup…</button>
+        <div id="hwwiz-open-hint" class="hint hidden">Nothing set up yet — the wizard detects your GPS, compass and motor and configures them for you.</div>
 
         <div id="dev-unavailable" class="hint err hidden">This build of the app can't configure devices (older backend).</div>
 
