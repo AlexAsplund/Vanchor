@@ -283,6 +283,9 @@
       simShown = on;
       const card = $("sim-card");
       if (card) card.classList.toggle("hidden", !on);
+      // Also hide/show the Simulator home tile (live toggle, same signal).
+      const tile = document.querySelector('.cm-tile[data-cat="sim"]');
+      if (tile) tile.classList.toggle("hidden", !on);
     }
     if (on && !presetsLoaded) { presetsLoaded = true; loadWeatherPresets(); }
     const e = t.environment;
