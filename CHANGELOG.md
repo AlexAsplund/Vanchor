@@ -4,6 +4,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Nested settings disclosures now clearly look expandable.** The sub-cards
+  inside a device card ("Advanced (8N1)…", "Receiver setup (u-blox)…") had no
+  expand indicator at all (their flex summaries suppressed the browser's
+  default triangle) — they now carry an accent ▸ chevron that rotates when
+  open, and the device cards' own trailing chevron is bigger and brighter.
+
 ## [1.5.0a23] — 2026-08-11
 
 - **Receiver setup can now read and edit which NMEA sentences the u-blox

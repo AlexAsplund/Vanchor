@@ -2738,6 +2738,19 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
   display: flex; align-items: center;
 }
 #dev-body details.adv[open] > summary { color: var(--text); }
+/* Expand affordance (operator feedback): summary's display:flex suppresses the
+   browser's default disclosure triangle, leaving these nested cards looking
+   like static text. Add an explicit leading chevron that rotates when open. */
+#dev-body details.adv > summary::before {
+  content: "\25B8"; display: inline-block; flex: 0 0 auto;
+  margin-right: 6px; color: var(--accent); font-size: 13px;
+  transition: transform 0.2s;
+}
+#dev-body details.adv[open] > summary::before { transform: rotate(90deg); }
+/* Device sub-cards keep the theme's trailing chevron but make it unmissable. */
+.command-menu details.dev-card > summary::after {
+  color: var(--text); font-size: 15px;
+}
 
 /* Sticky dirty-state Save (Task 4): hidden until the form is edited, then
    sticks to the bottom of the settings scroll on the panel background so the
