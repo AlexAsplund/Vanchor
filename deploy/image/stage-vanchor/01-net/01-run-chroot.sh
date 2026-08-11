@@ -17,6 +17,11 @@ BOOT_DIR=/boot/firmware        # Bookworm; older layouts use /boot
 if [ -f "$BOOT_DIR/config.txt" ]; then
     grep -q '^enable_uart=1'        "$BOOT_DIR/config.txt" || echo 'enable_uart=1'        >> "$BOOT_DIR/config.txt"
     grep -q '^dtoverlay=disable-bt' "$BOOT_DIR/config.txt" || echo 'dtoverlay=disable-bt' >> "$BOOT_DIR/config.txt"
+    # I2C for wired sensors (combo-GPS magnetometers, INA226 battery shunt):
+    # without this /dev/i2c-1 doesn't exist and every I2C device needs a manual
+    # raspi-config step -- the same trap the UART had. The container already
+    # carries smbus2 + the c 89:* device rule; this makes the bus exist.
+    grep -q '^dtparam=i2c_arm=on'   "$BOOT_DIR/config.txt" || echo 'dtparam=i2c_arm=on'   >> "$BOOT_DIR/config.txt"
 fi
 if [ -f "$BOOT_DIR/cmdline.txt" ]; then
     # Drop the serial-console token so getty no longer holds the port.

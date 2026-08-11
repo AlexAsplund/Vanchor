@@ -4,6 +4,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **SD image enables I2C out of the box** (`dtparam=i2c_arm=on`). Wired I2C
+  sensors — the combo-GPS magnetometers (BE-880 class) and the INA226 battery
+  shunt — previously needed a manual `raspi-config` step before `/dev/i2c-1`
+  even existed, the same trap the GPIO UART had. Now they just work on a
+  fresh flash.
+
 - **Device failures now say WHY, right on the device card (#142, #161).** A
   serial device that can't open its port used to die silently for the whole
   session with only a server-log line. Now: the error is classified into an

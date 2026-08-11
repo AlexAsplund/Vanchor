@@ -30,8 +30,9 @@ Raspberry Pi:
 | SDA | GPIO 2 (SDA1) |
 | SCL | GPIO 3 (SCL1) |
 
-Enable I2C on the Pi once: `sudo raspi-config` → **Interface Options → I2C →
-Yes**, then reboot. The bus is then `/dev/i2c-1`.
+The SD image enables I2C out of the box (the bus is `/dev/i2c-1`). Only on a
+self-installed Pi OS do you need to enable it once: `sudo raspi-config` →
+**Interface Options → I2C → Yes**, then reboot.
 
 ## Enable it
 
