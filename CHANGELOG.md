@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a23] — 2026-08-11
+
 - **Receiver setup can now read and edit which NMEA sentences the u-blox
   transmits.** The GPS card's "Receiver setup (u-blox)" section gained an NMEA
   sentences panel: **Read current** shows the chip's per-sentence output state
