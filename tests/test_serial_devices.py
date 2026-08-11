@@ -510,3 +510,58 @@ async def test_motor_feedback_reconnects_after_eof() -> None:
     await _pump(lambda: motor.last_feedback == SteeringFeedback(2.0, False, 5.0))
     assert motor.last_feedback == SteeringFeedback(2.0, False, 5.0)
     await motor.stop()
+
+
+# --- Operator-facing failure state (#142) ----------------------------------- #
+
+def test_classify_serial_error_messages():
+    from vanchor.hardware.serial_devices import classify_serial_error
+    assert "dialout" in classify_serial_error(
+        PermissionError(13, "could not open port /dev/ttyACM0"), "/dev/ttyACM0")
+    assert "check the cable" in classify_serial_error(
+        FileNotFoundError(2, "No such file or directory"), "/dev/ttyUSB3")
+    assert "in use" in classify_serial_error(OSError("Device or resource busy"), "/dev/x")
+    assert "cannot open /dev/y" in classify_serial_error(RuntimeError("weird"), "/dev/y")
+
+
+async def test_open_failure_records_error_and_keeps_retrying():
+    # A failed open no longer kills the device: the error is recorded (chip +
+    # debug) and the supervisor's reconnect loop heals when the port appears.
+    from vanchor.hardware.serial_devices import SerialGps
+    from vanchor.hardware.serial_link import FakeSerialTransport
+
+    async def instant(_s):  # collapse the backoff for the test
+        return None
+
+    t = FakeSerialTransport()
+    t._open_failures = 2                     # first open + first reconnect fail
+    gps = SerialGps(t, None, sleep=instant)
+    await gps.start()                        # does not raise
+    assert gps.status_detail is not None
+    assert "cannot open" in gps.status_detail or "no device" in gps.status_detail
+    assert "NOT RECEIVING" in gps.debug()
+    # Give the reconnect loop a few turns: second retry succeeds, then a line
+    # flows and the fault clears.
+    t.feed("$GPRMC,x*00")
+    for _ in range(40):
+        await asyncio.sleep(0)
+    assert gps.healthy
+    assert gps.status_detail is None         # fault cleared by flowing data
+    await gps.stop()
+
+
+async def test_reconnect_storm_is_reported():
+    from vanchor.hardware.serial_devices import _SerialReadSupervisor
+    from vanchor.hardware.serial_link import FakeSerialTransport
+
+    async def handle(_line):
+        return None
+
+    async def instant(_s):
+        return None
+
+    t = FakeSerialTransport()
+    sup = _SerialReadSupervisor(t, handle, name="x", sleep=instant)
+    for _ in range(4):
+        sup._note_reconnected()
+    assert sup.last_error is not None and "link unstable" in sup.last_error

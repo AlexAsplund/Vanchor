@@ -196,6 +196,21 @@ class _SerialReadSupervisor:
         self._stop = asyncio.Event()
         self.healthy: bool = False
         self.last_data_monotonic: float | None = None
+        # Operator-facing failure state (#142): why the link is down, plus a
+        # reconnect-storm detector (a link that keeps flapping is its own fault
+        # class even though each individual reconnect "works").
+        self.last_error: str | None = None
+        self._reconnect_times: deque[float] = deque(maxlen=8)
+
+    def _note_reconnected(self) -> None:
+        now = _time.monotonic()
+        self._reconnect_times.append(now)
+        recent = [ts for ts in self._reconnect_times if now - ts <= 60.0]
+        if len(recent) >= 4:
+            self.last_error = (f"link unstable \u2014 reconnected "
+                               f"{len(recent)}\u00d7 in the last minute")
+        else:
+            self.last_error = None
 
     def request_stop(self) -> None:
         """Ask the loop to exit; unblocks a backoff wait immediately."""
@@ -225,6 +240,8 @@ class _SerialReadSupervisor:
                 await self._reconnect()
                 continue
             self.last_data_monotonic = _time.monotonic()
+            if self.last_error is not None and len(self._reconnect_times) < 4:
+                self.last_error = None      # data flowing again -> fault cleared
             await self._handle_line(line)
 
     def _warn_garbage(self, exc: BaseException, last_warn: float) -> float:
@@ -257,6 +274,8 @@ class _SerialReadSupervisor:
                 raise
             except Exception as exc:
                 next_backoff = min(backoff * 2, self._backoff_max)
+                port = getattr(self.transport, "port", "?")
+                self.last_error = classify_serial_error(exc, str(port))
                 logger.warning(
                     "%s: reconnect failed (%s); retrying in %.0fs",
                     self._name,
@@ -267,6 +286,7 @@ class _SerialReadSupervisor:
                 continue
             logger.info("%s: serial reconnected", self._name)
             self.healthy = True
+            self._note_reconnected()
             return
 
     async def _wait(self, delay: float) -> bool:
@@ -355,6 +375,9 @@ class _SerialNmeaSensor(Sensor):
         try:
             port = getattr(self.transport, "port", None) or repr(self.transport)
             if not self._recent_lines:
+                err = self._sup.last_error
+                if err:
+                    return f"{cls}: NOT RECEIVING \u2014 {err}"
                 return f"{cls}: waiting for data…"
             lines = [
                 cls,
@@ -375,8 +398,25 @@ class _SerialNmeaSensor(Sensor):
         # task, so a shared port never gets two readers on one stream.
         if self._task is not None and not self._task.done():
             return
-        await self.transport.open()
+        try:
+            await self.transport.open()
+        except Exception as exc:  # noqa: BLE001 - record + keep retrying (#142)
+            # A failed open used to kill the device for the whole session with
+            # only a server-log line to show for it. Record an actionable error
+            # (shown on the device chip + debug view) and start the supervisor
+            # anyway: its reconnect loop retries with backoff, so a cable
+            # plugged in later just works.
+            port = getattr(self.transport, "port", "?")
+            self._sup.last_error = classify_serial_error(exc, str(port))
+            logger.warning("%s: open failed (%s); will keep retrying",
+                           type(self).__name__, exc)
         self._task = asyncio.ensure_future(self._sup.run())
+
+    @property
+    def status_detail(self) -> str | None:
+        """Operator-facing link fault (#142), or None when the link is fine.
+        Surfaced by _device_health onto the device chip and debug view."""
+        return self._sup.last_error
 
     async def stop(self) -> None:
         if self._task is None:
@@ -399,6 +439,25 @@ class SerialCompass(_SerialNmeaSensor):
 # Motor controller
 # --------------------------------------------------------------------------- #
 TimeFn = Callable[[], float]
+
+
+def classify_serial_error(exc: BaseException, port: str) -> str:
+    """Operator-facing one-liner for a serial open/read failure (#142).
+
+    The raw exceptions ("[Errno 13] could not open port ...") explain nothing
+    actionable; these do. Kept deliberately blunt -- they render on the device
+    chip and in the debug view."""
+    msg = str(exc)
+    if isinstance(exc, PermissionError) or "Errno 13" in msg or "Permission" in msg:
+        return (f"permission denied opening {port} \u2014 the app isn't in the "
+                "dialout group (automatic on the SD image; on a dev box run "
+                "under `sg dialout` or add the user and re-login)")
+    if isinstance(exc, FileNotFoundError) or "Errno 2" in msg or "No such file" in msg:
+        return f"no device at {port} \u2014 check the cable/port"
+    if "in use" in msg or "busy" in msg.lower() or "Errno 16" in msg:
+        return f"{port} is in use by another program"
+    return f"cannot open {port}: {msg[:120]}"
+
 
 
 class SerialMotorController(MotorController):

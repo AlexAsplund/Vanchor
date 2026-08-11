@@ -50,6 +50,8 @@ class UbloxGps(Sensor):
         self._last_pvt: ubx.NavPvt | None = None
         # Latest signal quality (every decode, incl. rejected fixes); see _emit.
         self.signal: dict | None = None
+        # Link fault (open failure etc., #142); cleared when frames flow.
+        self.last_error: str | None = None
         self._last_pvt_monotonic: float | None = None
         self._frames_received = 0
 
@@ -86,6 +88,9 @@ class UbloxGps(Sensor):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - port not ready -> back off
+                from ..serial_devices import classify_serial_error
+                self.last_error = classify_serial_error(
+                    exc, str(getattr(self.transport, "port", "?")))
                 logger.warning("%s: open failed (%s); retrying", self._name, exc)
                 self.healthy = False
                 await asyncio.sleep(2.0)
@@ -121,6 +126,7 @@ class UbloxGps(Sensor):
         self._last_pvt = pvt
         self._last_pvt_monotonic = time.monotonic()
         self._frames_received += 1
+        self.last_error = None            # frames flowing -> link fault cleared
         # Live signal-quality snapshot, kept for EVERY decode (valid or not) so
         # the UI can say "receiving, fix below quality gate (4 sats)" instead of
         # a bare "GPS lost" (#142). Read by _device_health via duck typing.
@@ -144,6 +150,8 @@ class UbloxGps(Sensor):
         """Operator-facing one-liner distinguishing "no data" / "acquiring" /
         "fix below the receiver's quality gate" from a healthy fix -- so the UI
         never reduces a weak-signal state to a bare "GPS lost"."""
+        if self.last_error is not None:
+            return self.last_error        # link fault outranks signal quality
         s = self.signal
         if s is None:
             return None
