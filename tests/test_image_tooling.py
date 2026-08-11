@@ -110,6 +110,8 @@ def test_net_chroot_speeds_up_offline_boot():
     assert "systemctl disable NetworkManager-wait-online.service" in text
     assert "disable_splash=1" in text
     assert "boot_delay=0" in text
+    # I2C bus must exist out of the box (magnetometer / INA226 without raspi-config).
+    assert "dtparam=i2c_arm=on" in text
 
 
 def test_dnsmasq_aliases_connectivity_checks():
