@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a22] — 2026-08-11
+
 - **Devices menu overhauled: everything for one device in one place.** The
   Devices panel is now six per-device cards (GPS, Compass, Depth, Motor,
   Battery + fusion calibration) — each with its source, connection (port +
