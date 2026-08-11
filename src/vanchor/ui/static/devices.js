@@ -204,7 +204,6 @@
     }
   }
   function syncConnFields() {
-    let anyShown = false;
     CONN_KINDS.forEach(({ kind, sel, opt }) => {
       const s = $(sel);
       if (!s) return;
@@ -220,10 +219,7 @@
         el.customRow.classList.toggle("hidden", !showCustom);
       }
       relabelConn(kind, el, i2c);
-      if (serial || i2c) anyShown = true;
     });
-    const box = $("dev-serial");
-    if (box) box.classList.toggle("hidden", !anyShown);
   }
 
   function syncMode() {
@@ -377,10 +373,16 @@
   // ---- device-specific menus (driver device_menu(): settings + actions) --
   // Rendered generically from the schema each active device advertises; a
   // setting change POSTs /api/device/setting, an action POSTs /api/device/action.
+  // Each menu is routed into its device's card slot (#dev-menus-<device>, e.g.
+  // #dev-menus-compass) when that slot exists; anything without a matching slot
+  // lands in the legacy #dev-menus fallback container at the panel bottom.
   function renderMenus(menus) {
-    const host = $("dev-menus");
-    if (!host) return;
-    host.innerHTML = "";
+    const fallback = $("dev-menus");
+    if (!fallback) return;
+    fallback.innerHTML = "";
+    document.querySelectorAll("[id^='dev-menus-']").forEach((slot) => {
+      slot.innerHTML = "";
+    });
     (menus || []).forEach((menu) => {
       const box = document.createElement("div");
       box.className = "dev-menu";
@@ -411,6 +413,7 @@
       const out = document.createElement("div");
       out.className = "hint dev-menu-out";
       box.appendChild(out);
+      const host = (menu.device && $("dev-menus-" + menu.device)) || fallback;
       host.appendChild(box);
       applyShownWhen(box);
     });
@@ -1534,7 +1537,7 @@
   const $ = (id) => document.getElementById(id);
   const card = $("devices-card");
   const viewer = $("dev-debug-viewer");
-  const grid = document.querySelector(".dev-srcgrid");
+  const body = $("dev-body");
   if (!card || !viewer) return;
 
   const KINDS = { gps: 1, compass: 1, depth: 1, motor: 1, battery: 1, steering: 1, thrust: 1 };
@@ -1607,11 +1610,15 @@
       .catch(() => { if (kind === curKind) onFail(); });
   }
 
-  function openDebug(kind) {
+  function openDebug(kind, host) {
     if (!KINDS[kind]) return;
     stopPoll();               // never leak the previous poll on switch
     curKind = kind;
     fails = 0;
+    // Move the ONE shared viewer into the invoking device's card so the raw
+    // data shows up next to the device it belongs to (Task 3). No host (e.g.
+    // an unexpected caller) -> leave it wherever it currently is.
+    if (host && viewer.parentElement !== host) host.appendChild(viewer);
     viewer.classList.remove("hidden");
     const title = $("dev-debug-title");
     if (title) title.textContent = "Raw data — " + kind;
@@ -1627,23 +1634,17 @@
     viewer.classList.add("hidden");
   }
 
-  // Debug buttons (delegated on the sources grid). preventDefault stops the
-  // enclosing <label> from re-focusing its select.
-  if (grid) grid.addEventListener("click", (e) => {
+  // Debug buttons (delegated on the whole card body — the buttons now live
+  // inside each device's sub-card, incl. steering/thrust inside the motor
+  // card's split disclosure). preventDefault stops the enclosing <label> from
+  // re-focusing its select. The viewer is moved into the sub-card containing
+  // the clicked button (steering/thrust resolve to the motor card).
+  if (body) body.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-debug]");
     if (!b) return;
     e.preventDefault();
     e.stopPropagation();
-    openDebug(b.dataset.debug);
-  });
-
-  // Also handle debug buttons inside the split-channels disclosure (steering/thrust).
-  const splitDetails = $("dev-split-details");
-  if (splitDetails) splitDetails.addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-debug]");
-    if (!b) return;
-    e.preventDefault();
-    openDebug(b.dataset.debug);
+    openDebug(b.dataset.debug, b.closest("details.dev-card"));
   });
 
   const closeBtn = $("dev-debug-close");
@@ -1653,9 +1654,17 @@
   card.addEventListener("toggle", () => { if (!card.open) closeDebug(); });
 
   // Also stop the debug poll when the split-channels disclosure is collapsed.
+  const splitDetails = $("dev-split-details");
   if (splitDetails) {
     splitDetails.addEventListener("toggle", () => { if (!splitDetails.open) closeDebug(); });
   }
+
+  // And when the sub-card currently hosting the viewer is collapsed.
+  document.querySelectorAll("#dev-body details.dev-card").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (!d.open && curKind != null && d.contains(viewer)) closeDebug();
+    });
+  });
 })();
 
 /* Connectors consent UI — pluggable integrations (Devices panel).
