@@ -44,3 +44,10 @@ fi
 
 # Enable the access-point service (brings the AP up at every boot; offline-first).
 systemctl enable vanchor-hotspot.service
+
+# Enable the WiFi client keep-alive pinger: constant ICMP toward each
+# associated client stops phones from napping their WiFi radio (telemetry
+# hiccups in the UI, worse in Low Power Mode).
+# BENCH-VERIFY: keep-awake effect vs. real phone power-save timing needs
+# on-water/bench hardware.
+systemctl enable vanchor-wifi-keepalive.service
