@@ -379,8 +379,14 @@
             </label>
           </div>
 
-          <button id="dev-save" class="btn-primary wide" type="button">Save</button>
-          <div id="dev-status" class="hint"></div>
+          <!-- Sticky dirty-state Save (Task 4): hidden until the form is edited,
+               then sticks to the bottom of the settings scroll (devices.js
+               toggles .hidden; save success / load / reset clear it). The ghost
+               row below stays ALWAYS visible — Restart must not be dirty-gated. -->
+          <div id="dev-save-bar" class="hidden">
+            <button id="dev-save" class="btn-primary wide" type="button">Save</button>
+            <div id="dev-status" class="hint"></div>
+          </div>
           <div class="btn-row dev-actions">
             <button id="dev-reset" class="btn-ghost" type="button">Reset to current</button>
             <button id="dev-restart" class="btn-ghost" type="button" title="Restart the server now (applies saved device/config changes)">⟳ Restart server</button>

@@ -102,6 +102,16 @@
     el.className = "hint" + (kind ? " " + kind : "");
   }
 
+  // Dirty-state sticky Save (Task 4): the Save bar stays hidden until the form
+  // is edited, then sticks to the bottom of the settings scroll. Cleared on
+  // save success and on every (re)load, so Reset hides it too.
+  let dirty = false;
+  function setDirty(on) {
+    dirty = !!on;
+    const bar = $("dev-save-bar");
+    if (bar) bar.classList.toggle("hidden", !dirty);
+  }
+
   function setBadge(txt) {
     const b = $("dev-state");
     if (b) b.textContent = txt || "";
@@ -375,6 +385,7 @@
     driverMenus = (cfg.driver_menus && typeof cfg.driver_menus === "object") ? cfg.driver_menus : {};
     activeMenus = Array.isArray(cfg.menus) ? cfg.menus : [];
     refreshMenus();
+    setDirty(false);  // freshly-(re)loaded form is clean — hide the Save bar
   }
 
   // Show the menu for the currently-SELECTED source of each device (from the
@@ -827,6 +838,8 @@
       })
       .catch(() => {
         setStatus("Couldn't load device config.", "err");
+        // The status may sit inside the hidden Save bar — surface it anyway.
+        if (VA.toast) VA.toast("Couldn't load device config.");
       });
   }
 
@@ -840,9 +853,11 @@
         if (btn) btn.disabled = false;
         if (res && res.ok === false) {
           setStatus("Save rejected: " + (res.error || "invalid"), "err");
-          return;
+          return;   // still dirty — the bar (and the error) stay visible
         }
         setStatus("Saved — restart the app to apply.", "ok");
+        setDirty(false);  // hides the sticky bar (and #dev-status with it) …
+        if (VA.toast) VA.toast("Saved — restart the app to apply.");  // … so toast it
       })
       .catch(() => {
         if (btn) btn.disabled = false;
@@ -852,7 +867,13 @@
 
   // ---- wiring -----------------------------------------------------------
 
-  // Mode segmented control.
+  // Any edit inside the card marks the form dirty (delegated; programmatic
+  // .value writes during render() fire no events, so loads stay clean).
+  ["input", "change"].forEach((ev) => {
+    card.addEventListener(ev, () => setDirty(true));
+  });
+
+  // Mode segmented control (buttons fire no input/change → mark dirty here).
   const seg = $("dev-mode");
   if (seg) {
     seg.addEventListener("click", (e) => {
@@ -860,6 +881,7 @@
       if (!b) return;
       setEnabled(b.dataset.on === "true");
       syncMode();
+      setDirty(true);
     });
   }
 
@@ -953,6 +975,8 @@
   if (restartBtn) restartBtn.addEventListener("click", function () {
     if (!confirm("Restart the server now? The connection will drop for a few seconds.")) return;
     setStatus("Restarting the server…", "ok");
+    // The status may sit inside the hidden Save bar — surface it anyway.
+    if (VA.toast) VA.toast("Restarting the server…");
     // The response may not arrive before the process re-execs; ignore errors.
     VA.postJSON("/api/restart", {}).catch(function () {});
     // Poll until the server is back up, then reload the page.

@@ -2736,6 +2736,19 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
 }
 #dev-body details.adv[open] > summary { color: var(--text); }
 
+/* Sticky dirty-state Save (Task 4): hidden until the form is edited, then
+   sticks to the bottom of the settings scroll on the panel background so the
+   content scrolling behind it can't bleed through. */
+#dev-save-bar {
+  position: sticky; bottom: 0; z-index: 6;
+  background: var(--glass-solid);
+  margin: 8px -13px 0; padding: 8px 13px 10px;  /* bleed to the card's edges */
+  border-top: 1px solid var(--line);
+}
+#dev-save-bar #dev-status { margin-top: 6px; }
+/* Room under the panel's last card so the stuck bar never covers its content. */
+.cm-panel[data-cat="devices"] { padding-bottom: 96px; }
+
 /* Depth readout at the top of the map long-press menu (nearest sounding/contour). */
 .map-menu .mm-depth {
   padding: 4px 8px 6px; font-size: 13px; font-weight: 600; color: var(--accent);
