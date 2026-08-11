@@ -1,7 +1,12 @@
-/* Tools tab: u-blox toolbox. Reads stats and applies UBX settings (NMEA on/off,
- * rate, baud) on any serial port via /api/tools/ublox/*, independent of the
- * configured GPS source. Talks to the same device-independent backend the
- * ublox-select warning uses. */
+/* u-blox receiver toolbox — the "Receiver setup (u-blox)…" disclosure inside
+ * the GPS card (Devices panel; formerly its own Tools tab). Reads stats and
+ * applies UBX settings (NMEA on/off, rate, baud) on any serial port via
+ * /api/tools/ublox/*, independent of the configured GPS source. Talks to the
+ * same device-independent backend the ublox-select warning uses.
+ *
+ * On each open of the disclosure the port list is refreshed and, when the
+ * configured GPS port looks serial (/dev/…), the port + connection baud are
+ * prefilled from the GPS card's own fields (#dev-gps-port / #dev-gps-baud). */
 (function () {
   "use strict";
   const $ = (id) => document.getElementById(id);
@@ -37,6 +42,35 @@
       });
       if (cur) sel.value = cur;
     } catch (e) { /* offline / no endpoint — leave the placeholder */ }
+  }
+
+  // Prefill from the GPS card's configured connection: preselect the configured
+  // serial port (adding it if the scan missed it, so the prefill survives a
+  // port-list refresh) and mirror the configured baud into #ubxt-baud.
+  function prefillFromConfig() {
+    const cfgPort = (($("dev-gps-port") || {}).value || "").trim();
+    const psel = $("ubxt-port");
+    if (psel && /^\/dev\//.test(cfgPort)) {
+      const has = Array.prototype.some.call(psel.options, (o) => o.value === cfgPort);
+      if (!has) {
+        const o = document.createElement("option");
+        o.value = cfgPort;
+        o.textContent = cfgPort + "  (configured GPS)";
+        psel.appendChild(o);
+      }
+      psel.value = cfgPort;
+    }
+    const cfgBaud = (($("dev-gps-baud") || {}).value || "").trim();
+    const bsel = $("ubxt-baud");
+    if (bsel && cfgBaud) {
+      const has = Array.prototype.some.call(bsel.options, (o) => o.value === cfgBaud);
+      if (!has) {
+        const o = document.createElement("option");
+        o.textContent = cfgBaud;   // option value defaults to its text
+        bsel.appendChild(o);
+      }
+      bsel.value = cfgBaud;
+    }
   }
 
   function fmtStats(d) {
@@ -102,6 +136,21 @@
       if (d.ok) {
         res.textContent = "Applied ✓" + (d.acks ? "  (" + Object.keys(d.acks).join(", ") + " ACKed)" : "") +
                           (body.persist ? " · saved to flash" : "");
+        // Baud-divergence warning: the receiver's UART baud was changed but the
+        // GPS connection baud (#dev-gps-baud) still expects the old rate. Warn
+        // only — never auto-change the config.
+        if (body.new_baud != null) {
+          const cur = parseInt((($("dev-gps-baud") || {}).value || "").trim(), 10);
+          if (!Number.isFinite(cur) || cur !== body.new_baud) {
+            const warn = document.createElement("div");
+            warn.className = "hint err";
+            warn.textContent = "⚠ Receiver UART baud changed to " + body.new_baud +
+              " — update the GPS connection baud (currently " +
+              (Number.isFinite(cur) ? cur : "driver default") +
+              ") or the GPS will stop decoding.";
+            res.appendChild(warn);
+          }
+        }
         if (window.VA && VA.toast) VA.toast("u-blox settings applied");
       } else {
         res.textContent = "Failed: " + (d.error || JSON.stringify(d.acks || {}));
@@ -111,13 +160,17 @@
 
   function init() {
     const read = $("ubxt-read"), apply = $("ubxt-apply");
-    if (!read && !apply) return;   // Tools panel not present
+    if (!read && !apply) return;   // toolbox markup not present
     if (read) read.addEventListener("click", readStats);
     if (apply) apply.addEventListener("click", applySettings);
-    // Refresh the port list whenever the Tools tile is opened, and once now.
-    const tile = document.querySelector('.cm-tile[data-cat="tools"]');
-    if (tile) tile.addEventListener("click", loadPorts);
-    loadPorts();
+    // Refresh the port list + prefill from the GPS config on every open of the
+    // disclosure (prefill runs AFTER the refresh so it can't be clobbered).
+    const det = $("ublox-tools-card");
+    if (det) {
+      det.addEventListener("toggle", () => {
+        if (det.open) loadPorts().then(prefillFromConfig);
+      });
+    }
   }
 
   if (document.readyState !== "loading") init();

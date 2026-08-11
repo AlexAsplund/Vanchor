@@ -871,8 +871,13 @@
 
   // Any edit inside the card marks the form dirty (delegated; programmatic
   // .value writes during render() fire no events, so loads stay clean).
+  // The u-blox receiver toolbox applies immediately via its own button —
+  // its controls are not part of collect(), so they don't dirty the form.
   ["input", "change"].forEach((ev) => {
-    card.addEventListener(ev, () => setDirty(true));
+    card.addEventListener(ev, (e) => {
+      if (e.target && e.target.closest && e.target.closest("#ublox-tools-card")) return;
+      setDirty(true);
+    });
   });
 
   // Mode segmented control (buttons fire no input/change → mark dirty here).

@@ -32,7 +32,6 @@
     devices: "Devices",
     data: "Data & system",
     sim: "Simulator",
-    tools: "Tools",
   };
 
   let current = null; // active category id, or null on the home grid
