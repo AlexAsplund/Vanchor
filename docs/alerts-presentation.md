@@ -118,7 +118,7 @@ touches the existing show/hide logic:
   non-top active banners + rendering the overflow strip. Idempotent recompute,
   so observer re-entry converges. All existing element ids are preserved;
   banners are *rehomed visually*, never removed.
-- Overflow strip `#sbanner-overflow` (button, `aria-expanded`); short-label
+- Overflow strip `#sbanner-overflow-strip` (button, `aria-expanded`); short-label
   map per id (`MOB`, `DRAG`, `GPS`, `SHALLOW`/`NO-GO`, `COMPASS`, `FAULT`,
   `BATT`, `LINK`, …).
 - Existing modules (`safety.js`, `health.js`, `core.js`, `alerts.js`) are
@@ -129,3 +129,15 @@ touches the existing show/hide logic:
 
 Out-of-scope surfaces (`#critical-stop-banner`, `#stale-data-banner`,
 `#arm-banner`, view-local strips) keep their existing z-order law.
+
+## What it looks like (390 px phone, 6 alerts active)
+
+Collapsed (default) — drag alarm full-size with its actions, everything else
+in the slim strip; chart + STOP untouched:
+
+![collapsed](images/alerts-compact-collapsed.png)
+
+Expanded (one tap on the strip) — today's full stack, `▴ collapse` bar at the
+bottom, 10 s idle auto-recollapse:
+
+![expanded](images/alerts-compact-expanded.png)
