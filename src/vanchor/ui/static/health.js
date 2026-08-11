@@ -128,6 +128,9 @@
     // ---- sensor age chips ------------------------------------------------
     renderAges(h);
 
+    // ---- per-device status chips (Devices panel sub-card summaries) ------
+    renderDevChips(h);
+
     // ---- master status dot: worst-of health (A19) -------------------------
     // alarm if any critical flag; warn if any degraded flag; never green if any alarm.
     const t_full = t || {};
@@ -169,5 +172,43 @@
     VA.setText("health-age-hdg",   fmtAge(h.heading_age_s));
     VA.setText("health-age-depth", fmtAge(h.depth_age_s));
     VA.setText("health-age-imu",   fmtAge(h.imu_age_s));
+  }
+
+  // ---- per-device chips (Devices panel, UX overhaul Task 3) ----------------
+  // Fills the .dev-chip pill in each device sub-card's summary from
+  // health.devices.<name>:
+  //   - healthy + fresh data (age < 5 s)      -> green "● <age>" (+ "N sats"
+  //     for the GPS when the driver reports signal.num_sv)
+  //   - present but stale / unhealthy / never -> grey "no data"
+  //   - entry absent entirely (sim devices report no health) -> "—"
+  // Battery has no health entry at all; its chip mirrors the selected source
+  // label from the Devices form (or "—" before the config loads).
+  const FRESH_S = 5;
+
+  function setChip(id, text, state) {
+    const el = $(id);
+    if (!el) return;
+    if (el.textContent !== text) el.textContent = text;
+    if (el.dataset.state !== state) el.dataset.state = state;
+  }
+
+  function renderDevChips(h) {
+    const devs = (h && h.devices) || {};
+    ["gps", "compass", "depth", "motor"].forEach(function (name) {
+      const d = devs[name];
+      if (!d) { setChip("dev-chip-" + name, "—", ""); return; }
+      const fresh = !!d.healthy && d.data_age_s != null && d.data_age_s < FRESH_S;
+      if (!fresh) { setChip("dev-chip-" + name, "no data", "stale"); return; }
+      let txt = "● " + fmtAge(d.data_age_s);
+      if (name === "gps" && d.signal && d.signal.num_sv != null) {
+        txt += " · " + d.signal.num_sv + " sats";
+      }
+      setChip("dev-chip-" + name, txt, "ok");
+    });
+    // Battery: source label (no per-device health is reported for it).
+    const sel = $("dev-src-battery");
+    const opt = (sel && sel.selectedIndex >= 0) ? sel.options[sel.selectedIndex] : null;
+    const label = opt && opt.textContent;
+    setChip("dev-chip-battery", label || "—", "");
   }
 })();

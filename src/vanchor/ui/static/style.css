@@ -701,6 +701,16 @@ input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 
 /* The fusion sub-card has no content until /api/fusion/calibration loads
    (devices.js unhides #dev-calib); hide the whole card until then. */
 #dev-card-fusion:has(> #dev-calib.hidden) { display: none; }
+/* Status chip in each sub-card summary (filled by health.js): a small pill,
+   pushed right (before the ▸ arrow) via margin-left:auto. */
+.dev-chip {
+  flex: 0 0 auto; margin-left: auto; margin-right: 8px;
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  background: var(--glass-solid); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 8px;
+}
+.dev-chip[data-state="ok"] { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent-2) 40%, var(--line)); }
 
 /* Backup & restore card (#backup-card / backup.js). */
 .backup-actions { grid-template-columns: 1fr; margin-top: 6px; }
