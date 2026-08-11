@@ -2723,12 +2723,18 @@ body[data-view="instruments"] #hud .hud-sub { font-size: 15px; }
 }
 .va-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-/* Per-port serial line settings: baud + data bits + parity + stop bits inline. */
-.dev-lineopts { display: flex; align-items: center; gap: 8px; }
-.dev-lineopts > span { flex: 0 0 auto; }
+/* Per-port serial line settings (Task 4): a baud row (dropdown + hidden custom
+   input) stacked over a collapsed "Advanced (8N1)…" framing disclosure. The
+   whole block keeps class .dev-lineopts so syncConnFields() hides it as one. */
+.dev-lineopts { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
 .dev-lineopts .line-fields { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; }
-.dev-lineopts .line-fields input { width: 5.5em; flex: 0 0 auto; }
+.dev-lineopts .line-fields input { width: 6.5em; flex: 0 0 auto; }
 .dev-lineopts .line-fields select { flex: 1 1 0; min-width: 0; }
+#dev-body details.adv > summary {
+  cursor: pointer; color: var(--muted); font-size: 12px;
+  display: flex; align-items: center;
+}
+#dev-body details.adv[open] > summary { color: var(--text); }
 
 /* Depth readout at the top of the map long-press menu (nearest sounding/contour). */
 .map-menu .mm-depth {

@@ -38,14 +38,30 @@
                 <span>GPS custom</span>
                 <input type="text" id="dev-gps-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/… or /dev/ttyUSB0" autocomplete="off" spellcheck="false" />
               </label>
-              <div class="dev-srcrow dev-lineopts">
-                <span>GPS line</span>
-                <div class="line-fields">
-                  <input type="number" id="dev-gps-baud" min="1200" step="100" placeholder="38400" title="Baud rate" autocomplete="off" />
-                  <select id="dev-gps-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
-                  <select id="dev-gps-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
-                  <select id="dev-gps-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+              <!-- Baud dropdown mirrors the port-pick pattern: the number input
+                   (id unchanged) stays the source of truth collect() reads; the
+                   select writes into it; "Custom…" reveals the input. Framing
+                   (data bits / parity / stop bits) is collapsed under Advanced —
+                   collect() still reads those ids even while closed. -->
+              <div class="dev-lineopts">
+                <div class="dev-srcrow">
+                  <span>GPS baud</span>
+                  <div class="line-fields">
+                    <select id="dev-gps-baud-pick" class="baud-pick" data-input="dev-gps-baud" title="Baud rate"><option value="">Default</option><option>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option><option value="__custom__">Custom…</option></select>
+                    <input type="number" id="dev-gps-baud" class="hidden" min="1200" step="100" placeholder="38400" title="Baud rate (custom)" autocomplete="off" />
+                  </div>
                 </div>
+                <details class="adv">
+                  <summary>Advanced (8N1)…</summary>
+                  <div class="dev-srcrow">
+                    <span>Framing</span>
+                    <div class="line-fields">
+                      <select id="dev-gps-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                      <select id="dev-gps-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                      <select id="dev-gps-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
             <div id="dev-menus-gps"></div>
@@ -68,14 +84,25 @@
                 <span>Compass custom</span>
                 <input type="text" id="dev-compass-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/… or /dev/ttyUSB0" autocomplete="off" spellcheck="false" />
               </label>
-              <div class="dev-srcrow dev-lineopts">
-                <span>Compass line</span>
-                <div class="line-fields">
-                  <input type="number" id="dev-compass-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
-                  <select id="dev-compass-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
-                  <select id="dev-compass-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
-                  <select id="dev-compass-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+              <div class="dev-lineopts">
+                <div class="dev-srcrow">
+                  <span>Compass baud</span>
+                  <div class="line-fields">
+                    <select id="dev-compass-baud-pick" class="baud-pick" data-input="dev-compass-baud" title="Baud rate"><option value="">Default</option><option>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option><option value="__custom__">Custom…</option></select>
+                    <input type="number" id="dev-compass-baud" class="hidden" min="1200" step="100" placeholder="4800" title="Baud rate (custom)" autocomplete="off" />
+                  </div>
                 </div>
+                <details class="adv">
+                  <summary>Advanced (8N1)…</summary>
+                  <div class="dev-srcrow">
+                    <span>Framing</span>
+                    <div class="line-fields">
+                      <select id="dev-compass-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                      <select id="dev-compass-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                      <select id="dev-compass-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
             <div id="dev-menus-compass"></div>
@@ -111,14 +138,25 @@
                 <span>Motor custom</span>
                 <input type="text" id="dev-motor-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/…, /dev/ttyUSB0, or i2c:&lt;bus&gt;:&lt;addr&gt;" autocomplete="off" spellcheck="false" />
               </label>
-              <div class="dev-srcrow dev-lineopts">
-                <span>Motor line</span>
-                <div class="line-fields">
-                  <input type="number" id="dev-motor-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
-                  <select id="dev-motor-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
-                  <select id="dev-motor-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
-                  <select id="dev-motor-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+              <div class="dev-lineopts">
+                <div class="dev-srcrow">
+                  <span>Motor baud</span>
+                  <div class="line-fields">
+                    <select id="dev-motor-baud-pick" class="baud-pick" data-input="dev-motor-baud" title="Baud rate"><option value="">Default</option><option>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option><option value="__custom__">Custom…</option></select>
+                    <input type="number" id="dev-motor-baud" class="hidden" min="1200" step="100" placeholder="4800" title="Baud rate (custom)" autocomplete="off" />
+                  </div>
                 </div>
+                <details class="adv">
+                  <summary>Advanced (8N1)…</summary>
+                  <div class="dev-srcrow">
+                    <span>Framing</span>
+                    <div class="line-fields">
+                      <select id="dev-motor-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                      <select id="dev-motor-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                      <select id="dev-motor-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
             <div id="dev-menus-motor"></div>
@@ -146,14 +184,25 @@
                   <span>Steering custom</span>
                   <input type="text" id="dev-steering-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/…, /dev/ttyUSB0, or i2c:&lt;bus&gt;:&lt;addr&gt;" autocomplete="off" spellcheck="false" />
                 </label>
-                <div class="dev-srcrow dev-lineopts">
-                  <span>Steering line</span>
-                  <div class="line-fields">
-                    <input type="number" id="dev-steering-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
-                    <select id="dev-steering-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
-                    <select id="dev-steering-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
-                    <select id="dev-steering-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                <div class="dev-lineopts">
+                  <div class="dev-srcrow">
+                    <span>Steering baud</span>
+                    <div class="line-fields">
+                      <select id="dev-steering-baud-pick" class="baud-pick" data-input="dev-steering-baud" title="Baud rate"><option value="">Default</option><option>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option><option value="__custom__">Custom…</option></select>
+                      <input type="number" id="dev-steering-baud" class="hidden" min="1200" step="100" placeholder="4800" title="Baud rate (custom)" autocomplete="off" />
+                    </div>
                   </div>
+                  <details class="adv">
+                    <summary>Advanced (8N1)…</summary>
+                    <div class="dev-srcrow">
+                      <span>Framing</span>
+                      <div class="line-fields">
+                        <select id="dev-steering-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                        <select id="dev-steering-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                        <select id="dev-steering-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               </div>
               <div class="dev-srcgrid">
@@ -172,14 +221,25 @@
                   <span>Thrust custom</span>
                   <input type="text" id="dev-thrust-port" list="dev-serial-ports" placeholder="/dev/serial/by-id/…, /dev/ttyUSB0, or i2c:&lt;bus&gt;:&lt;addr&gt;" autocomplete="off" spellcheck="false" />
                 </label>
-                <div class="dev-srcrow dev-lineopts">
-                  <span>Thrust line</span>
-                  <div class="line-fields">
-                    <input type="number" id="dev-thrust-baud" min="1200" step="100" placeholder="4800" title="Baud rate" autocomplete="off" />
-                    <select id="dev-thrust-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
-                    <select id="dev-thrust-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
-                    <select id="dev-thrust-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                <div class="dev-lineopts">
+                  <div class="dev-srcrow">
+                    <span>Thrust baud</span>
+                    <div class="line-fields">
+                      <select id="dev-thrust-baud-pick" class="baud-pick" data-input="dev-thrust-baud" title="Baud rate"><option value="">Default</option><option>4800</option><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option><option value="__custom__">Custom…</option></select>
+                      <input type="number" id="dev-thrust-baud" class="hidden" min="1200" step="100" placeholder="4800" title="Baud rate (custom)" autocomplete="off" />
+                    </div>
                   </div>
+                  <details class="adv">
+                    <summary>Advanced (8N1)…</summary>
+                    <div class="dev-srcrow">
+                      <span>Framing</span>
+                      <div class="line-fields">
+                        <select id="dev-thrust-bytesize" title="Data bits"><option value="8">8 bits</option><option value="7">7 bits</option><option value="6">6 bits</option><option value="5">5 bits</option></select>
+                        <select id="dev-thrust-parity" title="Parity"><option value="N">No parity</option><option value="E">Even</option><option value="O">Odd</option><option value="M">Mark</option><option value="S">Space</option></select>
+                        <select id="dev-thrust-stopbits" title="Stop bits"><option value="1">1 stop</option><option value="1.5">1.5 stop</option><option value="2">2 stop</option></select>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               </div>
             </details>

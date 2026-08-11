@@ -291,6 +291,7 @@
       const sel = $(f.id);
       fillSelect(sel, f.kind);
       setSelectValue(sel, hw[f.key]);
+      if (sel) sel.dataset.prevSrc = sel.value;  // baseline for baud defaults
     });
 
     setVal("dev-gps-port", hw.gps_port);
@@ -314,12 +315,14 @@
       setVal("dev-" + ch + "-parity", hw[ch + "_parity"]);
       setVal("dev-" + ch + "-stopbits", hw[ch + "_stopbits"]);
     });
+    syncBaudPicks();  // reflect the loaded bauds in the dropdowns
 
     // Populate split-channel source selects.
     SPLIT_SRC_FIELDS.forEach((f) => {
       const sel = $(f.id);
       fillSelect(sel, f.kind);
       setSelectValue(sel, hw[f.key]);
+      if (sel) sel.dataset.prevSrc = sel.value;  // baseline for baud defaults
     });
 
     // Auto-open/close the split channels disclosure to reflect the saved config.
@@ -669,6 +672,90 @@
     syncConnFields();   // keep the box + custom-row visibility consistent
   }
 
+  // Baud dropdowns (Task 4) — same pattern as the port picks: the number input
+  // (id unchanged) stays the source of truth that collect() reads; the select
+  // writes into it; "Custom…" reveals the input for oddball rates. An empty
+  // input = "Default" (backend/driver default, not sent).
+  const BAUD_PICKS = [
+    ["dev-gps-baud-pick",      "dev-gps-baud"],
+    ["dev-compass-baud-pick",  "dev-compass-baud"],
+    ["dev-motor-baud-pick",    "dev-motor-baud"],
+    ["dev-steering-baud-pick", "dev-steering-baud"],
+    ["dev-thrust-baud-pick",   "dev-thrust-baud"],
+  ];
+
+  function syncBaudPick(pickId, inputId) {
+    const sel = $(pickId), inp = $(inputId);
+    if (!sel || !inp) return;
+    const cur = (inp.value || "").trim();
+    const known = Array.prototype.some.call(sel.options,
+      (o) => o.value === cur && o.value !== PORT_CUSTOM);
+    sel.value = (known || cur === "") ? cur : PORT_CUSTOM;
+    inp.classList.toggle("hidden", sel.value !== PORT_CUSTOM);
+  }
+
+  function syncBaudPicks() {
+    BAUD_PICKS.forEach(([pk, ip]) => syncBaudPick(pk, ip));
+  }
+
+  function onBaudPick(pickId, inputId) {
+    const sel = $(pickId), inp = $(inputId);
+    if (!sel || !inp) return;
+    if (sel.value === PORT_CUSTOM) {
+      inp.classList.remove("hidden");
+      inp.focus();
+    } else {
+      inp.value = sel.value;  // the dropdown IS the source; mirror into the input
+      inp.classList.add("hidden");
+    }
+  }
+
+  // Driver-default baud per selected source. null = no opinion (no baud field,
+  // or the backend default applies).
+  function defaultBaud(kind, src) {
+    if (src === "ublox") return 38400;      // u-blox M9N UBX
+    if (src === "hwt901b") return 9600;     // WitMotion AHRS factory default
+    if (src === "serial" || src === "both") {
+      // NMEA-0183 sensors talk 4800; our motor/steering/thrust boards 115200.
+      return (kind === "gps" || kind === "compass") ? 4800 : 115200;
+    }
+    return null;
+  }
+
+  // On a SOURCE change, fill the baud field with the new driver's default —
+  // but only when it's empty or still at the PREVIOUS source's default; a
+  // user-typed value is never clobbered. Survives source flapping
+  // (ublox→serial→ublox keeps tracking) via data-prev-src on the select,
+  // which render() re-baselines on every config load.
+  function applyBaudDefault(kind, sel) {
+    const inp = $("dev-" + kind + "-baud");
+    if (!sel || !inp) return;
+    const prev = sel.dataset.prevSrc || "";
+    const next = sel.value;
+    if (next !== prev) {
+      const cur = (inp.value || "").trim();
+      const prevDef = defaultBaud(kind, prev);
+      const nextDef = defaultBaud(kind, next);
+      if (cur === "" || (prevDef != null && Number(cur) === prevDef)) {
+        if (nextDef != null) inp.value = String(nextDef);
+        // New source has no baud opinion: drop a stale driver default (never a
+        // user-typed value — those fail the guard above) so it isn't saved.
+        else if (cur !== "" && prevDef != null) inp.value = "";
+        syncBaudPick("dev-" + kind + "-baud-pick", "dev-" + kind + "-baud");
+      }
+    }
+    sel.dataset.prevSrc = next;
+  }
+
+  // Source-select id -> baud field prefix (devices without a baud are absent).
+  const BAUD_KIND_BY_SRC = {
+    "dev-src-gps": "gps",
+    "dev-src-compass": "compass",
+    "dev-src-motor": "motor",
+    "dev-src-steering": "steering",
+    "dev-src-thrust": "thrust",
+  };
+
   function loadSerialPorts() {
     fetch("/api/devices/serial-ports")
       .then((r) => (r.ok ? r.json() : null))
@@ -756,10 +843,16 @@
     });
   }
 
-  // Source selects → toggle serial disclosure + show the picked driver's menu.
+  // Source selects → toggle serial disclosure + show the picked driver's menu
+  // (+ fill the new driver's default baud if the field isn't user-set).
   SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
-    if (sel) sel.addEventListener("change", () => { syncConnFields(); refreshMenus(); });
+    if (sel) sel.addEventListener("change", () => {
+      const bk = BAUD_KIND_BY_SRC[f.id];
+      if (bk) applyBaudDefault(bk, sel);
+      syncConnFields();
+      refreshMenus();
+    });
   });
 
   // Warn when the u-blox GPS driver is chosen: it reconfigures the receiver
@@ -788,6 +881,7 @@
         dlg.removeEventListener("close", onClose);
         if (dlg.returnValue !== "ok") {   // cancelled / Esc -> revert the pick
           gsel.value = prev;
+          applyBaudDefault("gps", gsel);  // undo the ublox default baud too
           syncConnFields();
           refreshMenus();
         }
@@ -801,16 +895,27 @@
     if (cancel) cancel.addEventListener("click", () => { dlg.returnValue = "cancel"; dlg.close(); });
   })();
 
-  // Split-channel source selects → toggle per-channel serial rows.
+  // Split-channel source selects → toggle per-channel serial rows
+  // (+ per-channel driver-default baud).
   SPLIT_SRC_FIELDS.forEach((f) => {
     const sel = $(f.id);
-    if (sel) sel.addEventListener("change", syncSplitSerial);
+    if (sel) sel.addEventListener("change", () => {
+      const bk = BAUD_KIND_BY_SRC[f.id];
+      if (bk) applyBaudDefault(bk, sel);
+      syncSplitSerial();
+    });
   });
 
   // Serial-port dropdowns: mirror the pick into the (source-of-truth) input.
   PORT_PICKS.forEach(([pk, ip]) => {
     const sel = $(pk);
     if (sel) sel.addEventListener("change", () => onPortPick(pk, ip));
+  });
+
+  // Baud dropdowns: same mirroring into the (source-of-truth) number input.
+  BAUD_PICKS.forEach(([pk, ip]) => {
+    const sel = $(pk);
+    if (sel) sel.addEventListener("change", () => onBaudPick(pk, ip));
   });
 
   const nEn = $("dev-nmea-enabled");
