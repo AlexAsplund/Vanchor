@@ -31,12 +31,14 @@
             <b id="sys-latest-line">—</b>
             <a id="sys-download-link" class="btn-ghost" href="#" download hidden>Download</a>
           </div>
+          <button id="sys-install-btn" class="btn-primary wide" type="button" style="display:none">Download &amp; install</button>
 
           <div class="ctx-sub">Sideload update bundle</div>
-          <div class="hint">Download a <code>.bundle.tar</code> on your phone/laptop, then upload it here.</div>
+          <div class="hint">Or pick a downloaded <code>.bundle.tar</code> manually (the phone's file
+            app may have renamed it — that's fine, it is fixed automatically).</div>
           <label class="backup-file-row">
             <span>Bundle file</span>
-            <input type="file" id="sys-upload-file" accept=".tar" />
+            <input type="file" id="sys-upload-file" accept=".tar,.bundle.tar,application/x-tar,application/octet-stream" />
           </label>
           <progress id="sys-upload-progress" value="0" max="1" style="width:100%;display:none"></progress>
           <div id="sys-upload-status" class="hint"></div>
