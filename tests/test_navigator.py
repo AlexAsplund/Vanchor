@@ -103,3 +103,25 @@ def test_gga_after_rmc_carries_forward_cog():
     assert state.fix.cog_deg == pytest.approx(90.0), (
         "GGA-only fix should carry forward the last known cog, not reset to 0"
     )
+
+
+def test_satellite_count_from_gga_carried_through_rmc():
+    """#114 request: GGA's satellite count reaches state.fix (and telemetry's
+    gps.num_sv) and survives RMC-only cycles, which carry no satellites."""
+    from vanchor.core.state import NavigationState
+    from vanchor.nav.navigator import Navigator
+
+    state = NavigationState()
+    nav = Navigator(state, bus=None)
+    nav.handle_sentence(nmea.encode_gga(GeoPoint(59.0, 18.0), satellites=9))
+    assert state.fix.num_sv == 9
+    assert state.to_dict()["gps"]["num_sv"] == 9
+    # RMC has no satellite field -> the last GGA count is carried forward.
+    nav.handle_sentence(nmea.encode_rmc(GeoPoint(59.0001, 18.0), sog_knots=1.0, cog_deg=0.0))
+    assert state.fix.num_sv == 9
+    # Sim/no-count sources stay None-safe.
+    s2 = NavigationState()
+    Navigator(s2, bus=None).handle_sentence(
+        nmea.encode_rmc(GeoPoint(59.0, 18.0), sog_knots=1.0, cog_deg=0.0))
+    assert s2.fix.num_sv is None
+    assert s2.to_dict()["gps"]["num_sv"] is None

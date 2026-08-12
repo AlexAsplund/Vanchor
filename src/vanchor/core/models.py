@@ -61,6 +61,10 @@ class GpsFix:
     vel_d_mps: float | None = None   # NED velocity, down (m/s)
     h_acc_m: float | None = None     # horizontal position accuracy estimate (m)
     s_acc_mps: float | None = None   # speed accuracy estimate (m/s)
+    # Satellites used in the solution: GGA field 7 on the NMEA path, NAV-PVT
+    # numSV on the UBX path; None on sim / RMC-only cycles (the navigator
+    # carries the last GGA value forward).
+    num_sv: int | None = None
 
     # Source-agnostic capability flags: downstream (nav.fusion) activates the
     # richer behaviour off WHAT the fix carries, not which driver produced it --

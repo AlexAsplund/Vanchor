@@ -4,6 +4,15 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Satellite count on the main screen** (requested in discussion #114). The
+  GPS chip in the top status bar now shows the actual number of satellites
+  ("9 sat") instead of an anonymous OK dot, on every source that reports it:
+  GGA on plain NMEA receivers (BE-880 class), NAV-PVT on the u-blox driver.
+  RMC-only cycles carry the last count forward; sim/no-count sources keep the
+  old labels. Also new in telemetry: a `gps` block (`num_sv`, `h_acc_m`) --
+  which makes the GPS-walk analysis tool's accuracy-honesty check work on
+  real recordings too.
+
 ## [1.5.0a24] — 2026-08-11
 
 - **Alerts no longer pile into an unreadable stack.** When several alerts fire
