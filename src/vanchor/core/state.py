@@ -235,6 +235,13 @@ class NavigationState:
             "heading_deg": round(self.heading_deg, 2),
             "heading_from_cog": self.heading_from_cog,
             "sog_knots": round(self.sog_knots, 2),
+            # GPS receiver quality (source-agnostic: GGA on NMEA, NAV-PVT on
+            # UBX; None on sim). Drives the main-screen satellite count.
+            "gps": {
+                "num_sv": self.fix.num_sv if self.fix else None,
+                "h_acc_m": (round(self.fix.h_acc_m, 1)
+                            if self.fix and self.fix.h_acc_m is not None else None),
+            },
             "fusion": {
                 "yaw_rate_dps": (round(self.yaw_rate_dps, 2)
                                  if self.yaw_rate_dps is not None else None),

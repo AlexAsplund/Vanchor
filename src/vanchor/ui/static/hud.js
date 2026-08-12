@@ -33,10 +33,15 @@
 
   VA.onTelemetry(function renderHud(t) {
     // ---- top status-bar chips ----
-    const fix = fixLabel(t);
+    // The GPS chip shows the ACTUAL satellite count when the receiver reports
+    // it (discussion #114 request) -- "12 sat" beats an anonymous green dot.
+    // Sim / satellite-less sources fall back to the old OK/NO FIX labels.
+    let fix = fixLabel(t);
+    const sv = t.gps && Number.isFinite(t.gps.num_sv) ? t.gps.num_sv : null;
+    if (fix === "OK" && sv !== null) fix = sv + " sat";
     VA.setText("chip-fix-val", fix);
     const fixChip = document.getElementById("chip-fix");
-    if (fixChip) fixChip.dataset.fix = (fix === "OK") ? "ok" : (fix === "—") ? "none" : "bad";
+    if (fixChip) fixChip.dataset.fix = (fix === "OK" || sv !== null) ? "ok" : (fix === "—") ? "none" : "bad";
 
     const sog = VA.fin(t.sog_knots);
     VA.setText("chip-sog", sog === null ? "—" : sog.toFixed(1));

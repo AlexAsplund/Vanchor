@@ -366,11 +366,14 @@ class Navigator:
         if isinstance(parsed, nmea.RMC):
             point = self._apply_offset(parsed.point)
             if parsed.valid and self.guard.check_position(point):
+                _prev = self.state.fix
                 fix = GpsFix(
                     point=point,
                     sog_knots=parsed.sog_knots,
                     cog_deg=parsed.cog_deg,
                     valid=True,
+                    # RMC carries no satellite count -- keep the last GGA's.
+                    num_sv=_prev.num_sv if _prev is not None else None,
                 )
                 self.state.fix = fix
                 self.state.fix_seq += 1
@@ -395,6 +398,7 @@ class Navigator:
                     sog_knots=self.state.sog_knots,
                     cog_deg=cog,
                     valid=True,
+                    num_sv=parsed.satellites or None,
                 )
                 self.state.fix = fix
                 self.state.fix_seq += 1

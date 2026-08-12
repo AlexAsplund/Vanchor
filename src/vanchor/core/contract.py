@@ -83,6 +83,7 @@ TELEMETRY_FIELDS: dict[str, dict] = {
     "rtl_recommended": {"type": "boolean", "desc": "return-to-launch recommended (e.g. low battery)"},
     "mob": {"type": "object|null", "desc": "man-overboard mark state"},
     "launch": {"type": "object|null", "desc": "captured launch point (for RTL)"},
+    "gps": {"type": "object", "desc": "receiver quality: num_sv (satellites used; GGA/NAV-PVT, null on sim), h_acc_m"},
     # --- battery / power ---
     "battery": {"type": "object", "desc": "battery snapshot (SoC, voltage, current, range)"},
     # --- charts / depth ---

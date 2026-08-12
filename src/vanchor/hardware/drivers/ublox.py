@@ -141,6 +141,7 @@ class UbloxGps(Sensor):
             sog_knots=pvt.sog_knots, cog_deg=pvt.cog_deg, valid=True,
             vel_n_mps=pvt.vel_n_mps, vel_e_mps=pvt.vel_e_mps, vel_d_mps=pvt.vel_d_mps,
             h_acc_m=pvt.h_acc_m, s_acc_mps=pvt.s_acc_mps,
+            num_sv=pvt.num_sv,
         )
         if self.bus is not None:
             await self.bus.publish(events.GPS_FIX_IN, fix)
