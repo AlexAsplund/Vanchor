@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a25] — 2026-08-12
+
 - **One-tap updates from GitHub, pre-releases included.** "Check for updates"
   was silently broken: it filtered for an asset name pattern that no release
   has used (`vanchor-app-*-arm64…`), so it always said no release found. Fixed
