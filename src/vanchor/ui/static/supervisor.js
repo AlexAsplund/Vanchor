@@ -68,6 +68,7 @@
   let _bundleName = null;   // after successful upload (passed to inspect/apply)
   let _manifestData = null; // last inspect result
   let _appVersion = null;   // from telemetry
+  let _latestAsset = null;  // GitHub release asset chosen by "Check for updates"
   let _supAvailable = false;
   let _activeJob = null;    // from telemetry while WS alive
   let _reconnecting = false;
@@ -195,37 +196,43 @@
     fetch("https://api.github.com/repos/AlexAsplund/Vanchor/releases?per_page=15")
       .then(function (r) { return r.json(); })
       .then(function (releases) {
-        // Find the latest release with an arm64 bundle asset
+        // Find the newest release (INCLUDING pre-releases -- every vanchor
+        // release is an alpha) carrying an update bundle. Assets are named
+        // vanchor-update-<ver>.bundle.tar; accept the legacy vanchor-app-*
+        // -arm64 pattern too.
+        function isBundle(a) {
+          return a && a.name && a.name.endsWith(".bundle.tar") &&
+            (a.name.startsWith("vanchor-update-") || a.name.startsWith("vanchor-app-"));
+        }
         let latest = null;
         for (const rel of releases) {
           if (!rel.tag_name) continue;
-          const hasBundle = (rel.assets || []).some(function (a) {
-            return a.name && a.name.startsWith("vanchor-app-") && a.name.endsWith("-arm64.bundle.tar");
-          });
-          if (!hasBundle) continue;
+          const asset = (rel.assets || []).find(isBundle);
+          if (!asset) continue;
           const ver = rel.tag_name.replace(/^v/, "");
           if (!latest || verGt(ver, latest.ver)) {
-            const asset = rel.assets.find(function (a) {
-              return a.name.startsWith("vanchor-app-") && a.name.endsWith("-arm64.bundle.tar");
-            });
-            latest = { ver, tag: rel.tag_name, asset };
+            latest = { ver, tag: rel.tag_name, asset, prerelease: !!rel.prerelease };
           }
         }
         if (!latest) {
-          setText("sys-check-status", "No arm64 bundle release found.");
+          setText("sys-check-status", "No release with an update bundle found.");
           return;
         }
         const currentVer = _appVersion;
         const isNewer = currentVer ? verGt(latest.ver, currentVer) : true;
         setText("sys-check-status",
           isNewer ? ("Update available: v" + latest.ver) : "Already up to date (v" + latest.ver + ")");
-        setText("sys-latest-line", "v" + latest.ver + (isNewer ? " ★ new" : ""));
+        setText("sys-latest-line", "v" + latest.ver
+          + (latest.prerelease ? " (pre-release)" : "") + (isNewer ? " ★ new" : ""));
         const link = $("sys-download-link");
         if (link && latest.asset) {
           link.href = latest.asset.browser_download_url;
           link.download = latest.asset.name;
           link.hidden = false;
         }
+        _latestAsset = latest.asset;
+        const inst = $("sys-install-btn");
+        if (inst) inst.style.display = isNewer ? "" : "none";
         show("sys-latest-row", true);
       })
       .catch(function (err) {
@@ -246,59 +253,116 @@
     show("sys-compat-warning", false);
   });
 
+  // Canonicalize a picked filename for the upload endpoint (#25): iOS Files
+  // renames duplicates ("...bundle 2.tar"), Safari can mangle extensions, and
+  // the server requires ^[A-Za-z0-9][A-Za-z0-9._-]*\.bundle\.tar$. The NAME is
+  // only a storage key -- the bundle's own manifest (checked at inspect) is the
+  // real validator -- so never hard-reject on the name alone.
+  function canonicalBundleName(raw) {
+    let name = String(raw || "").replace(/[^A-Za-z0-9._\-]/g, "_");
+    if (/^[A-Za-z0-9][A-Za-z0-9._\-]{0,127}$/.test(name) && name.endsWith(".bundle.tar")) {
+      return name;
+    }
+    const dup = name.match(/^(.*\.bundle)[._\-][^.]*\.tar$/);   // "...bundle_2.tar"
+    if (dup) name = dup[1] + ".tar";
+    else if (/\.tar$/.test(name)) name = name.replace(/\.tar$/, ".bundle.tar");
+    else name = "upload.bundle.tar";                             // inspect will judge it
+    if (!/^[A-Za-z0-9]/.test(name) || name.length > 128) name = "upload.bundle.tar";
+    return name;
+  }
+
+  // Shared chunked-upload pump: POSTs sequential chunks produced by
+  // nextChunk(offset) -> Promise<Blob|null> (null = source exhausted).
+  // totalSize drives the progress bar. Calls inspectBundle() on completion.
+  function pumpUpload(name, totalSize, nextChunk, onFail) {
+    const prog = $("sys-upload-progress");
+    if (prog) { prog.style.display = ""; prog.value = 0; }
+    let offset = 0;
+    function step() {
+      nextChunk(offset).then(function (chunk) {
+        const isDone = chunk === null || offset + chunk.size >= totalSize;
+        const body = chunk === null ? new Blob([]) : chunk;
+        const url = "/api/supervisor/upload?name=" + encodeURIComponent(name)
+          + "&offset=" + offset + "&done=" + (isDone ? 1 : 0);
+        return fetch(url, { method: "POST", body: body })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (!data.ok && data.error !== "bad_offset") {
+              throw new Error(data.error || "unknown");
+            }
+            offset = data.size;
+            if (prog && totalSize) prog.value = offset / totalSize;
+            if (isDone && data.ok) {
+              _bundleName = data.bundle;
+              setText("sys-upload-status", "Upload complete. Inspecting…");
+              if (prog) prog.style.display = "none";
+              inspectBundle();
+              return;
+            }
+            step();
+          });
+      }).catch(function (err) {
+        setText("sys-upload-status", "Upload error: " + err.message);
+        if (prog) prog.style.display = "none";
+        onFail && onFail(err);
+      });
+    }
+    step();
+  }
+
   $("sys-upload-btn") && $("sys-upload-btn").addEventListener("click", function () {
     const input = $("sys-upload-file");
     const f = input && input.files && input.files[0];
     if (!f) return;
-    const name = f.name.replace(/[^A-Za-z0-9._\-]/g, "_");
-    if (!name.endsWith(".bundle.tar")) {
-      setText("sys-upload-status", "File must end in .bundle.tar");
-      return;
-    }
+    const name = canonicalBundleName(f.name);
     enable("sys-upload-btn", false);
-    const prog = $("sys-upload-progress");
-    if (prog) { prog.style.display = ""; prog.value = 0; }
-    setText("sys-upload-status", "Uploading…");
+    setText("sys-upload-status", "Uploading…"
+      + (name !== f.name ? " (as " + name + ")" : ""));
+    pumpUpload(name, f.size, function (offset) {
+      return Promise.resolve(f.slice(offset, offset + CHUNK));
+    }, function () { enable("sys-upload-btn", true); });
+  });
 
-    let offset = 0;
-    function uploadChunk() {
-      const isDone = offset + CHUNK >= f.size;
-      const chunk = f.slice(offset, offset + CHUNK);
-      const url = "/api/supervisor/upload?name=" + encodeURIComponent(name)
-        + "&offset=" + offset + "&done=" + (isDone ? 1 : 0);
-      fetch(url, { method: "POST", body: chunk })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (data.error === "bad_offset") {
-            // Resume from server's current size
-            offset = data.size;
-            uploadChunk();
-            return;
-          }
-          if (!data.ok) {
-            setText("sys-upload-status", "Upload error: " + (data.error || "unknown"));
-            enable("sys-upload-btn", true);
-            if (prog) prog.style.display = "none";
-            return;
-          }
-          offset = data.size;
-          if (prog) prog.value = offset / f.size;
-          if (isDone) {
-            _bundleName = data.bundle;
-            setText("sys-upload-status", "Upload complete. Inspecting…");
-            if (prog) prog.style.display = "none";
-            inspectBundle();
-          } else {
-            uploadChunk();
-          }
-        })
-        .catch(function (err) {
-          setText("sys-upload-status", "Upload error: " + err.message);
-          enable("sys-upload-btn", true);
-          if (prog) prog.style.display = "none";
-        });
-    }
-    uploadChunk();
+  // ---- one-tap Download & install (#26): the PHONE has internet (cellular);
+  // stream the GitHub release asset through fetch and pipe it straight into
+  // the chunked upload -- no Files-app round trip, no full-file memory.
+  // BENCH-VERIFY: asset CORS + a full run on a real iPhone over the boat AP.
+  $("sys-install-btn") && $("sys-install-btn").addEventListener("click", function () {
+    const asset = _latestAsset;
+    if (!asset) return;
+    const btn = $("sys-install-btn");
+    if (btn) btn.disabled = true;
+    setText("sys-upload-status", "Downloading " + asset.name + "…");
+    fetch(asset.browser_download_url)
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status + " from GitHub");
+        const reader = resp.body.getReader();
+        let buf = new Uint8Array(0);
+        let sourceDone = false;
+        function fill() {
+          if (sourceDone || buf.length >= CHUNK) return Promise.resolve();
+          return reader.read().then(function (r) {
+            if (r.done) { sourceDone = true; return; }
+            const merged = new Uint8Array(buf.length + r.value.length);
+            merged.set(buf); merged.set(r.value, buf.length);
+            buf = merged;
+            return fill();
+          });
+        }
+        pumpUpload(canonicalBundleName(asset.name), asset.size, function () {
+          return fill().then(function () {
+            if (buf.length === 0 && sourceDone) return null;
+            const take = buf.slice(0, CHUNK);
+            buf = buf.slice(take.length);
+            return new Blob([take]);
+          });
+        }, function () { if (btn) btn.disabled = false; });
+      })
+      .catch(function (err) {
+        setText("sys-upload-status", "Download failed: " + err.message
+          + " — use the Download link + manual upload instead.");
+        if (btn) btn.disabled = false;
+      });
   });
 
   function inspectBundle() {

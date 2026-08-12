@@ -4,6 +4,19 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **One-tap updates from GitHub, pre-releases included.** "Check for updates"
+  was silently broken: it filtered for an asset name pattern that no release
+  has used (`vanchor-app-*-arm64…`), so it always said no release found. Fixed
+  to match the real `vanchor-update-<ver>.bundle.tar` assets (legacy pattern
+  still accepted), pre-releases are labeled, and a new **Download & install**
+  button streams the bundle from GitHub straight into the chunked upload --
+  the phone's internet does the fetching; no Files-app round trip.
+- **Sideload upload no longer rejects renamed bundles.** iPhones rename
+  duplicate downloads ("…bundle 2.tar"), which the upload refused with a
+  dead-end message. The name is now canonicalized automatically (the bundle's
+  own manifest remains the real validator at inspect time), and the file
+  picker accepts what iOS actually presents (tar/octet-stream).
+
 - **Satellite count on the main screen** (requested in discussion #114). The
   GPS chip in the top status bar now shows the actual number of satellites
   ("9 sat") instead of an anonymous OK dot, on every source that reports it:
