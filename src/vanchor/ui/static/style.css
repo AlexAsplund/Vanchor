@@ -3059,8 +3059,10 @@ body.mobile.ls[data-view="chart"] #map-pills { display: none; }
   /* Tighten chip footprint so 3 health chips fit in #chips. */
   body.mobile .chip  { padding: 3px 5px; font-size: 10px; gap: 4px; }
   body.mobile .chips { gap: 3px; }
-  /* chip-fix: drop val text → dot-only; dot color mirrors data-fix state. */
-  body.mobile #chip-fix .chip-val { display: none; }
+  /* chip-fix: dot + compact value. The value stays VISIBLE on phones — the
+     satellite count ("9 sat") was requested exactly for the phone main screen
+     (#114); an anonymous dot hid it. Dot color mirrors data-fix state. */
+  body.mobile #chip-fix .chip-val { font-size: 10px; white-space: nowrap; }
   body.mobile #chip-fix .chip-dot { display: block; }
   body.mobile #chip-fix[data-fix="ok"]   .chip-dot { background: var(--accent-2); box-shadow: 0 0 5px var(--accent-2); }
   body.mobile #chip-fix[data-fix="bad"]  .chip-dot { background: var(--stop); animation: pulse 0.8s infinite; }

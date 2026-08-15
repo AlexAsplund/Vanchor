@@ -4,6 +4,18 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Hardware wizard: the I2C scan now really scans.** The scan step listed a
+  static catalog of supported chips as if they had been detected, and rendered
+  it as garbage ("0x0x42 @ bus undefined: undefined") due to a client/server
+  field mismatch (#114 report). The wizard now probes each I2C bus for the
+  known addresses and shows only chips that actually answered; when nothing
+  answers it says so and lists the supported chips as a wiring hint, and when
+  no I2C bus exists it explains how to enable one.
+- **Satellite count now visible on phones.** The main-screen GPS chip
+  collapsed to an anonymous dot on narrow screens, hiding the "9 sat" count
+  on exactly the devices it was requested for (#114). The chip keeps the
+  colored dot and shows the compact value text on mobile too.
+
 ## [1.5.0a25] — 2026-08-12
 
 - **One-tap updates from GitHub, pre-releases included.** "Check for updates"

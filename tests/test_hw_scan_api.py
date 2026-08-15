@@ -48,7 +48,8 @@ class TestHwScanShape:
 
     def test_hw_scan_has_required_keys(self, rt):
         result = rt.hw_scan()
-        for key in ("ports", "i2c_buses", "known_i2c", "capabilities"):
+        for key in ("ports", "i2c_buses", "known_i2c", "i2c_detected",
+                    "capabilities"):
             assert key in result, f"hw_scan missing key: {key}"
 
     def test_ports_is_list(self, rt):
@@ -86,6 +87,70 @@ class TestHwScanPortSchema:
         for entry in rt.hw_scan()["known_i2c"]:
             assert "addr" in entry
             assert "kind" in entry
+
+
+# --------------------------------------------------------------------------- #
+# _probe_known_i2c() — real bus probing behind the wizard scan (#114)
+# --------------------------------------------------------------------------- #
+
+class TestProbeKnownI2c:
+    KNOWN = [
+        {"kind": "helm-pico", "addr": "0x42", "label": "Vanchor helm PCB"},
+        {"kind": "magnetometer", "addr": "0x0d", "label": "QMC5883L compass"},
+        {"kind": "magnetometer", "addr": "0x0d", "label": "QMC5883P compass"},
+    ]
+
+    def _install_fake_smbus(self, monkeypatch, answering: set[int]):
+        import sys
+        import types
+
+        class FakeSMBus:
+            def __init__(self, bus):
+                self.bus = bus
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read_byte(self, addr):
+                if addr not in answering:
+                    raise OSError(121, "Remote I/O error")
+                return 0
+
+        mod = types.ModuleType("smbus2")
+        mod.SMBus = FakeSMBus
+        monkeypatch.setitem(sys.modules, "smbus2", mod)
+
+    def test_answering_chip_is_detected_with_hex_addr(self, rt, monkeypatch):
+        self._install_fake_smbus(monkeypatch, answering={0x0D})
+        out = rt._hwscan._probe_known_i2c([{"bus": 1}], self.KNOWN)
+        assert len(out) == 1
+        assert out[0]["addr"] == "0x0d"
+        assert out[0]["bus"] == 1
+        # Shared-address catalog entries merge into ONE row, labels joined.
+        assert "QMC5883L" in out[0]["label"] and "QMC5883P" in out[0]["label"]
+
+    def test_silent_bus_detects_nothing(self, rt, monkeypatch):
+        self._install_fake_smbus(monkeypatch, answering=set())
+        assert rt._hwscan._probe_known_i2c([{"bus": 1}], self.KNOWN) == []
+
+    def test_no_buses_probes_nothing(self, rt, monkeypatch):
+        self._install_fake_smbus(monkeypatch, answering={0x42})
+        assert rt._hwscan._probe_known_i2c([], self.KNOWN) == []
+
+    def test_missing_smbus2_returns_empty(self, rt, monkeypatch):
+        import builtins
+        real_import = builtins.__import__
+
+        def no_smbus(name, *a, **kw):
+            if name == "smbus2":
+                raise ImportError(name)
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", no_smbus)
+        assert rt._hwscan._probe_known_i2c([{"bus": 1}], self.KNOWN) == []
 
 
 # --------------------------------------------------------------------------- #
