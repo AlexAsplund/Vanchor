@@ -180,7 +180,7 @@ class HardwareScan:
         # Demo mode: return sim posture without scanning real hardware
         if getattr(rt.config, "demo", None) and rt.config.demo.enabled:
             return {"ports": [], "i2c_buses": [], "known_i2c": known_i2c,
-                    "capabilities": caps}
+                    "i2c_detected": [], "capabilities": caps}
 
         in_use = self._ports_in_use()
         i2c_owned = self._i2c_addrs_in_use()
@@ -210,8 +210,53 @@ class HardwareScan:
             _owned = any(_b == _bus_n for (_b, _) in i2c_owned)
             i2c_buses.append({"bus": _bus_n, "path": _dev, "in_use": _owned})
 
+        # Actually probe each bus for the known addresses. The catalog alone
+        # reads like a detection result in the wizard ("is my compass seen?")
+        # when it never touched the bus -- a single read_byte per known address
+        # answers the real question: is the chip wired and answering. Probing
+        # only cataloged addresses (never a 0x03..0x77 sweep) keeps this safe;
+        # a concurrent read alongside an active driver is serialized by the
+        # kernel per transaction.
+        i2c_detected = self._probe_known_i2c(i2c_buses, known_i2c)
+
         return {"ports": ports, "i2c_buses": i2c_buses, "known_i2c": known_i2c,
-                "capabilities": caps}
+                "i2c_detected": i2c_detected, "capabilities": caps}
+
+    @staticmethod
+    def _probe_known_i2c(i2c_buses: list[dict], known_i2c: list[dict]) -> list[dict]:
+        """One read_byte per (bus, known address); answering chips only.
+
+        Entries sharing an address (rare) merge into one row with the labels
+        joined, so a hit never renders twice."""
+        by_addr: dict[int, list[dict]] = {}
+        for dev in known_i2c:
+            try:
+                by_addr.setdefault(int(dev["addr"], 16), []).append(dev)
+            except (KeyError, ValueError):
+                continue
+        detected: list[dict] = []
+        try:
+            from smbus2 import SMBus
+        except ImportError:
+            return detected
+        for entry in i2c_buses:
+            bus_n = entry.get("bus")
+            try:
+                with SMBus(bus_n) as sb:
+                    for addr, devs in sorted(by_addr.items()):
+                        try:
+                            sb.read_byte(addr)
+                        except OSError:
+                            continue
+                        detected.append({
+                            "bus": bus_n,
+                            "addr": f"0x{addr:02x}",
+                            "kind": devs[0]["kind"],
+                            "label": " / ".join(d["label"] for d in devs),
+                        })
+            except (OSError, PermissionError):
+                continue
+        return detected
 
     # ------------------------------------------------------------------ #
     # Hardware setup wizard: probe

@@ -232,9 +232,25 @@
         if (b.label) html += ` <span class="hint">${b.label}</span>`;
         html += "</div>";
       });
-      known.forEach(k => {
-        html += `<div class="scan-row hint">I²C 0x${k.addr.toString(16).padStart(2, "0")} @ bus ${k.bus}: ${k.desc}</div>`;
+      // Real probe results: chips that ANSWERED on a bus. The static catalog
+      // (known) is only a wiring hint when nothing answers -- listing it as
+      // rows reads like a detection result and confuses setup (#114).
+      const found = _scanData.i2c_detected || [];
+      found.forEach(k => {
+        html += `<div class="scan-row"><b>I²C ${k.addr}</b> ${k.label}` +
+          ` <code class="hint">bus ${k.bus}</code></div>`;
       });
+      if (buses.length && !found.length && known.length) {
+        const supported = known.map(k => `${k.addr} (${k.label})`).join(", ");
+        html += `<div class="scan-row hint">No known I²C device answered on the bus.` +
+          ` If one is connected, check the wiring (SDA, SCL, 3.3V, GND).` +
+          ` Supported: ${supported}</div>`;
+      }
+      if (!buses.length && _scanData.capabilities && _scanData.capabilities.i2c) {
+        html += '<div class="scan-row hint">No I²C bus found. On a Raspberry Pi, ' +
+          "enable I²C with <code>sudo raspi-config</code> (Interface Options) " +
+          "or reflash with the latest image, then reboot and rescan.</div>";
+      }
     }
     if (list) list.innerHTML = html;
 
