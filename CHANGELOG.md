@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a26] — 2026-08-16
+
 - **Hardware wizard: the I2C scan now really scans.** The scan step listed a
   static catalog of supported chips as if they had been detected, and rendered
   it as garbage ("0x0x42 @ bus undefined: undefined") due to a client/server
