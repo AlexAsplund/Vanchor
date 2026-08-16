@@ -371,6 +371,19 @@
       .then(function (data) {
         _manifestData = data;
         show("sys-compat-warning", false);
+        // postJSON returns the body even on 503 -- without this check a missing
+        // supervisor daemon reads as "Incompatible bundle" (#114 video), which
+        // sends the user chasing the bundle instead of the boat computer.
+        if (data && data.error === "supervisor_unavailable") {
+          setText("sys-compat-warning",
+            "The update service on the boat computer is not reachable, so the "
+            + "app cannot install updates right now. Reflash the SD card with "
+            + "the latest image instead.");
+          show("sys-compat-warning", true);
+          setText("sys-upload-status", "Update service not reachable.");
+          enable("sys-apply-btn", false);
+          return;
+        }
         if (data.compatible) {
           const ver = (data.manifest && data.manifest.app_version) || "?";
           setText("sys-upload-status",

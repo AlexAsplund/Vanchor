@@ -4,6 +4,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Honest error when the update service is missing.** Uploading a bundle on
+  a system where the app cannot reach the vanchor-supervisor daemon reported
+  "Incompatible bundle" (#114 video), sending the user chasing the bundle
+  instead of the boat computer. It now says the update service is not
+  reachable and recommends reflashing.
+
 ## [1.5.0a26] — 2026-08-16
 
 - **Hardware wizard: the I2C scan now really scans.** The scan step listed a
