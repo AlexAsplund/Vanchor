@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a27] — 2026-08-17
+
 - **SD image: I2C actually works now.** The image set `dtparam=i2c_arm=on`
   but never loaded the `i2c-dev` kernel module, so `/dev/i2c-1` did not exist
   on a flashed Pi -- the wizard scan reported "No I2C bus found" and no
