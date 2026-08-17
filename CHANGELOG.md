@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a28] — 2026-08-17
+
 ## [1.5.0a27] — 2026-08-17
 
 - **SD image: I2C actually works now.** The image set `dtparam=i2c_arm=on`
