@@ -23,6 +23,12 @@ if [ -f "$BOOT_DIR/config.txt" ]; then
     # carries smbus2 + the c 89:* device rule; this makes the bus exist.
     grep -q '^dtparam=i2c_arm=on'   "$BOOT_DIR/config.txt" || echo 'dtparam=i2c_arm=on'   >> "$BOOT_DIR/config.txt"
 fi
+# dtparam=i2c_arm=on enables the bus HARDWARE, but /dev/i2c-1 (what smbus2 and
+# the wizard scan open) only appears once the i2c-dev module is loaded --
+# raspi-config's do_i2c sets both, we previously set only the dtparam. Field
+# result (#114): a flashed image reports "No I2C bus found" and no compass can
+# ever be detected. /etc/modules loads it at every boot.
+grep -q '^i2c-dev' /etc/modules 2>/dev/null || echo 'i2c-dev' >> /etc/modules
 if [ -f "$BOOT_DIR/cmdline.txt" ]; then
     # Drop the serial-console token so getty no longer holds the port.
     sed -i -E 's/console=(serial0|ttyAMA0|ttyS0),[0-9]+ ?//g' "$BOOT_DIR/cmdline.txt"
