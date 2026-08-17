@@ -432,6 +432,13 @@ class I2cTransport(SerialTransport):
                 async with self._lock:
                     # 1. TXA: one 2-byte read starting at 0x02.
                     n = await asyncio.to_thread(self._read_txa)
+                    # The count crosses the wire with no integrity check; the
+                    # firmware FIFO is 1024 bytes, so anything larger is a
+                    # corrupted count -- and honoring it (up to 64 KiB) would
+                    # hold _lock through a ~1 s bus read, stalling write_line
+                    # past the firmware's 800 ms command watchdog (failsafe
+                    # stop mid-run from one flipped bit).
+                    n = min(n, 1024)
 
                     # 2. Drain DATA if bytes are available.
                     if n > 0:

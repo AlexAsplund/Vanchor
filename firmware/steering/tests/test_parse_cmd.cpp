@@ -254,4 +254,29 @@ static void runCrcVectors() {
   char out[64] = "A -12.4 1 -7 42";
   vanchorAppendCrc(out, sizeof out);
   CHECK(std::strcmp(out, "A -12.4 1 -7 42*C8") == 0);
+
+  // Digit-overflow saturation (the accumulator must never wrap 32-bit long:
+  // "CMD 4294967551 F 0" is 2^32+255 -- a wrapping parser reads pwm 255 FULL
+  // AHEAD from garbage; the saturating one clamps identically on any width).
+  {
+    char big[64] = "CMD 4294967551 F 0";
+    int bpwm; char bdir; int bsteer;
+    CHECK(vanchorParseCmd(big, &bpwm, &bdir, &bsteer, 0));
+    CHECK(bpwm == 255 && bdir == 'F' && bsteer == 0);
+    char big2[64] = "CMD 99999999999999999999 R -99999999999999999999";
+    CHECK(vanchorParseCmd(big2, &bpwm, &bdir, &bsteer, 0));
+    CHECK(bpwm == 255 && bdir == 'R' && bsteer == -100);
+    char big3[64] = "CMD 10 F 5 99999999999999999999";
+    int bseq;
+    CHECK(vanchorParseCmd(big3, &bpwm, &bdir, &bsteer, &bseq));
+    CHECK(bpwm == 10 && bsteer == 5 && bseq == VANCHOR_SEQ_MAX);
+  }
+
+  // AppendCrc with no room must DROP the line (empty string), never ship a
+  // CRC-less line that the peer would accept as authentic old-peer traffic.
+  {
+    char tight[8] = "A 1 2";      // needs 5+4=9 > 8
+    vanchorAppendCrc(tight, sizeof tight);
+    CHECK(tight[0] == '\0');
+  }
 }

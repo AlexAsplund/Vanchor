@@ -72,6 +72,127 @@
     return endpoint + (endpoint.indexOf("?") >= 0 ? "&" : "?") + qs;
   }
 
+  // ---- Satellite with per-tile fallback (#114 "low resolution" report) ----
+  // Esri World_Imagery serves native z19 over most shorelines, but the layer
+  // was capped at maxNativeZoom 17 to dodge the "Map data not yet available"
+  // placeholder tiles Esri returns (HTTP 200, so tileerror never fires) in
+  // remote areas -- which made EVERY area blurry. This subclass requests
+  // native tiles up to 19 and falls back per tile: on a load error OR a
+  // detected placeholder (uniform rgb(204,204,204) at 5 sample points --
+  // verified against live Esri tiles; real imagery never matches), it swaps in
+  // the parent tile CSS-scaled to the right quadrant, recursing down to
+  // fallbackFloorZoom (a custom option -- NOT minNativeZoom, which would make
+  // Leaflet upsample z13 tiles when zoomed out below it). Fallback mechanics adapted from ghybs/leaflet.tilelayer
+  // .fallback (MIT). crossOrigin is required for the canvas sampling; if the
+  // canvas taints anyway, the tile is kept as-is (today's behavior).
+  const PLACEHOLDER_RGB = 204, PLACEHOLDER_TOL = 4, PLACEHOLDER_MIN_Z = 16;
+  let _satCanvas = null;
+  // True when the drawable (img or ImageBitmap) is Esri's uniform-gray
+  // "Map data not yet available" tile. May throw (tainted canvas) -- callers
+  // catch and keep the tile.
+  function _samplePlaceholder(drawable) {
+    if (!_satCanvas) {
+      _satCanvas = document.createElement("canvas");
+      _satCanvas.width = _satCanvas.height = 256;
+    }
+    const ctx = _satCanvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(drawable, 0, 0, 256, 256);
+    return [[8, 8], [248, 8], [8, 248], [248, 248], [128, 40]].every(([x, y]) => {
+      const d = ctx.getImageData(x, y, 1, 1).data;
+      return Math.abs(d[0] - PLACEHOLDER_RGB) <= PLACEHOLDER_TOL &&
+             Math.abs(d[1] - PLACEHOLDER_RGB) <= PLACEHOLDER_TOL &&
+             Math.abs(d[2] - PLACEHOLDER_RGB) <= PLACEHOLDER_TOL;
+    });
+  }
+  const SatelliteLayer = L.TileLayer.extend({
+    createTile(coords, done) {
+      const tile = L.TileLayer.prototype.createTile.call(this, coords, done);
+      tile._origCoords = coords;
+      return tile;
+    },
+    _tileOnLoad(done, tile) {
+      if (this._looksLikePlaceholder(tile) && this._fallbackStep(tile)) return;
+      L.TileLayer.prototype._tileOnLoad.call(this, done, tile);
+    },
+    _tileOnError(done, tile, e) {
+      if (this._fallbackStep(tile)) return;
+      L.TileLayer.prototype._tileOnError.call(this, done, tile, e);
+    },
+    _looksLikePlaceholder(tile) {
+      const z = tile._curCoords ? tile._curCoords.z : (tile._origCoords ? tile._origCoords.z : 0);
+      if (z < PLACEHOLDER_MIN_Z) return false;
+      try {
+        return _samplePlaceholder(tile);
+      } catch (err) {
+        return false;   // canvas tainted (no CORS) or decode issue -> keep tile
+      }
+    },
+    // ---- hooks consulted by patchTileLayerForCache (the ACTIVE tile path
+    // whenever VA.tileCache exists; the _tileOnLoad/_tileOnError overrides
+    // above only serve the rare no-cache fallback). --------------------------
+    _vetTileBlob(blob, coords) {
+      if (coords.z < PLACEHOLDER_MIN_Z) return Promise.resolve(true);
+      if (typeof createImageBitmap !== "function") return Promise.resolve(true);
+      return createImageBitmap(blob)
+        .then((bmp) => {
+          let placeholder = false;
+          try { placeholder = _samplePlaceholder(bmp); } catch (e) { /* keep */ }
+          if (bmp.close) bmp.close();
+          return !placeholder;
+        })
+        .catch(() => true);   // undecodable -> let the normal error path run
+    },
+    _fallbackParent(img, origCoords, curCoords) {
+      if (curCoords.z - 1 < (this.options.fallbackFloorZoom || 0)) return null;
+      const next = {
+        x: Math.floor(curCoords.x / 2),
+        y: Math.floor(curCoords.y / 2),
+        z: curCoords.z - 1,
+        fallback: true,
+      };
+      const scale = Math.pow(2, origCoords.z - next.z);
+      const ts = this.getTileSize();
+      img.style.width = (ts.x * scale) + "px";
+      img.style.height = (ts.y * scale) + "px";
+      img.style.marginTop = (-((origCoords.y - next.y * scale) * ts.y)) + "px";
+      img.style.marginLeft = (-((origCoords.x - next.x * scale) * ts.x)) + "px";
+      return next;
+    },
+    _fallbackStep(tile) {
+      const orig = tile._origCoords;
+      if (!orig) return false;
+      if (!tile._curCoords) {
+        const c = this._wrapCoords(orig);
+        tile._curCoords = { x: c.x, y: c.y, z: c.z, fallback: true };
+      }
+      const cur = tile._curCoords;
+      if (cur.z - 1 < (this.options.fallbackFloorZoom || 0)) return false;
+      cur.z -= 1;
+      cur.x = Math.floor(cur.x / 2);
+      cur.y = Math.floor(cur.y / 2);
+      const scale = tile._fallbackScale = (tile._fallbackScale || 1) * 2;
+      const ts = this.getTileSize();
+      tile.style.width = (ts.x * scale) + "px";
+      tile.style.height = (ts.y * scale) + "px";
+      tile.style.marginTop = (-((orig.y - cur.y * scale) * ts.y)) + "px";
+      tile.style.marginLeft = (-((orig.x - cur.x * scale) * ts.x)) + "px";
+      tile.src = this.getTileUrl(cur);   // re-fires load/error -> recurses
+      return true;
+    },
+    getTileUrl(coords) {
+      // Same template data as L.TileLayer.getTileUrl, but honor the fallback
+      // coords' own z instead of the map's current url zoom.
+      const data = {
+        r: L.Browser.retina ? "@2x" : "",
+        s: this._getSubdomain(coords),
+        x: coords.x,
+        y: coords.y,
+        z: coords.fallback ? coords.z : this._getZoomForUrl(),
+      };
+      return L.Util.template(this._url, L.Util.extend(data, this.options));
+    },
+  });
+
   const base = {
     "Dark": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
@@ -85,11 +206,11 @@
     // tint (#map.base-nautical). Pairs with the Sea-marks + depth overlays.
     "Nautical": L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
       { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
-    "Satellite": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      // maxNativeZoom kept where real imagery exists (remote water/shore has none
-      // deeper) so Leaflet UPSCALES the deepest available tile past it instead of
-      // fetching Esri's "Map data not available" placeholder.
-      { maxZoom: 22, maxNativeZoom: 17, attribution: "© Esri, Maxar, Earthstar Geographics" }),
+    "Satellite": new SatelliteLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      // Native z19 where Esri has imagery; the SatelliteLayer fallback swaps
+      // placeholder/missing tiles for the CSS-scaled parent down to z13.
+      { maxZoom: 22, maxNativeZoom: 19, fallbackFloorZoom: 13, crossOrigin: true,
+        attribution: "© Esri, Maxar, Earthstar Geographics" }),
     "Light": L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 22, maxNativeZoom: 20, attribution: OSM + ", " + CARTO }),
     "Topo": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
@@ -370,6 +491,34 @@
   // one-cache-key invariant as the basemaps.
   function patchTileLayerForCache(layer) {
     const origCreate = layer.createTile;
+    // Resolve url -> displayable src through hot-LRU -> IndexedDB -> network.
+    // When the layer defines _vetTileBlob (the Satellite placeholder check),
+    // blobs are vetted BEFORE display/caching; a vetted-out blob resolves to
+    // null (and is never cached -- placeholders must not poison the offline
+    // store). Hot-LRU entries were vetted on insert, so hits skip the check.
+    // Cached blobs re-vet (pre-fix caches may hold placeholders).
+    function resolveTile(coords, url) {
+      const cache = VA.tileCache;
+      const vet = (blob) => (layer._vetTileBlob
+        ? layer._vetTileBlob(blob, coords) : Promise.resolve(true));
+      const hot = lruGet(url);
+      if (hot !== undefined) return Promise.resolve(hot);
+      return cache.get(url).then((blob) => {
+        if (blob) {
+          return vet(blob).then((ok) => (ok ? lruPut(url, blob) : null));
+        }
+        // not cached: download the tile ONCE via fetch, then use that single
+        // blob for BOTH the <img> (object URL) and the cache. (A second plain
+        // fetch of the same URL used to double-download every uncached tile.)
+        return fetch(url)
+          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("tile fetch failed"))))
+          .then((blob) => vet(blob).then((ok) => {
+            if (!ok) return null;
+            if (cache.put) { try { cache.put(url, blob); } catch (e) {} }
+            return lruPut(url, blob);
+          }));
+      });
+    }
     layer.createTile = function (coords, done) {
       const img = document.createElement("img");
       const url = this.getTileUrl(coords);
@@ -380,44 +529,28 @@
         // no cache installed — fall back to default network behaviour
         return origCreate.call(this, coords, done);
       }
-      const hot = lruGet(url);
-      if (hot !== undefined) {
-        img.onload = () => done(null, img);
-        img.onerror = () => done(new Error("cached tile decode failed"), img);
-        img.src = hot;
-        return img;
-      }
-      cache.get(url).then((blob) => {
-        if (blob) {
-          img.onload = () => done(null, img);
-          img.onerror = () => done(new Error("cached tile decode failed"), img);
-          img.src = lruPut(url, blob);
-          return;
-        }
-        // not cached: download the tile ONCE via fetch, then use that single blob
-        // for BOTH the <img> (object URL) and the cache. Previously we set
-        // img.src=url AND fetch(url) separately, downloading every uncached tile
-        // twice. (perf) The plain fetch of the same URL is CORS-safe (the old
-        // second fetch already worked).
-        fetch(url)
-          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("tile fetch failed"))))
-          .then((blob) => {
-            img.onload = () => done(null, img);
-            img.onerror = () => done(new Error("tile load failed"), img);
-            img.src = lruPut(url, blob);
-            if (cache.put) { try { cache.put(url, blob); } catch (e) {} }
-          })
-          .catch(() => {
-            // Network fetch failed — fall back to a direct <img> load.
-            img.onload = () => done(null, img);
-            img.onerror = () => done(new Error("tile load failed"), img);
-            img.src = url;
-          });
-      }).catch(() => {
-        img.src = url;
+      const layerRef = this;
+      const show = (src) => {
         img.onload = () => done(null, img);
         img.onerror = () => done(new Error("tile load failed"), img);
-      });
+        img.src = src;
+      };
+      // One resolve step at the given coords; on a vetted-out tile descend to
+      // the parent (layer._fallbackParent supplies the coords + CSS placement)
+      // until the layer declines, then show the original url as-is (today's
+      // behaviour). Non-satellite layers have no hooks: identical pipeline.
+      function step(curCoords, curUrl) {
+        resolveTile(curCoords, curUrl)
+          .then((src) => {
+            if (src !== null) { show(src); return; }
+            const next = layerRef._fallbackParent
+              ? layerRef._fallbackParent(img, coords, curCoords) : null;
+            if (next) step(next, layerRef.getTileUrl(next));
+            else show(url);
+          })
+          .catch(() => { show(curUrl); });   // cache/network error → direct load
+      }
+      step(coords, url);
       return img;
     };
   }

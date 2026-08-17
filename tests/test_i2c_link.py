@@ -551,3 +551,19 @@ class TestImport:
         t = I2cTransport(3)   # no smbus_factory → will try real smbus2
         with pytest.raises(RuntimeError, match="pip install vanchor\\[i2c\\]"):
             await t.open()
+
+    async def test_glitched_txa_count_is_capped_to_fifo_size(self) -> None:
+        """A corrupted TXA count (bit-flip on the wire; register reads have no
+        integrity check) must be capped at the firmware FIFO size (1024) --
+        honoring e.g. 0x8014 would hold the poll lock through a ~32 KiB bus
+        read, stalling write_line past the firmware's 800 ms watchdog."""
+        bus = _open_ok_bus()
+        bus.stage(0x02, bytes([0x14, 0x80]))     # TXA reads as 0x8014 = 32788
+        bus.stage(0x10, b"OK\n" + b"\x00" * 2000)
+        t = await _open_transport(bus)
+        await asyncio.wait_for(t.read_line(), timeout=2.0)
+        await t.close()
+        data_reads = [tx for tx in bus.transactions
+                      if tx[0] == "read" and tx[2] == 0x10]
+        assert data_reads, "no DATA read happened"
+        assert max(tx[1] for tx in data_reads) <= 1024, data_reads

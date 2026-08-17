@@ -1,3 +1,21 @@
+/* Saturating base-10 digit accumulator. `v = v*10 + d` with no width guard is
+ * signed-overflow UB and, on 32-bit `long` (the RP2040/RP2350 and AVR case),
+ * wraps at 10 digits -- "CMD 4294967551 F 0" must read as huge-then-clamped,
+ * never wrap to 255 (full ahead from line noise on CRC-less links). Digits are
+ * consumed to the end either way; the cap parks the value far above every
+ * caller's clamp so saturated garbage lands on the clamp exactly like any
+ * large value would. */
+inline long vanchorAccumDigits(const char **pp) {
+  const char *p = *pp;
+  long v = 0;
+  while (*p >= '0' && *p <= '9') {
+    if (v <= 100000L) v = v * 10 + (*p - '0');
+    p++;
+  }
+  *pp = p;
+  return v;
+}
+
 /*
  * vanchor_protocol.h  --  shared line protocol for the Vanchor-NG hardware bridge.
  *
@@ -190,8 +208,7 @@ inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer,
   // --- pwm ---
   while (*p == ' ') p++;
   if (*p < '0' || *p > '9') return false;
-  long v = 0;
-  while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
+  long v = vanchorAccumDigits(&p);
   if (v < 0) v = 0;
   if (v > 255) v = 255;
 
@@ -207,8 +224,7 @@ inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer,
   if (*p == '-') { sign = -1; p++; }
   else if (*p == '+') { p++; }
   if (*p < '0' || *p > '9') return false;
-  long s = 0;
-  while (*p >= '0' && *p <= '9') { s = s * 10 + (*p - '0'); p++; }
+  long s = vanchorAccumDigits(&p);
   s *= sign;
   if (s < -100) s = -100;
   if (s > 100) s = 100;
@@ -221,8 +237,7 @@ inline bool vanchorParseCmd(const char *line, int *pwm, char *dir, int *steer,
   const char *pq = p;
   while (*pq == ' ') pq++;
   if (*pq >= '0' && *pq <= '9') {
-    q = 0;
-    while (*pq >= '0' && *pq <= '9') { q = q * 10 + (*pq - '0'); pq++; }
+    q = vanchorAccumDigits(&pq);
     if (q > VANCHOR_SEQ_MAX) q = VANCHOR_SEQ_MAX;
   }
 
@@ -272,8 +287,7 @@ inline bool vanchorParseSteerDeg(const char *line, float *deg, int *seq = 0) {
   const char *pq = p;
   while (*pq == ' ') pq++;
   if (*pq >= '0' && *pq <= '9') {
-    q = 0;
-    while (*pq >= '0' && *pq <= '9') { q = q * 10 + (*pq - '0'); pq++; }
+    q = vanchorAccumDigits(&pq);
     if (q > VANCHOR_SEQ_MAX) q = VANCHOR_SEQ_MAX;
   }
 
@@ -349,7 +363,15 @@ inline bool vanchorAcceptLine(char *line) {
 inline void vanchorAppendCrc(char *buf, unsigned int cap) {
   unsigned int len = 0;
   while (buf[len]) len++;
-  if (len + 4 > cap) return;
+  if (len + 4 > cap) {
+    // No room for "*HH\0": DROP the line rather than ship it CRC-less. A
+    // CRC-less line passes as an old-peer's authentic traffic on the
+    // receiving side, so silently omitting the CRC would downgrade the
+    // link's integrity check exactly when the line is most likely malformed
+    // (it just overflowed its buffer).
+    buf[0] = '\0';
+    return;
+  }
   unsigned char c = vanchorCrc8(buf, len);
   const char *hex = "0123456789ABCDEF";
   buf[len] = '*';

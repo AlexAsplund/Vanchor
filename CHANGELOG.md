@@ -4,6 +4,20 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Sharp satellite imagery.** The Satellite layer was capped at zoom 17 to
+  dodge Esri's "Map data not yet available" placeholder tiles, which made
+  EVERY area blurry (#114 report). It now loads native zoom-19 tiles and
+  falls back per tile: placeholders are detected by pixel sampling and
+  replaced with the scaled parent tile, and they are never stored in the
+  offline tile cache.
+- **Firmware protocol hardening (Arduino + Pico).** The shared line-protocol
+  parser accumulated digits with wrapping arithmetic -- on 32-bit boards a
+  noise line like "CMD 4294967551 F 0" could wrap to pwm 255 (full ahead).
+  Digits now saturate, and a line too long for its buffer is dropped instead
+  of shipped without its CRC. The I2C motor-tunnel transport also caps a
+  corrupted byte-count so one flipped bit cannot stall commands past the
+  firmware watchdog.
+
 ## [1.5.0a27] — 2026-08-17
 
 - **SD image: I2C actually works now.** The image set `dtparam=i2c_arm=on`
