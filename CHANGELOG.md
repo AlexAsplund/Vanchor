@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a28] — 2026-08-17
+
 - **Sharp satellite imagery.** The Satellite layer was capped at zoom 17 to
   dodge Esri's "Map data not yet available" placeholder tiles, which made
   EVERY area blurry (#114 report). It now loads native zoom-19 tiles and
