@@ -4,6 +4,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **SD image: I2C actually works now.** The image set `dtparam=i2c_arm=on`
+  but never loaded the `i2c-dev` kernel module, so `/dev/i2c-1` did not exist
+  on a flashed Pi -- the wizard scan reported "No I2C bus found" and no
+  compass could ever be detected (#114 field report). The image now also adds
+  `i2c-dev` to `/etc/modules`, matching what raspi-config's I2C enable does.
+
 - **Honest error when the update service is missing.** Uploading a bundle on
   a system where the app cannot reach the vanchor-supervisor daemon reported
   "Incompatible bundle" (#114 video), sending the user chasing the bundle
