@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a29] — 2026-08-18
+
 - **Flash the helm Pico from the app.** Devices -> Motor -> "Helm firmware
   (Pico)": the phone downloads the latest vanchor-pcb firmware release
   (Pico 2 or original Pico) and the boat computer flashes the USB-connected
