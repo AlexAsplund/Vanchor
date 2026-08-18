@@ -54,6 +54,7 @@ def test_compose_cgroup_rules_exact(compose):
         "c 188:* rmw",
         "c 204:* rmw",
         "c 89:* rmw",
+        "c 189:* rmw",
     }
     assert set(rules) == expected, f"Expected cgroup rules {expected!r}, got {rules!r}"
 
@@ -110,7 +111,7 @@ def test_dockerfile_final_stage_apt_only_allowed_packages(dockerfile_text):
     # Adoption task 6 adds network-manager (provides nmcli for WiFi setup).
     # This set is the exhaustive allowlist — adding any other package requires
     # an explicit review and an update here.
-    ALLOWED = {"network-manager"}
+    ALLOWED = {"network-manager", "libusb-1.0-0"}
 
     # Split on FROM: the last FROM block is the final stage.
     blocks = dockerfile_text.split("FROM ")

@@ -1222,6 +1222,48 @@ def create_app(runtime: "Runtime", *, telemetry_hz: float = 5.0) -> FastAPI:
             media_type="application/json",
         )
 
+    @app.get("/api/hw/pico/flash")
+    async def pico_flash_status() -> dict:
+        """Whether this install can flash a Pico (picotool baked in)."""
+        from ..hardware import pico_flash as _pf
+        return {"picotool": _pf.picotool_path() is not None}
+
+    @app.post("/api/hw/pico/flash")
+    async def pico_flash_run(file: UploadFile = File(...), force: bool = False):
+        """Flash an uploaded UF2 onto the USB-connected helm Pico.
+
+        Safety interlock: refused while any guided mode drives (the motor
+        controller goes away mid-flash; the board's EN pulldowns keep the
+        bridges disabled, but the BOAT loses steering/thrust) -- same rule as
+        the supervisor's update/rollback paths; ``force=true`` overrides.
+        400 = not a UF2; 200 with {ok, output} otherwise."""
+        from ..hardware import pico_flash as _pf
+        if not force and runtime.state.mode != "manual":
+            return Response(
+                content=json.dumps({
+                    "ok": False,
+                    "error": "underway",
+                    "detail": (f"Boat is in an active guided mode "
+                               f"({runtime.state.mode}); flashing removes the "
+                               "motor controller. Stop first, or force=true."),
+                }),
+                media_type="application/json",
+                status_code=409,
+            )
+        data = await file.read()
+        err = _pf.validate_uf2(data)
+        if err is not None:
+            return Response(
+                content=json.dumps({"ok": False, "error": err}),
+                media_type="application/json",
+                status_code=400,
+            )
+        dest = Path(runtime.config.data_dir) / "helm-firmware.uf2"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        ok, out = await asyncio.to_thread(_pf.flash, str(dest))
+        return {"ok": ok, "output": out[-4000:]}
+
     @app.get("/api/devices/{kind}/debug")
     async def device_debug(kind: str) -> dict:
         """Human-readable raw-data snapshot for one device (gps/compass/depth/

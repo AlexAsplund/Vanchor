@@ -30,6 +30,7 @@ services:
       - "c 188:* rmw"             # ttyUSB* (FTDI/CH340 adapters)
       - "c 204:* rmw"             # ttyAMA* / serial0 (Pi UART)
       - "c 89:* rmw"              # i2c-*
+      - "c 189:* rmw"             # /dev/bus/usb — picotool (helm-Pico flasher)
     devices:
       # SoC-fixed GPIO chip — comment out on non-Pi hosts (compose fails on
       # missing device paths; Pi has /dev/gpiochip0 always).

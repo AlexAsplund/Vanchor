@@ -241,6 +241,30 @@
             </div>
             <div id="dev-menus-motor"></div>
 
+            <!-- Helm firmware flasher: fetch the latest UF2 with the PHONE's
+                 internet (vanchor-pcb releases), upload it, the Pi flashes the
+                 USB-connected Pico via picotool (no BOOTSEL button needed). -->
+            <details class="adv" id="pico-fw-card">
+              <summary>Helm firmware (Pico)…</summary>
+              <div class="hint">Flash the vanchor motor-controller firmware onto a Raspberry Pi Pico / Pico&nbsp;2 plugged into the boat computer by USB. Your phone downloads the firmware; the boat flashes it. The motor stays disabled during flashing.</div>
+              <label class="dev-srcrow">
+                <span>Board</span>
+                <select id="pico-fw-board">
+                  <option value="pico2">Pico 2 (RP2350) — recommended</option>
+                  <option value="pico">Pico (RP2040)</option>
+                </select>
+              </label>
+              <button type="button" class="btn-ghost" id="pico-fw-check">Check latest firmware</button>
+              <div class="hint" id="pico-fw-latest"></div>
+              <button type="button" class="btn-primary wide" id="pico-fw-flash" style="display:none">Download &amp; flash</button>
+              <label class="dev-srcrow">
+                <span>Or UF2 file</span>
+                <input type="file" id="pico-fw-file" accept=".uf2,application/octet-stream" />
+              </label>
+              <button type="button" class="btn-ghost" id="pico-fw-flash-file">Flash selected file</button>
+              <div class="hint" id="pico-fw-status"></div>
+            </details>
+
             <!-- Advanced: split channels — independent Steering + Thrust sources.
                  Hidden (closed <details>) by default; auto-opened by devices.js
                  when the saved config has explicit steering_source/thrust_source.
