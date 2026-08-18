@@ -4,6 +4,16 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **Flash the helm Pico from the app.** Devices -> Motor -> "Helm firmware
+  (Pico)": the phone downloads the latest vanchor-pcb firmware release
+  (Pico 2 or original Pico) and the boat computer flashes the USB-connected
+  board with picotool -- no BOOTSEL button, no computer, no toolchain. A
+  manual .uf2 file upload works too (offline / self-built firmware). Flashing
+  is refused while a guided mode drives (force overrides), uploads are
+  validated as real UF2 images, and installs without the flasher (older
+  images) say so honestly. The firmware itself now ships as drag-and-drop
+  UF2s from vanchor-pcb CI (fw-v* releases).
+
 ## [1.5.0a28] — 2026-08-17
 
 - **Sharp satellite imagery.** The Satellite layer was capped at zoom 17 to

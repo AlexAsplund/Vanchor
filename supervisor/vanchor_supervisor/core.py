@@ -65,6 +65,7 @@ _DEFAULT_CONTAINERS = [
             "c 188:* rmw",
             "c 204:* rmw",
             "c 89:* rmw",
+            "c 189:* rmw",  # /dev/bus/usb -- picotool (helm-Pico flasher)
         ],
         "devices": ["/dev/gpiochip0"],
         "restart": "unless-stopped",
