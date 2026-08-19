@@ -1,5 +1,14 @@
 # Vanchor-NG firmware
 
+> [!IMPORTANT]
+> **New builds: use the Pico firmware instead.** One Raspberry Pi Pico 2 /
+> Pico replaces both Arduino boards below with a single firmware —
+> [`helm-pico` in the vanchor-pcb repo](https://github.com/AlexAsplund/vanchor-pcb/tree/master/firmware/helm-pico) — same protocol, AS5600
+> magnetic encoder, ready-made UF2 files, flashable from the vanchor app
+> (Devices → Motor → Helm firmware), and the target for new features
+> (NMEA2000 etc.). The Arduino sketches below remain maintained for existing
+> boats and stay the reference for the hijacked-speed-controller approach.
+
 Arduino firmware that lets the Raspberry Pi autopilot drive the boat's **engine
 (thrust)** and **steering (azimuth)** hardware over USB serial. Two independent
 sketches, one shared protocol header:
