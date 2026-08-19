@@ -167,6 +167,12 @@ class DeviceManager:
         # stopbits 1/1.5/2. Normalise parity to an upper-case letter.
         for dev in ("gps", "compass", "motor", "steering", "thrust"):
             baud = hw_in.get(f"{dev}_baud")
+            # 0 and "" mean "not set", not a rate: older cached clients send
+            # gps_baud:0 for an empty baud box (Number("") is 0 in JS), which
+            # made saving a sim GPS impossible. Normalise to None (keep/clear).
+            if baud == 0 or (isinstance(baud, str) and not baud.strip()):
+                hw_in[f"{dev}_baud"] = None
+                baud = None
             if baud is not None:
                 try:
                     if int(baud) <= 0:

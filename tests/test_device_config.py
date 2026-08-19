@@ -211,6 +211,29 @@ def test_post_rejects_bad_baudrate(client):
     assert r.status_code == 400
 
 
+def test_post_zero_baud_means_unset_not_error(client):
+    """Regression (#114-era field report): saving with a sim GPS failed with
+    "gps_baud must be a positive integer" because an empty baud box posted
+    gps_baud:0 (JS Number("") is 0). 0 and "" must read as "not set"."""
+    before = client.get("/api/config/devices").json()["hardware"].get("gps_baud")
+    r = client.post("/api/config/devices",
+                    json={"hardware": {"gps_source": "sim", "gps_baud": 0}})
+    assert r.status_code == 200, r.text
+    after = client.get("/api/config/devices").json()["hardware"]
+    assert after["gps_source"] == "sim"
+    assert after.get("gps_baud") == before          # kept, not zeroed
+
+    r = client.post("/api/config/devices",
+                    json={"hardware": {"compass_baud": ""}})
+    assert r.status_code == 200, r.text
+
+
+def test_post_negative_baud_still_rejected(client):
+    r = client.post("/api/config/devices",
+                    json={"hardware": {"gps_baud": -9600}})
+    assert r.status_code == 400
+
+
 def test_post_coerces_int_port_from_string(client):
     r = client.post("/api/config/devices", json={"nmea_tcp": {"port": "10120"}})
     assert r.status_code == 200
