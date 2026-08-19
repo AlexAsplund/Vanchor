@@ -4,6 +4,12 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+- **"gps_baud must be a positive integer" when saving a sim GPS -- fixed.**
+  An empty baud box posted 0 (JavaScript Number("") is 0), so switching a
+  device back to Simulated could not be saved. Empty numeric fields now post
+  nothing, the server treats 0/"" as "not set", and empty sim-motor shaping
+  fields no longer silently post 0.
+
 ## [1.5.0a29] — 2026-08-18
 
 - **Flash the helm Pico from the app.** Devices -> Motor -> "Helm firmware

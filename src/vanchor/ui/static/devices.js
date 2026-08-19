@@ -321,6 +321,11 @@
   }
 
   function num(v) {
+    // Number("") is 0, not NaN -- an empty input must mean "not set" (null),
+    // never 0. Sending gps_baud:0 made "save" impossible with a sim GPS
+    // (server: "gps_baud must be a positive integer"), and empty sim-motor
+    // fields silently posted 0 instead of leaving the value alone.
+    if (v == null || String(v).trim() === "") return null;
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   }
