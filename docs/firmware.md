@@ -1,7 +1,16 @@
-# Firmware integration (Pi ↔ Arduino)
+# Firmware integration (Pi ↔ motor controller)
 
-How the Arduino firmware in [`firmware/`](../firmware/README.md) plugs into the
-Vanchor-NG Python app. Full schematics, pin maps, wiring and BOM live in
+> [!IMPORTANT]
+> **Two firmware paths exist.** The preferred one for new builds is the
+> single-board **Pico firmware** ([`helm-pico`, vanchor-pcb repo](https://github.com/AlexAsplund/vanchor-pcb/tree/master/firmware/helm-pico)):
+> one Pico 2 / Pico replaces both Arduinos, speaks the exact same protocol
+> described on this page, and can be flashed from the app (Devices → Motor →
+> Helm firmware). The Arduino path below remains maintained for existing
+> boats. Everything on this page about the protocol, failsafes and Pi-side
+> integration applies to BOTH.
+
+How the motor-controller firmware in [`firmware/`](../firmware/README.md)
+(and its Pico successor) plugs into the Vanchor-NG Python app. Full schematics, pin maps, wiring and BOM live in
 `firmware/README.md`; this page is the **software contract** and the one change
 the Pi needs to read steering feedback.
 

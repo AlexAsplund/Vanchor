@@ -134,6 +134,7 @@
           <details style="margin-top:.75rem">
             <summary class="hint">Wiring help — Motor (vanchor firmware)</summary>
             <ul class="hint" style="margin:.25rem 0 0 1rem">
+              <li>A Raspberry Pi Pico / Pico&nbsp;2 with the vanchor helm firmware over USB (one board drives both thrust and steering — the preferred setup).</li>
               <li>One or two Arduino Nanos over USB (engine = thrust, steering = azimuth) at 115200.</li>
               <li>Wiring, pin maps and BOM: <code>firmware/README.md</code>.</li>
               <li>The probe only <b>listens</b> for the firmware's A/E feedback lines — it never sends a motor command; nothing can spin.</li>

@@ -31,6 +31,11 @@ Pi's UART):
 
 ### Motor & steering — the firmware boundary
 
+> **Preferred controller for new builds:** one Raspberry Pi Pico 2 running
+> [`helm-pico`](https://github.com/AlexAsplund/vanchor-pcb/tree/master/firmware/helm-pico) replaces the two Arduino boards described below
+> (same protocol, same `motor_port` config — the Pi cannot tell the
+> difference). The Arduino description remains valid for existing boats.
+
 The Pi does **not** drive high current directly. It sends a normalized
 `MotorCommand` (`thrust ∈ [-1,1]`, `steering ∈ [-1,1]`) over serial to the
 Arduino firmware in [`firmware/`](../firmware/README.md), which turns it into
