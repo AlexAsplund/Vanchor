@@ -4,6 +4,8 @@ All notable changes to Vanchor-NG. Dates are ISO-8601.
 
 ## Unreleased
 
+## [1.5.0a30] — 2026-08-25
+
 - **"gps_baud must be a positive integer" when saving a sim GPS -- fixed.**
   An empty baud box posted 0 (JavaScript Number("") is 0), so switching a
   device back to Simulated could not be saved. Empty numeric fields now post
